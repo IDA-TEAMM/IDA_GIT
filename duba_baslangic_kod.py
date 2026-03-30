@@ -12,13 +12,13 @@ class Duba:#nasıl sınıflandıracağımız
         self.y = y
         self.tip = "Kenar (turuncu)" if sinif_id == 0 else "Engel (sari)"
 class  IdaAlgilamaDugumu(Node):#iletişim yetenekleri(measj,gönderme,veri tutma)
-    def __init__(self):
+    def init__(self):
         super().__init__('ida_perception_node')
         self.subscription = self.create_subscription(#abone sistemi 
-            Point,#beklenen veri tipi 
-            '/oakd/detections'#dinlenecek kanal 
-            self.tespit_callback,#veri gelince hangi kanal çalışacak
-            10)#sistem kalitesi(sistem yoğunlaşınca 10 mesajı beklemede tutar)
+        Point,#beklenen veri tipi 
+        '/oakd/detections',#dinlenecek kanal 
+        self.tespit_callback,#veri gelince hangi kanal çalışacak
+        10)#sistem kalitesi(sistem yoğunlaşınca 10 mesajı beklemede tutar)
         self.tespit_edilenler = []
     def tespit_callback(self, msg):
         yeni_duba =Duba(int(msg.z), msg.x, msg.y)
@@ -29,16 +29,16 @@ class  IdaAlgilamaDugumu(Node):#iletişim yetenekleri(measj,gönderme,veri tutma
                 return
         self.tespit_edilenler.append(yeni_duba)#listenin sonuna ekler 
         self.get_logger().info(f"Tespit Kaydedildi: {yeni_duba.tip}| Mesafe: {yeni_duba.x:.2f}m")#ekrana yazdırır.
-    def main():
-        rclpy.init()
-        node = IdaAlgilamaDugumu()
-        try:
-            rclpy.spin(node)
-        except KeyboardInterrupt:
-            pass
-        finally:
-            node.destroy_node()
-            rclpy.shutdown()
+def main():
+    rclpy.init()
+    node = IdaAlgilamaDugumu()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
             
 
 
