@@ -1,0 +1,47 @@
+import rclpy 
+from rclpy.node import Node
+from geometry_msgs.msg import Point
+from std_msgs.msg import Int32
+import time 
+
+class Duba:#nasıl sınıflandıracağımız
+    def __init__(self,sinif_id, x, y):
+        self.id = sinif_id
+        self.x=  x
+        self.y = y
+        self.tip = "Kenar (turuncu)" if sinif_id == 0 else "Engel (sari)"
+class  IdaAlgilamaDugumu(Node):#iletişim yetenekleri(measj,gönderme,veri tutma)
+    def __init__(self):
+        super().__init__('ida_perception_node')
+        self.subscription = self.create_subscription(#abone sistemi 
+            Point,#beklenen veri tipi 
+            '/oakd/detections'#dinlenecek kanal 
+            self.tespit_callback,#veri gelince hangi kanal çalışacak
+            10)#sistem kalitesi(sistem yoğunlaşınca 10 mesajı beklemede tutar)
+        self.tespit_edilenler = []
+    def tespit_callback(self, msg):
+        yeni_duba =Duba(int(msg.z), msg.x, msg.y)
+        if self.tespit_edilenler:
+            son = self.tespit_edilenler[-1]
+            fark = ((son.x-yeni_duba.x)**2+(son.y-yeni_duba.y)**2)**0.5#ne kadar yer değiştirdi
+            if fark< 0.10:
+                return
+        self.tespit_edilenler.append(yeni_duba)#listenin sonuna ekler 
+        self.get_logger().info(f"Tespit Kaydedildi: {yeni_duba.tip}| Mesafe: {yeni_duba.x:.2f}m")#ekrana yazdırır.
+    def main():
+        rclpy.init()
+        node = IdaAlgilamaDugumu()
+        try:
+            rclpy.spin(node)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            node.destroy_node()
+            rclpy.shutdown()
+            
+
+
+
+
+        
+    
