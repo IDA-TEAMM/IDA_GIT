@@ -3,6 +3,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import Point
 from std_msgs.msg import Int32
 import time 
+#PHYTON KOPYALA YAPISTIR YAPARSANIZ DAHA RAHAT ANLASILIR
 
 class Duba:#nasıl sınıflandıracağımız
     def __init__(self,sinif_id, x, y):
