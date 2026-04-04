@@ -11,7 +11,7 @@ class GazeboYoloDugumu(Node):
         self.bridge = CvBridge()
         self.subscriptions = self.create_subscription(
             Image,
-            '/camera/image_raw',
+            '/camera_sensor/image_raw',
             self.camera_callback,
             10
         ) 
