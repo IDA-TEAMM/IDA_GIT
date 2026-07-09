@@ -1,1 +1,0 @@
-/root/ros2_ws/build/rcpputils/ament_generate_version_header/rcpputils/rcpputils/version.h

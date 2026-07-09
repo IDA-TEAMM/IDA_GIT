@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ros2/rosidl/rosidl_adapter/rosidl_adapter/srv/__init__.py

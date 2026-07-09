@@ -1,1 +1,0 @@
-/root/ros2_ws/build/rcl_logging_spdlog/ament_cmake_core/rcl_logging_spdlogConfig-version.cmake

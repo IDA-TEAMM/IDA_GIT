@@ -1,3 +1,0 @@
-/root/ros2_ws/install/tracetools/lib/libtracetools.so
-/root/ros2_ws/install/tracetools/share/tracetools/cmake/tracetools_exportExport.cmake
-/root/ros2_ws/install/tracetools/share/tracetools/cmake/tracetools_exportExport-noconfig.cmake

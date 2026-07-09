@@ -1,4 +1,0 @@
-Invoking command in '/root/ros2_ws/build/iceoryx_hoofs': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /root/ros2_ws/build/iceoryx_hoofs -- -j16 -l16
-Invoked command in '/root/ros2_ws/build/iceoryx_hoofs' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /root/ros2_ws/build/iceoryx_hoofs -- -j16 -l16
-Invoking command in '/root/ros2_ws/build/iceoryx_hoofs': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /root/ros2_ws/build/iceoryx_hoofs
-Invoked command in '/root/ros2_ws/build/iceoryx_hoofs' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --install /root/ros2_ws/build/iceoryx_hoofs

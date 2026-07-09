@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ros2/rmw/rmw_implementation_cmake/cmake/get_available_rmw_implementations.cmake

@@ -1,2 +1,0 @@
-# Hashes of file build rules.
-28c305060f46e84fd4504a7b5194ec2b CMakeFiles/pybind11_vendor_uninstall

@@ -1,1 +1,0 @@
-/usr/bin/cc -fPIC -shared -Wl,-soname,libtracetools_status.so -o libtracetools_status.so CMakeFiles/tracetools_status.dir/src/status.c.o  -Wl,-rpath,/root/ros2_ws/build/tracetools libtracetools.so 

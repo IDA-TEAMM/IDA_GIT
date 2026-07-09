@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ament/ament_cmake/ament_cmake_export_targets/cmake/ament_cmake_export_targets_package_hook.cmake

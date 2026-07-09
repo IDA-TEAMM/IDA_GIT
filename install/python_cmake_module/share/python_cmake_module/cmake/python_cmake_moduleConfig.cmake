@@ -1,1 +1,0 @@
-/root/ros2_ws/build/python_cmake_module/ament_cmake_core/python_cmake_moduleConfig.cmake

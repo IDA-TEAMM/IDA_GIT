@@ -1,1 +1,0 @@
-/root/ros2_ws/build/ros_environment/ament_cmake_environment_hooks/1.ros_python_version.sh

@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ros2/rosidl/rosidl_runtime_c/include/rosidl_runtime_c/message_type_support_struct.h

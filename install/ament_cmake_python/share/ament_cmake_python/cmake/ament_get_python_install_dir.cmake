@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ament/ament_cmake/ament_cmake_python/cmake/ament_get_python_install_dir.cmake

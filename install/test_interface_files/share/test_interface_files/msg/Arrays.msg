@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ros2/test_interface_files/msg/Arrays.msg

@@ -1,1 +1,0 @@
-/root/ros2_ws/build/rmw/ament_cmake_core/rmwConfig.cmake

@@ -1,1 +1,0 @@
-/root/ros2_ws/build/test_interface_files/ament_cmake_environment_hooks/local_setup.bash

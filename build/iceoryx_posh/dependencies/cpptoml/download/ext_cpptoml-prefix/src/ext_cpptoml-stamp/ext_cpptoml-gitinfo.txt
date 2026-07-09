@@ -1,3 +1,0 @@
-repository='https://github.com/skystrife/cpptoml.git'
-module=''
-tag='origin'

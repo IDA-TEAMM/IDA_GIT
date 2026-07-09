@@ -1,1 +1,0 @@
-/root/ros2_ws/build/rosidl_typesupport_introspection_cpp/ament_cmake_environment_hooks/local_setup.zsh

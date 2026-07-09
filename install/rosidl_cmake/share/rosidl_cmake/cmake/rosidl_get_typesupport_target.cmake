@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ros2/rosidl/rosidl_cmake/cmake/rosidl_get_typesupport_target.cmake

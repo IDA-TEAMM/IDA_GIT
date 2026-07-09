@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ros2/rosidl/rosidl_adapter/cmake/rosidl_adapt_interfaces.cmake

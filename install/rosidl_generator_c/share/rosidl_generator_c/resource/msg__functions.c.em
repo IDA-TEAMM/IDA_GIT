@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ros2/rosidl/rosidl_generator_c/resource/msg__functions.c.em

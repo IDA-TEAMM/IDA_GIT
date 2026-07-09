@@ -1,1 +1,0 @@
-/root/ros2_ws/build/launch_testing/test/launch_testing/examples/hello_world_launch_test.py

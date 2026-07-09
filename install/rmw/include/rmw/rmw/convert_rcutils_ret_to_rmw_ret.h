@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ros2/rmw/rmw/include/rmw/convert_rcutils_ret_to_rmw_ret.h

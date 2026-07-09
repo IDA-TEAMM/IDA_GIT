@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ament/ament_lint/ament_cmake_cpplint/cmake/ament_cmake_cpplint_lint_hook.cmake

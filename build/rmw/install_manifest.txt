@@ -1,3 +1,0 @@
-/root/ros2_ws/install/rmw/share/rmw/cmake/rmwExport.cmake
-/root/ros2_ws/install/rmw/share/rmw/cmake/rmwExport-noconfig.cmake
-/root/ros2_ws/install/rmw/lib/librmw.so

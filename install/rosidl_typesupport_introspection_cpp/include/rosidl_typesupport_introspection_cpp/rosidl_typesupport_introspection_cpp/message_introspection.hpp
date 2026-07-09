@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ros2/rosidl/rosidl_typesupport_introspection_cpp/include/rosidl_typesupport_introspection_cpp/message_introspection.hpp

@@ -1,3 +1,0 @@
-/root/ros2_ws/install/rcl_logging_spdlog/lib/librcl_logging_spdlog.so
-/root/ros2_ws/install/rcl_logging_spdlog/share/rcl_logging_spdlog/cmake/rcl_logging_spdlogExport.cmake
-/root/ros2_ws/install/rcl_logging_spdlog/share/rcl_logging_spdlog/cmake/rcl_logging_spdlogExport-noconfig.cmake

@@ -1,1 +1,0 @@
-/root/ros2_ws/build/rcl_logging_interface/ament_cmake_environment_hooks/local_setup.sh

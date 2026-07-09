@@ -1,1 +1,0 @@
-/root/ros2_ws/build/rosidl_runtime_cpp/ament_cmake_core/rosidl_runtime_cppConfig-version.cmake

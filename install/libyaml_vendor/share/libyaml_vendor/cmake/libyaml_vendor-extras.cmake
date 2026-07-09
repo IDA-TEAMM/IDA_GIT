@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ros2/libyaml_vendor/libyaml_vendor-extras.cmake

@@ -1,1 +1,0 @@
-/root/ros2_ws/build/rosidl_generator_c/ament_cmake_core/rosidl_generator_cConfig-version.cmake

@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ament/ament_cmake/ament_cmake_gmock/cmake/ament_add_gmock.cmake

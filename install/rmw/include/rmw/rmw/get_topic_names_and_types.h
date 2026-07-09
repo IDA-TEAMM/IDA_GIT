@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ros2/rmw/rmw/include/rmw/get_topic_names_and_types.h

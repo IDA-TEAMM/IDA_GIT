@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ament/ament_cmake/ament_cmake_export_interfaces/cmake/ament_export_interfaces.cmake

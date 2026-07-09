@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ros2/rosidl/rosidl_generator_c/rosidl_generator_c/__init__.py

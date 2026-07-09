@@ -1,1 +1,0 @@
-/root/ros2_ws/src/ros2/launch/launch_xml/setup.py
