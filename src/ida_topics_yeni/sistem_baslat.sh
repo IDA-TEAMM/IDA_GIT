@@ -22,7 +22,7 @@ trap cleanup SIGINT SIGTERM
 pkill -9 -f 'sensor_node.py|perception_node.py|decision_node.py|control_node.py|mavros_node' 2>/dev/null || true
 sleep 2
 source /opt/ros/humble/setup.bash
-cd /root/ros2_ws/src/ida_topics
+cd /root/ros2_ws/src/ida_topics_yeni
 echo "=== 1/5 Sensor Node ==="
 python3 -u ida_topics/sensor_node.py > "$LOG_DIR/sensor_node.log" 2>&1 &
 PIDS+=($!)
