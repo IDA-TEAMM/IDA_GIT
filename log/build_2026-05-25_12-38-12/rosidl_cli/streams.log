@@ -1,0 +1,28 @@
+[1.500s] Invoking command in '/root/ros2_ws/build/rosidl_cli': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_xmllint:/root/ros2_ws/install/ament_copyright:/root/ros2_ws/install/ament_pep257:/root/ros2_ws/install/ament_flake8:/root/ros2_ws/install/ament_lint:${AMENT_PREFIX_PATH} PATH=/root/ros2_ws/install/ament_xmllint/bin:/root/ros2_ws/install/ament_copyright/bin:/root/ros2_ws/install/ament_pep257/bin:/root/ros2_ws/install/ament_flake8/bin:${PATH} PYTHONPATH=/root/ros2_ws/build/rosidl_cli/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/ros2_ws/install/rosidl_cli/lib/python3.10/site-packages:/root/ros2_ws/build/ament_xmllint:/root/ros2_ws/install/ament_xmllint/lib/python3.10/site-packages:/root/ros2_ws/build/ament_copyright:/root/ros2_ws/install/ament_copyright/lib/python3.10/site-packages:/root/ros2_ws/build/ament_pep257:/root/ros2_ws/install/ament_pep257/lib/python3.10/site-packages:/root/ros2_ws/build/ament_flake8:/root/ros2_ws/install/ament_flake8/lib/python3.10/site-packages:/root/ros2_ws/build/ament_lint:/root/ros2_ws/install/ament_lint/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /root/ros2_ws/build/rosidl_cli/build --no-deps symlink_data
+[1.928s] running develop
+[2.198s] running egg_info
+[2.198s] creating rosidl_cli.egg-info
+[2.199s] writing rosidl_cli.egg-info/PKG-INFO
+[2.205s] writing dependency_links to rosidl_cli.egg-info/dependency_links.txt
+[2.205s] writing entry points to rosidl_cli.egg-info/entry_points.txt
+[2.205s] writing requirements to rosidl_cli.egg-info/requires.txt
+[2.205s] writing top-level names to rosidl_cli.egg-info/top_level.txt
+[2.205s] writing manifest file 'rosidl_cli.egg-info/SOURCES.txt'
+[2.205s] reading manifest file 'rosidl_cli.egg-info/SOURCES.txt'
+[2.205s] writing manifest file 'rosidl_cli.egg-info/SOURCES.txt'
+[2.207s] running build_ext
+[2.208s] Creating /root/ros2_ws/install/rosidl_cli/lib/python3.10/site-packages/rosidl-cli.egg-link (link to .)
+[2.209s] Installing rosidl script to /root/ros2_ws/install/rosidl_cli/bin
+[2.210s] 
+[2.210s] Installed /root/ros2_ws/build/rosidl_cli
+[2.210s] running symlink_data
+[2.210s] creating /root/ros2_ws/install/rosidl_cli/share/ament_index
+[2.210s] creating /root/ros2_ws/install/rosidl_cli/share/ament_index/resource_index
+[2.210s] creating /root/ros2_ws/install/rosidl_cli/share/ament_index/resource_index/packages
+[2.212s] symbolically linking /root/ros2_ws/build/rosidl_cli/resource/rosidl_cli -> /root/ros2_ws/install/rosidl_cli/share/ament_index/resource_index/packages
+[2.212s] symbolically linking /root/ros2_ws/build/rosidl_cli/package.xml -> /root/ros2_ws/install/rosidl_cli/share/rosidl_cli
+[2.212s] symbolically linking /root/ros2_ws/build/rosidl_cli/resource/package.dsv -> /root/ros2_ws/install/rosidl_cli/share/rosidl_cli
+[2.212s] creating /root/ros2_ws/install/rosidl_cli/share/rosidl_cli/environment
+[2.212s] symbolically linking /root/ros2_ws/build/rosidl_cli/completion/rosidl-argcomplete.bash -> /root/ros2_ws/install/rosidl_cli/share/rosidl_cli/environment
+[2.212s] symbolically linking /root/ros2_ws/build/rosidl_cli/completion/rosidl-argcomplete.zsh -> /root/ros2_ws/install/rosidl_cli/share/rosidl_cli/environment
+[2.281s] Invoked command in '/root/ros2_ws/build/rosidl_cli' returned '0': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_xmllint:/root/ros2_ws/install/ament_copyright:/root/ros2_ws/install/ament_pep257:/root/ros2_ws/install/ament_flake8:/root/ros2_ws/install/ament_lint:${AMENT_PREFIX_PATH} PATH=/root/ros2_ws/install/ament_xmllint/bin:/root/ros2_ws/install/ament_copyright/bin:/root/ros2_ws/install/ament_pep257/bin:/root/ros2_ws/install/ament_flake8/bin:${PATH} PYTHONPATH=/root/ros2_ws/build/rosidl_cli/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/ros2_ws/install/rosidl_cli/lib/python3.10/site-packages:/root/ros2_ws/build/ament_xmllint:/root/ros2_ws/install/ament_xmllint/lib/python3.10/site-packages:/root/ros2_ws/build/ament_copyright:/root/ros2_ws/install/ament_copyright/lib/python3.10/site-packages:/root/ros2_ws/build/ament_pep257:/root/ros2_ws/install/ament_pep257/lib/python3.10/site-packages:/root/ros2_ws/build/ament_flake8:/root/ros2_ws/install/ament_flake8/lib/python3.10/site-packages:/root/ros2_ws/build/ament_lint:/root/ros2_ws/install/ament_lint/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /root/ros2_ws/build/rosidl_cli/build --no-deps symlink_data

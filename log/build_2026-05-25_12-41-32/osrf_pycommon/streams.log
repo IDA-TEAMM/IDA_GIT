@@ -1,0 +1,15 @@
+[1.109s] Invoking command in '/root/ros2_ws/build/osrf_pycommon': PYTHONPATH=/root/ros2_ws/build/osrf_pycommon/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/ros2_ws/install/osrf_pycommon/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /root/ros2_ws/build/osrf_pycommon/build --no-deps symlink_data
+[1.267s] running develop
+[1.376s] running egg_info
+[1.376s] writing osrf_pycommon.egg-info/PKG-INFO
+[1.376s] writing dependency_links to osrf_pycommon.egg-info/dependency_links.txt
+[1.376s] writing requirements to osrf_pycommon.egg-info/requires.txt
+[1.376s] writing top-level names to osrf_pycommon.egg-info/top_level.txt
+[1.379s] reading manifest file 'osrf_pycommon.egg-info/SOURCES.txt'
+[1.380s] writing manifest file 'osrf_pycommon.egg-info/SOURCES.txt'
+[1.381s] running build_ext
+[1.381s] Creating /root/ros2_ws/install/osrf_pycommon/lib/python3.10/site-packages/osrf-pycommon.egg-link (link to .)
+[1.382s] 
+[1.382s] Installed /root/ros2_ws/build/osrf_pycommon
+[1.382s] running symlink_data
+[1.477s] Invoked command in '/root/ros2_ws/build/osrf_pycommon' returned '0': PYTHONPATH=/root/ros2_ws/build/osrf_pycommon/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/ros2_ws/install/osrf_pycommon/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /root/ros2_ws/build/osrf_pycommon/build --no-deps symlink_data

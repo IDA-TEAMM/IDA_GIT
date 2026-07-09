@@ -1,0 +1,1 @@
+/root/ros2_ws/src/ros2/rosidl/rosidl_generator_c/resource/srv__type_support.h.em

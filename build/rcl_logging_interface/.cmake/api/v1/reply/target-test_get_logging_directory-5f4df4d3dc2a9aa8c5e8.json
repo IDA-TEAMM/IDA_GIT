@@ -1,0 +1,303 @@
+{
+	"artifacts" : 
+	[
+		{
+			"path" : "test_get_logging_directory"
+		}
+	],
+	"backtrace" : 4,
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"add_executable",
+			"_ament_add_gtest_executable",
+			"ament_add_gtest_executable",
+			"ament_add_gtest",
+			"target_link_libraries",
+			"ament_target_dependencies",
+			"add_compile_options",
+			"add_definitions",
+			"include",
+			"find_package",
+			"target_include_directories"
+		],
+		"files" : 
+		[
+			"/root/ros2_ws/install/ament_cmake_gtest/share/ament_cmake_gtest/cmake/ament_add_gtest_executable.cmake",
+			"/root/ros2_ws/install/ament_cmake_gtest/share/ament_cmake_gtest/cmake/ament_add_gtest.cmake",
+			"CMakeLists.txt",
+			"/root/ros2_ws/install/ament_cmake_target_dependencies/share/ament_cmake_target_dependencies/cmake/ament_target_dependencies.cmake",
+			"/root/ros2_ws/install/ament_cmake_ros/share/ament_cmake_ros/cmake/ament_cmake_ros-extras.cmake",
+			"/root/ros2_ws/install/ament_cmake_ros/share/ament_cmake_ros/cmake/ament_cmake_rosConfig.cmake"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 2
+			},
+			{
+				"command" : 3,
+				"file" : 2,
+				"line" : 54,
+				"parent" : 0
+			},
+			{
+				"command" : 2,
+				"file" : 1,
+				"line" : 68,
+				"parent" : 1
+			},
+			{
+				"command" : 1,
+				"file" : 0,
+				"line" : 37,
+				"parent" : 2
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 50,
+				"parent" : 3
+			},
+			{
+				"command" : 4,
+				"file" : 0,
+				"line" : 53,
+				"parent" : 3
+			},
+			{
+				"command" : 4,
+				"file" : 0,
+				"line" : 55,
+				"parent" : 3
+			},
+			{
+				"command" : 4,
+				"file" : 2,
+				"line" : 56,
+				"parent" : 0
+			},
+			{
+				"command" : 5,
+				"file" : 2,
+				"line" : 57,
+				"parent" : 0
+			},
+			{
+				"command" : 4,
+				"file" : 3,
+				"line" : 145,
+				"parent" : 8
+			},
+			{
+				"command" : 6,
+				"file" : 2,
+				"line" : 15,
+				"parent" : 0
+			},
+			{
+				"command" : 9,
+				"file" : 2,
+				"line" : 18,
+				"parent" : 0
+			},
+			{
+				"file" : 5,
+				"parent" : 11
+			},
+			{
+				"command" : 8,
+				"file" : 5,
+				"line" : 41,
+				"parent" : 12
+			},
+			{
+				"file" : 4,
+				"parent" : 13
+			},
+			{
+				"command" : 7,
+				"file" : 4,
+				"line" : 25,
+				"parent" : 14
+			},
+			{
+				"command" : 10,
+				"file" : 0,
+				"line" : 51,
+				"parent" : 3
+			},
+			{
+				"command" : 10,
+				"file" : 3,
+				"line" : 141,
+				"parent" : 8
+			}
+		]
+	},
+	"compileGroups" : 
+	[
+		{
+			"compileCommandFragments" : 
+			[
+				{
+					"backtrace" : 10,
+					"fragment" : "-Wall"
+				},
+				{
+					"backtrace" : 10,
+					"fragment" : "-Wextra"
+				},
+				{
+					"backtrace" : 10,
+					"fragment" : "-Wpedantic"
+				},
+				{
+					"fragment" : "-std=gnu++14"
+				}
+			],
+			"defines" : 
+			[
+				{
+					"backtrace" : 7,
+					"define" : "RCUTILS_ENABLE_FAULT_INJECTION"
+				},
+				{
+					"backtrace" : 15,
+					"define" : "ROS_PACKAGE_NAME=\"rcl_logging_interface\""
+				}
+			],
+			"includes" : 
+			[
+				{
+					"backtrace" : 7,
+					"path" : "/root/ros2_ws/src/ros2/rcl_logging/rcl_logging_interface/include"
+				},
+				{
+					"backtrace" : 16,
+					"isSystem" : true,
+					"path" : "/root/ros2_ws/install/gtest_vendor/src/gtest_vendor/include"
+				},
+				{
+					"backtrace" : 17,
+					"isSystem" : true,
+					"path" : "/root/ros2_ws/install/rcpputils/include/rcpputils"
+				},
+				{
+					"backtrace" : 17,
+					"isSystem" : true,
+					"path" : "/opt/ros/humble/include/rcutils"
+				}
+			],
+			"language" : "CXX",
+			"languageStandard" : 
+			{
+				"backtraces" : 
+				[
+					5
+				],
+				"standard" : "14"
+			},
+			"sourceIndexes" : 
+			[
+				0
+			]
+		}
+	],
+	"dependencies" : 
+	[
+		{
+			"backtrace" : 7,
+			"id" : "rcl_logging_interface::@6890427a1f51a3e7e1df"
+		},
+		{
+			"backtrace" : 6,
+			"id" : "gtest::@0af4add9fe94340e763e"
+		},
+		{
+			"backtrace" : 5,
+			"id" : "gtest_main::@0af4add9fe94340e763e"
+		}
+	],
+	"id" : "test_get_logging_directory::@6890427a1f51a3e7e1df",
+	"link" : 
+	{
+		"commandFragments" : 
+		[
+			{
+				"fragment" : "",
+				"role" : "flags"
+			},
+			{
+				"fragment" : "-Wl,-rpath,/root/ros2_ws/build/rcl_logging_interface:/root/ros2_ws/install/rcpputils/lib:/opt/ros/humble/lib",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 5,
+				"fragment" : "gtest/libgtest_main.a",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 6,
+				"fragment" : "gtest/libgtest.a",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 7,
+				"fragment" : "librcl_logging_interface.so",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 9,
+				"fragment" : "/root/ros2_ws/install/rcpputils/lib/librcpputils.so",
+				"role" : "libraries"
+			},
+			{
+				"fragment" : "-pthread",
+				"role" : "libraries"
+			},
+			{
+				"backtrace" : 9,
+				"fragment" : "/opt/ros/humble/lib/librcutils.so",
+				"role" : "libraries"
+			},
+			{
+				"fragment" : "-ldl",
+				"role" : "libraries"
+			},
+			{
+				"fragment" : "-latomic",
+				"role" : "libraries"
+			}
+		],
+		"language" : "CXX"
+	},
+	"name" : "test_get_logging_directory",
+	"nameOnDisk" : "test_get_logging_directory",
+	"paths" : 
+	{
+		"build" : ".",
+		"source" : "."
+	},
+	"sourceGroups" : 
+	[
+		{
+			"name" : "Source Files",
+			"sourceIndexes" : 
+			[
+				0
+			]
+		}
+	],
+	"sources" : 
+	[
+		{
+			"backtrace" : 4,
+			"compileGroupIndex" : 0,
+			"path" : "test/test_get_logging_directory.cpp",
+			"sourceGroupIndex" : 0
+		}
+	],
+	"type" : "EXECUTABLE"
+}

@@ -1,0 +1,1 @@
+/root/ros2_ws/src/ament/ament_lint/ament_cmake_cppcheck/cmake/ament_cmake_cppcheck_lint_hook.cmake

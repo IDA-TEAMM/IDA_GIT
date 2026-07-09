@@ -1,0 +1,17 @@
+/root/ros2_ws/install/fastcdr/share/fastcdr/LICENSE
+/root/ros2_ws/install/fastcdr/include/fastcdr/eProsima_auto_link.h
+/root/ros2_ws/install/fastcdr/include/fastcdr/exceptions/BadParamException.h
+/root/ros2_ws/install/fastcdr/include/fastcdr/exceptions/Exception.h
+/root/ros2_ws/install/fastcdr/include/fastcdr/exceptions/NotEnoughMemoryException.h
+/root/ros2_ws/install/fastcdr/include/fastcdr/fastcdr_dll.h
+/root/ros2_ws/install/fastcdr/include/fastcdr/Cdr.h
+/root/ros2_ws/install/fastcdr/include/fastcdr/FastBuffer.h
+/root/ros2_ws/install/fastcdr/include/fastcdr/FastCdr.h
+/root/ros2_ws/install/fastcdr/include/fastcdr/config.h
+/root/ros2_ws/install/fastcdr/lib/libfastcdr.so.1.0.24
+/root/ros2_ws/install/fastcdr/lib/libfastcdr.so.1
+/root/ros2_ws/install/fastcdr/lib/libfastcdr.so
+/root/ros2_ws/install/fastcdr/lib/cmake/fastcdr/fastcdr-dynamic-targets.cmake
+/root/ros2_ws/install/fastcdr/lib/cmake/fastcdr/fastcdr-dynamic-targets-release.cmake
+/root/ros2_ws/install/fastcdr/lib/cmake/fastcdr/fastcdr-config.cmake
+/root/ros2_ws/install/fastcdr/lib/cmake/fastcdr/fastcdr-config-version.cmake

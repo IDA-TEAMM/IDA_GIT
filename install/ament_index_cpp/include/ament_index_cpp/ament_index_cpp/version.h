@@ -1,0 +1,1 @@
+/root/ros2_ws/build/ament_index_cpp/ament_generate_version_header/ament_index_cpp/ament_index_cpp/version.h

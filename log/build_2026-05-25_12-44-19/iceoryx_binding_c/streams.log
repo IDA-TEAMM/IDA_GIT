@@ -1,0 +1,42 @@
+[0.013s] Invoking command in '/root/ros2_ws/build/iceoryx_binding_c': CMAKE_PREFIX_PATH=/root/ros2_ws/install/iceoryx_posh:/root/ros2_ws/install/iceoryx_hoofs:/opt/ros/humble LD_LIBRARY_PATH=/root/ros2_ws/install/iceoryx_posh/lib:/root/ros2_ws/install/iceoryx_hoofs/lib:${LD_LIBRARY_PATH} PATH=/root/ros2_ws/install/iceoryx_posh/bin:${PATH} PKG_CONFIG_PATH=/root/ros2_ws/install/iceoryx_posh/lib/x86_64-linux-gnu/pkgconfig:/root/ros2_ws/install/iceoryx_posh/lib/pkgconfig:/root/ros2_ws/install/iceoryx_hoofs/lib/x86_64-linux-gnu/pkgconfig:/root/ros2_ws/install/iceoryx_hoofs/lib/pkgconfig /usr/bin/cmake --build /root/ros2_ws/build/iceoryx_binding_c -- -j16 -l16
+[0.087s] [100%] Built target iceoryx_binding_c
+[0.099s] Invoked command in '/root/ros2_ws/build/iceoryx_binding_c' returned '0': CMAKE_PREFIX_PATH=/root/ros2_ws/install/iceoryx_posh:/root/ros2_ws/install/iceoryx_hoofs:/opt/ros/humble LD_LIBRARY_PATH=/root/ros2_ws/install/iceoryx_posh/lib:/root/ros2_ws/install/iceoryx_hoofs/lib:${LD_LIBRARY_PATH} PATH=/root/ros2_ws/install/iceoryx_posh/bin:${PATH} PKG_CONFIG_PATH=/root/ros2_ws/install/iceoryx_posh/lib/x86_64-linux-gnu/pkgconfig:/root/ros2_ws/install/iceoryx_posh/lib/pkgconfig:/root/ros2_ws/install/iceoryx_hoofs/lib/x86_64-linux-gnu/pkgconfig:/root/ros2_ws/install/iceoryx_hoofs/lib/pkgconfig /usr/bin/cmake --build /root/ros2_ws/build/iceoryx_binding_c -- -j16 -l16
+[0.100s] Invoking command in '/root/ros2_ws/build/iceoryx_binding_c': CMAKE_PREFIX_PATH=/root/ros2_ws/install/iceoryx_posh:/root/ros2_ws/install/iceoryx_hoofs:/opt/ros/humble LD_LIBRARY_PATH=/root/ros2_ws/install/iceoryx_posh/lib:/root/ros2_ws/install/iceoryx_hoofs/lib:${LD_LIBRARY_PATH} PATH=/root/ros2_ws/install/iceoryx_posh/bin:${PATH} PKG_CONFIG_PATH=/root/ros2_ws/install/iceoryx_posh/lib/x86_64-linux-gnu/pkgconfig:/root/ros2_ws/install/iceoryx_posh/lib/pkgconfig:/root/ros2_ws/install/iceoryx_hoofs/lib/x86_64-linux-gnu/pkgconfig:/root/ros2_ws/install/iceoryx_hoofs/lib/pkgconfig /usr/bin/cmake --install /root/ros2_ws/build/iceoryx_binding_c
+[0.109s] -- Install configuration: ""
+[0.109s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/lib/libiceoryx_binding_c.so
+[0.110s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6
+[0.110s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c
+[0.110s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/api.h
+[0.110s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/chunk.h
+[0.110s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/client.h
+[0.110s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/config.h
+[0.111s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/enums.h
+[0.111s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/internal
+[0.111s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/internal/c2cpp_binding.h
+[0.111s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/internal/c2cpp_enum_translation.hpp
+[0.111s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/internal/cpp2c_enum_translation.hpp
+[0.111s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/internal/cpp2c_publisher.hpp
+[0.111s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/internal/cpp2c_service_description_translation.hpp
+[0.111s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/internal/cpp2c_subscriber.hpp
+[0.111s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/internal/cpp2c_waitset.hpp
+[0.111s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/listener.h
+[0.111s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/log.h
+[0.112s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/node.h
+[0.112s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/notification_info.h
+[0.112s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/publisher.h
+[0.113s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/request_header.h
+[0.113s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/response_header.h
+[0.113s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/runtime.h
+[0.113s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/server.h
+[0.113s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/service_description.h
+[0.114s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/service_discovery.h
+[0.114s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/subscriber.h
+[0.114s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/types.h
+[0.114s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/user_trigger.h
+[0.114s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/include/iceoryx/v2.0.6/iceoryx_binding_c/wait_set.h
+[0.114s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/lib/cmake/iceoryx_binding_c/iceoryx_binding_cConfigVersion.cmake
+[0.114s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/lib/cmake/iceoryx_binding_c/iceoryx_binding_cConfig.cmake
+[0.114s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/lib/cmake/iceoryx_binding_c/iceoryx_binding_cTargets.cmake
+[0.114s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/lib/cmake/iceoryx_binding_c/iceoryx_binding_cTargets-noconfig.cmake
+[0.114s] -- Up-to-date: /root/ros2_ws/install/iceoryx_binding_c/share/doc/iceoryx_binding_c/LICENSE
+[0.114s] Invoked command in '/root/ros2_ws/build/iceoryx_binding_c' returned '0': CMAKE_PREFIX_PATH=/root/ros2_ws/install/iceoryx_posh:/root/ros2_ws/install/iceoryx_hoofs:/opt/ros/humble LD_LIBRARY_PATH=/root/ros2_ws/install/iceoryx_posh/lib:/root/ros2_ws/install/iceoryx_hoofs/lib:${LD_LIBRARY_PATH} PATH=/root/ros2_ws/install/iceoryx_posh/bin:${PATH} PKG_CONFIG_PATH=/root/ros2_ws/install/iceoryx_posh/lib/x86_64-linux-gnu/pkgconfig:/root/ros2_ws/install/iceoryx_posh/lib/pkgconfig:/root/ros2_ws/install/iceoryx_hoofs/lib/x86_64-linux-gnu/pkgconfig:/root/ros2_ws/install/iceoryx_hoofs/lib/pkgconfig /usr/bin/cmake --install /root/ros2_ws/build/iceoryx_binding_c

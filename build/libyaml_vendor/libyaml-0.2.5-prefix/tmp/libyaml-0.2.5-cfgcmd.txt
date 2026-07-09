@@ -1,0 +1,1 @@
+cmd='/usr/bin/cmake;-DCMAKE_INSTALL_PREFIX=/root/ros2_ws/build/libyaml_vendor/libyaml_install;-DINSTALL_INCLUDE_DIR:STRING=include/libyaml_vendor;-DCMAKE_BUILD_TYPE=;-DBUILD_SHARED_LIBS=ON;-DBUILD_TESTING=OFF;-DCMAKE_C_FLAGS=;-GUnix Makefiles;<SOURCE_DIR><SOURCE_SUBDIR>'

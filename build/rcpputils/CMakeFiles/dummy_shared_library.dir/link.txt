@@ -1,0 +1,1 @@
+/usr/bin/cc -fPIC -shared -Wl,-soname,libdummy_shared_library.so -o libdummy_shared_library.so CMakeFiles/dummy_shared_library.dir/test/dummy_shared_library/dummy_shared_library.c.o 

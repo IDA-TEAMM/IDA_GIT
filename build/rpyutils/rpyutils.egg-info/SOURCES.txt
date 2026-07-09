@@ -1,0 +1,11 @@
+package.xml
+setup.py
+resource/rpyutils
+rpyutils/__init__.py
+rpyutils/add_dll_directories.py
+rpyutils/import_c_library.py
+rpyutils.egg-info/PKG-INFO
+rpyutils.egg-info/SOURCES.txt
+rpyutils.egg-info/dependency_links.txt
+rpyutils.egg-info/requires.txt
+rpyutils.egg-info/top_level.txt

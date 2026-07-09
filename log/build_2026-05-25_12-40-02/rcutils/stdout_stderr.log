@@ -1,0 +1,22 @@
+-- Found ament_cmake_python: 1.3.14 (/root/ros2_ws/install/ament_cmake_python/share/ament_cmake_python/cmake)
+-- Found ament_cmake_ros: 0.10.0 (/root/ros2_ws/install/ament_cmake_ros/share/ament_cmake_ros/cmake)
+-- Override CMake install command with custom implementation using symlinks instead of copying resources
+CMake Error at CMakeLists.txt:158 (find_package):
+  By not providing "Findperformance_test_fixture.cmake" in CMAKE_MODULE_PATH
+  this project has asked CMake to find a package configuration file provided
+  by "performance_test_fixture", but CMake did not find one.
+
+  Could not find a package configuration file provided by
+  "performance_test_fixture" with any of the following names:
+
+    performance_test_fixtureConfig.cmake
+    performance_test_fixture-config.cmake
+
+  Add the installation prefix of "performance_test_fixture" to
+  CMAKE_PREFIX_PATH or set "performance_test_fixture_DIR" to a directory
+  containing one of the above files.  If "performance_test_fixture" provides
+  a separate development package or SDK, be sure it has been installed.
+
+
+-- Configuring incomplete, errors occurred!
+See also "/root/ros2_ws/build/rcutils/CMakeFiles/CMakeOutput.log".

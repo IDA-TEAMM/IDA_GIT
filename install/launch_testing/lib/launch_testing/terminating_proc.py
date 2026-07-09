@@ -1,0 +1,1 @@
+/root/ros2_ws/build/launch_testing/example_processes/terminating_proc.py

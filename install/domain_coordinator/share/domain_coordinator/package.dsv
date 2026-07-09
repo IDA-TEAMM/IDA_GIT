@@ -1,0 +1,9 @@
+source;share/domain_coordinator/hook/pythonpath.ps1
+source;share/domain_coordinator/hook/pythonpath.dsv
+source;share/domain_coordinator/hook/pythonpath.sh
+source;share/domain_coordinator/hook/ament_prefix_path.ps1
+source;share/domain_coordinator/hook/ament_prefix_path.dsv
+source;share/domain_coordinator/hook/ament_prefix_path.sh
+source;../../build/domain_coordinator/share/domain_coordinator/hook/pythonpath_develop.ps1
+source;../../build/domain_coordinator/share/domain_coordinator/hook/pythonpath_develop.dsv
+source;../../build/domain_coordinator/share/domain_coordinator/hook/pythonpath_develop.sh

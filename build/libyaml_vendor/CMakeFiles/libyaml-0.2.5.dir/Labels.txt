@@ -1,0 +1,13 @@
+# Target labels
+ libyaml-0.2.5
+# Source files and their labels
+/root/ros2_ws/build/libyaml_vendor/CMakeFiles/libyaml-0.2.5
+/root/ros2_ws/build/libyaml_vendor/CMakeFiles/libyaml-0.2.5.rule
+/root/ros2_ws/build/libyaml_vendor/CMakeFiles/libyaml-0.2.5-complete.rule
+/root/ros2_ws/build/libyaml_vendor/libyaml-0.2.5-prefix/src/libyaml-0.2.5-stamp/libyaml-0.2.5-build.rule
+/root/ros2_ws/build/libyaml_vendor/libyaml-0.2.5-prefix/src/libyaml-0.2.5-stamp/libyaml-0.2.5-configure.rule
+/root/ros2_ws/build/libyaml_vendor/libyaml-0.2.5-prefix/src/libyaml-0.2.5-stamp/libyaml-0.2.5-download.rule
+/root/ros2_ws/build/libyaml_vendor/libyaml-0.2.5-prefix/src/libyaml-0.2.5-stamp/libyaml-0.2.5-install.rule
+/root/ros2_ws/build/libyaml_vendor/libyaml-0.2.5-prefix/src/libyaml-0.2.5-stamp/libyaml-0.2.5-mkdir.rule
+/root/ros2_ws/build/libyaml_vendor/libyaml-0.2.5-prefix/src/libyaml-0.2.5-stamp/libyaml-0.2.5-patch.rule
+/root/ros2_ws/build/libyaml_vendor/libyaml-0.2.5-prefix/src/libyaml-0.2.5-stamp/libyaml-0.2.5-update.rule

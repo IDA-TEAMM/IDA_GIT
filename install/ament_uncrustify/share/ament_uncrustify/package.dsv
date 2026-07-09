@@ -1,0 +1,15 @@
+source;share/ament_uncrustify/hook/path.ps1
+source;share/ament_uncrustify/hook/path.dsv
+source;share/ament_uncrustify/hook/path.sh
+source;share/ament_uncrustify/hook/pythonpath.ps1
+source;share/ament_uncrustify/hook/pythonpath.dsv
+source;share/ament_uncrustify/hook/pythonpath.sh
+source;share/ament_uncrustify/hook/pythonscriptspath.ps1
+source;share/ament_uncrustify/hook/pythonscriptspath.dsv
+source;share/ament_uncrustify/hook/pythonscriptspath.sh
+source;share/ament_uncrustify/hook/ament_prefix_path.ps1
+source;share/ament_uncrustify/hook/ament_prefix_path.dsv
+source;share/ament_uncrustify/hook/ament_prefix_path.sh
+source;../../build/ament_uncrustify/share/ament_uncrustify/hook/pythonpath_develop.ps1
+source;../../build/ament_uncrustify/share/ament_uncrustify/hook/pythonpath_develop.dsv
+source;../../build/ament_uncrustify/share/ament_uncrustify/hook/pythonpath_develop.sh

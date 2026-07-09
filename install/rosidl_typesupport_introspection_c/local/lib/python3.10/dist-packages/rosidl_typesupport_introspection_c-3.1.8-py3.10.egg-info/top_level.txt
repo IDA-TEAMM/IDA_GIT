@@ -1,0 +1,1 @@
+/root/ros2_ws/build/rosidl_typesupport_introspection_c/ament_cmake_python/rosidl_typesupport_introspection_c/rosidl_typesupport_introspection_c.egg-info/top_level.txt

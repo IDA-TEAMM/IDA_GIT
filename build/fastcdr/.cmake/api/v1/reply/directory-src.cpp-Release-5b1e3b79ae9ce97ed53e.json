@@ -1,0 +1,148 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"install",
+			"set_public_headers_directory",
+			"set_public_header"
+		],
+		"files" : 
+		[
+			"cmake/dev/set_sources.cmake",
+			"src/cpp/CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 1
+			},
+			{
+				"command" : 1,
+				"file" : 1,
+				"line" : 102,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 25,
+				"parent" : 1
+			},
+			{
+				"command" : 2,
+				"file" : 1,
+				"line" : 108,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 39,
+				"parent" : 3
+			},
+			{
+				"command" : 0,
+				"file" : 1,
+				"line" : 161,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 1,
+				"line" : 177,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 1,
+				"line" : 227,
+				"parent" : 0
+			}
+		]
+	},
+	"installers" : 
+	[
+		{
+			"backtrace" : 2,
+			"component" : "headers",
+			"destination" : "include",
+			"paths" : 
+			[
+				"include/fastcdr"
+			],
+			"type" : "directory"
+		},
+		{
+			"backtrace" : 4,
+			"component" : "headers",
+			"destination" : "include/fastcdr",
+			"paths" : 
+			[
+				"/root/ros2_ws/build/fastcdr/include/fastcdr/config.h"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 5,
+			"component" : "Unspecified",
+			"destination" : "lib",
+			"paths" : 
+			[
+				"src/cpp/libfastcdr.so.1.0.24",
+				"src/cpp/libfastcdr.so.1"
+			],
+			"targetId" : "fastcdr::@75938a602bfe1332d7ce",
+			"targetIndex" : 0,
+			"targetInstallNamelink" : "skip",
+			"type" : "target"
+		},
+		{
+			"backtrace" : 5,
+			"component" : "Unspecified",
+			"destination" : "lib",
+			"paths" : 
+			[
+				"src/cpp/libfastcdr.so"
+			],
+			"targetId" : "fastcdr::@75938a602bfe1332d7ce",
+			"targetIndex" : 0,
+			"targetInstallNamelink" : "only",
+			"type" : "target"
+		},
+		{
+			"backtrace" : 6,
+			"component" : "cmake",
+			"destination" : "lib/cmake/fastcdr",
+			"exportName" : "fastcdr-dynamic-targets",
+			"exportTargets" : 
+			[
+				{
+					"id" : "fastcdr::@75938a602bfe1332d7ce",
+					"index" : 0
+				}
+			],
+			"paths" : 
+			[
+				"src/cpp/CMakeFiles/Export/lib/cmake/fastcdr/fastcdr-dynamic-targets.cmake"
+			],
+			"type" : "export"
+		},
+		{
+			"backtrace" : 7,
+			"component" : "cmake",
+			"destination" : "lib/cmake/fastcdr",
+			"paths" : 
+			[
+				"/root/ros2_ws/build/fastcdr/cmake/config/fastcdr-config.cmake",
+				"/root/ros2_ws/build/fastcdr/cmake/config/fastcdr-config-version.cmake"
+			],
+			"type" : "file"
+		}
+	],
+	"paths" : 
+	{
+		"build" : "src/cpp",
+		"source" : "src/cpp"
+	}
+}

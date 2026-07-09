@@ -1,0 +1,53 @@
+[0.043s] Invoking command in '/root/ros2_ws/build/ament_cmake_test': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_python:/root/ros2_ws/install/ament_cmake_core:/root/ros2_ws/install/ament_package:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_python:/root/ros2_ws/install/ament_cmake_core:/opt/ros/humble PYTHONPATH=/root/ros2_ws/build/ament_package:/root/ros2_ws/install/ament_package/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/cmake /root/ros2_ws/src/ament/ament_cmake/ament_cmake_test -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/root/ros2_ws/install/ament_cmake_test
+[0.300s] -- Found ament_cmake_core: 1.3.14 (/root/ros2_ws/install/ament_cmake_core/share/ament_cmake_core/cmake)
+[0.301s] -- Found Python3: /usr/bin/python3 (found version "3.10.12") found components: Interpreter 
+[0.301s] -- Override CMake install command with custom implementation using symlinks instead of copying resources
+[0.301s] -- Found ament_cmake_python: 1.3.14 (/root/ros2_ws/install/ament_cmake_python/share/ament_cmake_python/cmake)
+[0.374s] -- Configuring done
+[0.377s] -- Generating done
+[0.379s] -- Build files have been written to: /root/ros2_ws/build/ament_cmake_test
+[0.380s] Invoked command in '/root/ros2_ws/build/ament_cmake_test' returned '0': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_python:/root/ros2_ws/install/ament_cmake_core:/root/ros2_ws/install/ament_package:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_python:/root/ros2_ws/install/ament_cmake_core:/opt/ros/humble PYTHONPATH=/root/ros2_ws/build/ament_package:/root/ros2_ws/install/ament_package/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/cmake /root/ros2_ws/src/ament/ament_cmake/ament_cmake_test -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/root/ros2_ws/install/ament_cmake_test
+[0.382s] Invoking command in '/root/ros2_ws/build/ament_cmake_test': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_python:/root/ros2_ws/install/ament_cmake_core:/root/ros2_ws/install/ament_package:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_python:/root/ros2_ws/install/ament_cmake_core:/opt/ros/humble PYTHONPATH=/root/ros2_ws/build/ament_package:/root/ros2_ws/install/ament_package/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/cmake --build /root/ros2_ws/build/ament_cmake_test -- -j16 -l16
+[0.421s] Built target ament_cmake_python_symlink_ament_cmake_test
+[0.561s] running egg_info
+[0.561s] creating ament_cmake_test.egg-info
+[0.561s] writing ament_cmake_test.egg-info/PKG-INFO
+[0.561s] writing dependency_links to ament_cmake_test.egg-info/dependency_links.txt
+[0.561s] writing top-level names to ament_cmake_test.egg-info/top_level.txt
+[0.561s] writing manifest file 'ament_cmake_test.egg-info/SOURCES.txt'
+[0.563s] reading manifest file 'ament_cmake_test.egg-info/SOURCES.txt'
+[0.563s] writing manifest file 'ament_cmake_test.egg-info/SOURCES.txt'
+[0.584s] Built target ament_cmake_python_build_ament_cmake_test_egg
+[0.596s] Invoked command in '/root/ros2_ws/build/ament_cmake_test' returned '0': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_python:/root/ros2_ws/install/ament_cmake_core:/root/ros2_ws/install/ament_package:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_python:/root/ros2_ws/install/ament_cmake_core:/opt/ros/humble PYTHONPATH=/root/ros2_ws/build/ament_package:/root/ros2_ws/install/ament_package/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/cmake --build /root/ros2_ws/build/ament_cmake_test -- -j16 -l16
+[0.597s] Invoking command in '/root/ros2_ws/build/ament_cmake_test': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_python:/root/ros2_ws/install/ament_cmake_core:/root/ros2_ws/install/ament_package:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_python:/root/ros2_ws/install/ament_cmake_core:/opt/ros/humble PYTHONPATH=/root/ros2_ws/build/ament_package:/root/ros2_ws/install/ament_package/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/cmake --install /root/ros2_ws/build/ament_cmake_test
+[0.602s] -- Install configuration: ""
+[0.604s] -- Execute custom install script
+[0.605s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/environment/pythonpath.sh
+[0.610s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/environment/pythonpath.dsv
+[0.619s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/local/lib/python3.10/dist-packages/ament_cmake_test-1.3.14-py3.10.egg-info/PKG-INFO
+[0.627s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/local/lib/python3.10/dist-packages/ament_cmake_test-1.3.14-py3.10.egg-info/SOURCES.txt
+[0.633s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/local/lib/python3.10/dist-packages/ament_cmake_test-1.3.14-py3.10.egg-info/dependency_links.txt
+[0.641s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/local/lib/python3.10/dist-packages/ament_cmake_test-1.3.14-py3.10.egg-info/top_level.txt
+[0.650s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/local/lib/python3.10/dist-packages/ament_cmake_test/__init__.py
+[0.658s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_index/resource_index/package_run_dependencies/ament_cmake_test
+[0.665s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_index/resource_index/parent_prefix_path/ament_cmake_test
+[0.673s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/environment/ament_prefix_path.sh
+[0.681s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/environment/ament_prefix_path.dsv
+[0.690s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/environment/path.sh
+[0.698s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/environment/path.dsv
+[0.706s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/local_setup.bash
+[0.714s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/local_setup.sh
+[0.723s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/local_setup.zsh
+[0.730s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/local_setup.dsv
+[0.738s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/package.dsv
+[0.746s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_index/resource_index/packages/ament_cmake_test
+[0.754s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/cmake/ament_cmake_test-extras.cmake
+[0.762s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/cmake/ament_cmake_testConfig.cmake
+[0.770s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/cmake/ament_cmake_testConfig-version.cmake
+[0.778s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/package.xml
+[0.786s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/cmake/ament_add_test.cmake
+[0.794s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/cmake/ament_add_test_label.cmake
+[0.800s] -- Symlinking: /root/ros2_ws/install/ament_cmake_test/share/ament_cmake_test/cmake/run_test.py
+[0.838s] Listing '/root/ros2_ws/install/ament_cmake_test/local/lib/python3.10/dist-packages/ament_cmake_test'...
+[0.838s] Compiling '/root/ros2_ws/install/ament_cmake_test/local/lib/python3.10/dist-packages/ament_cmake_test/__init__.py'...
+[0.839s] Invoked command in '/root/ros2_ws/build/ament_cmake_test' returned '0': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_python:/root/ros2_ws/install/ament_cmake_core:/root/ros2_ws/install/ament_package:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_python:/root/ros2_ws/install/ament_cmake_core:/opt/ros/humble PYTHONPATH=/root/ros2_ws/build/ament_package:/root/ros2_ws/install/ament_package/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/cmake --install /root/ros2_ws/build/ament_cmake_test

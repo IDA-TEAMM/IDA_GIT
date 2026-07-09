@@ -1,0 +1,14 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : [],
+		"files" : [],
+		"nodes" : []
+	},
+	"installers" : [],
+	"paths" : 
+	{
+		"build" : "gmock",
+		"source" : "/root/ros2_ws/install/gmock_vendor/src/gmock_vendor"
+	}
+}

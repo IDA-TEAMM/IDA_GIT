@@ -1,0 +1,1 @@
+/usr/bin/c++ CMakeFiles/test_msg_initialization.dir/test/test_msg_initialization.cpp.o -o test_msg_initialization  -Wl,-rpath,/root/ros2_ws/install/rosidl_runtime_c/lib:/opt/ros/humble/lib gtest/libgtest_main.a gtest/libgtest.a /root/ros2_ws/install/rosidl_runtime_c/lib/librosidl_runtime_c.so -pthread /opt/ros/humble/lib/librcutils.so -ldl -latomic 

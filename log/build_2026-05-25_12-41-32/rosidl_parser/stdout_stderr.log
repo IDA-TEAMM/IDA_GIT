@@ -1,0 +1,10 @@
+Built target ament_cmake_python_symlink_rosidl_parser
+running egg_info
+creating rosidl_parser.egg-info
+writing rosidl_parser.egg-info/PKG-INFO
+writing dependency_links to rosidl_parser.egg-info/dependency_links.txt
+writing top-level names to rosidl_parser.egg-info/top_level.txt
+writing manifest file 'rosidl_parser.egg-info/SOURCES.txt'
+reading manifest file 'rosidl_parser.egg-info/SOURCES.txt'
+writing manifest file 'rosidl_parser.egg-info/SOURCES.txt'
+Built target ament_cmake_python_build_rosidl_parser_egg

@@ -1,0 +1,1 @@
+/root/ros2_ws/install/rosidl_typesupport_interface/share/rosidl_typesupport_interface/cmake/rosidl_typesupport_interfaceExport.cmake

@@ -1,0 +1,1 @@
+/root/ros2_ws/build/rosidl_cmake/ament_cmake_python/rosidl_cmake/rosidl_cmake.egg-info/dependency_links.txt

@@ -1,0 +1,30 @@
+In file included from /root/ros2_ws/src/ros2/rcl/rcl_yaml_param_parser/test/test_parse.cpp:28:
+/root/ros2_ws/src/ros2/rcl/rcl_yaml_param_parser/test/./mocking_utils/patch.hpp:38:10: fatal error: mimick/mimick.h: No such file or directory
+   38 | #include "mimick/mimick.h"
+      |          ^~~~~~~~~~~~~~~~~
+compilation terminated.
+gmake[2]: *** [CMakeFiles/test_parse.dir/build.make:76: CMakeFiles/test_parse.dir/test/test_parse.cpp.o] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:289: CMakeFiles/test_parse.dir/all] Error 2
+gmake[1]: *** Waiting for unfinished jobs....
+In file included from /root/ros2_ws/src/ros2/rcl/rcl_yaml_param_parser/test/test_parser.cpp:27:
+/root/ros2_ws/src/ros2/rcl/rcl_yaml_param_parser/test/./mocking_utils/patch.hpp:38:10: fatal error: mimick/mimick.h: No such file or directory
+   38 | #include "mimick/mimick.h"
+      |          ^~~~~~~~~~~~~~~~~
+compilation terminated.
+In file included from /root/ros2_ws/src/ros2/rcl/rcl_yaml_param_parser/test/test_parser_multiple_nodes.cpp:27:
+/root/ros2_ws/src/ros2/rcl/rcl_yaml_param_parser/test/./mocking_utils/patch.hpp:38:10: fatal error: mimick/mimick.h: No such file or directory
+   38 | #include "mimick/mimick.h"
+      |          ^~~~~~~~~~~~~~~~~
+compilation terminated.
+gmake[2]: *** [CMakeFiles/test_parser_multiple_nodes.dir/build.make:76: CMakeFiles/test_parser_multiple_nodes.dir/test/test_parser_multiple_nodes.cpp.o] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:345: CMakeFiles/test_parser_multiple_nodes.dir/all] Error 2
+gmake[2]: *** [CMakeFiles/test_parser.dir/build.make:76: CMakeFiles/test_parser.dir/test/test_parser.cpp.o] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:317: CMakeFiles/test_parser.dir/all] Error 2
+In file included from /root/ros2_ws/src/ros2/rcl/rcl_yaml_param_parser/test/test_parser_multiple_params.cpp:27:
+/root/ros2_ws/src/ros2/rcl/rcl_yaml_param_parser/test/./mocking_utils/patch.hpp:38:10: fatal error: mimick/mimick.h: No such file or directory
+   38 | #include "mimick/mimick.h"
+      |          ^~~~~~~~~~~~~~~~~
+compilation terminated.
+gmake[2]: *** [CMakeFiles/test_parser_multiple_params.dir/build.make:76: CMakeFiles/test_parser_multiple_params.dir/test/test_parser_multiple_params.cpp.o] Error 1
+gmake[1]: *** [CMakeFiles/Makefile2:373: CMakeFiles/test_parser_multiple_params.dir/all] Error 2
+gmake: *** [Makefile:146: all] Error 2

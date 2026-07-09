@@ -1,0 +1,16 @@
+[0.982s] Invoking command in '/root/ros2_ws/build/ament_lint': PYTHONPATH=/root/ros2_ws/build/ament_lint/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/ros2_ws/install/ament_lint/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /root/ros2_ws/build/ament_lint/build --no-deps symlink_data
+[1.173s] running develop
+[1.312s] running egg_info
+[1.313s] writing ament_lint.egg-info/PKG-INFO
+[1.313s] writing dependency_links to ament_lint.egg-info/dependency_links.txt
+[1.313s] writing entry points to ament_lint.egg-info/entry_points.txt
+[1.313s] writing requirements to ament_lint.egg-info/requires.txt
+[1.313s] writing top-level names to ament_lint.egg-info/top_level.txt
+[1.315s] reading manifest file 'ament_lint.egg-info/SOURCES.txt'
+[1.316s] writing manifest file 'ament_lint.egg-info/SOURCES.txt'
+[1.317s] running build_ext
+[1.317s] Creating /root/ros2_ws/install/ament_lint/lib/python3.10/site-packages/ament-lint.egg-link (link to .)
+[1.319s] 
+[1.319s] Installed /root/ros2_ws/build/ament_lint
+[1.319s] running symlink_data
+[1.356s] Invoked command in '/root/ros2_ws/build/ament_lint' returned '0': PYTHONPATH=/root/ros2_ws/build/ament_lint/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/ros2_ws/install/ament_lint/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /root/ros2_ws/build/ament_lint/build --no-deps symlink_data

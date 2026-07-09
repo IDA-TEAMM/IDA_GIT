@@ -1,0 +1,17 @@
+[1.567s] Invoking command in '/root/ros2_ws/build/ament_cppcheck': PYTHONPATH=/root/ros2_ws/build/ament_cppcheck/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/ros2_ws/install/ament_cppcheck/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /root/ros2_ws/build/ament_cppcheck/build --no-deps symlink_data
+[1.949s] running develop
+[2.096s] running egg_info
+[2.097s] writing ament_cppcheck.egg-info/PKG-INFO
+[2.098s] writing dependency_links to ament_cppcheck.egg-info/dependency_links.txt
+[2.098s] writing entry points to ament_cppcheck.egg-info/entry_points.txt
+[2.098s] writing requirements to ament_cppcheck.egg-info/requires.txt
+[2.099s] writing top-level names to ament_cppcheck.egg-info/top_level.txt
+[2.101s] reading manifest file 'ament_cppcheck.egg-info/SOURCES.txt'
+[2.102s] writing manifest file 'ament_cppcheck.egg-info/SOURCES.txt'
+[2.104s] running build_ext
+[2.104s] Creating /root/ros2_ws/install/ament_cppcheck/lib/python3.10/site-packages/ament-cppcheck.egg-link (link to .)
+[2.105s] Installing ament_cppcheck script to /root/ros2_ws/install/ament_cppcheck/bin
+[2.105s] 
+[2.105s] Installed /root/ros2_ws/build/ament_cppcheck
+[2.105s] running symlink_data
+[2.168s] Invoked command in '/root/ros2_ws/build/ament_cppcheck' returned '0': PYTHONPATH=/root/ros2_ws/build/ament_cppcheck/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/ros2_ws/install/ament_cppcheck/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /root/ros2_ws/build/ament_cppcheck/build --no-deps symlink_data

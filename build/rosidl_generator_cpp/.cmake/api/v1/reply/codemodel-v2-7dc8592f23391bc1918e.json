@@ -1,0 +1,229 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-6800c20b570d24d76931.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.12"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						5,
+						6,
+						7,
+						8,
+						9,
+						10,
+						11,
+						12,
+						13,
+						14,
+						15
+					]
+				},
+				{
+					"build" : "gtest",
+					"jsonFile" : "directory-gtest-02132bb52f481e8f8a48.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.8"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 1,
+					"source" : "/root/ros2_ws/install/gtest_vendor/src/gtest_vendor",
+					"targetIndexes" : 
+					[
+						3,
+						4
+					]
+				}
+			],
+			"name" : "",
+			"projects" : 
+			[
+				{
+					"childIndexes" : 
+					[
+						1
+					],
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "rosidl_generator_cpp",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2,
+						5,
+						6,
+						7,
+						8,
+						9,
+						10,
+						11,
+						12,
+						13,
+						14,
+						15
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						1
+					],
+					"name" : "gtest",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						3,
+						4
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "ament_cmake_python_build_rosidl_generator_cpp_egg::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ament_cmake_python_build_rosidl_generator_cpp_egg-59003dca39b6056214de.json",
+					"name" : "ament_cmake_python_build_rosidl_generator_cpp_egg",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "ament_cmake_python_symlink_rosidl_generator_cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ament_cmake_python_symlink_rosidl_generator_cpp-e431af475adf334a6a32.json",
+					"name" : "ament_cmake_python_symlink_rosidl_generator_cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "ament_cmake_python_symlink_rosidl_generator_cpp_setup::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ament_cmake_python_symlink_rosidl_generator_cpp_setup-da270907c7c6f887c2f5.json",
+					"name" : "ament_cmake_python_symlink_rosidl_generator_cpp_setup",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "gtest::@0af4add9fe94340e763e",
+					"jsonFile" : "target-gtest-a66222e2032b03e61d77.json",
+					"name" : "gtest",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "gtest_main::@0af4add9fe94340e763e",
+					"jsonFile" : "target-gtest_main-1c3bf1e23fbfe697114c.json",
+					"name" : "gtest_main",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "rosidl_generator_cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-rosidl_generator_cpp-b3142b65cb60cc8e5b48.json",
+					"name" : "rosidl_generator_cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "rosidl_generator_cpp__cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-rosidl_generator_cpp__cpp-334b5ee47f564dfb80dc.json",
+					"name" : "rosidl_generator_cpp__cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "rosidl_generator_cpp_uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-rosidl_generator_cpp_uninstall-46afe3b49e875a2ba841.json",
+					"name" : "rosidl_generator_cpp_uninstall",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_interfaces_cpp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_interfaces_cpp-74e0760401a98c880443.json",
+					"name" : "test_interfaces_cpp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_msg_builder::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_msg_builder-d07d5cd84c20a878dbfe.json",
+					"name" : "test_msg_builder",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_msg_datatype::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_msg_datatype-d333d4d2c7210e5263cd.json",
+					"name" : "test_msg_datatype",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_msg_initialization::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_msg_initialization-d84c9ecd12abadead5b4.json",
+					"name" : "test_msg_initialization",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_name::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_name-80e00ffe8fccc4ec2850.json",
+					"name" : "test_name",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_srv_initialization::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_srv_initialization-380ed3e9426ee5b111d2.json",
+					"name" : "test_srv_initialization",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_traits::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_traits-ce53263f571ac6b7c608.json",
+					"name" : "test_traits",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-uninstall-17d277b6cbdc07263fb1.json",
+					"name" : "uninstall",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/root/ros2_ws/build/rosidl_generator_cpp",
+		"source" : "/root/ros2_ws/src/ros2/rosidl/rosidl_generator_cpp"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 3
+	}
+}

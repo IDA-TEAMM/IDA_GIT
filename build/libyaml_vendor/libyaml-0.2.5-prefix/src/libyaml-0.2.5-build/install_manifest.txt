@@ -1,0 +1,6 @@
+/root/ros2_ws/build/libyaml_vendor/libyaml_install/include/libyaml_vendor/yaml.h
+/root/ros2_ws/build/libyaml_vendor/libyaml_install/lib/libyaml.so
+/root/ros2_ws/build/libyaml_vendor/libyaml_install/cmake/yamlConfig.cmake
+/root/ros2_ws/build/libyaml_vendor/libyaml_install/cmake/yamlTargets.cmake
+/root/ros2_ws/build/libyaml_vendor/libyaml_install/cmake/yamlTargets-noconfig.cmake
+/root/ros2_ws/build/libyaml_vendor/libyaml_install/cmake/yamlConfigVersion.cmake

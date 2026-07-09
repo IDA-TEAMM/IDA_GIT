@@ -1,0 +1,12 @@
+/root/ros2_ws/build/rosidl_generator_c/rosidl_adapter/rosidl_generator_c:msg/Arrays.idl
+/root/ros2_ws/build/rosidl_generator_c/rosidl_adapter/rosidl_generator_c:msg/BasicTypes.idl
+/root/ros2_ws/build/rosidl_generator_c/rosidl_adapter/rosidl_generator_c:msg/BoundedPlainSequences.idl
+/root/ros2_ws/build/rosidl_generator_c/rosidl_adapter/rosidl_generator_c:msg/BoundedSequences.idl
+/root/ros2_ws/build/rosidl_generator_c/rosidl_adapter/rosidl_generator_c:msg/Constants.idl
+/root/ros2_ws/build/rosidl_generator_c/rosidl_adapter/rosidl_generator_c:msg/Defaults.idl
+/root/ros2_ws/build/rosidl_generator_c/rosidl_adapter/rosidl_generator_c:msg/Empty.idl
+/root/ros2_ws/build/rosidl_generator_c/rosidl_adapter/rosidl_generator_c:msg/MultiNested.idl
+/root/ros2_ws/build/rosidl_generator_c/rosidl_adapter/rosidl_generator_c:msg/Nested.idl
+/root/ros2_ws/build/rosidl_generator_c/rosidl_adapter/rosidl_generator_c:msg/Strings.idl
+/root/ros2_ws/build/rosidl_generator_c/rosidl_adapter/rosidl_generator_c:msg/UnboundedSequences.idl
+/root/ros2_ws/build/rosidl_generator_c/rosidl_adapter/rosidl_generator_c:msg/WStrings.idl

@@ -1,0 +1,8 @@
+Cloning into 'src'...
+HEAD is now at fededad one-char typo
+Submodule 'deps/meta-cmake' (https://github.com/meta-toolkit/meta-cmake.git) registered for path 'deps/meta-cmake'
+Cloning into '/root/ros2_ws/build/iceoryx_posh/dependencies/cpptoml/src/deps/meta-cmake'...
+fatal: detected dubious ownership in repository at '/root/ros2_ws/src/eclipse-iceoryx/iceoryx'
+To add an exception for this directory, call:
+
+	git config --global --add safe.directory /root/ros2_ws/src/eclipse-iceoryx/iceoryx

@@ -1,0 +1,1 @@
+/root/ros2_ws/build/ament_index_python/completion/ament_index-argcomplete.zsh

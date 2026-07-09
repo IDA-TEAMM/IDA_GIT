@@ -1,0 +1,1 @@
+/root/ros2_ws/src/ros2/ament_cmake_ros/domain_coordinator/setup.py

@@ -1,0 +1,1 @@
+/root/ros2_ws/build/ament_lint_common/ament_cmake_core/ament_lint_commonConfig.cmake

@@ -1,0 +1,8 @@
+source;share/pybind11_vendor/hook/cmake_prefix_path.ps1
+source;share/pybind11_vendor/hook/cmake_prefix_path.dsv
+source;share/pybind11_vendor/hook/cmake_prefix_path.sh
+source;share/pybind11_vendor/local_setup.bash
+source;share/pybind11_vendor/local_setup.dsv
+source;share/pybind11_vendor/local_setup.ps1
+source;share/pybind11_vendor/local_setup.sh
+source;share/pybind11_vendor/local_setup.zsh

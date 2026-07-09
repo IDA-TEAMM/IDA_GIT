@@ -1,0 +1,309 @@
+<?xml version="1.0"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot
+  name="Girdap">
+  <link
+    name="base_link">
+    <inertial>
+      <origin
+        xyz="9.85971541118582E-05 -0.0715655546706883 -0.598500849362795"
+        rpy="0 0 0" />
+      <mass
+        value="8.75975954543827" />
+      <inertia
+        ixx="0.0688292644744636"
+        ixy="3.62754647397863E-05"
+        ixz="-1.10735519256523E-05"
+        iyy="0.0655255312350463"
+        iyz="-0.00167849965494792"
+        izz="0.0531637552221677" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Girdap/meshes/base_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.298039215686275 0.298039215686275 0.298039215686275 1" />
+      </material>
+    </visual>
+    
+  </link>
+  <link
+    name="kamera_link">
+    <inertial>
+      <origin
+        xyz="0.000506558960936636 -0.00990955896460521 -0.00766250562193904"
+        rpy="0 0 0" />
+      <mass
+        value="0.0407155106171239" />
+      <inertia
+        ixx="1.005150383713E-05"
+        ixy="5.47812124655946E-09"
+        ixz="3.91397519017976E-08"
+        iyy="2.65392753535241E-05"
+        iyz="-3.21805335336149E-07"
+        izz="3.40770222088154E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Girdap/meshes/kamera_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.592156862745098 0.666666666666667 0.682352941176471 1" />
+      </material>
+    </visual>
+    
+  </link>
+  <joint
+    name="kamera_link"
+    type="fixed">
+    <origin
+      xyz="-0.0018388 0.258 0.075623"
+      rpy="1.5708 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="kamera_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="lidar_link">
+    <inertial>
+      <origin
+        xyz="0.516118435756135 0.164321958385845 -6.35667019630687E-06"
+        rpy="0 0 0" />
+      <mass
+        value="0.141887342965566" />
+      <inertia
+        ixx="4.17977384459599E-05"
+        ixy="-3.05328884182171E-07"
+        ixz="5.52613324143589E-09"
+        iyy="6.87998236856538E-05"
+        iyz="-4.39952236199982E-10"
+        izz="4.50773277349344E-05" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Girdap/meshes/lidar_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    
+  </link>
+  <joint
+    name="lidar_link"
+    type="fixed">
+    <origin
+      xyz="0 0 0"
+      rpy="1.5708 0 1.5708" />
+    <parent
+      link="base_link" />
+    <child
+      link="lidar_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="buton_link">
+    <inertial>
+      <origin
+        xyz="0.0185002243779769 0.0149997200530561 0.0328204874793562"
+        rpy="0 0 0" />
+      <mass
+        value="0.0588232194922118" />
+      <inertia
+        ixx="2.99686739066378E-05"
+        ixy="-4.51413675267062E-09"
+        ixz="-5.10205957438581E-10"
+        iyy="3.11576315400281E-05"
+        iyz="6.36447441474456E-10"
+        izz="8.87462045184843E-06" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Girdap/meshes/buton_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    
+  </link>
+  <joint
+    name="buton_link"
+    type="fixed">
+    <origin
+      xyz="-0.0185 0.84489 0.063612"
+      rpy="0 0 0" />
+    <parent
+      link="base_link" />
+    <child
+      link="buton_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="gps_link">
+    <inertial>
+      <origin
+        xyz="0.000339575962859273 0.00498340400536437 -2.59388401063765E-07"
+        rpy="0 0 0" />
+      <mass
+        value="0.57303411708247" />
+      <inertia
+        ixx="0.000699084421040958"
+        ixy="2.67173790660909E-06"
+        ixz="-2.75618934635389E-09"
+        iyy="0.00122652348335515"
+        iyz="-1.60413205072803E-10"
+        izz="0.000694026697272567" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Girdap/meshes/gps_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.792156862745098 0.819607843137255 0.933333333333333 1" />
+      </material>
+    </visual>
+    
+  </link>
+  <joint
+    name="gps_link"
+    type="fixed">
+    <origin
+      xyz="-0.12636 0.89602 0.1677"
+      rpy="1.5708 0 -1.6347" />
+    <parent
+      link="base_link" />
+    <child
+      link="gps_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="lthruster_link">
+    <inertial>
+      <origin
+        xyz="-0.000132048328493006 0.118033700609347 0.000313889023872194"
+        rpy="0 0 0" />
+      <mass
+        value="0.041717172701853" />
+      <inertia
+        ixx="0.000335302047453241"
+        ixy="1.36011211640386E-09"
+        ixz="1.41376483974843E-09"
+        iyy="3.42307724707207E-06"
+        iyz="-4.96190519878195E-10"
+        izz="0.000335301932369313" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Girdap/meshes/lthruster_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.866666666666667 0.909803921568627 1 1" />
+      </material>
+    </visual>
+    
+  </link>
+  <joint
+    name="lthruster_link"
+    type="fixed">
+    <origin
+      xyz="0.29322 0.99056 -0.21207"
+      rpy="1.5708 -0.7854 1.5708" />
+    <parent
+      link="base_link" />
+    <child
+      link="lthruster_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+  <link
+    name="rthruster_link">
+    <inertial>
+      <origin
+        xyz="-0.000132048326732304 0.118033700645791 0.000313889023688285"
+        rpy="0 0 0" />
+      <mass
+        value="0.0417171726907254" />
+      <inertia
+        ixx="0.000335302047452512"
+        ixy="1.36011254997779E-09"
+        ixz="1.41376479036767E-09"
+        iyy="3.42307724659588E-06"
+        iyz="-4.96190571906295E-10"
+        izz="0.000335301932368767" />
+    </inertial>
+    <visual>
+      <origin
+        xyz="0 0 0"
+        rpy="0 0 0" />
+      <geometry>
+        <mesh
+          filename="package://Girdap/meshes/rthruster_link.STL" />
+      </geometry>
+      <material
+        name="">
+        <color
+          rgba="0.866666666666667 0.909803921568627 1 1" />
+      </material>
+    </visual>
+    
+  </link>
+  <joint
+    name="rthruster_link"
+    type="fixed">
+    <origin
+      xyz="-0.30031 0.99056 -0.21207"
+      rpy="1.5708 -0.7854 1.5708" />
+    <parent
+      link="base_link" />
+    <child
+      link="rthruster_link" />
+    <axis
+      xyz="0 0 0" />
+  </joint>
+</robot>

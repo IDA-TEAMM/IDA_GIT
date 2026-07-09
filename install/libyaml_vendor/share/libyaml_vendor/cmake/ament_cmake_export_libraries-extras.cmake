@@ -1,0 +1,1 @@
+/root/ros2_ws/build/libyaml_vendor/ament_cmake_export_libraries/ament_cmake_export_libraries-extras.cmake

@@ -1,0 +1,122 @@
+-- The C compiler identification is GNU 11.4.0
+-- The CXX compiler identification is GNU 11.4.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found ament_cmake: 1.3.14 (/root/ros2_ws/install/ament_cmake/share/ament_cmake/cmake)
+-- Found Python3: /usr/bin/python3 (found version "3.10.12") found components: Interpreter 
+-- Override CMake install command with custom implementation using symlinks instead of copying resources
+-- Found ament_lint_auto: 0.12.15 (/root/ros2_ws/install/ament_lint_auto/share/ament_lint_auto/cmake)
+-- Found performance_test_fixture: 0.0.9 (/opt/ros/humble/share/performance_test_fixture/cmake)
+-- Found gtest sources under '/root/ros2_ws/install/gtest_vendor/src/gtest_vendor': C++ tests using 'Google Test' will be built
+-- Looking for pthread.h
+-- Looking for pthread.h - found
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+-- Performance tests are disabled by default, so Google Benchmark tests will be skipped. To enable these tests, set the CMake variable 'AMENT_RUN_PERFORMANCE_TESTS'.
+-- Added test 'copyright' to check source files copyright and LICENSE
+-- Added test 'cppcheck' to perform static code analysis on C / C++ code
+-- Configured cppcheck include dirs: /opt/ros/humble/include
+-- Configured cppcheck exclude dirs and/or files: 
+-- Added test 'cpplint' to check C / C++ code against the Google style
+-- Configured cpplint exclude dirs and/or files: 
+-- Added test 'lint_cmake' to check CMake code style
+-- Added test 'uncrustify' to check C / C++ code style
+-- Configured uncrustify additional arguments: 
+-- Added test 'xmllint' to check XML markup files
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /root/ros2_ws/build/libyaml_vendor
+[  6%] Building CXX object gtest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[ 12%] Creating directories for 'libyaml-0.2.5'
+[ 18%] Building CXX object gtest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[ 25%] Performing download step (git clone) for 'libyaml-0.2.5'
+Cloning into 'libyaml-0.2.5'...
+[ 31%] Linking CXX static library libgtest_main.a
+[ 31%] Built target gtest_main
+HEAD is now at 2c891fc Changes for v0.2.5 release
+[ 37%] No update step for 'libyaml-0.2.5'
+[ 43%] Performing patch step for 'libyaml-0.2.5'
+[ 50%] Performing configure step for 'libyaml-0.2.5'
+-- The C compiler identification is GNU 11.4.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /root/ros2_ws/build/libyaml_vendor/libyaml-0.2.5-prefix/src/libyaml-0.2.5-build
+[ 56%] Performing build step for 'libyaml-0.2.5'
+[ 11%] Building C object CMakeFiles/yaml.dir/src/reader.c.o
+[ 22%] Building C object CMakeFiles/yaml.dir/src/loader.c.o
+[ 33%] Building C object CMakeFiles/yaml.dir/src/dumper.c.o
+[ 44%] Building C object CMakeFiles/yaml.dir/src/api.c.o
+[ 55%] Building C object CMakeFiles/yaml.dir/src/parser.c.o
+[ 77%] Building C object CMakeFiles/yaml.dir/src/emitter.c.o
+[ 77%] Building C object CMakeFiles/yaml.dir/src/scanner.c.o
+[ 88%] Building C object CMakeFiles/yaml.dir/src/writer.c.o
+[100%] Linking C shared library libyaml.so
+[100%] Built target yaml
+[ 62%] Performing install step for 'libyaml-0.2.5'
+Consolidate compiler generated dependencies of target yaml
+[100%] Built target yaml
+Install the project...
+-- Install configuration: ""
+-- Installing: /root/ros2_ws/build/libyaml_vendor/libyaml_install/include/libyaml_vendor/yaml.h
+-- Installing: /root/ros2_ws/build/libyaml_vendor/libyaml_install/lib/libyaml.so
+-- Installing: /root/ros2_ws/build/libyaml_vendor/libyaml_install/cmake/yamlConfig.cmake
+-- Installing: /root/ros2_ws/build/libyaml_vendor/libyaml_install/cmake/yamlTargets.cmake
+-- Installing: /root/ros2_ws/build/libyaml_vendor/libyaml_install/cmake/yamlTargets-noconfig.cmake
+-- Installing: /root/ros2_ws/build/libyaml_vendor/libyaml_install/cmake/yamlConfigVersion.cmake
+[ 68%] Completed 'libyaml-0.2.5'
+[ 68%] Built target libyaml-0.2.5
+[ 75%] Building CXX object CMakeFiles/benchmark_reader.dir/test/benchmark/benchmark_reader.cpp.o
+[ 81%] Linking CXX static library libgtest.a
+[ 81%] Built target gtest
+[ 87%] Building CXX object CMakeFiles/test_yaml_reader.dir/test/test_reader.cpp.o
+[ 93%] Linking CXX executable benchmark_reader
+[ 93%] Built target benchmark_reader
+[100%] Linking CXX executable test_yaml_reader
+[100%] Built target test_yaml_reader
+-- Install configuration: ""
+-- Execute custom install script
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/environment/library_path.sh
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/environment/library_path.dsv
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/ament_index/resource_index/package_run_dependencies/libyaml_vendor
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/ament_index/resource_index/parent_prefix_path/libyaml_vendor
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/environment/ament_prefix_path.sh
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/environment/ament_prefix_path.dsv
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/environment/path.sh
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/environment/path.dsv
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/local_setup.bash
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/local_setup.sh
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/local_setup.zsh
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/local_setup.dsv
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/package.dsv
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/ament_index/resource_index/packages/libyaml_vendor
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/cmake/libyaml_vendor-extras.cmake
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/cmake/ament_cmake_export_libraries-extras.cmake
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/cmake/ament_cmake_export_dependencies-extras.cmake
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/cmake/libyaml_vendorConfig.cmake
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/cmake/libyaml_vendorConfig-version.cmake
+-- Symlinking: /root/ros2_ws/install/libyaml_vendor/share/libyaml_vendor/package.xml
+-- Up-to-date: /root/ros2_ws/install/libyaml_vendor
+-- Installing: /root/ros2_ws/install/libyaml_vendor/include
+-- Installing: /root/ros2_ws/install/libyaml_vendor/include/libyaml_vendor
+-- Installing: /root/ros2_ws/install/libyaml_vendor/include/libyaml_vendor/yaml.h
+-- Installing: /root/ros2_ws/install/libyaml_vendor/lib
+-- Installing: /root/ros2_ws/install/libyaml_vendor/lib/libyaml.so
+-- Installing: /root/ros2_ws/install/libyaml_vendor/cmake
+-- Installing: /root/ros2_ws/install/libyaml_vendor/cmake/yamlConfig.cmake
+-- Installing: /root/ros2_ws/install/libyaml_vendor/cmake/yamlTargets.cmake
+-- Installing: /root/ros2_ws/install/libyaml_vendor/cmake/yamlTargets-noconfig.cmake
+-- Installing: /root/ros2_ws/install/libyaml_vendor/cmake/yamlConfigVersion.cmake

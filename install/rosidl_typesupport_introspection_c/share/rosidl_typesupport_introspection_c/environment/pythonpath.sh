@@ -1,0 +1,1 @@
+/root/ros2_ws/build/rosidl_typesupport_introspection_c/ament_cmake_environment_hooks/pythonpath.sh

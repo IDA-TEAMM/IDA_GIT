@@ -1,0 +1,1 @@
+/root/ros2_ws/src/ament/ament_cmake/ament_cmake_export_link_flags/cmake/ament_cmake_export_link_flags_package_hook.cmake

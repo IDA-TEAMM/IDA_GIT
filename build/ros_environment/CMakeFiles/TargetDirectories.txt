@@ -1,0 +1,7 @@
+/root/ros2_ws/build/ros_environment/CMakeFiles/uninstall.dir
+/root/ros2_ws/build/ros_environment/CMakeFiles/ros_environment_uninstall.dir
+/root/ros2_ws/build/ros_environment/CMakeFiles/edit_cache.dir
+/root/ros2_ws/build/ros_environment/CMakeFiles/rebuild_cache.dir
+/root/ros2_ws/build/ros_environment/CMakeFiles/list_install_components.dir
+/root/ros2_ws/build/ros_environment/CMakeFiles/install.dir
+/root/ros2_ws/build/ros_environment/CMakeFiles/install/local.dir

@@ -1,0 +1,15 @@
+/root/ros2_ws/install/pybind11_vendor/share/ament_index/resource_index/package_run_dependencies/pybind11_vendor
+/root/ros2_ws/install/pybind11_vendor/share/ament_index/resource_index/parent_prefix_path/pybind11_vendor
+/root/ros2_ws/install/pybind11_vendor/share/pybind11_vendor/environment/ament_prefix_path.sh
+/root/ros2_ws/install/pybind11_vendor/share/pybind11_vendor/environment/ament_prefix_path.dsv
+/root/ros2_ws/install/pybind11_vendor/share/pybind11_vendor/environment/path.sh
+/root/ros2_ws/install/pybind11_vendor/share/pybind11_vendor/environment/path.dsv
+/root/ros2_ws/install/pybind11_vendor/share/pybind11_vendor/local_setup.bash
+/root/ros2_ws/install/pybind11_vendor/share/pybind11_vendor/local_setup.sh
+/root/ros2_ws/install/pybind11_vendor/share/pybind11_vendor/local_setup.zsh
+/root/ros2_ws/install/pybind11_vendor/share/pybind11_vendor/local_setup.dsv
+/root/ros2_ws/install/pybind11_vendor/share/pybind11_vendor/package.dsv
+/root/ros2_ws/install/pybind11_vendor/share/ament_index/resource_index/packages/pybind11_vendor
+/root/ros2_ws/install/pybind11_vendor/share/pybind11_vendor/cmake/pybind11_vendorConfig.cmake
+/root/ros2_ws/install/pybind11_vendor/share/pybind11_vendor/cmake/pybind11_vendorConfig-version.cmake
+/root/ros2_ws/install/pybind11_vendor/share/pybind11_vendor/package.xml

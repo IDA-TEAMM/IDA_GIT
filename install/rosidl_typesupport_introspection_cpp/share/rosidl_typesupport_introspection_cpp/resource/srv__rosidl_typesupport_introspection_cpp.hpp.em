@@ -1,0 +1,1 @@
+/root/ros2_ws/src/ros2/rosidl/rosidl_typesupport_introspection_cpp/resource/srv__rosidl_typesupport_introspection_cpp.hpp.em

@@ -1,0 +1,1 @@
+/root/ros2_ws/build/python_cmake_module/ament_cmake_environment_hooks/local_setup.sh

@@ -1,0 +1,10 @@
+/root/ros2_ws/build/rosidl_cmake/CMakeFiles/uninstall.dir
+/root/ros2_ws/build/rosidl_cmake/CMakeFiles/rosidl_cmake_uninstall.dir
+/root/ros2_ws/build/rosidl_cmake/CMakeFiles/ament_cmake_python_symlink_rosidl_cmake.dir
+/root/ros2_ws/build/rosidl_cmake/CMakeFiles/ament_cmake_python_build_rosidl_cmake_egg.dir
+/root/ros2_ws/build/rosidl_cmake/CMakeFiles/test.dir
+/root/ros2_ws/build/rosidl_cmake/CMakeFiles/edit_cache.dir
+/root/ros2_ws/build/rosidl_cmake/CMakeFiles/rebuild_cache.dir
+/root/ros2_ws/build/rosidl_cmake/CMakeFiles/list_install_components.dir
+/root/ros2_ws/build/rosidl_cmake/CMakeFiles/install.dir
+/root/ros2_ws/build/rosidl_cmake/CMakeFiles/install/local.dir

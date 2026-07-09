@@ -1,0 +1,115 @@
+-- The C compiler identification is GNU 11.4.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Found ament_cmake_ros: 0.10.0 (/root/ros2_ws/install/ament_cmake_ros/share/ament_cmake_ros/cmake)
+-- Found Python3: /usr/bin/python3 (found version "3.10.12") found components: Interpreter 
+-- Override CMake install command with custom implementation using symlinks instead of copying resources
+-- Found rcutils: 5.1.8 (/opt/ros/humble/share/rcutils/cmake)
+-- Found rosidl_typesupport_interface: 3.1.8 (/root/ros2_ws/install/rosidl_typesupport_interface/share/rosidl_typesupport_interface/cmake)
+-- Found ament_lint_auto: 0.12.15 (/root/ros2_ws/install/ament_lint_auto/share/ament_lint_auto/cmake)
+-- Found performance_test_fixture: 0.0.9 (/opt/ros/humble/share/performance_test_fixture/cmake)
+-- The CXX compiler identification is GNU 11.4.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Found gtest sources under '/root/ros2_ws/install/gtest_vendor/src/gtest_vendor': C++ tests using 'Google Test' will be built
+-- Looking for pthread.h
+-- Looking for pthread.h - found
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+-- Performance tests are disabled by default, so Google Benchmark tests will be skipped. To enable these tests, set the CMake variable 'AMENT_RUN_PERFORMANCE_TESTS'.
+-- Added test 'copyright' to check source files copyright and LICENSE
+-- Added test 'cppcheck' to perform static code analysis on C / C++ code
+-- Configured cppcheck include dirs: /opt/ros/humble/include;$<BUILD_INTERFACE:/root/ros2_ws/src/ros2/rosidl/rosidl_runtime_c/include>
+-- Configured cppcheck exclude dirs and/or files: 
+-- Added test 'cpplint' to check C / C++ code against the Google style
+-- Configured cpplint exclude dirs and/or files: 
+-- Added test 'lint_cmake' to check CMake code style
+-- Added test 'uncrustify' to check C / C++ code style
+-- Configured uncrustify additional arguments: 
+-- Added test 'xmllint' to check XML markup files
+-- Configuring done
+-- Generating done
+-- Build files have been written to: /root/ros2_ws/build/rosidl_runtime_c
+[  8%] Building CXX object gtest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[  8%] Building C object CMakeFiles/rosidl_runtime_c.dir/src/primitives_sequence_functions.c.o
+[ 12%] Building CXX object gtest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[ 16%] Building C object CMakeFiles/rosidl_runtime_c.dir/src/sequence_bound.c.o
+[ 20%] Building C object CMakeFiles/rosidl_runtime_c.dir/src/service_type_support.c.o
+[ 24%] Building C object CMakeFiles/rosidl_runtime_c.dir/src/message_type_support.c.o
+[ 28%] Building C object CMakeFiles/rosidl_runtime_c.dir/src/string_functions.c.o
+[ 32%] Building C object CMakeFiles/rosidl_runtime_c.dir/src/u16string_functions.c.o
+[ 36%] Linking C shared library librosidl_runtime_c.so
+[ 36%] Built target rosidl_runtime_c
+[ 40%] Building CXX object CMakeFiles/benchmark_string_conversion.dir/test/benchmark/benchmark_string_conversion.cpp.o
+[ 44%] Linking CXX static library libgtest_main.a
+[ 44%] Built target gtest_main
+[ 48%] Linking CXX executable benchmark_string_conversion
+[ 48%] Built target benchmark_string_conversion
+[ 52%] Linking CXX static library libgtest.a
+[ 52%] Built target gtest
+[ 56%] Building CXX object CMakeFiles/test_service_type_support.dir/test/test_service_type_support.cpp.o
+[ 60%] Building CXX object CMakeFiles/test_sequence_bound.dir/test/test_sequence_bound.cpp.o
+[ 64%] Building CXX object CMakeFiles/test_message_type_support.dir/test/test_message_type_support.cpp.o
+[ 68%] Building CXX object CMakeFiles/test_primitives_sequence_functions.dir/test/test_primitives_sequence_functions.cpp.o
+[ 72%] Building CXX object CMakeFiles/test_string_functions.dir/test/test_string_functions.cpp.o
+[ 76%] Building CXX object CMakeFiles/test_u16string_functions.dir/test/test_u16string_functions.cpp.o
+[ 80%] Linking CXX executable test_message_type_support
+[ 84%] Linking CXX executable test_sequence_bound
+[ 84%] Built target test_message_type_support
+[ 84%] Built target test_sequence_bound
+[ 88%] Linking CXX executable test_service_type_support
+[ 92%] Linking CXX executable test_string_functions
+[ 96%] Linking CXX executable test_u16string_functions
+[ 96%] Built target test_service_type_support
+[ 96%] Built target test_string_functions
+[ 96%] Built target test_u16string_functions
+[100%] Linking CXX executable test_primitives_sequence_functions
+[100%] Built target test_primitives_sequence_functions
+-- Install configuration: ""
+-- Execute custom install script
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/environment/library_path.sh
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/environment/library_path.dsv
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/ament_index/resource_index/rosidl_runtime_packages/rosidl_runtime_c
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/include/rosidl_runtime_c/rosidl_runtime_c/action_type_support_struct.h
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/include/rosidl_runtime_c/rosidl_runtime_c/message_initialization.h
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/include/rosidl_runtime_c/rosidl_runtime_c/message_type_support_struct.h
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/include/rosidl_runtime_c/rosidl_runtime_c/primitives_sequence.h
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/include/rosidl_runtime_c/rosidl_runtime_c/primitives_sequence_functions.h
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/include/rosidl_runtime_c/rosidl_runtime_c/sequence_bound.h
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/include/rosidl_runtime_c/rosidl_runtime_c/service_type_support_struct.h
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/include/rosidl_runtime_c/rosidl_runtime_c/string.h
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/include/rosidl_runtime_c/rosidl_runtime_c/string_bound.h
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/include/rosidl_runtime_c/rosidl_runtime_c/string_functions.h
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/include/rosidl_runtime_c/rosidl_runtime_c/u16string.h
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/include/rosidl_runtime_c/rosidl_runtime_c/u16string_functions.h
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/include/rosidl_runtime_c/rosidl_runtime_c/visibility_control.h
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/ament_index/resource_index/package_run_dependencies/rosidl_runtime_c
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/ament_index/resource_index/parent_prefix_path/rosidl_runtime_c
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/environment/ament_prefix_path.sh
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/environment/ament_prefix_path.dsv
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/environment/path.sh
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/environment/path.dsv
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/local_setup.bash
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/local_setup.sh
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/local_setup.zsh
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/local_setup.dsv
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/package.dsv
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/ament_index/resource_index/packages/rosidl_runtime_c
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/cmake/ament_cmake_export_dependencies-extras.cmake
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/cmake/ament_cmake_export_include_directories-extras.cmake
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/cmake/ament_cmake_export_libraries-extras.cmake
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/cmake/ament_cmake_export_targets-extras.cmake
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/cmake/rosidl_runtime_cConfig.cmake
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/cmake/rosidl_runtime_cConfig-version.cmake
+-- Symlinking: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/package.xml
+-- Installing: /root/ros2_ws/install/rosidl_runtime_c/lib/librosidl_runtime_c.so
+-- Set runtime path of "/root/ros2_ws/install/rosidl_runtime_c/lib/librosidl_runtime_c.so" to ""
+-- Installing: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/cmake/rosidl_runtime_cExport.cmake
+-- Installing: /root/ros2_ws/install/rosidl_runtime_c/share/rosidl_runtime_c/cmake/rosidl_runtime_cExport-noconfig.cmake

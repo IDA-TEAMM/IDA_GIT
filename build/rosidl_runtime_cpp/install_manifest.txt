@@ -1,0 +1,1 @@
+/root/ros2_ws/install/rosidl_runtime_cpp/share/rosidl_runtime_cpp/cmake/rosidl_runtime_cppExport.cmake

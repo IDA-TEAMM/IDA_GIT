@@ -1,0 +1,46 @@
+[0.031s] Invoking command in '/root/ros2_ws/build/test_interface_files': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_core:/root/ros2_ws/install/ament_package:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_core:/opt/ros/humble PYTHONPATH=/root/ros2_ws/build/ament_package:/root/ros2_ws/install/ament_package/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/cmake /root/ros2_ws/src/ros2/test_interface_files -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/root/ros2_ws/install/test_interface_files
+[0.049s] -- Found ament_cmake_core: 1.3.14 (/root/ros2_ws/install/ament_cmake_core/share/ament_cmake_core/cmake)
+[0.258s] -- Found Python3: /usr/bin/python3 (found version "3.10.12") found components: Interpreter 
+[0.347s] -- Override CMake install command with custom implementation using symlinks instead of copying resources
+[0.423s] -- Configuring done
+[0.425s] -- Generating done
+[0.427s] -- Build files have been written to: /root/ros2_ws/build/test_interface_files
+[0.429s] Invoked command in '/root/ros2_ws/build/test_interface_files' returned '0': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_core:/root/ros2_ws/install/ament_package:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_core:/opt/ros/humble PYTHONPATH=/root/ros2_ws/build/ament_package:/root/ros2_ws/install/ament_package/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/cmake /root/ros2_ws/src/ros2/test_interface_files -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/root/ros2_ws/install/test_interface_files
+[0.430s] Invoking command in '/root/ros2_ws/build/test_interface_files': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_core:/root/ros2_ws/install/ament_package:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_core:/opt/ros/humble PYTHONPATH=/root/ros2_ws/build/ament_package:/root/ros2_ws/install/ament_package/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/cmake --build /root/ros2_ws/build/test_interface_files -- -j16 -l16
+[0.468s] Invoked command in '/root/ros2_ws/build/test_interface_files' returned '0': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_core:/root/ros2_ws/install/ament_package:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_core:/opt/ros/humble PYTHONPATH=/root/ros2_ws/build/ament_package:/root/ros2_ws/install/ament_package/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/cmake --build /root/ros2_ws/build/test_interface_files -- -j16 -l16
+[0.469s] Invoking command in '/root/ros2_ws/build/test_interface_files': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_core:/root/ros2_ws/install/ament_package:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_core:/opt/ros/humble PYTHONPATH=/root/ros2_ws/build/ament_package:/root/ros2_ws/install/ament_package/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/cmake --install /root/ros2_ws/build/test_interface_files
+[0.478s] -- Install configuration: ""
+[0.478s] -- Execute custom install script
+[0.478s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/msg/Arrays.msg
+[0.489s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/msg/BasicTypes.msg
+[0.498s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/msg/BoundedPlainSequences.msg
+[0.501s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/msg/BoundedSequences.msg
+[0.510s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/msg/Constants.msg
+[0.518s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/msg/Defaults.msg
+[0.526s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/msg/Empty.msg
+[0.533s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/msg/MultiNested.msg
+[0.541s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/msg/Nested.msg
+[0.551s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/msg/Strings.msg
+[0.559s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/msg/UnboundedSequences.msg
+[0.568s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/msg/WStrings.msg
+[0.575s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/srv/Arrays.srv
+[0.582s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/srv/BasicTypes.srv
+[0.589s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/srv/Empty.srv
+[0.597s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/action/Fibonacci.action
+[0.605s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/ament_index/resource_index/package_run_dependencies/test_interface_files
+[0.629s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/ament_index/resource_index/parent_prefix_path/test_interface_files
+[0.629s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/environment/ament_prefix_path.sh
+[0.630s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/environment/ament_prefix_path.dsv
+[0.663s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/environment/path.sh
+[0.663s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/environment/path.dsv
+[0.663s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/local_setup.bash
+[0.663s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/local_setup.sh
+[0.713s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/local_setup.zsh
+[0.714s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/local_setup.dsv
+[0.714s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/package.dsv
+[0.715s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/ament_index/resource_index/packages/test_interface_files
+[0.715s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/cmake/test_interface_files-extras.cmake
+[0.715s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/cmake/test_interface_filesConfig.cmake
+[0.715s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/cmake/test_interface_filesConfig-version.cmake
+[0.715s] -- Symlinking: /root/ros2_ws/install/test_interface_files/share/test_interface_files/package.xml
+[0.726s] Invoked command in '/root/ros2_ws/build/test_interface_files' returned '0': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_core:/root/ros2_ws/install/ament_package:${AMENT_PREFIX_PATH} CMAKE_PREFIX_PATH=/root/ros2_ws/install/ament_cmake_core:/opt/ros/humble PYTHONPATH=/root/ros2_ws/build/ament_package:/root/ros2_ws/install/ament_package/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/cmake --install /root/ros2_ws/build/test_interface_files

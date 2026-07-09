@@ -1,0 +1,10 @@
+/root/ros2_ws/build/rosidl_parser/CMakeFiles/uninstall.dir
+/root/ros2_ws/build/rosidl_parser/CMakeFiles/rosidl_parser_uninstall.dir
+/root/ros2_ws/build/rosidl_parser/CMakeFiles/ament_cmake_python_symlink_rosidl_parser.dir
+/root/ros2_ws/build/rosidl_parser/CMakeFiles/ament_cmake_python_build_rosidl_parser_egg.dir
+/root/ros2_ws/build/rosidl_parser/CMakeFiles/test.dir
+/root/ros2_ws/build/rosidl_parser/CMakeFiles/edit_cache.dir
+/root/ros2_ws/build/rosidl_parser/CMakeFiles/rebuild_cache.dir
+/root/ros2_ws/build/rosidl_parser/CMakeFiles/list_install_components.dir
+/root/ros2_ws/build/rosidl_parser/CMakeFiles/install.dir
+/root/ros2_ws/build/rosidl_parser/CMakeFiles/install/local.dir

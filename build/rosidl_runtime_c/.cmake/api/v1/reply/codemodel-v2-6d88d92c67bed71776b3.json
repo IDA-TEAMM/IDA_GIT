@@ -1,0 +1,193 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-8dfd6630cb71dafaba5a.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.12"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						3,
+						4,
+						5,
+						6,
+						7,
+						8,
+						9,
+						10,
+						11
+					]
+				},
+				{
+					"build" : "gtest",
+					"jsonFile" : "directory-gtest-02132bb52f481e8f8a48.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.8"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 1,
+					"source" : "/root/ros2_ws/install/gtest_vendor/src/gtest_vendor",
+					"targetIndexes" : 
+					[
+						1,
+						2
+					]
+				}
+			],
+			"name" : "",
+			"projects" : 
+			[
+				{
+					"childIndexes" : 
+					[
+						1
+					],
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "rosidl_runtime_c",
+					"targetIndexes" : 
+					[
+						0,
+						3,
+						4,
+						5,
+						6,
+						7,
+						8,
+						9,
+						10,
+						11
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						1
+					],
+					"name" : "gtest",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						1,
+						2
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "benchmark_string_conversion::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-benchmark_string_conversion-3a4a1c5126b575eee4ed.json",
+					"name" : "benchmark_string_conversion",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "gtest::@0af4add9fe94340e763e",
+					"jsonFile" : "target-gtest-995a7c288f7164e1d295.json",
+					"name" : "gtest",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "gtest_main::@0af4add9fe94340e763e",
+					"jsonFile" : "target-gtest_main-eda96fb890e905521ac3.json",
+					"name" : "gtest_main",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "rosidl_runtime_c::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-rosidl_runtime_c-302f5318810b3632fc86.json",
+					"name" : "rosidl_runtime_c",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "rosidl_runtime_c_uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-rosidl_runtime_c_uninstall-04b0334656b783bd5e4a.json",
+					"name" : "rosidl_runtime_c_uninstall",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_message_type_support::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_message_type_support-ff0bd2661f4b829ebc2c.json",
+					"name" : "test_message_type_support",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_primitives_sequence_functions::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_primitives_sequence_functions-db609ca928076df15ff7.json",
+					"name" : "test_primitives_sequence_functions",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_sequence_bound::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_sequence_bound-0aa3a6b56dd3e6f4ccab.json",
+					"name" : "test_sequence_bound",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_service_type_support::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_service_type_support-af5e91eba49e69b1941b.json",
+					"name" : "test_service_type_support",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_string_functions::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_string_functions-7ca2540f6df029621706.json",
+					"name" : "test_string_functions",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_u16string_functions::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_u16string_functions-b72a90439d6a0661db0a.json",
+					"name" : "test_u16string_functions",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-uninstall-8e47a38bacaf35bb54d7.json",
+					"name" : "uninstall",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/root/ros2_ws/build/rosidl_runtime_c",
+		"source" : "/root/ros2_ws/src/ros2/rosidl/rosidl_runtime_c"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 3
+	}
+}

@@ -1,0 +1,1 @@
+/root/ros2_ws/src/ament/ament_index/ament_index_python/completion/ament_index-argcomplete.bash

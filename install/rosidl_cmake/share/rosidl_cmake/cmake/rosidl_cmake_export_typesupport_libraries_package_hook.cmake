@@ -1,0 +1,1 @@
+/root/ros2_ws/src/ros2/rosidl/rosidl_cmake/cmake/rosidl_cmake_export_typesupport_libraries_package_hook.cmake

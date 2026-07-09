@@ -1,0 +1,20 @@
+{
+  "package_name": "rosidl_generator_cpp",
+  "non_idl_tuples": [
+    "/root/ros2_ws/install/test_interface_files/share/test_interface_files:msg/Arrays.msg",
+    "/root/ros2_ws/install/test_interface_files/share/test_interface_files:msg/BasicTypes.msg",
+    "/root/ros2_ws/install/test_interface_files/share/test_interface_files:msg/BoundedPlainSequences.msg",
+    "/root/ros2_ws/install/test_interface_files/share/test_interface_files:msg/BoundedSequences.msg",
+    "/root/ros2_ws/install/test_interface_files/share/test_interface_files:msg/Constants.msg",
+    "/root/ros2_ws/install/test_interface_files/share/test_interface_files:msg/Defaults.msg",
+    "/root/ros2_ws/install/test_interface_files/share/test_interface_files:msg/Empty.msg",
+    "/root/ros2_ws/install/test_interface_files/share/test_interface_files:msg/MultiNested.msg",
+    "/root/ros2_ws/install/test_interface_files/share/test_interface_files:msg/Nested.msg",
+    "/root/ros2_ws/install/test_interface_files/share/test_interface_files:msg/Strings.msg",
+    "/root/ros2_ws/install/test_interface_files/share/test_interface_files:msg/UnboundedSequences.msg",
+    "/root/ros2_ws/install/test_interface_files/share/test_interface_files:msg/WStrings.msg",
+    "/root/ros2_ws/install/test_interface_files/share/test_interface_files:srv/Arrays.srv",
+    "/root/ros2_ws/install/test_interface_files/share/test_interface_files:srv/BasicTypes.srv",
+    "/root/ros2_ws/install/test_interface_files/share/test_interface_files:srv/Empty.srv"
+  ]
+}

@@ -1,0 +1,310 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-8796ffb70d24e24c8ccf.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.12"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						4,
+						5,
+						6,
+						7,
+						8,
+						9,
+						10,
+						11,
+						12,
+						13,
+						14,
+						15,
+						16,
+						17,
+						18,
+						19,
+						20,
+						21,
+						22,
+						23,
+						24
+					]
+				},
+				{
+					"build" : "gtest",
+					"jsonFile" : "directory-gtest-02132bb52f481e8f8a48.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.8"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 1,
+					"source" : "/root/ros2_ws/install/gtest_vendor/src/gtest_vendor",
+					"targetIndexes" : 
+					[
+						2,
+						3
+					]
+				}
+			],
+			"name" : "",
+			"projects" : 
+			[
+				{
+					"childIndexes" : 
+					[
+						1
+					],
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "rcpputils",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						4,
+						5,
+						6,
+						7,
+						8,
+						9,
+						10,
+						11,
+						12,
+						13,
+						14,
+						15,
+						16,
+						17,
+						18,
+						19,
+						20,
+						21,
+						22,
+						23,
+						24
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						1
+					],
+					"name" : "gtest",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						2,
+						3
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "ament_generate_version_header__rcpputils::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-ament_generate_version_header__rcpputils-65bc7944026579883233.json",
+					"name" : "ament_generate_version_header__rcpputils",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "dummy_shared_library::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-dummy_shared_library-b3e7d4e17dc8630acef1.json",
+					"name" : "dummy_shared_library",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "gtest::@0af4add9fe94340e763e",
+					"jsonFile" : "target-gtest-3e7bb873a0eebb40ba45.json",
+					"name" : "gtest",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 1,
+					"id" : "gtest_main::@0af4add9fe94340e763e",
+					"jsonFile" : "target-gtest_main-3cf6853bf3e77abf35f1.json",
+					"name" : "gtest_main",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "rcpputils::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-rcpputils-81faae1a4ef723c7f6d2.json",
+					"name" : "rcpputils",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "rcpputils_uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-rcpputils_uninstall-b1c606913e561a97583e.json",
+					"name" : "rcpputils_uninstall",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_accumulator::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_accumulator-e20ea4558c27adabdbaf.json",
+					"name" : "test_accumulator",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_asserts_debug::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_asserts_debug-03a7956d0c3f356ca04f.json",
+					"name" : "test_asserts_debug",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_asserts_ndebug::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_asserts_ndebug-ab0ea1202b84c631639c.json",
+					"name" : "test_asserts_ndebug",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_clamp::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_clamp-307d06600559bbd0ed33.json",
+					"name" : "test_clamp",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_endian::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_endian-a74ae42945d9b227d174.json",
+					"name" : "test_endian",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_env::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_env-3deafd5f1daad4070e14.json",
+					"name" : "test_env",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_filesystem_helper::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_filesystem_helper-36e1a79e883116620754.json",
+					"name" : "test_filesystem_helper",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_find_and_replace::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_find_and_replace-9401b6dc2dea94248f83.json",
+					"name" : "test_find_and_replace",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_find_library::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_find_library-27668b315f02a9fb9996.json",
+					"name" : "test_find_library",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_join::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_join-b80d98abff8e542bf49e.json",
+					"name" : "test_join",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_library::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_library-1782d838f38e37b72e2c.json",
+					"name" : "test_library",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_pointer_traits::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_pointer_traits-98d0784459aa2d983252.json",
+					"name" : "test_pointer_traits",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_process::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_process-e297fecaba980c01dad0.json",
+					"name" : "test_process",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_scope_exit::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_scope_exit-262644d928a3ed0a7141.json",
+					"name" : "test_scope_exit",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_shared_library::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_shared_library-05c986d9a7eb4959a72a.json",
+					"name" : "test_shared_library",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_split::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_split-c3ef63cfe8e813442e65.json",
+					"name" : "test_split",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_thread_safety_annotations::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_thread_safety_annotations-5406cecf7020d60411a2.json",
+					"name" : "test_thread_safety_annotations",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "test_time::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-test_time-46c422e536a1db996212.json",
+					"name" : "test_time",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "uninstall::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-uninstall-4b71b5f1658cb00d9ad6.json",
+					"name" : "uninstall",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/root/ros2_ws/build/rcpputils",
+		"source" : "/root/ros2_ws/src/ros2/rcpputils"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 3
+	}
+}

@@ -1,0 +1,80 @@
+Determining if the strlcpy exist failed with the following output:
+Change Dir: /root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_01ad1/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_01ad1.dir/build.make CMakeFiles/cmTC_01ad1.dir/build
+gmake[1]: Entering directory '/root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp'
+Building C object CMakeFiles/cmTC_01ad1.dir/CheckSymbolExists.c.o
+/usr/bin/cc   -std=gnu99 -o CMakeFiles/cmTC_01ad1.dir/CheckSymbolExists.c.o -c /root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp/CheckSymbolExists.c
+/root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp/CheckSymbolExists.c: In function ‘main’:
+/root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp/CheckSymbolExists.c:8:19: error: ‘strlcpy’ undeclared (first use in this function); did you mean ‘strncpy’?
+    8 |   return ((int*)(&strlcpy))[argc];
+      |                   ^~~~~~~
+      |                   strncpy
+/root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp/CheckSymbolExists.c:8:19: note: each undeclared identifier is reported only once for each function it appears in
+gmake[1]: *** [CMakeFiles/cmTC_01ad1.dir/build.make:78: CMakeFiles/cmTC_01ad1.dir/CheckSymbolExists.c.o] Error 1
+gmake[1]: Leaving directory '/root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp'
+gmake: *** [Makefile:127: cmTC_01ad1/fast] Error 2
+
+
+File /root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp/CheckSymbolExists.c:
+/* */
+#include <string.h>
+
+int main(int argc, char** argv)
+{
+  (void)argv;
+#ifndef strlcpy
+  return ((int*)(&strlcpy))[argc];
+#else
+  (void)argc;
+  return 0;
+#endif
+}
+Determining if the strlcat exist failed with the following output:
+Change Dir: /root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_df85f/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_df85f.dir/build.make CMakeFiles/cmTC_df85f.dir/build
+gmake[1]: Entering directory '/root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp'
+Building C object CMakeFiles/cmTC_df85f.dir/CheckSymbolExists.c.o
+/usr/bin/cc   -std=gnu99 -o CMakeFiles/cmTC_df85f.dir/CheckSymbolExists.c.o -c /root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp/CheckSymbolExists.c
+/root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp/CheckSymbolExists.c: In function ‘main’:
+/root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp/CheckSymbolExists.c:8:19: error: ‘strlcat’ undeclared (first use in this function); did you mean ‘strncat’?
+    8 |   return ((int*)(&strlcat))[argc];
+      |                   ^~~~~~~
+      |                   strncat
+/root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp/CheckSymbolExists.c:8:19: note: each undeclared identifier is reported only once for each function it appears in
+gmake[1]: *** [CMakeFiles/cmTC_df85f.dir/build.make:78: CMakeFiles/cmTC_df85f.dir/CheckSymbolExists.c.o] Error 1
+gmake[1]: Leaving directory '/root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp'
+gmake: *** [Makefile:127: cmTC_df85f/fast] Error 2
+
+
+File /root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp/CheckSymbolExists.c:
+/* */
+#include <string.h>
+
+int main(int argc, char** argv)
+{
+  (void)argv;
+#ifndef strlcat
+  return ((int*)(&strlcat))[argc];
+#else
+  (void)argc;
+  return 0;
+#endif
+}
+Performing C SOURCE FILE Test COMPILER_HAS_HIDDEN_INLINE_VISIBILITY failed with the following output:
+Change Dir: /root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp
+
+Run Build Command(s):/usr/bin/gmake -f Makefile cmTC_efaa4/fast && /usr/bin/gmake  -f CMakeFiles/cmTC_efaa4.dir/build.make CMakeFiles/cmTC_efaa4.dir/build
+gmake[1]: Entering directory '/root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp'
+Building C object CMakeFiles/cmTC_efaa4.dir/src.c.o
+/usr/bin/cc -DCOMPILER_HAS_HIDDEN_INLINE_VISIBILITY  -fvisibility-inlines-hidden -std=gnu99 -o CMakeFiles/cmTC_efaa4.dir/src.c.o -c /root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp/src.c
+cc1: warning: command-line option '-fvisibility-inlines-hidden' is valid for C++/ObjC++ but not for C
+Linking C executable cmTC_efaa4
+/usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_efaa4.dir/link.txt --verbose=1
+/usr/bin/cc CMakeFiles/cmTC_efaa4.dir/src.c.o -o cmTC_efaa4 
+gmake[1]: Leaving directory '/root/ros2_ws/build/cyclonedds/CMakeFiles/CMakeTmp'
+
+
+Source file was:
+int main(void) { return 0; }

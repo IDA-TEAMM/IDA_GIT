@@ -1,0 +1,196 @@
+{
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"install",
+			"install_target_directories_and_header",
+			"setup_install_directories_and_export_package",
+			"install_package_files_and_export"
+		],
+		"files" : 
+		[
+			"CMakeLists.txt",
+			"cmake/IceoryxPackageHelper.cmake"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 224,
+				"parent" : 0
+			},
+			{
+				"command" : 2,
+				"file" : 0,
+				"line" : 230,
+				"parent" : 0
+			},
+			{
+				"command" : 1,
+				"file" : 1,
+				"line" : 63,
+				"parent" : 2
+			},
+			{
+				"command" : 0,
+				"file" : 1,
+				"line" : 80,
+				"parent" : 3
+			},
+			{
+				"command" : 0,
+				"file" : 1,
+				"line" : 89,
+				"parent" : 3
+			},
+			{
+				"command" : 3,
+				"file" : 1,
+				"line" : 67,
+				"parent" : 2
+			},
+			{
+				"command" : 0,
+				"file" : 1,
+				"line" : 101,
+				"parent" : 6
+			},
+			{
+				"command" : 0,
+				"file" : 1,
+				"line" : 107,
+				"parent" : 6
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 236,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 248,
+				"parent" : 0
+			}
+		]
+	},
+	"installers" : 
+	[
+		{
+			"backtrace" : 1,
+			"component" : "dev",
+			"destination" : "include/iceoryx/v2.0.6",
+			"paths" : 
+			[
+				{
+					"from" : "platform/linux/include",
+					"to" : "."
+				}
+			],
+			"type" : "directory"
+		},
+		{
+			"backtrace" : 4,
+			"component" : "bin",
+			"destination" : "lib",
+			"paths" : 
+			[
+				"libiceoryx_hoofs.so"
+			],
+			"targetId" : "iceoryx_hoofs::@6890427a1f51a3e7e1df",
+			"targetIndex" : 0,
+			"type" : "target"
+		},
+		{
+			"backtrace" : 4,
+			"component" : "bin",
+			"destination" : "lib",
+			"paths" : 
+			[
+				"platform/libiceoryx_platform.so"
+			],
+			"targetId" : "iceoryx_platform::@06522778d3acbe1b37c9",
+			"targetIndex" : 1,
+			"type" : "target"
+		},
+		{
+			"backtrace" : 5,
+			"component" : "dev",
+			"destination" : "include/iceoryx/v2.0.6",
+			"paths" : 
+			[
+				{
+					"from" : "include",
+					"to" : "."
+				}
+			],
+			"type" : "directory"
+		},
+		{
+			"backtrace" : 7,
+			"component" : "Unspecified",
+			"destination" : "lib/cmake/iceoryx_hoofs",
+			"paths" : 
+			[
+				"/root/ros2_ws/build/iceoryx_hoofs/iceoryx_hoofsConfigVersion.cmake",
+				"/root/ros2_ws/build/iceoryx_hoofs/iceoryx_hoofsConfig.cmake"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 8,
+			"component" : "Unspecified",
+			"destination" : "lib/cmake/iceoryx_hoofs",
+			"exportName" : "iceoryx_hoofsTargets",
+			"exportTargets" : 
+			[
+				{
+					"id" : "iceoryx_hoofs::@6890427a1f51a3e7e1df",
+					"index" : 0
+				},
+				{
+					"id" : "iceoryx_platform::@06522778d3acbe1b37c9",
+					"index" : 1
+				}
+			],
+			"paths" : 
+			[
+				"CMakeFiles/Export/lib/cmake/iceoryx_hoofs/iceoryx_hoofsTargets.cmake"
+			],
+			"type" : "export"
+		},
+		{
+			"backtrace" : 9,
+			"component" : "Unspecified",
+			"destination" : "lib/cmake/iceoryx_hoofs",
+			"paths" : 
+			[
+				"cmake/IceoryxPackageHelper.cmake",
+				"cmake/IceoryxPlatform.cmake",
+				"cmake/IceoryxVersion.cmake"
+			],
+			"type" : "file"
+		},
+		{
+			"backtrace" : 10,
+			"component" : "dev",
+			"destination" : "share/doc/iceoryx_hoofs",
+			"paths" : 
+			[
+				"LICENSE"
+			],
+			"type" : "file"
+		}
+	],
+	"paths" : 
+	{
+		"build" : ".",
+		"source" : "."
+	}
+}

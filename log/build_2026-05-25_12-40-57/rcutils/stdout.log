@@ -1,0 +1,5 @@
+-- Found ament_cmake_python: 1.3.14 (/root/ros2_ws/install/ament_cmake_python/share/ament_cmake_python/cmake)
+-- Found ament_cmake_ros: 0.10.0 (/root/ros2_ws/install/ament_cmake_ros/share/ament_cmake_ros/cmake)
+-- Override CMake install command with custom implementation using symlinks instead of copying resources
+-- Configuring incomplete, errors occurred!
+See also "/root/ros2_ws/build/rcutils/CMakeFiles/CMakeOutput.log".

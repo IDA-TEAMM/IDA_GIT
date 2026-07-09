@@ -1,0 +1,1 @@
+/root/ros2_ws/build/rosidl_cli/completion/rosidl-argcomplete.zsh

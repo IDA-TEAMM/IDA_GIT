@@ -1,0 +1,1 @@
+/usr/bin/cc -fPIC -shared -Wl,-soname,librcl_logging_interface.so -o librcl_logging_interface.so CMakeFiles/rcl_logging_interface.dir/src/logging_dir.c.o  -Wl,-rpath,/opt/ros/humble/lib: /opt/ros/humble/lib/librcutils.so -ldl -latomic 

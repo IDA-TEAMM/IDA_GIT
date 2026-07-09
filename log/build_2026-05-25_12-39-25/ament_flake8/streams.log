@@ -1,0 +1,17 @@
+[1.167s] Invoking command in '/root/ros2_ws/build/ament_flake8': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_lint:${AMENT_PREFIX_PATH} PYTHONPATH=/root/ros2_ws/build/ament_flake8/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/ros2_ws/install/ament_flake8/lib/python3.10/site-packages:/root/ros2_ws/build/ament_lint:/root/ros2_ws/install/ament_lint/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /root/ros2_ws/build/ament_flake8/build --no-deps symlink_data
+[1.408s] running develop
+[1.496s] running egg_info
+[1.496s] writing ament_flake8.egg-info/PKG-INFO
+[1.496s] writing dependency_links to ament_flake8.egg-info/dependency_links.txt
+[1.496s] writing entry points to ament_flake8.egg-info/entry_points.txt
+[1.496s] writing requirements to ament_flake8.egg-info/requires.txt
+[1.496s] writing top-level names to ament_flake8.egg-info/top_level.txt
+[1.499s] reading manifest file 'ament_flake8.egg-info/SOURCES.txt'
+[1.499s] writing manifest file 'ament_flake8.egg-info/SOURCES.txt'
+[1.501s] running build_ext
+[1.501s] Creating /root/ros2_ws/install/ament_flake8/lib/python3.10/site-packages/ament-flake8.egg-link (link to .)
+[1.502s] Installing ament_flake8 script to /root/ros2_ws/install/ament_flake8/bin
+[1.502s] 
+[1.502s] Installed /root/ros2_ws/build/ament_flake8
+[1.503s] running symlink_data
+[1.543s] Invoked command in '/root/ros2_ws/build/ament_flake8' returned '0': AMENT_PREFIX_PATH=/root/ros2_ws/install/ament_lint:${AMENT_PREFIX_PATH} PYTHONPATH=/root/ros2_ws/build/ament_flake8/prefix_override:/usr/lib/python3/dist-packages/colcon_core/task/python/colcon_distutils_commands:/root/ros2_ws/install/ament_flake8/lib/python3.10/site-packages:/root/ros2_ws/build/ament_lint:/root/ros2_ws/install/ament_lint/lib/python3.10/site-packages:${PYTHONPATH} /usr/bin/python3 -W ignore:setup.py install is deprecated -W ignore:easy_install command is deprecated setup.py develop --editable --build-directory /root/ros2_ws/build/ament_flake8/build --no-deps symlink_data

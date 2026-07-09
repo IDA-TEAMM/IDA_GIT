@@ -1,0 +1,55 @@
+[0.659s] Invoking command in '/root/ros2_ws/build/iceoryx_hoofs': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /root/ros2_ws/src/eclipse-iceoryx/iceoryx/iceoryx_hoofs -DCMAKE_INSTALL_PREFIX=/root/ros2_ws/install/iceoryx_hoofs
+[0.732s] -- The C compiler identification is GNU 11.4.0
+[0.787s] -- The CXX compiler identification is GNU 11.4.0
+[0.805s] -- Detecting C compiler ABI info
+[0.854s] -- Detecting C compiler ABI info - done
+[0.858s] -- Check for working C compiler: /usr/bin/cc - skipped
+[0.859s] -- Detecting C compile features
+[0.859s] -- Detecting C compile features - done
+[0.861s] -- Detecting CXX compiler ABI info
+[0.930s] -- Detecting CXX compiler ABI info - done
+[0.938s] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+[0.939s] -- Detecting CXX compile features
+[0.939s] -- Detecting CXX compile features - done
+[0.946s] -- Configuring done
+[0.958s] -- Generating done
+[0.961s] -- Build files have been written to: /root/ros2_ws/build/iceoryx_hoofs
+[0.965s] Invoked command in '/root/ros2_ws/build/iceoryx_hoofs' returned '0': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake /root/ros2_ws/src/eclipse-iceoryx/iceoryx/iceoryx_hoofs -DCMAKE_INSTALL_PREFIX=/root/ros2_ws/install/iceoryx_hoofs
+[0.966s] Invoking command in '/root/ros2_ws/build/iceoryx_hoofs': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /root/ros2_ws/build/iceoryx_hoofs -- -j16 -l16
+[1.013s] [  4%] Building CXX object platform/CMakeFiles/iceoryx_platform.dir/linux/source/file.cpp.o
+[1.013s] [  4%] Building CXX object platform/CMakeFiles/iceoryx_platform.dir/linux/source/mman.cpp.o
+[1.013s] [  8%] Building CXX object platform/CMakeFiles/iceoryx_platform.dir/linux/source/grp.cpp.o
+[1.014s] [  8%] Building CXX object platform/CMakeFiles/iceoryx_platform.dir/linux/source/fnctl.cpp.o
+[1.017s] [ 11%] Building CXX object platform/CMakeFiles/iceoryx_platform.dir/linux/source/mqueue.cpp.o
+[1.018s] [ 13%] Building CXX object platform/CMakeFiles/iceoryx_platform.dir/linux/source/unistd.cpp.o
+[1.020s] [ 15%] Building CXX object platform/CMakeFiles/iceoryx_platform.dir/linux/source/socket.cpp.o
+[1.063s] [ 17%] Linking CXX shared library libiceoryx_platform.so
+[1.098s] [ 17%] Built target iceoryx_platform
+[1.118s] [ 20%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/concurrent/active_object.cpp.o
+[1.118s] [ 22%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/cxx/deadline_timer.cpp.o
+[1.118s] [ 24%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/cxx/helplets.cpp.o
+[1.118s] [ 26%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/cxx/generic_raii.cpp.o
+[1.119s] [ 28%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/concurrent/loffli.cpp.o
+[1.122s] [ 31%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/cxx/unique_id.cpp.o
+[1.125s] [ 33%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/error_handling/error_handling.cpp.o
+[1.125s] [ 35%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/log/logging_internal.cpp.o
+[1.125s] [ 37%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/log/logging.cpp.o
+[1.125s] [ 40%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/cxx/filesystem.cpp.o
+[1.126s] [ 42%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/log/logmanager.cpp.o
+[1.126s] [ 44%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/file_reader/file_reader.cpp.o
+[1.126s] [ 46%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/log/logstream.cpp.o
+[1.130s] [ 48%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/cxx/requires.cpp.o
+[1.130s] [ 51%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/log/logcommon.cpp.o
+[1.130s] [ 53%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/log/logger.cpp.o
+[1.224s] [ 55%] Building CXX object CMakeFiles/iceoryx_hoofs.dir/source/posix_wrapper/access_control.cpp.o
+[1.308s] In file included from /root/ros2_ws/src/eclipse-iceoryx/iceoryx/iceoryx_hoofs/include/iceoryx_hoofs/internal/posix_wrapper/access_control.hpp:23,
+[1.308s]                  from /root/ros2_ws/src/eclipse-iceoryx/iceoryx/iceoryx_hoofs/source/posix_wrapper/access_control.cpp:18:
+[1.308s] /root/ros2_ws/src/eclipse-iceoryx/iceoryx/iceoryx_hoofs/platform/linux/include/iceoryx_hoofs/platform/acl.hpp:20:10: fatal error: sys/acl.h: No such file or directory
+[1.308s]    20 | #include <sys/acl.h>
+[1.308s]       |          ^~~~~~~~~~~
+[1.308s] compilation terminated.
+[1.308s] gmake[2]: *** [CMakeFiles/iceoryx_hoofs.dir/build.make:300: CMakeFiles/iceoryx_hoofs.dir/source/posix_wrapper/access_control.cpp.o] Error 1
+[1.309s] gmake[2]: *** Waiting for unfinished jobs....
+[2.224s] gmake[1]: *** [CMakeFiles/Makefile2:100: CMakeFiles/iceoryx_hoofs.dir/all] Error 2
+[2.224s] gmake: *** [Makefile:136: all] Error 2
+[2.225s] Invoked command in '/root/ros2_ws/build/iceoryx_hoofs' returned '2': CMAKE_PREFIX_PATH=/opt/ros/humble /usr/bin/cmake --build /root/ros2_ws/build/iceoryx_hoofs -- -j16 -l16

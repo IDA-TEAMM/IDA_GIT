@@ -1,0 +1,1219 @@
+[-1778328052362886912.000s] colcon.colcon_ros.prefix_path.ament WARNING The path '/home/sudenaz/ros2_ws/install/test_launch_testing' in the environment variable AMENT_PREFIX_PATH doesn't exist
+[-1778328052362886912.000s] colcon.colcon_ros.prefix_path.ament WARNING The path '/home/sudenaz/ros2_ws/install/rviz_ogre_vendor' in the environment variable AMENT_PREFIX_PATH doesn't exist
+[-1778328052362886912.000s] colcon.colcon_ros.prefix_path.ament WARNING The path '/home/sudenaz/ros2_ws/install/rviz_assimp_vendor' in the environment variable AMENT_PREFIX_PATH doesn't exist
+[-1778328052362886912.000s] colcon.colcon_ros.prefix_path.ament WARNING The path '/home/sudenaz/ros2_ws/install/launch_testing_ament_cmake' in the environment variable AMENT_PREFIX_PATH doesn't exist
+[-1778328052362886912.000s] colcon.colcon_ros.prefix_path.ament WARNING The path '/home/sudenaz/ros2_ws/install/launch_pytest' in the environment variable AMENT_PREFIX_PATH doesn't exist
+[-1778328052362886912.000s] colcon.colcon_ros.prefix_path.ament WARNING The path '/home/sudenaz/ros2_ws/install/mimick_vendor' in the environment variable AMENT_PREFIX_PATH doesn't exist
+[-1778328052362886912.000s] colcon.colcon_ros.prefix_path.catkin WARNING The path '/home/sudenaz/ros2_ws/install/test_launch_testing' in the environment variable CMAKE_PREFIX_PATH doesn't exist
+[-1778328052362886912.000s] colcon.colcon_ros.prefix_path.catkin WARNING The path '/home/sudenaz/ros2_ws/install/rviz_ogre_vendor' in the environment variable CMAKE_PREFIX_PATH doesn't exist
+[-1778328052362886912.000s] colcon.colcon_ros.prefix_path.catkin WARNING The path '/home/sudenaz/ros2_ws/install/rviz_assimp_vendor' in the environment variable CMAKE_PREFIX_PATH doesn't exist
+[-1778328052362886912.000s] colcon.colcon_ros.prefix_path.catkin WARNING The path '/home/sudenaz/ros2_ws/install/launch_testing_ament_cmake' in the environment variable CMAKE_PREFIX_PATH doesn't exist
+[-1778328052362886912.000s] colcon.colcon_ros.prefix_path.catkin WARNING The path '/home/sudenaz/ros2_ws/install/mimick_vendor' in the environment variable CMAKE_PREFIX_PATH doesn't exist
+[-1778328052362886912.000s] colcon.colcon_core.package_selection WARNING Some selected packages are already built in one or more underlay workspaces:
+	'tf2_msgs' is in: /home/sudenaz/ros2_ws/install/tf2_msgs
+	'resource_retriever' is in: /home/sudenaz/ros2_ws/install/resource_retriever
+	'builtin_interfaces' is in: /home/sudenaz/ros2_ws/install/builtin_interfaces
+	'launch' is in: /home/sudenaz/ros2_ws/install/launch
+	'ament_index_python' is in: /home/sudenaz/ros2_ws/install/ament_index_python
+	'ament_cmake_gtest' is in: /home/sudenaz/ros2_ws/install/ament_cmake_gtest
+	'zstd_vendor' is in: /home/sudenaz/ros2_ws/install/zstd_vendor
+	'rclcpp' is in: /home/sudenaz/ros2_ws/install/rclcpp
+	'rcl_logging_interface' is in: /home/sudenaz/ros2_ws/install/rcl_logging_interface
+	'rclcpp_action' is in: /home/sudenaz/ros2_ws/install/rclcpp_action
+	'pluginlib' is in: /home/sudenaz/ros2_ws/install/pluginlib
+	'rmw_implementation' is in: /home/sudenaz/ros2_ws/install/rmw_implementation
+	'launch_ros' is in: /home/sudenaz/ros2_ws/install/launch_ros
+	'sqlite3_vendor' is in: /home/sudenaz/ros2_ws/install/sqlite3_vendor
+	'camera_calibration_parsers' is in: /home/sudenaz/ros2_ws/install/camera_calibration_parsers
+	'rpyutils' is in: /home/sudenaz/ros2_ws/install/rpyutils
+	'ros2test' is in: /home/sudenaz/ros2_ws/install/ros2test
+	'geometry_msgs' is in: /home/sudenaz/ros2_ws/install/geometry_msgs
+	'ros2cli' is in: /home/sudenaz/ros2_ws/install/ros2cli
+	'tf2_py' is in: /home/sudenaz/ros2_ws/install/tf2_py
+	'console_bridge_vendor' is in: /home/sudenaz/ros2_ws/install/console_bridge_vendor
+	'rosidl_runtime_c' is in: /home/sudenaz/ros2_ws/install/rosidl_runtime_c
+	'rqt_gui' is in: /home/sudenaz/ros2_ws/install/rqt_gui
+	'camera_info_manager' is in: /home/sudenaz/ros2_ws/install/camera_info_manager
+	'rcl_yaml_param_parser' is in: /home/sudenaz/ros2_ws/install/rcl_yaml_param_parser
+	'qt_gui_app' is in: /home/sudenaz/ros2_ws/install/qt_gui_app
+	'qt_gui' is in: /home/sudenaz/ros2_ws/install/qt_gui
+	'action_tutorials_interfaces' is in: /home/sudenaz/ros2_ws/install/action_tutorials_interfaces
+	'ament_index_cpp' is in: /home/sudenaz/ros2_ws/install/ament_index_cpp
+	'rmw' is in: /home/sudenaz/ros2_ws/install/rmw
+	'example_interfaces' is in: /home/sudenaz/ros2_ws/install/example_interfaces
+	'rosgraph_msgs' is in: /home/sudenaz/ros2_ws/install/rosgraph_msgs
+	'message_filters' is in: /home/sudenaz/ros2_ws/install/message_filters
+	'rcutils' is in: /home/sudenaz/ros2_ws/install/rcutils
+	'launch_xml' is in: /home/sudenaz/ros2_ws/install/launch_xml
+	'std_msgs' is in: /home/sudenaz/ros2_ws/install/std_msgs
+	'yaml_cpp_vendor' is in: /home/sudenaz/ros2_ws/install/yaml_cpp_vendor
+	'rcl' is in: /home/sudenaz/ros2_ws/install/rcl
+	'qt_gui_py_common' is in: /home/sudenaz/ros2_ws/install/qt_gui_py_common
+	'rcl_action' is in: /home/sudenaz/ros2_ws/install/rcl_action
+	'tinyxml_vendor' is in: /home/sudenaz/ros2_ws/install/tinyxml_vendor
+	'rclcpp_components' is in: /home/sudenaz/ros2_ws/install/rclcpp_components
+	'ament_cmake_gmock' is in: /home/sudenaz/ros2_ws/install/ament_cmake_gmock
+	'tf2' is in: /home/sudenaz/ros2_ws/install/tf2
+	'unique_identifier_msgs' is in: /home/sudenaz/ros2_ws/install/unique_identifier_msgs
+	'ament_lint_common' is in: /home/sudenaz/ros2_ws/install/ament_lint_common
+	'launch_testing' is in: /home/sudenaz/ros2_ws/install/launch_testing
+	'ament_lint_auto' is in: /home/sudenaz/ros2_ws/install/ament_lint_auto
+	'rcl_interfaces' is in: /home/sudenaz/ros2_ws/install/rcl_interfaces
+	'sensor_msgs' is in: /home/sudenaz/ros2_ws/install/sensor_msgs
+	'rcl_lifecycle' is in: /home/sudenaz/ros2_ws/install/rcl_lifecycle
+	'urdfdom_headers' is in: /home/sudenaz/ros2_ws/install/urdfdom_headers
+	'urdf' is in: /home/sudenaz/ros2_ws/install/urdf
+	'rcpputils' is in: /home/sudenaz/ros2_ws/install/rcpputils
+	'qt_dotgraph' is in: /home/sudenaz/ros2_ws/install/qt_dotgraph
+	'eigen3_cmake_module' is in: /home/sudenaz/ros2_ws/install/eigen3_cmake_module
+	'tracetools_trace' is in: /home/sudenaz/ros2_ws/install/tracetools_trace
+If a package in a merged underlay workspace is overridden and it installs headers, then all packages in the overlay must sort their include directories by workspace order. Failure to do so may result in build failures or undefined behavior at run time.
+If the overridden package is used by another package in any underlay, then the overriding package in the overlay must be API and ABI compatible or undefined behavior at run time may occur.
+
+If you understand the risks and want to override a package anyways, add the following to the command line:
+	--allow-overriding action_tutorials_interfaces ament_cmake_gmock ament_cmake_gtest ament_index_cpp ament_index_python ament_lint_auto ament_lint_common builtin_interfaces camera_calibration_parsers camera_info_manager console_bridge_vendor eigen3_cmake_module example_interfaces geometry_msgs launch launch_ros launch_testing launch_xml message_filters pluginlib qt_dotgraph qt_gui qt_gui_app qt_gui_py_common rcl rcl_action rcl_interfaces rcl_lifecycle rcl_logging_interface rcl_yaml_param_parser rclcpp rclcpp_action rclcpp_components rcpputils rcutils resource_retriever rmw rmw_implementation ros2cli ros2test rosgraph_msgs rosidl_runtime_c rpyutils rqt_gui sensor_msgs sqlite3_vendor std_msgs tf2 tf2_msgs tf2_py tinyxml_vendor tracetools_trace unique_identifier_msgs urdf urdfdom_headers yaml_cpp_vendor zstd_vendor
+
+This may be promoted to an error in a future release of colcon-override-check.
+Starting >>> ament_package
+Starting >>> ament_lint
+Starting >>> gtest_vendor
+Starting >>> ament_pycodestyle
+Starting >>> ament_cppcheck
+Starting >>> osrf_pycommon
+Starting >>> fastcdr
+Starting >>> iceoryx_hoofs
+Starting >>> google_benchmark_vendor
+Starting >>> urdfdom_headers
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'test_suite'
+  warnings.warn(msg)
+Finished <<< gtest_vendor [0.87s]
+Starting >>> gmock_vendor
+Finished <<< google_benchmark_vendor [0.87s]
+Finished <<< fastcdr [0.90s]
+Finished <<< urdfdom_headers [0.88s]
+Finished <<< iceoryx_hoofs [0.94s]
+Starting >>> iceoryx_posh
+Finished <<< gmock_vendor [0.13s]
+Finished <<< iceoryx_posh [0.25s]
+Starting >>> iceoryx_binding_c
+Starting >>> iceoryx_introspection
+[-1778328052362886912.000s] colcon.colcon_cmake.task.cmake.build WARNING Could not run installation step for package 'iceoryx_introspection' because it has no 'install' target
+Finished <<< iceoryx_introspection [0.07s]
+Finished <<< iceoryx_binding_c [0.12s]
+Starting >>> cyclonedds
+Finished <<< cyclonedds [0.27s]
+--- stderr: osrf_pycommon
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'test_suite'
+  warnings.warn(msg)
+---
+Finished <<< osrf_pycommon [1.60s]
+Finished <<< ament_package [1.68s]
+Starting >>> ament_cmake_core
+Finished <<< ament_cmake_core [0.09s]
+Starting >>> ament_cmake_python
+Starting >>> ament_cmake_libraries
+Starting >>> ament_cmake_export_libraries
+Starting >>> ament_cmake_include_directories
+Starting >>> ament_cmake_export_definitions
+Starting >>> ament_cmake_export_include_directories
+Starting >>> ament_cmake_export_link_flags
+Starting >>> ament_cmake_version
+Starting >>> test_interface_files
+Starting >>> ros_environment
+--- stderr: ament_lint
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< ament_lint [1.88s]
+--- stderr: ament_cppcheck
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< ament_cppcheck [1.87s]
+Starting >>> ament_flake8
+--- stderr: ament_pycodestyle
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< ament_pycodestyle [1.90s]
+Starting >>> ament_pyflakes
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+Finished <<< ament_cmake_python [0.51s]
+Finished <<< ament_cmake_libraries [0.51s]
+Starting >>> ament_cmake_test
+Starting >>> ament_cmake_export_dependencies
+Finished <<< ament_cmake_include_directories [0.51s]
+Finished <<< ament_cmake_export_libraries [0.53s]
+Finished <<< ament_cmake_export_link_flags [0.48s]
+Finished <<< ament_cmake_export_definitions [0.51s]
+Finished <<< ament_cmake_export_include_directories [0.50s]
+Finished <<< test_interface_files [0.49s]
+Finished <<< ament_cmake_version [0.50s]
+Finished <<< ros_environment [0.50s]
+Starting >>> ament_cmake_export_interfaces
+Starting >>> ament_cmake_export_targets
+Starting >>> ament_cmake_target_dependencies
+Finished <<< ament_cmake_export_dependencies [0.15s]
+Finished <<< ament_cmake_export_interfaces [0.10s]
+Finished <<< ament_cmake_export_targets [0.13s]
+Finished <<< ament_cmake_target_dependencies [0.16s]
+Finished <<< ament_cmake_test [0.47s]
+Starting >>> ament_cmake_gtest
+Starting >>> ament_lint_auto
+Starting >>> ament_cmake_pytest
+Starting >>> ament_cmake_google_benchmark
+Starting >>> ament_cmake_nose
+Starting >>> ament_cmake_vendor_package
+Finished <<< ament_cmake_gtest [0.11s]
+Starting >>> ament_cmake_gen_version_h
+Starting >>> ament_cmake_gmock
+Finished <<< ament_cmake_pytest [0.16s]
+Finished <<< ament_cmake_nose [0.18s]
+Finished <<< ament_lint_auto [0.22s]
+Finished <<< ament_cmake_vendor_package [0.22s]
+Finished <<< ament_cmake_gen_version_h [0.18s]
+Finished <<< ament_cmake_gmock [0.19s]
+Starting >>> ament_cmake
+--- stderr: ament_flake8
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< ament_flake8 [1.21s]
+Starting >>> ament_pep257
+Starting >>> ament_mypy
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+--- stderr: ament_pyflakes
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< ament_pyflakes [1.42s]
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+Finished <<< ament_cmake_google_benchmark [0.74s]
+Finished <<< ament_cmake [0.49s]
+Starting >>> uncrustify_vendor
+Starting >>> pybind11_vendor
+Starting >>> tinyxml2_vendor
+Starting >>> yaml_cpp_vendor
+Starting >>> tinyxml_vendor
+Starting >>> libcurl_vendor
+Starting >>> ament_cmake_auto
+Starting >>> shared_queues_vendor
+Starting >>> sqlite3_vendor
+Starting >>> zstd_vendor
+Finished <<< yaml_cpp_vendor [0.28s]
+Finished <<< tinyxml2_vendor [0.32s]
+Finished <<< sqlite3_vendor [0.29s]
+Finished <<< shared_queues_vendor [0.31s]
+Finished <<< uncrustify_vendor [0.42s]
+Finished <<< tinyxml_vendor [0.42s]
+Finished <<< libcurl_vendor [0.42s]
+Finished <<< ament_cmake_auto [0.43s]
+Finished <<< pybind11_vendor [0.47s]
+Finished <<< zstd_vendor [0.41s]
+--- stderr: ament_mypy
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< ament_mypy [1.27s]
+--- stderr: ament_pep257
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< ament_pep257 [1.31s]
+Starting >>> ament_copyright
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+--- stderr: ament_copyright
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< ament_copyright [0.89s]
+Starting >>> ament_lint_cmake
+Starting >>> ament_xmllint
+Starting >>> ament_cpplint
+Starting >>> ament_uncrustify
+Starting >>> ament_index_python
+Starting >>> domain_coordinator
+Starting >>> ament_clang_format
+Starting >>> ament_clang_tidy
+Starting >>> ament_pclint
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+--- stderr: ament_xmllint
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< ament_xmllint [2.08s]
+Starting >>> rosidl_cli
+Starting >>> rpyutils
+Starting >>> tracetools_trace
+Starting >>> tracetools_read
+--- stderr: ament_index_python
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< ament_index_python [2.29s]
+Starting >>> launch
+--- stderr: ament_cpplint
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< ament_cpplint [2.33s]
+--- stderr: domain_coordinator
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< domain_coordinator [2.93s]
+--- stderr: ament_clang_tidy
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< ament_clang_tidy [2.92s]
+--- stderr: ament_clang_format
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< ament_clang_format [2.93s]
+--- stderr: ament_lint_cmake
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< ament_lint_cmake [2.99s]
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+Starting >>> ament_cmake_lint_cmake
+Finished <<< ament_pclint [3.27s]
+Finished <<< ament_cmake_lint_cmake [0.36s]
+Starting >>> ament_cmake_copyright
+--- stderr: ament_uncrustify
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< ament_uncrustify [3.86s]
+Finished <<< ament_cmake_copyright [0.25s]
+Starting >>> ament_cmake_xmllint
+Starting >>> ament_cmake_cppcheck
+Starting >>> ament_cmake_cpplint
+Starting >>> ament_cmake_flake8
+Starting >>> ament_cmake_pep257
+Starting >>> ament_cmake_uncrustify
+Starting >>> eigen3_cmake_module
+Starting >>> ament_cmake_clang_format
+Starting >>> ament_cmake_mypy
+Starting >>> ament_cmake_clang_tidy
+Starting >>> ament_cmake_pclint
+Finished <<< rosidl_cli [2.18s]
+Starting >>> ament_cmake_pycodestyle
+Finished <<< tracetools_read [2.16s]
+Starting >>> ament_cmake_pyflakes
+Finished <<< rpyutils [2.27s]
+Finished <<< ament_cmake_pep257 [0.44s]
+Finished <<< ament_cmake_cppcheck [0.48s]
+Finished <<< ament_cmake_flake8 [0.48s]
+Finished <<< ament_cmake_xmllint [0.53s]
+Starting >>> ignition_cmake2_vendor
+Starting >>> foonathan_memory_vendor
+Finished <<< ament_cmake_clang_format [0.53s]
+Finished <<< ament_cmake_mypy [0.53s]
+Finished <<< ament_cmake_cpplint [0.60s]
+Finished <<< tracetools_trace [2.42s]
+--- stderr: launch
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< launch [2.25s]
+Starting >>> launch_xml
+Starting >>> launch_yaml
+Finished <<< ament_cmake_clang_tidy [0.60s]
+Finished <<< ament_cmake_pclint [0.60s]
+Finished <<< eigen3_cmake_module [0.67s]
+Finished <<< ament_cmake_pycodestyle [0.38s]
+Finished <<< ament_cmake_uncrustify [0.70s]
+Starting >>> ament_lint_common
+Finished <<< foonathan_memory_vendor [0.25s]
+Starting >>> fastrtps
+Finished <<< ament_cmake_pyflakes [0.45s]
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+Finished <<< ignition_cmake2_vendor [0.63s]
+Starting >>> ignition_math6_vendor
+Finished <<< ament_lint_common [0.50s]
+Starting >>> ament_cmake_ros
+Starting >>> rosidl_typesupport_interface
+Starting >>> rosidl_adapter
+Starting >>> fastrtps_cmake_module
+Starting >>> python_cmake_module
+Starting >>> ament_index_cpp
+Starting >>> rmw_implementation_cmake
+Starting >>> spdlog_vendor
+Starting >>> console_bridge_vendor
+Starting >>> python_qt_binding
+Starting >>> tango_icons_vendor
+Starting >>> keyboard_handler
+Finished <<< fastrtps [0.71s]
+Starting >>> rti_connext_dds_cmake_module
+Finished <<< ignition_math6_vendor [0.40s]
+Starting >>> tlsf
+Finished <<< fastrtps_cmake_module [0.91s]
+Starting >>> rttest
+Finished <<< ament_index_cpp [0.94s]
+Finished <<< rosidl_typesupport_interface [1.02s]
+Finished <<< spdlog_vendor [0.99s]
+Finished <<< python_cmake_module [1.05s]
+Finished <<< rmw_implementation_cmake [1.05s]
+--- stderr: launch_yaml
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< launch_yaml [1.71s]
+Finished <<< ament_cmake_ros [1.14s]
+Starting >>> rcutils
+Starting >>> tracetools
+Starting >>> urdf_parser_plugin
+Starting >>> resource_retriever
+Finished <<< console_bridge_vendor [1.17s]
+Finished <<< tango_icons_vendor [1.15s]
+Finished <<< rti_connext_dds_cmake_module [1.03s]
+Finished <<< tlsf [0.98s]
+Finished <<< keyboard_handler [1.18s]
+--- stderr: launch_xml
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< launch_xml [1.96s]
+Starting >>> launch_testing
+Finished <<< rosidl_adapter [1.47s]
+Starting >>> rosidl_parser
+Finished <<< python_qt_binding [1.49s]
+Starting >>> qt_gui
+Starting >>> qt_gui_py_common
+Starting >>> qt_dotgraph
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+Finished <<< rttest [1.09s]
+Finished <<< tracetools [0.91s]
+Finished <<< urdf_parser_plugin [0.97s]
+Finished <<< resource_retriever [1.33s]
+Finished <<< rcutils [1.49s]
+Starting >>> rosidl_runtime_c
+Starting >>> rcpputils
+Finished <<< rosidl_parser [1.17s]
+Starting >>> rosidl_cmake
+Finished <<< qt_dotgraph [1.14s]
+Finished <<< qt_gui_py_common [1.22s]
+Finished <<< qt_gui [1.47s]
+Starting >>> qt_gui_app
+--- stderr: launch_testing
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< launch_testing [1.79s]
+Finished <<< rosidl_runtime_c [0.70s]
+Starting >>> rosidl_runtime_cpp
+Starting >>> rmw
+Finished <<< rcpputils [0.73s]
+Starting >>> rcl_logging_interface
+Starting >>> libyaml_vendor
+Starting >>> class_loader
+Finished <<< rosidl_cmake [0.90s]
+Starting >>> rosidl_generator_c
+Starting >>> rosidl_typesupport_introspection_c
+Starting >>> rosidl_generator_dds_idl
+Finished <<< qt_gui_app [0.85s]
+Finished <<< rmw [0.81s]
+Finished <<< rcl_logging_interface [0.86s]
+Starting >>> rcl_logging_noop
+Starting >>> rcl_logging_spdlog
+Finished <<< class_loader [0.90s]
+Starting >>> pluginlib
+Finished <<< rosidl_runtime_cpp [1.08s]
+Finished <<< libyaml_vendor [1.08s]
+Starting >>> rcl_yaml_param_parser
+Finished <<< rosidl_generator_c [1.11s]
+Starting >>> rosidl_generator_cpp
+Finished <<< rosidl_typesupport_introspection_c [1.16s]
+Starting >>> rosidl_typesupport_introspection_cpp
+Finished <<< rosidl_generator_dds_idl [1.30s]
+Finished <<< pluginlib [0.67s]
+Starting >>> urdf
+Finished <<< rcl_logging_spdlog [1.02s]
+Finished <<< rcl_logging_noop [1.07s]
+Finished <<< rcl_yaml_param_parser [0.94s]
+Finished <<< urdf [0.73s]
+Finished <<< rosidl_generator_cpp [1.07s]
+Starting >>> rosidl_typesupport_fastrtps_cpp
+Finished <<< rosidl_typesupport_introspection_cpp [1.32s]
+Starting >>> rosidl_typesupport_introspection_tests
+Finished <<< rosidl_typesupport_fastrtps_cpp [0.97s]
+Starting >>> rosidl_typesupport_fastrtps_c
+Finished <<< rosidl_typesupport_introspection_tests [0.72s]
+Finished <<< rosidl_typesupport_fastrtps_c [0.99s]
+Starting >>> rosidl_typesupport_c
+Finished <<< rosidl_typesupport_c [1.03s]
+Starting >>> rosidl_generator_py
+Starting >>> rosidl_generator_rs
+Starting >>> rosidl_typesupport_cpp
+Finished <<< rosidl_generator_py [1.09s]
+Finished <<< rosidl_typesupport_cpp [1.11s]
+Finished <<< rosidl_generator_rs [1.16s]
+Starting >>> rosidl_default_generators
+Starting >>> rosidl_default_runtime
+Finished <<< rosidl_default_runtime [0.84s]
+Finished <<< rosidl_default_generators [0.92s]
+Starting >>> builtin_interfaces
+Starting >>> unique_identifier_msgs
+Starting >>> rmw_dds_common
+Starting >>> lifecycle_msgs
+Starting >>> std_srvs
+Finished <<< unique_identifier_msgs [1.31s]
+Finished <<< rmw_dds_common [1.33s]
+Starting >>> rmw_cyclonedds_cpp
+Starting >>> rmw_connextdds_common
+Finished <<< std_srvs [1.48s]
+Finished <<< lifecycle_msgs [1.51s]
+Finished <<< builtin_interfaces [1.77s]
+Starting >>> action_msgs
+Starting >>> std_msgs
+Starting >>> rcl_interfaces
+Starting >>> rosgraph_msgs
+Starting >>> statistics_msgs
+Starting >>> rosbag2_interfaces
+Starting >>> pendulum_msgs
+Finished <<< rmw_connextdds_common [1.05s]
+Starting >>> rmw_connextddsmicro
+Finished <<< rmw_cyclonedds_cpp [1.48s]
+Starting >>> rmw_implementation
+Finished <<< pendulum_msgs [1.63s]
+Finished <<< rosgraph_msgs [1.90s]
+Finished <<< std_msgs [1.93s]
+Starting >>> geometry_msgs
+Starting >>> actionlib_msgs
+Finished <<< statistics_msgs [1.96s]
+Finished <<< rmw_connextddsmicro [1.50s]
+Finished <<< action_msgs [2.15s]
+Starting >>> test_msgs
+Starting >>> rosbag2_storage_mcap_testdata
+Starting >>> example_interfaces
+Starting >>> ros2cli_test_interfaces
+Starting >>> action_tutorials_interfaces
+Finished <<< rcl_interfaces [2.23s]
+Starting >>> composition_interfaces
+Finished <<< rosbag2_interfaces [2.34s]
+Finished <<< rmw_implementation [1.58s]
+Finished <<< geometry_msgs [1.72s]
+Starting >>> sensor_msgs
+Starting >>> tf2
+Starting >>> tf2_msgs
+Starting >>> nav_msgs
+Starting >>> diagnostic_msgs
+Starting >>> shape_msgs
+Starting >>> trajectory_msgs
+Finished <<< ros2cli_test_interfaces [1.81s]
+Finished <<< composition_interfaces [1.77s]
+Finished <<< actionlib_msgs [2.22s]
+Finished <<< rosbag2_storage_mcap_testdata [2.05s]
+Finished <<< action_tutorials_interfaces [2.15s]
+Finished <<< example_interfaces [2.48s]
+Finished <<< test_msgs [2.63s]
+Starting >>> rcl
+Starting >>> rosidl_runtime_py
+Finished <<< tf2 [1.73s]
+Finished <<< sensor_msgs [2.02s]
+Starting >>> sensor_msgs_py
+Starting >>> visualization_msgs
+Starting >>> stereo_msgs
+Finished <<< shape_msgs [2.14s]
+Finished <<< nav_msgs [2.21s]
+Starting >>> map_msgs
+Finished <<< trajectory_msgs [2.20s]
+Finished <<< diagnostic_msgs [2.27s]
+Finished <<< tf2_msgs [2.33s]
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+Finished <<< rcl [2.20s]
+Starting >>> rcl_lifecycle
+Starting >>> rcl_action
+Starting >>> libstatistics_collector
+Finished <<< stereo_msgs [1.79s]
+Finished <<< map_msgs [1.58s]
+Finished <<< visualization_msgs [1.86s]
+Starting >>> common_interfaces
+--- stderr: rosidl_runtime_py
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+/usr/lib/python3.14/site-packages/setuptools/dist.py:759: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: Apache Software License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+---
+Finished <<< rosidl_runtime_py [3.92s]
+Finished <<< rcl_action [1.76s]
+Finished <<< rcl_lifecycle [1.81s]
+Starting >>> launch_ros
+Starting >>> ros2cli
+Starting >>> tf2_py
+Starting >>> rqt_gui
+Starting >>> rqt_py_common
+Starting >>> camera_info_manager_py
+Finished <<< common_interfaces [1.38s]
+Finished <<< libstatistics_collector [1.97s]
+Starting >>> rclcpp
+--- stderr: sensor_msgs_py
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+---
+Finished <<< sensor_msgs_py [3.33s]
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+Finished <<< rclcpp [2.33s]
+Starting >>> rclcpp_lifecycle
+Starting >>> rclcpp_components
+Starting >>> rclcpp_action
+Starting >>> laser_geometry
+Starting >>> camera_calibration_parsers
+Starting >>> dummy_map_server
+Starting >>> dummy_sensors
+Starting >>> tlsf_cpp
+Starting >>> test_quality_of_service
+Finished <<< rqt_py_common [2.68s]
+Finished <<< tf2_py [2.72s]
+Finished <<< ros2cli [4.32s]
+Finished <<< rclcpp_action [2.22s]
+Starting >>> test_communication
+Finished <<< rclcpp_components [2.40s]
+Finished <<< rclcpp_lifecycle [2.44s]
+Starting >>> message_filters
+Starting >>> ros2lifecycle_test_fixtures
+Finished <<< tlsf_cpp [2.39s]
+Finished <<< camera_calibration_parsers [2.46s]
+Finished <<< dummy_sensors [2.44s]
+Starting >>> camera_info_manager
+Finished <<< rqt_gui [5.11s]
+Finished <<< test_quality_of_service [2.52s]
+Finished <<< dummy_map_server [2.61s]
+--- stderr: camera_info_manager_py
+/usr/lib/python3.14/site-packages/setuptools/_distutils/dist.py:289: UserWarning: Unknown distribution option: 'tests_require'
+  warnings.warn(msg)
+---
+Finished <<< camera_info_manager_py [5.27s]
+Finished <<< launch_ros [5.42s]
+Starting >>> ros2test
+Starting >>> ros2pkg
+Starting >>> ros2node
+Starting >>> ros2service
+Starting >>> tracetools_launch
+Starting >>> ros2action
+Starting >>> ros2doctor
+Starting >>> ros2interface
+Starting >>> ros2topic
+Starting >>> rosbag2
+[-1778328052362886912.000s] colcon.colcon_cmake.task.cmake.build ERROR Failed to find the following files:
+- /home/sudenaz/ros2_ws/install/rosbag2_cpp/share/rosbag2_cpp/package.sh
+- /home/sudenaz/ros2_ws/install/rosbag2_transport/share/rosbag2_transport/package.sh
+- /home/sudenaz/ros2_ws/install/rosbag2_py/share/rosbag2_py/package.sh
+- /home/sudenaz/ros2_ws/install/ros2bag/share/ros2bag/package.sh
+- /home/sudenaz/ros2_ws/install/rosbag2_tests/share/rosbag2_tests/package.sh
+Check that the following packages have been built:
+- rosbag2_cpp
+- rosbag2_transport
+- rosbag2_py
+- ros2bag
+- rosbag2_tests
+Failed   <<< rosbag2 [0.01s, exited with code 1]
+Starting >>> demo_nodes_cpp_native
+[-1778328052362886912.000s] colcon.colcon_cmake.task.cmake.build ERROR Failed to find the following files:
+- /home/sudenaz/ros2_ws/install/launch_testing_ament_cmake/share/launch_testing_ament_cmake/package.sh
+- /home/sudenaz/ros2_ws/install/rmw_fastrtps_shared_cpp/share/rmw_fastrtps_shared_cpp/package.sh
+- /home/sudenaz/ros2_ws/install/rmw_fastrtps_cpp/share/rmw_fastrtps_cpp/package.sh
+Check that the following packages have been built:
+- launch_testing_ament_cmake
+- rmw_fastrtps_shared_cpp
+- rmw_fastrtps_cpp
+Failed   <<< demo_nodes_cpp_native [0.01s, exited with code 1]
+Aborted  <<< laser_geometry [3.03s]
+Aborted  <<< ros2test [0.20s]
+Aborted  <<< ros2pkg [0.18s]
+Aborted  <<< ros2node [0.17s]
+Aborted  <<< ros2service [0.15s]
+Aborted  <<< tracetools_launch [0.12s]
+Aborted  <<< ros2action [0.10s]
+Aborted  <<< ros2doctor [0.07s]
+Aborted  <<< ros2interface [0.06s]
+Aborted  <<< ros2topic [0.04s]
+Aborted  <<< ros2lifecycle_test_fixtures [1.50s]
+Aborted  <<< test_communication [1.72s]
+Aborted  <<< camera_info_manager [1.54s]
+Aborted  <<< message_filters [1.75s]
+
+Summary: 199 packages finished [39.3s]
+  2 packages failed: demo_nodes_cpp_native rosbag2
+  14 packages aborted: camera_info_manager laser_geometry message_filters ros2action ros2doctor ros2interface ros2lifecycle_test_fixtures ros2node ros2pkg ros2service ros2test ros2topic test_communication tracetools_launch
+  24 packages had stderr output: ament_clang_format ament_clang_tidy ament_copyright ament_cppcheck ament_cpplint ament_flake8 ament_index_python ament_lint ament_lint_cmake ament_mypy ament_pep257 ament_pycodestyle ament_pyflakes ament_uncrustify ament_xmllint camera_info_manager_py domain_coordinator launch launch_testing launch_xml launch_yaml osrf_pycommon rosidl_runtime_py sensor_msgs_py
+  33 packages not processed
