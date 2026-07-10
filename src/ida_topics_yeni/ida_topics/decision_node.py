@@ -2,6 +2,8 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, PoseStamped
 from nav_msgs.msg import Odometry
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from vision_msgs.msg import Detection2DArray
 from sensor_msgs.msg import Imu
 import math
@@ -27,7 +29,11 @@ class DecisionNode(Node):
         self.orange_buoys = None
         self.yellow_buoys = None
         self.image_center = 320
-        self.pose_sub = self.create_subscription(Odometry, "/mavros/local_position/odom", self.pose_cb, 10)
+        mavros_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10)
+        self.pose_sub = self.create_subscription(Odometry, "/mavros/local_position/odom", self.pose_cb, mavros_qos)
         self.orange_sub = self.create_subscription(Detection2DArray, "/perception/orange_buoys", self.orange_cb, 10)
         self.yellow_sub = self.create_subscription(Detection2DArray, "/perception/yellow_buoys", self.yellow_cb, 10)
         self.imu_sub = self.create_subscription(Imu, "/imu/data", self.imu_cb, 10)
