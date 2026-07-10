@@ -4,3 +4,8 @@ log/
 *.pyc
 __pycache__/
 *.egg-info/
+src/ros2/
+src/ros/
+src/osrf/
+src/ros-tooling/
+src/gazebo_ros_pkgs
