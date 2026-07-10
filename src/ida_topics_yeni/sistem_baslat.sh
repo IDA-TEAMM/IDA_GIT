@@ -47,6 +47,10 @@ echo "=== 6/6 Telemetri Node ==="
 python3 -u ida_topics/telemetri_node.py > "$LOG_DIR/telemetri_node.log" 2>&1 &
 PIDS+=($!)
 sleep 1
+echo "=== 7/7 Kamera Kayit Node ==="
+python3 -u ida_topics/kamera_kayit_node.py > "$LOG_DIR/kamera_kayit_node.log" 2>&1 &
+PIDS+=($!)
+sleep 1
 echo "=== TUM NODE'LAR BASLATILDI ==="
 echo "PID'ler: ${PIDS[@]}"
 wait
