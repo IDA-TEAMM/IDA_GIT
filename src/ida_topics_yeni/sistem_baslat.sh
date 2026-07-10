@@ -55,14 +55,6 @@ echo "=== 8/8 Local Map Node ==="
 python3 -u ida_topics/local_map_node.py > "$LOG_DIR/local_map_node.log" 2>&1 &
 PIDS+=($!)
 sleep 1
-echo "=== 8/8 Local Map Node ==="
-python3 -u ida_topics/local_map_node.py > "$LOG_DIR/local_map_node.log" 2>&1 &
-PIDS+=($!)
-sleep 1
-echo "=== 8/8 Local Map Node ==="
-python3 -u ida_topics/local_map_node.py > "$LOG_DIR/local_map_node.log" 2>&1 &
-PIDS+=($!)
-sleep 1
 echo "=== TUM NODE'LAR BASLATILDI ==="
 echo "PID'ler: ${PIDS[@]}"
 wait
