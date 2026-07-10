@@ -23,7 +23,19 @@ pkill -9 -f 'sensor_node.py|perception_node.py|decision_node.py|control_node.py|
 sleep 2
 source /opt/ros/humble/setup.bash
 cd /root/ros2_ws/src/ida_topics_yeni
-echo "=== 1/5 Sensor Node ==="
+echo "=== 1/5 GPS/IMU Driver ==="
+python3 -u ida_topics/gps_imu_driver_node.py > "$LOG_DIR/gps_imu_driver.log" 2>&1 &
+PIDS+=($!)
+sleep 1
+echo "=== 2/5 OAK-D Lite Driver ==="
+python3 -u ida_topics/oakd_driver_node.py > "$LOG_DIR/oakd_driver.log" 2>&1 &
+PIDS+=($!)
+sleep 1
+echo "=== 3/5 Livox LiDAR Driver ==="
+python3 -u ida_topics/livox_driver_node.py > "$LOG_DIR/livox_driver.log" 2>&1 &
+PIDS+=($!)
+sleep 1
+echo "=== 4/5 Sensor Node ==="
 python3 -u ida_topics/sensor_node.py > "$LOG_DIR/sensor_node.log" 2>&1 &
 PIDS+=($!)
 sleep 1
