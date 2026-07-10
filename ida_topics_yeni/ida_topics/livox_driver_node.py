@@ -51,7 +51,7 @@ class LivoxDriverNode(Node):
         # ── Parametreler ──────────────────────────────────────────────────────
         self.declare_parameter('device_ip', LIVOX_DEVICE_IP)
         self.declare_parameter('data_port', LIVOX_DATA_PORT)
-        self.declare_parameter('host_ip', '192.168.1.5')
+        self.declare_parameter('host_ip', '0.0.0.0')
         self.declare_parameter('scan_height', 0.0)   # 2D dilim yüksekliği (m)
         self.declare_parameter('scan_thickness', 0.3) # Dilim kalınlığı (m)
 
