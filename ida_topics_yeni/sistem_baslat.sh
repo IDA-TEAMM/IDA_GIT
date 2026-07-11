@@ -34,7 +34,7 @@ sleep 2
 export ROS_DOMAIN_ID=42
 source /opt/ros/humble/setup.bash
 cd /root/ros2_ws/src/ida_topics_yeni
-echo "=== 1/5 GPS/IMU Driver ==="
+echo "=== 1/11 GPS/IMU Driver ==="
 if [ -n "$GPS_PORT" ]; then
     python3 -u ida_topics/gps_imu_driver_node.py --ros-args -p port:="$GPS_PORT" > "$LOG_DIR/gps_imu_driver.log" 2>&1 &
 else
@@ -42,43 +42,43 @@ else
 fi
 PIDS+=($!)
 sleep 1
-echo "=== 2/5 OAK-D Lite Driver ==="
+echo "=== 2/11 OAK-D Lite Driver ==="
 python3 -u ida_topics/oakd_driver_node.py > "$LOG_DIR/oakd_driver.log" 2>&1 &
 PIDS+=($!)
 sleep 1
-echo "=== 3/5 Livox LiDAR Driver ==="
+echo "=== 3/11 Livox LiDAR Driver ==="
 python3 -u ida_topics/livox_driver_node.py > "$LOG_DIR/livox_driver.log" 2>&1 &
 PIDS+=($!)
 sleep 1
-echo "=== 4/5 Sensor Node ==="
+echo "=== 4/11 Sensor Node ==="
 python3 -u ida_topics/sensor_node.py > "$LOG_DIR/sensor_node.log" 2>&1 &
 PIDS+=($!)
 sleep 1
-echo "=== 2/5 Perception Node ==="
+echo "=== 5/11 Perception Node ==="
 python3 -u ida_topics/perception_node.py > "$LOG_DIR/perception_node.log" 2>&1 &
 PIDS+=($!)
 sleep 2
-echo "=== 3/5 MAVROS (FCU: $FCU_URL) ==="
+echo "=== 6/11 MAVROS (FCU: $FCU_URL) ==="
 ros2 run mavros mavros_node --ros-args -p fcu_url:="$FCU_URL" -p tgt_system:=1 -p tgt_component:=1 > "$LOG_DIR/mavros.log" 2>&1 &
 PIDS+=($!)
 sleep 3
-echo "=== 4/5 Decision Node ==="
+echo "=== 7/11 Decision Node ==="
 python3 -u ida_topics/decision_node.py > "$LOG_DIR/decision_node.log" 2>&1 &
 PIDS+=($!)
 sleep 1
-echo "=== 5/5 Control Node ==="
+echo "=== 8/11 Control Node ==="
 python3 -u ida_topics/control_node.py > "$LOG_DIR/control_node.log" 2>&1 &
 PIDS+=($!)
 sleep 1
-echo "=== 6/6 Telemetri Node ==="
+echo "=== 9/11 Telemetri Node ==="
 python3 -u ida_topics/telemetri_node.py > "$LOG_DIR/telemetri_node.log" 2>&1 &
 PIDS+=($!)
 sleep 1
-echo "=== 7/7 Kamera Kayit Node ==="
+echo "=== 10/11 Kamera Kayit Node ==="
 python3 -u ida_topics/kamera_kayit_node.py > "$LOG_DIR/kamera_kayit_node.log" 2>&1 &
 PIDS+=($!)
 sleep 1
-echo "=== 8/8 Local Map Node ==="
+echo "=== 11/11 Local Map Node ==="
 python3 -u ida_topics/local_map_node.py > "$LOG_DIR/local_map_node.log" 2>&1 &
 PIDS+=($!)
 sleep 1
