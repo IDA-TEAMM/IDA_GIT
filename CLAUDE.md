@@ -25,7 +25,13 @@ Bu proje neredeyse tamamen bir **Docker container içinde** çalıştırılır (
 
 ```bash
 # Sadece ida_topics paketini derle (container içinde)
-colcon build --packages-select ida_topics
+# --paths ile discovery'yi sadece bu pakete kisitlamak SART: aksi halde
+# colcon workspace'teki vendored ROS2 kaynak kodunu (src/ros2/, src/ament/
+# vb.) da bagimlilik zincirine dahil edip onlari da kaynaktan derlemeye
+# calisir (rmw_cyclonedds_cpp, test_msgs iceren "Failed to find..." hatasi
+# verir) - halbuki bunlarin hepsi zaten /opt/ros/humble altinda apt ile
+# kurulu, tekrar derlenmelerine gerek yok (2026-07-13'te bulundu/duzeltildi)
+colcon build --packages-select ida_topics --paths src/ida_topics_yeni
 source install/setup.bash
 
 # Tüm sistemi başlat (11 node + MAVROS, container içinde çalıştırılmalı)
