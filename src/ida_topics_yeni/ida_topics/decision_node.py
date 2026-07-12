@@ -37,7 +37,7 @@ class DecisionNode(Node):
         self.orange_sub = self.create_subscription(Detection2DArray, "/perception/orange_buoys", self.orange_cb, 10)
         self.yellow_sub = self.create_subscription(Detection2DArray, "/perception/yellow_buoys", self.yellow_cb, 10)
         self.imu_sub = self.create_subscription(Imu, "/imu/data", self.imu_cb, 10)
-        self.cmd_vel_pub = self.create_publisher(Twist, "/model/Girdap/cmd_vel", 10)
+        self.cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self.timer = self.create_timer(0.1, self.process)
         self.get_logger().info("Decision Node baslatildi.")
 
