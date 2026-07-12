@@ -9,3 +9,6 @@ src/ros/
 src/osrf/
 src/ros-tooling/
 src/gazebo_ros_pkgs
+mav.parm
+mav.tlog
+mav.tlog.raw
