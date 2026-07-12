@@ -19,6 +19,10 @@ Proje şu anda Gazebo simülasyonundan gerçek donanıma (Pixhawk/ArduPilot, F9P
 
 Bu proje neredeyse tamamen bir **Docker container içinde** çalıştırılır (container: `ros2_final`, host `~/ros2_ws` ↔ container `/root/ros2_ws` volume mount ile senkron). `colcon build` sadece `ida_topics` paketini ROS2 index'ine kaydetmek için gerekir; asıl node'lar `ros2 run` yerine doğrudan `python3` ile çalıştırılır (aşağıya bakın).
 
+**Container önkoşulları (2026-07-13 itibarıyla doğrulandı, hepsi kalıcı değil — bkz. aşağıdaki not):** `ros-humble-mavros` + `ros-humble-mavros-extras` + `ros-humble-mavros-msgs` (apt, `install_geographiclib_datasets.sh` ile birlikte), `depthai==2.32.0.0` (OAK-D için — **v3 değil**, node kodu v2 API kullanıyor), `ultralytics` + `numpy<2` (ultralytics numpy'yi 2.x'e yükseltip sistemin `matplotlib`/`opencv`'sini bozuyor, `pip3 uninstall opencv-python` ile düzeltilmeli — pip'in kendi `opencv-python`'ı ROS'un `python3-opencv` apt paketini gölgeliyor), `pyserial`. Host'ta ayrıca OAK-D için udev kuralı gerekir: `/etc/udev/rules.d/80-movidius.rules` → `SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"`.
+
+**Önemli:** Bu paket kurulumları container'ın **yazılabilir katmanında** yaşıyor, `docker commit` ile bir image'a dondurulmadıysa container silinirse/yeniden oluşturulursa kaybolur (2026-07-13'te tam bunun tersi bir sorun için — OAK-D'nin USB re-enumeration'ı container'ın `/dev`'inin canlı olmasını gerektirdiği için — container `-v /dev:/dev` ile yeniden oluşturulmuştu). Container'ı yeniden oluşturmadan önce mutlaka `docker commit ros2_final <yeni-image-adi>` yap.
+
 ```bash
 # Sadece ida_topics paketini derle (container içinde)
 colcon build --packages-select ida_topics
@@ -40,7 +44,7 @@ python3 -m py_compile src/ida_topics_yeni/ida_topics/*.py
 
 ## Mimari: 11-node pipeline
 
-`sistem_baslat.sh` node'ları şu sırayla başlatır (Pixhawk/F9P GPS portlarını otomatik algılar, yoksa test moduna düşer):
+`sistem_baslat.sh` node'ları şu sırayla başlatır (Pixhawk portunu otomatik algılar — telemetri radyo veya doğrudan USB —, bulamazsa UDP test moduna düşer):
 
 ```
 1. gps_imu_driver_node  ─┐
@@ -56,16 +60,18 @@ python3 -m py_compile src/ida_topics_yeni/ida_topics/*.py
 11. local_map_node        → şartname zorunlu: LiDAR tabanlı 2D OccupancyGrid + PGM kaydı
 ```
 
-Katmanlı tasarımın önemli noktası: **driver node'ları** (1-3) gerçek donanımı standart ROS2 sensör topic'lerine (`/gps/fix`, `/imu/data`, `/camera/image_raw`, `/lidar/scan`, `/lidar/points`) çeviriyor — bu aynı topic'ler daha önce Gazebo `ros_gz_bridge` tarafından besleniyordu, yani `sensor_node`den sonraki hiçbir node'un sim mi gerçek donanım mı olduğunu bilmesi gerekmiyor.
+Katmanlı tasarımın önemli noktası: **driver node'ları** (1-3) gerçek donanımı standart ROS2 sensör topic'lerine (`/gps/fix`, `/imu/data`, `/camera/image_raw`, `/lidar/scan`, `/lidar/points`) çeviriyor — bu aynı topic'ler daha önce Gazebo `ros_gz_bridge` tarafından besleniyordu, yani `sensor_node`den sonraki hiçbir node'un sim mi gerçek donanım mı olduğunu bilmesi gerekmiyor. **İstisna (2026-07-13):** `gps_imu_driver_node.py` artık donanımdan değil, **MAVROS'tan** besleniyor — bkz. aşağıdaki not.
 
 Katman akışı:
 - **Sensör katmanı** (driver'lar → `sensor_node`): ham sensör verisini `/sensor/*` altında yeniden yayınlar, timeout/sağlık izlemesi yapar, `/diagnostics` üretir.
-- **Algı katmanı** (`perception_node`): `/root/best.pt` YOLO11 modeli (container-içi, repo'da yok) + HSV eşiği (turuncu H=10-34, sarı H=35-55) ile `/perception/orange_buoys`, `/perception/yellow_buoys` üretir.
+- **Algı katmanı** (`perception_node`): `/root/best.pt` YOLO11 modeli (container-içi, **repo'da yok, container'ın kendi yazılabilir katmanında da varsayılan olarak yok** — `~/Masaüstü/IDA_YAZILIM/yolo/best.pt` yedeğinden `docker cp` ile elle kopyalanması gerekir) + HSV eşiği (turuncu H=10-34, sarı H=35-55) ile `/perception/orange_buoys`, `/perception/yellow_buoys` üretir.
 - **Karar katmanı** (`decision_node`): sabit `WAYPOINTS` listesi + cascade PID (dış döngü heading→yaw_rate, iç döngü yaw_rate→thrust) + yakın dubalardan kaçınma mantığı. Pozisyon kaynağı `/mavros/local_position/odom` (MAVROS EKF, BEST_EFFORT QoS gerektirir).
 - **Kontrol katmanı** (`control_node`): `/cmd_vel`'i alıp MAVROS'a (`/mavros/setpoint_velocity/cmd_vel`) iletir; RC kanal 8 (idx 7) kill-switch, RC kanal 5 (idx 4) manuel override, 2s cmd_vel watchdog'u içerir.
 - **Kayıt katmanı** (`telemetri_node`, `kamera_kayit_node`, `local_map_node`): şartname gereği zorunlu loglama/kayıt, `/tmp/{telemetri,kamera,local_map}/` altına zaman damgalı dosyalar yazar.
 
 **Not:** `decision_node.py` eskiden Gazebo-özel `/model/Girdap/cmd_vel` topic'ine yayın yapıyordu, `control_node.py` ise `/cmd_vel`'i dinliyordu (decision_node çıktısı control_node'a ulaşmıyordu). Bu 2026-07-12'de düzeltildi — artık `decision_node.py` de `/cmd_vel`'e yayın yapıyor.
+
+**Not (2026-07-13) — F9P GPS mimarisi:** Fiziksel GPS modülü bir **Holybro H-RTK F9P Rover (IST8310 kompas)** — tek birleşik konnektörle sadece Pixhawk'ın GPS1 portuna bağlanıyor, bağımsız bir ikinci UART/USB çıkışı yok (bir FTDI adaptörle spare pin'lere tapping denendi, hep tanımlanamayan bir ikili protokol geldi — NMEA/UBX/RTCM değil). Bu yüzden `gps_imu_driver_node.py` artık ham seri port okumuyor, `/mavros/global_position/global` ve `/mavros/imu/data`'yı dinleyip aynı çıktı topic'lerine (`/gps/fix`, `/imu/data`) yeniden yayınlıyor — yani bu node artık MAVROS'un **başlamış ve bağlanmış olmasına bağımlı** (launch sırasında MAVROS'tan önce başlatılsa da sorun değil, ROS2 subscription'ları geç bağlanan publisher'ları da yakalar, sadece MAVROS bağlanana kadar GPS verisi gelmez).
 
 ## Kritik teknik detaylar
 
@@ -73,6 +79,9 @@ Katman akışı:
 - **`mavros_msgs.msg.VfrHud`** doğru sınıf adıdır, `VFR_HUD` değil — yanlış yazarsan import hatası alırsın.
 - **`decision_node.py`'de `cmd.angular.z = -angular`** kasıtlı işaret düzeltmesidir (ArduPilot yaw yönü uyumu için), bug değildir — kaldırma.
 - **`livox_driver_node.py`'de `host_ip` parametresi `'0.0.0.0'` olmalı** — belirli bir arayüz IP'si UDP socket bağlama hatası verir.
-- **Opsiyonel donanım portları:** F9P GPS portu boşsa (`GPS_PORT=""`), `sistem_baslat.sh`'daki gibi `-p port:=...` argümanını hiç geçirme — boş string parametre node başlatmasını bozar.
 - **`config_ekf.yaml`** (`robot_localization` EKF ayarları) Gazebo simülasyonu içindir; gerçek donanımda MAVROS'un kendi EKF'i kullanılıyor.
 - **`ROS_DOMAIN_ID=42`** hem laptop hem Jetson `~/.bashrc`'sinde hem de `sistem_baslat.sh` içinde (`source /opt/ros/humble/setup.bash`'ten ÖNCE) export edilmeli — Jetson↔laptop topic keşfinin çalışması buna bağlı.
+- **`livox_driver_node.py`'deki `LIVOX_DEVICE_IP`/`LIVOX_DATA_PORT` sabitleri bu ekipte doğrulanmış gerçek değerler** (`192.168.117.100`, port `56301`) — genel Livox dokümantasyonundaki `192.168.1.1xx`/`56100` değil. Host'un ethernet arayüzü de aynı alt ağda statik IP'ye sahip olmalı (`192.168.117.50/24`, `nmcli` ile kalıcı yapılandırıldı).
+- **`oakd_driver_node.py` yalnızca DepthAI v2.x ile çalışır** (`pipeline.createColorCamera()` v2 API'si) — pip'in varsayılan kurduğu v3 tamamen farklı bir API sunar ve `AttributeError` fırlatır.
+- **Pixhawk hem telemetri radyo (`/dev/ttyUSB0`, CP2102) hem kendi doğrudan USB'si (`/dev/ttyACM0`, "Pixhawk6C"/Holybro) üzerinden bağlanabilir** — ikisi de MAVROS `fcu_url=serial://<port>:57600` ile çalışıyor, `sistem_baslat.sh` ikisini de otomatik dener (önce ttyUSB0, yoksa ttyACM0).
+- **MAVROS `FCU:` heartbeat log'unda "ArduPilot" görmelisin** (proje ArduPilot hedefliyor, PX4 değil) — bir oturumda bir kez "PX4 Autopilot" görülmüştü, muhtemelen ilk bağlantıda geçici bir yanlış okuma, tekrarlarsa araştırılmalı.
