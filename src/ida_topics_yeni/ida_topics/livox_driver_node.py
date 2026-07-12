@@ -9,7 +9,7 @@ Livox Mid-360 özellikleri:
   - 200m menzil
   - 200,000 nokta/saniye
   - UDP port: 56100 (data), 56200 (command)
-  - IP: 192.168.1.1xx (varsayılan)
+  - IP: 192.168.117.100 (bu cihazda dogrulanan, 2026-07-13)
 
 Publish:
   /lidar/points  → sensor_msgs/PointCloud2
@@ -38,9 +38,11 @@ import math
 
 
 # Livox Mid-360 UDP protokol sabitleri
-LIVOX_DATA_PORT    = 56100
+# NOT (2026-07-13): Gercek cihazda tcpdump ile dogrulandi - nokta verisi
+# host'un 56301 portuna geliyor (56100 degil), IMU verisi 56401'e geliyor.
+LIVOX_DATA_PORT    = 56301
 LIVOX_CMD_PORT     = 56200
-LIVOX_DEVICE_IP    = '192.168.1.100'  # Varsayılan Mid-360 IP
+LIVOX_DEVICE_IP    = '192.168.117.100'  # Bu cihazda dogrulanan Mid-360 IP (2026-07-13)
 POINT_STRUCT_SIZE  = 14  # Her nokta: x(4) + y(4) + z(4) + intensity(1) + tag(1)
 
 
