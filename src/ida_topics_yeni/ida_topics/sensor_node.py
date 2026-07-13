@@ -12,7 +12,7 @@ class SensorNode(Node):
  
         # --- Parametreler ---
         self.declare_parameter('lidar_timeout', 0.5)
-        self.declare_parameter('imu_timeout', 0.2)
+        self.declare_parameter('imu_timeout', 1.5)
         self.declare_parameter('gps_timeout', 2.0)
         self.declare_parameter('camera_timeout', 0.5)
  
