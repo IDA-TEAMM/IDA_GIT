@@ -43,8 +43,11 @@ class PerceptionNode(Node):
         self.get_logger().info(f'Encoding: {msg.encoding}', once=True)
         img = np.frombuffer(msg.data, dtype=np.uint8).reshape(
             msg.height, msg.width, -1)
-        # Gazebo R8G8B8 → BGR
-        bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        if msg.encoding == 'rgb8':
+            # Gazebo R8G8B8 → BGR
+            bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+        else:
+            bgr = img
 
         results = self.model(bgr, conf=0.15, verbose=False)
 
