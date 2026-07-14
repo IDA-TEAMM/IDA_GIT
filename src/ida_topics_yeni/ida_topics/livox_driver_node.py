@@ -8,7 +8,8 @@ Livox Mid-360 özellikleri:
   - 360° FOV (yatay), -7° ~ +52° (dikey)
   - 200m menzil
   - 200,000 nokta/saniye
-  - UDP port: 56100 (data), 56200 (command)
+  - UDP port: 56301 (data, bu cihazda tcpdump ile dogrulandi, genel Livox
+    dokumantasyonundaki 56100 DEGIL), 56200 (command)
   - IP: 192.168.117.100 (bu cihazda dogrulanan, 2026-07-13)
 
 Publish:
@@ -234,6 +235,8 @@ def main(args=None):
     node = LivoxDriverNode()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass  # launch/systemd SIGINT'i normal kapanıştır (traceback basma)
     finally:
         node.destroy_node()
         rclpy.shutdown()

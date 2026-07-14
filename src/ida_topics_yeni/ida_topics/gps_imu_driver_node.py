@@ -73,6 +73,8 @@ def main(args=None):
     node = GpsImuDriverNode()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass  # launch/systemd SIGINT'i normal kapanıştır (traceback basma)
     finally:
         node.destroy_node()
         rclpy.shutdown()

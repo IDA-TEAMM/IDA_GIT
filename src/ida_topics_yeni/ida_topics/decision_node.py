@@ -3,7 +3,6 @@ from rclpy.node import Node
 from geometry_msgs.msg import Twist, PoseStamped
 from nav_msgs.msg import Odometry
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from vision_msgs.msg import Detection2DArray
 from sensor_msgs.msg import Imu
 import math

@@ -23,6 +23,12 @@ setup(
             'perception_node = ida_topics.perception_node:main',
             'control_node = ida_topics.control_node:main',
             'decision_node = ida_topics.decision_node:main',
+            'gps_imu_driver_node = ida_topics.gps_imu_driver_node:main',
+            'oakd_driver_node = ida_topics.oakd_driver_node:main',
+            'livox_driver_node = ida_topics.livox_driver_node:main',
+            'kamera_kayit_node = ida_topics.kamera_kayit_node:main',
+            'local_map_node = ida_topics.local_map_node:main',
+            'telemetri_node = ida_topics.telemetri_node:main',
         ],
     },
 )
