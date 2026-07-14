@@ -306,6 +306,13 @@ def generate_launch_description() -> LaunchDescription:
             "mission_source", default_value=str(hw["mission_source"]),
             description="Görev kaynağı: file (araç üstü YAML) | fc (YKİ→MAVROS)",
         ),
+        # with_drivers — sensör sürücüleri (ida_topics paketi, F-S.2). false =
+        # video günü (AUTO görevine sensör gerekmez, MAVROS yeter); true =
+        # final/algı testleri (Livox UDP + OAK-D + Dosya-1 kamera kaydı).
+        DeclareLaunchArgument(
+            "with_drivers", default_value="false",
+            description="Sensör sürücülerini başlat: Livox + OAK-D + kamera kaydı",
+        ),
     ]
 
     # --- MAVROS: ArduRover apm.launch (XML) include ---
@@ -466,6 +473,40 @@ def generate_launch_description() -> LaunchDescription:
         Node(package=_PKG, executable="mission_manager_node",
              name="mission_manager_node", parameters=mission_params,
              output="screen"),
+    ]
+
+    # --- Sensör sürücüleri (ida_topics paketi — with_drivers:=true, F-S.2) ---
+    # Topic hizalaması remap ile: sürücüler kendi isimlerinde yayınlar, girdap
+    # perception /livox/lidar + /oak/rgb/image_raw bekler.
+    _drv = IfCondition(LaunchConfiguration("with_drivers"))
+    driver_nodes = [
+        # Livox Mid-360 — saf Python UDP (SDK'sız). IP/port gerçek cihazda
+        # doğrulandı: 192.168.117.100, data 56301.
+        Node(package="ida_topics", executable="livox_driver_node",
+             name="livox_driver_node", condition=_drv, output="screen",
+             remappings=[("/lidar/points", "/livox/lidar"),
+                         ("/lidar/scan", "/livox/scan")]),
+        # OAK-D Lite — depthai pip paketi gerekir (yalnız Jetson'da kurulu).
+        # ⚠ use_onboard_camera:=true (F3.1, algı ekibinin OAK node'u) ile
+        # AYNI ANDA açma — iki süreç aynı USB cihazını açamaz.
+        Node(package="ida_topics", executable="oakd_driver_node",
+             name="oakd_driver_node", condition=_drv, output="screen",
+             remappings=[("/camera/image_raw", "/oak/rgb/image_raw")]),
+        # Dosya-1 (Şartname 4.2): işlenmiş kamera mp4'ü (bbox overlay + zaman
+        # etiketi) → ~/girdap_logs/kamera.
+        # ⚠ F-S.3 (bilinen kısıt): kamera_kayit_node ida_topics'in kendi
+        # perception_node'unu (ayrı /perception/orange_buoys + /yellow_buoys
+        # topic'leri) varsayar; girdap_decision'ın perception_camera_node'u
+        # ise TEK topic'te (/perception/buoys) class_id (0=turuncu/1=sarı/
+        # 2=hedef) taşır. Bu remap yalnız /perception/buoys'u orange_buoys'a
+        # bağlar — Dosya-1 mp4 üretilir (≥1Hz, bbox overlay) ama sarı/hedef
+        # sınıflar da "TURUNCU DUBA" etiketiyle çizilir (kozmetik, hata_defteri
+        # F-S.3). Düzgün çözüm: kamera_kayit_node'u class_id okur hale getirmek
+        # (T1 — video için engelleyici değil, Dosya-1 formatı yine sağlanıyor).
+        Node(package="ida_topics", executable="kamera_kayit_node",
+             name="kamera_kayit_node", condition=_drv, output="screen",
+             remappings=[("/camera/image_raw", "/oak/rgb/image_raw"),
+                         ("/perception/orange_buoys", "/perception/buoys")]),
     ]
 
     return LaunchDescription(

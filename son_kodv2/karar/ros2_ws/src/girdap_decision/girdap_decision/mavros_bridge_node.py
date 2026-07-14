@@ -31,6 +31,11 @@ Sorumluluklar (CLAUDE.md MAVROS bölümü + Şartname 4.1):
        (`rc_kill_threshold_pwm`, varsayılan 1500) altına düşerse → KILL.
        Yazılım/servis KILL yollarından bağımsız, companion computer canlı
        olmasa bile RC alıcısı üzerinden doğrudan çalışır.
+    6. RC manuel-override (F-S.4) — `rc_manual_channel` (varsayılan 4,
+       0-indexed = RC kanal 5) eşik PWM'in (`rc_manual_threshold_pwm`,
+       varsayılan 1700) üstündeyken `_maybe_auto_guided()` GUIDED istemeyi
+       bırakır — pilot RC'den manuel moda geçmek istediğinde yazılım
+       kavga etmez.
 
 KILL, `/girdap/mission/kill` (fsm_node, Trigger) çağrılarak yayılır: FSM KILL
 durumuna geçer, planning_node sıfır thrust yayınlar → motorlar durur. Böylece
@@ -92,6 +97,10 @@ class MavrosBridgeNode(Node):
         # varsayılanlar (RC kanal 8, 0-indexed 7; PWM eşiği 1500).
         self.declare_parameter("rc_kill_channel", 7)
         self.declare_parameter("rc_kill_threshold_pwm", 1500)
+        # F-S.4: RC manuel-override — ida_topics ile aynı varsayılanlar
+        # (RC kanal 5, 0-indexed 4; PWM eşiği 1700).
+        self.declare_parameter("rc_manual_channel", 4)
+        self.declare_parameter("rc_manual_threshold_pwm", 1700)
 
         cfg = MavrosBridgeConfig(
             heartbeat_timeout_s=float(
@@ -101,9 +110,15 @@ class MavrosBridgeNode(Node):
             rc_kill_threshold_pwm=int(
                 self.get_parameter("rc_kill_threshold_pwm").value
             ),
+            rc_manual_threshold_pwm=int(
+                self.get_parameter("rc_manual_threshold_pwm").value
+            ),
         )
         self._bridge = MavrosBridge(cfg)
         self._rc_kill_channel = int(self.get_parameter("rc_kill_channel").value)
+        self._rc_manual_channel = int(
+            self.get_parameter("rc_manual_channel").value
+        )
         self._auto_guided = bool(self.get_parameter("auto_guided").value)
         self._stream_rate_hz = int(self.get_parameter("stream_rate_hz").value)
         self._arm_retry_max = int(self.get_parameter("arming_retry_max").value)
@@ -211,6 +226,26 @@ class MavrosBridgeNode(Node):
                 f"→ FCU disarm (F-S.1)"
             )
             self._trigger_kill()
+            return
+        self._on_rc_manual_check(msg)
+
+    def _on_rc_manual_check(self, msg: RCIn) -> None:
+        """F-S.4: pilot RC'den manuel istiyorsa yazılım GUIDED için kavga etmez.
+
+        ida_topics/control_node.py'deki manual_override ile aynı güvenlik
+        önceliği: kanal eşik üstündeyken `needs_mode_change()` False döner,
+        `_maybe_auto_guided()` mod isteği göndermeyi bırakır — pilotun RC'den
+        seçtiği mod (ör. MANUAL) yazılım tarafından geri zorlanmaz.
+        """
+        idx = self._rc_manual_channel
+        channel_pwm = msg.channels[idx] if len(msg.channels) > idx else None
+        active = self._bridge.is_rc_manual_active(channel_pwm)
+        if active != self._bridge.rc_manual_override:
+            self.get_logger().info(
+                f"RC manuel-override {'AKTİF' if active else 'pasif'} "
+                f"(kanal {idx + 1}, PWM={channel_pwm}) (F-S.4)"
+            )
+        self._bridge.set_rc_manual_override(active)
 
     # ----- FC akış hızı (SR0) — F-M.6 -----
 

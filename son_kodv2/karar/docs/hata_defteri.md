@@ -192,6 +192,36 @@
   bu yalnız bir tetikleyici daha.
 - **Durum:** KAPANDI (bu oturumda TDD ile eklendi ve test edildi).
 
+### [2026-07-14] F-S.2/F-S.3 — sensör sürücüleri (ida_topics) son_kodv2'ye entegre edildi
+- **F-S.2:** `ros2_ws/src/ida_topics_yeni` (Livox UDP, OAK-D depthai, gps_imu MAVROS
+  köprüsü, kamera_kayit) son_kodv2'ye kopyalandı + `hardware.launch.py`'a
+  `with_drivers:=true` bayrağıyla wire edildi (son_kod'daki desenle aynı: remap
+  `/lidar/points`→`/livox/lidar`, `/camera/image_raw`→`/oak/rgb/image_raw`).
+- **F-S.3 (bilinen kozmetik kısıt, T1):** `kamera_kayit_node` ida_topics'in KENDİ
+  perception'ının iki ayrı topic'ini (`/perception/orange_buoys`/`yellow_buoys`)
+  varsayıyor; girdap_decision'ın `perception_camera_node`'u TEK topic'te
+  (`/perception/buoys`) class_id (0/1/2) taşıyor. Remap yalnız `/perception/buoys`'u
+  `orange_buoys`'a bağlıyor → Dosya-1 mp4 üretiliyor (≥1Hz, bbox overlay) ama
+  sarı/hedef sınıflar da "TURUNCU DUBA" etiketiyle çiziliyor. Video için engelleyici
+  DEĞİL (format şartı sağlanıyor), T1'de `kamera_kayit_node`'un class_id okur hale
+  getirilmesi önerilir.
+- **Durum:** F-S.2 KAPANDI (build+launch doğrulandı), F-S.3 AÇIK (T1, düşük öncelik).
+
+### [2026-07-14] F-S.4 — RC manuel-override girdap_decision'da hiç yoktu (🟠, düzeltildi)
+- **Belirti:** `ida_topics/control_node.py`'deki RC kanal 5 manuel-override mantığının
+  (pilot RC'den MANUAL isterse yazılım GUIDED için kavga etmez) girdap_decision'da
+  karşılığı yoktu — `mavros_bridge._maybe_auto_guided()` görev aktifken (PARKUR1/2/3)
+  mod hedeften farklı olduğu sürece SÜREKLİ GUIDED isteği gönderiyordu, pilot RC'den
+  manuel almaya çalışsa bile.
+- **Etki:** operatör görev sırasında acil RC manuel müdahale etmek isterse yazılım
+  mod isteğiyle "kavga edebilir" — md 3.3.1.1 istemsiz-hareket riskiyle aynı aile.
+- **Düzeltme (TDD):** `MavrosBridge.is_rc_manual_active()` + `set_rc_manual_override()`
+  (çekirdek, 4 test) — `needs_mode_change()` artık `rc_manual_override` aktifken
+  False dönüyor. `mavros_bridge_node._on_rc_manual_check()` (`/mavros/rc/in`, aynı
+  abonelik F-S.1 ile paylaşılıyor), `rc_manual_channel`/`rc_manual_threshold_pwm`
+  parametreleri ida_topics ile aynı varsayılanlar (kanal 5, PWM 1700), 3 node testi.
+- **Durum:** KAPANDI (bu oturumda TDD ile eklendi ve test edildi). Suite 310→317.
+
 ### [2026-07-14] F-M.3 — servis yoluyla KILL FCU'yu DISARM etmiyor (🟠, KAPANDI'ya bkz)
 - Bu madde koda göre zaten düzeltilmişti (`_on_mission_state` KILL gözleyince
   `_trigger_kill()` çağırıyor, `test_fm3_*` testleri PASSED) — doc-senkron gecikmesiyle

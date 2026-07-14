@@ -354,3 +354,53 @@ def test_fs1_zaten_killed_iken_tekrar_tetiklemez(ros_context) -> None:  # noqa: 
         assert len(calls) == 1, "zaten killed iken _trigger_kill tekrar çağrıldı"
     finally:
         n.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# F-S.4: RC manuel-override
+# --------------------------------------------------------------------------- #
+#
+# ida_topics/control_node.py'deki manual_override'ın karşılığı yoktu — pilot
+# görev aktifken RC'den manuel moda geçmek isterse yazılım GUIDED için kavga
+# ediyordu. Bu testler _on_rc_manual_check'in bridge state'ini doğru
+# güncellediğini ve needs_mode_change()'i bastırdığını doğrular.
+
+
+def test_fs4_rc_manual_esik_ustu_override_aktif_eder(ros_context) -> None:  # noqa: ANN001
+    n = girdap.MavrosBridgeNode()
+    try:
+        # index 4 (RC kanal 5) = 1900 → eşiğin (1700) üstü → override aktif.
+        n._on_rc_in(_rc([1500, 1500, 1500, 1500, 1900, 1500, 1500, 1500]))
+        assert n._bridge.rc_manual_override is True
+    finally:
+        n.destroy_node()
+
+
+def test_fs4_rc_manual_esik_alti_override_pasif(ros_context) -> None:  # noqa: ANN001
+    n = girdap.MavrosBridgeNode()
+    try:
+        n._on_rc_in(_rc([1500, 1500, 1500, 1500, 1200, 1500, 1500, 1500]))
+        assert n._bridge.rc_manual_override is False
+    finally:
+        n.destroy_node()
+
+
+def test_fs4_manual_override_needs_mode_change_bastirir(ros_context) -> None:  # noqa: ANN001
+    """Görev aktifken bile manuel override → yazılım GUIDED istemeyi bırakır."""
+    from std_msgs.msg import String
+
+    n = girdap.MavrosBridgeNode()
+    try:
+        n._on_mission_state(String(data="PARKUR1"))
+        n._on_state(_state(armed=True))          # mode="MANUAL" != hedef GUIDED
+        assert n._bridge.needs_mode_change() is True
+
+        n._on_rc_in(_rc([1500, 1500, 1500, 1500, 1900, 1500, 1500, 1500]))
+        assert n._bridge.needs_mode_change() is False, (
+            "RC manuel-override aktifken yazılım hâlâ GUIDED istiyor (F-S.4)"
+        )
+
+        n._on_rc_in(_rc([1500, 1500, 1500, 1500, 1200, 1500, 1500, 1500]))
+        assert n._bridge.needs_mode_change() is True   # override kalkınca eski hâl
+    finally:
+        n.destroy_node()

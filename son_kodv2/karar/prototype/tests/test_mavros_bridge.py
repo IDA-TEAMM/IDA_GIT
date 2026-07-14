@@ -360,3 +360,37 @@ def test_rc_kill_ozel_esik_config() -> None:
     b = MavrosBridge(MavrosBridgeConfig(rc_kill_threshold_pwm=1000))
     assert b.is_rc_kill_active(1200) is False
     assert b.is_rc_kill_active(900) is True
+
+
+# --------------------------------------------------------------------------- #
+# RC manuel-override — F-S.4
+# --------------------------------------------------------------------------- #
+
+
+def test_rc_manual_esik_ustu_aktif() -> None:
+    b = MavrosBridge(MavrosBridgeConfig(rc_manual_threshold_pwm=1700))
+    assert b.is_rc_manual_active(1900) is True
+
+
+def test_rc_manual_esik_alti_pasif() -> None:
+    b = MavrosBridge(MavrosBridgeConfig(rc_manual_threshold_pwm=1700))
+    assert b.is_rc_manual_active(1200) is False
+
+
+def test_rc_manual_none_pwm_pasif() -> None:
+    b = MavrosBridge()
+    assert b.is_rc_manual_active(None) is False
+
+
+def test_rc_manual_override_needs_mode_change_bastirir() -> None:
+    """F-S.4: manuel override aktifken görev aktif olsa bile mod zorlanmaz."""
+    b = _active_bridge()
+    b.set_mission_state("PARKUR1")
+    b.update_state(0.0, connected=True, armed=True, guided=False, mode="MANUAL")
+    assert b.needs_mode_change() is True     # override yok — normal davranış
+
+    b.set_rc_manual_override(True)
+    assert b.needs_mode_change() is False    # pilot manuel istiyor — kavga yok
+
+    b.set_rc_manual_override(False)
+    assert b.needs_mode_change() is True     # override kalkınca eski davranış

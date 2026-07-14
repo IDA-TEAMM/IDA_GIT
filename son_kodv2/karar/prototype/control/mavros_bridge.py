@@ -55,6 +55,9 @@ class MavrosBridgeConfig:
     # node parametresidir — burada yalnız "aşağıda ne kadar düşükse kill"
     # eşiği tutulur, ida_topics/control_node.py RC_KILL_THRESHOLD ile aynı.
     rc_kill_threshold_pwm: int = 1500
+    # F-S.4: RC manuel-override eşiği (PWM). ida_topics/control_node.py
+    # RC_MANUAL_THRESHOLD ile aynı (bu değerin ÜSTÜ = pilot manuel istiyor).
+    rc_manual_threshold_pwm: int = 1700
 
 
 @dataclass(frozen=True)
@@ -100,6 +103,11 @@ class MavrosBridge:
         # port devri sırasındaki state boşluğu FC hiç görülmeden KILL
         # latch'lememeli. Bilinçli KALICI: sonraki kopmalar sıfırlamaz (M6d).
         self._ever_connected: bool = False
+        # F-S.4: pilot RC'den manuel moda geçmek istiyor mu? True iken
+        # needs_mode_change() False döner — yazılım pilotla GUIDED için
+        # "kavga etmez" (ida_topics/control_node.py manual_override ile aynı
+        # güvenlik önceliği: pilot her zaman kazanır).
+        self._rc_manual_override: bool = False
 
     # ----- config / durum erişimi -----
 
@@ -214,6 +222,26 @@ class MavrosBridge:
             return False
         return channel_pwm < self._cfg.rc_kill_threshold_pwm
 
+    # ----- RC manuel-override — F-S.4 -----
+
+    def is_rc_manual_active(self, channel_pwm: Optional[int]) -> bool:
+        """RC manuel-override kanalı eşiğin ÜSTÜNDE mi (pilot manuel istiyor)?
+
+        `channel_pwm` None ya da <=0 ise (kanal yok/kayıp) manuel İSTENMİYOR
+        sayılır — yalnız geçerli, eşik üstü PWM pilotun bilinçli isteğidir.
+        """
+        if channel_pwm is None or channel_pwm <= 0:
+            return False
+        return channel_pwm > self._cfg.rc_manual_threshold_pwm
+
+    def set_rc_manual_override(self, active: bool) -> None:
+        """Pilot RC manuel-override kanalını aktif/pasif bildirir."""
+        self._rc_manual_override = active
+
+    @property
+    def rc_manual_override(self) -> bool:
+        return self._rc_manual_override
+
     # ----- görev-aktif bayrağı — F14.3 -----
 
     def set_mission_state(self, state_name: str) -> None:
@@ -241,10 +269,12 @@ class MavrosBridge:
     def needs_mode_change(self) -> bool:
         """GUIDED'e geçiş gerekiyor mu?
 
-        Koşullar: görev aktif (F14.3) + bağlı + mod hedeften farklı. Görev
-        aktif değilken (öncesi/sonrası/KILL) operatörün mod seçimi zorlanmaz.
+        Koşullar: görev aktif (F14.3) + bağlı + mod hedeften farklı + pilot
+        RC'den manuel istemiyor (F-S.4). Görev aktif değilken (öncesi/sonrası/
+        KILL) veya pilot manuel override'dayken operatörün mod seçimi
+        zorlanmaz — yazılım pilotla GUIDED için kavga etmez.
         """
-        if not self._mission_active:
+        if not self._mission_active or self._rc_manual_override:
             return False
         if self._last is None or not self._last.connected:
             return False
