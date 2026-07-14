@@ -1,0 +1,11 @@
+- [IDA/Girdap USV overview](project_ida_teknofest_overview.md) — TEKNOFEST 2026 competition context, team, deadlines, current phase
+- [Docker environment](project_ida_docker_env.md) — ros2_final/final5 setup, disk-full crisis 2026-07-13, `distracted_galileo` holds YOLO training data (backed up, don't delete)
+- [Hardware & network config](project_ida_hardware_network.md) — serial/UDP ports, Jetson↔laptop network, ROS_DOMAIN_ID=42
+- [Critical code gotchas](feedback_ida_critical_rules.md) — VfrHud spelling, QoS BEST_EFFORT, Livox host_ip, sign conventions
+- [File locations & backups](reference_ida_file_locations.md) — GitHub repo, Desktop backups, container-only paths
+- [11 nodes: status & tests](project_ida_nodes_and_tests.md) — which nodes are new/updated, topics, what's tested vs pending
+- [4-location file sync](feedback_ida_three_location_sync.md) — node files live in git + IDA_YAZILIM/nodes + plain Masaüstü + GUNCEL files, update all on every change
+- [Telemetry radio/QGC debug](project_ida_telemetry_radio_debug.md) — RESOLVED: dialout group fix + logout/login worked, QGC connects, next: "Not Ready" pre-arm checks
+- [Git branch sync: main + sude-feature-v2](feedback_ida_git_branch_sync.md) — push to both branches, keep them fast-forward identical
+- [Captain's parallel decision repo](project_ida_captain_decision_repo.md) — girdap_decision (RRT*+MPPI/FSM/GTSAM) rivals ida_topics; no canonical choice yet; video deadline 2026-07-21 17:00
+- [Scan git regularly while coding](feedback_ida_scan_git_while_coding.md) — fetch origin periodically during sessions, not just at start; team pushes unpredictably
