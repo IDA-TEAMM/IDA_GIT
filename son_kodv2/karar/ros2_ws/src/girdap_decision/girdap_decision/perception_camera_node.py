@@ -9,9 +9,17 @@ sürücüsü / sentetik / rosbag) değişebilir.
 Image → numpy dönüşümü girdap_decision.image_codec ile (cv_bridge DEĞİL —
 apt cv_bridge numpy 2.x ABI'siyle kırık, gerekçe image_codec docstring'inde).
 
-YOLO katmanı MOCK modda (gerçek .pt yok — sabit test bbox'ı döner). Gerçek
-model gelince yolo_model_path parametresi verilir; kod yolu aynı kalır
-(ultralytics lazy import — mock modda hiç yüklenmez).
+YOLO katmanı (hedef sınıfı, class 2) MOCK modda (gerçek .pt yok — sabit test
+bbox'ı döner). Gerçek model gelince yolo_model_path parametresi verilir; kod
+yolu aynı kalır (ultralytics lazy import — mock modda hiç yüklenmez).
+
+F-S.9: turuncu/sarı (class 0/1) için ikinci bir ALTERNATİF yol — eğitilmiş
+genel duba lokalizatörü (ör. ida_topics/best.pt, ida_topics/perception_node.py
+ile aynı model) + BU node'un ayarlanmış HSV eşikleriyle sınıflandırma
+(ida_topics'in kanıtlanmış "YOLO bulur, HSV sınıflar" deseni + girdap'ın
+tune edilmiş renk eşiklerinin birleşimi). `use_yolo_localizer:=true` +
+`yolo_localizer_model_path` ile açılır; varsayılan kapalı = mevcut saf-HSV
+segmentasyonu hiç değişmez.
 
 Sınıf sözleşmesi (class_id string olarak yayınlanır — vision_msgs şeması):
     "0" = parkur_kenari (turuncu)   "1" = engel (sarı)   "2" = hedef (Parkur-3)
@@ -40,6 +48,7 @@ from vision_msgs.msg import (
 from girdap_decision.image_codec import imgmsg_to_bgr
 from girdap_decision.qos_profiles import sensor_data_qos
 from prototype.perception.camera_buoys import (
+    BuoyLocalizer,
     CameraBuoyConfig,
     Detection,
     YoloInference,
@@ -60,6 +69,12 @@ class PerceptionCameraNode(Node):
         self.declare_parameter("morph_kernel_px", 5)
         self.declare_parameter("use_yolo", False)
         self.declare_parameter("yolo_model_path", "")   # boş = mock
+        # F-S.9: turuncu/sarı için ALTERNATİF yol — eğitilmiş genel duba
+        # lokalizatörü (ör. ida_topics/best.pt) + BU node'un HSV eşikleri.
+        # Varsayılan False → mevcut saf-HSV segmentasyonu değişmez.
+        self.declare_parameter("use_yolo_localizer", False)
+        self.declare_parameter("yolo_localizer_model_path", "")  # boş = mock
+        self.declare_parameter("yolo_localizer_min_coverage", 0.15)
         self.declare_parameter("log_period_s", 5.0)
         # HSV aralıkları dizi param — yalnız params.yaml'dan (launch-arg değil)
         self.declare_parameter("hsv_orange_lo", [5, 120, 120])
@@ -79,11 +94,22 @@ class PerceptionCameraNode(Node):
             morph_kernel_px=int(p("morph_kernel_px").value),
             use_yolo=bool(p("use_yolo").value),
             yolo_model_path=str(p("yolo_model_path").value),
+            use_yolo_localizer=bool(p("use_yolo_localizer").value),
+            yolo_localizer_model_path=str(p("yolo_localizer_model_path").value),
+            yolo_localizer_min_coverage=float(
+                p("yolo_localizer_min_coverage").value
+            ),
         )
         # .pt yolu boşsa mock — gerçek model geldiğinde yalnız parametre değişir.
         self._yolo = YoloInference(
             model_path=self._cfg.yolo_model_path,
             mock=not self._cfg.yolo_model_path,
+        )
+        # F-S.9: turuncu/sarı lokalizatörü (ida_topics/best.pt gibi bir genel
+        # duba modeli) — hedef sınıfı YoloInference'dan bağımsız, ayrı model.
+        self._localizer = BuoyLocalizer(
+            model_path=self._cfg.yolo_localizer_model_path,
+            mock=not self._cfg.yolo_localizer_model_path,
         )
         self._log_period_s = float(p("log_period_s").value)
         self._last_log_t: Optional[float] = None
@@ -97,19 +123,27 @@ class PerceptionCameraNode(Node):
         )
 
         yolo_mode = "mock" if self._yolo.is_mock else self._cfg.yolo_model_path
+        loc_mode = (
+            "mock" if self._localizer.is_mock
+            else self._cfg.yolo_localizer_model_path
+        )
         self.get_logger().info(
             "perception_camera_node aktif: /oak/rgb/image_raw → "
             "/perception/buoys "
             f"(min_area={self._cfg.min_area_px} px, "
             f"clahe={self._cfg.clahe_clip_limit}, "
-            f"yolo={'AÇIK:' + yolo_mode if self._cfg.use_yolo else 'kapalı'})"
+            f"hedef_yolo={'AÇIK:' + yolo_mode if self._cfg.use_yolo else 'kapalı'}, "
+            f"turuncu/sarı="
+            f"{'YOLO-lokalizatör:' + loc_mode if self._cfg.use_yolo_localizer else 'HSV'})"
         )
 
     # ------------------------------------------------------------- callback
 
     def _on_image(self, msg: Image) -> None:
         frame = imgmsg_to_bgr(msg)                 # cv_bridge'siz (docstring)
-        detections = detect_buoys(frame, self._cfg, self._yolo)
+        detections = detect_buoys(
+            frame, self._cfg, self._yolo, self._localizer
+        )
         self._pub.publish(self._to_msg(detections, msg))
 
         self.get_logger().debug(f"{len(detections)} duba tespiti")

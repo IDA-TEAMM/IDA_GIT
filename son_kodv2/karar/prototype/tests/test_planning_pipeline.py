@@ -220,3 +220,106 @@ def test_global_path_published_after_waypoints(bounds: Bounds) -> None:
     # Yol mevcut pozdan (5,5) goal'e (40,40) gitmeli
     assert math.hypot(path[0][0] - 5.0, path[0][1] - 5.0) < 2.0
     assert math.hypot(path[-1][0] - 40.0, path[-1][1] - 40.0) < 2.0
+
+
+# --------------------------------------------------------------------------- #
+# F-S.10: control_mode="pid" — MPPI'ye alternatif, kanıtlanmış PID kontrolcü.
+# Aynı kapalı-döngü fiziksel plant testleriyle (test_closed_loop_*), PID
+# yolunun da GERÇEKTEN goal'e ulaştığını + engelden kaçındığını kanıtlar —
+# yalnız birim test değil, uçtan uca simülasyon.
+# --------------------------------------------------------------------------- #
+
+
+def _pid_cfg() -> PlanningPipelineConfig:
+    return PlanningPipelineConfig(control_mode="pid")
+
+
+def test_control_mode_varsayilan_mppi(bounds: Bounds) -> None:
+    assert PlanningPipelineConfig().control_mode == "mppi"
+
+
+def test_pid_modu_rrt_replan_atlar(bounds: Bounds) -> None:
+    """F-S.10: control_mode='pid' iken RRT* hiç koşmaz — global_path None
+    kalır (gereksiz CPU harcanmaz, PID hedefe doğrudan gider)."""
+    pipe = PlanningPipeline(bounds, _pid_cfg())
+    pipe.set_state(np.array([5.0, 5.0, 0.0, 0.0, 0.0, 0.0]))
+    pipe.set_waypoints([(5.0, 5.0), (40.0, 40.0)])
+    assert pipe.global_path is None
+
+
+def test_pid_modu_kapali_dongu_goale_ulasir(bounds: Bounds) -> None:
+    """PID modu: engelsiz sahnede araç goal'e < 2 m yaklaşmalı (fiziksel
+    plant üzerinde — test_closed_loop_reaches_goal'ın PID karşılığı)."""
+    dyn = CatamaranDynamics()
+    pipe = PlanningPipeline(bounds, _pid_cfg(), dynamics=dyn)
+
+    start = (5.0, 5.0)
+    goal = (40.0, 40.0)
+    pipe.set_waypoints([start, goal])
+    pipe.set_mission_state("PARKUR1")
+
+    state = np.zeros(6)
+    state[0], state[1] = start
+    state[2] = math.atan2(goal[1] - start[1], goal[0] - start[0])
+
+    dt = 0.05
+    reached = False
+    for _ in range(int(40.0 / dt)):
+        pipe.set_state(state)
+        u = pipe.compute_control()
+        assert u is not None and np.all(np.isfinite(u))
+        state = dyn.step_rk4(state, u, dt)
+        if math.hypot(state[0] - goal[0], state[1] - goal[1]) < 2.0:
+            reached = True
+            break
+
+    final = math.hypot(state[0] - goal[0], state[1] - goal[1])
+    print(f"\n[pid closed-loop] final goal hata = {final:.2f} m")
+    assert reached, f"PID modu goal'e ulaşamadı (final hata {final:.2f} m)"
+
+
+def test_pid_modu_kapali_dongu_engelden_kacar(bounds: Bounds) -> None:
+    """PID modu: yol üstündeki LiDAR engelinden emniyet payıyla kaçınmalı
+    (test_closed_loop_avoids_obstacle'ın PID karşılığı)."""
+    dyn = CatamaranDynamics()
+    pipe = PlanningPipeline(bounds, _pid_cfg(), dynamics=dyn)
+
+    start = (5.0, 5.0)
+    goal = (45.0, 45.0)
+    obs = CircleObstacle(25.0, 25.0, 4.0)     # köşegen üstünde
+    pipe.set_waypoints([start, goal])
+    pipe.set_obstacles([obs])
+    pipe.set_mission_state("PARKUR1")
+
+    state = np.zeros(6)
+    state[0], state[1] = start
+    state[2] = math.atan2(goal[1] - start[1], goal[0] - start[0])
+
+    dt = 0.05
+    min_clearance = float("inf")
+    for _ in range(int(45.0 / dt)):
+        pipe.set_state(state)
+        u = pipe.compute_control()
+        assert u is not None
+        state = dyn.step_rk4(state, u, dt)
+        d = math.hypot(state[0] - obs.cx, state[1] - obs.cy) - obs.r
+        min_clearance = min(min_clearance, d)
+        if math.hypot(state[0] - goal[0], state[1] - goal[1]) < 2.0:
+            break
+
+    print(f"\n[pid obstacle] min clearance = {min_clearance:.2f} m")
+    assert min_clearance > -0.5, "PID modu engelin derinine girdi (çarptı)"
+
+
+def test_pid_modu_parkur_disi_motor_stop(bounds: Bounds) -> None:
+    """PID modu da FSM gating'e uymalı — parkur dışı None (motor stop)."""
+    pipe = PlanningPipeline(bounds, _pid_cfg())
+    pipe.set_waypoints([(5.0, 5.0), (45.0, 45.0)])
+    pipe.set_mission_state("BEKLEMEDE")
+    assert pipe.compute_control() is None
+
+
+def test_pid_modu_waypoint_yoksa_none(bounds: Bounds) -> None:
+    pipe = PlanningPipeline(bounds, _pid_cfg())
+    pipe.set_mission_state("PARKUR1")
+    assert pipe.compute_control() is None

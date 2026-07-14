@@ -82,15 +82,29 @@ class PlanningNode(Node):
         self.declare_parameter("mode_name", "GUIDED")        # otonomi modu
         self.declare_parameter("map_rate_hz", 10.0)          # Dosya-3 yayım hızı
         self.declare_parameter("use_rrt", True)              # false → video bypass
+        # F-S.10: yerel kontrolcü seçimi — "mppi" (varsayılan) | "pid"
+        # (ida_topics'in donanımda kanıtlanmış cascade PID'i + LiDAR
+        # potansiyel-alan kaçınması; MPPI saha kalibrasyonu tamamlanana
+        # kadar düşme-güvenli yedek — bkz. PlanningPipelineConfig.control_mode).
+        self.declare_parameter("control_mode", "mppi")
 
         bx = self.get_parameter("bounds_x").value
         by = self.get_parameter("bounds_y").value
         bounds = Bounds(bx[0], bx[1], by[0], by[1])
 
+        control_mode = str(self.get_parameter("control_mode").value).lower()
+        if control_mode not in ("mppi", "pid"):
+            self.get_logger().warn(
+                f"control_mode='{control_mode}' geçersiz → 'mppi' varsayılanına "
+                "düşüldü (geçerli değerler: mppi, pid)"
+            )
+            control_mode = "mppi"
+
         cfg = PlanningPipelineConfig(
             replan_proximity=float(self.get_parameter("replan_proximity").value),
             mppi_K=int(self.get_parameter("mppi_K").value),
             mppi_T=int(self.get_parameter("mppi_T").value),
+            control_mode=control_mode,
         )
         self._pipe = PlanningPipeline(bounds, cfg)
 

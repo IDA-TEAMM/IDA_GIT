@@ -19,10 +19,13 @@ from prototype.perception.camera_buoys import (
     CLASS_ENGEL,
     CLASS_HEDEF,
     CLASS_PARKUR_KENARI,
+    BuoyLocalizer,
     CameraBuoyConfig,
     Detection,
+    RawBox,
     YoloInference,
     apply_clahe,
+    classify_roi_color,
     color_mask,
     detect_buoys,
     mask_to_detections,
@@ -31,6 +34,8 @@ from prototype.perception.synthetic_camera import (
     FRAME_H,
     FRAME_W,
     ORANGE_BGR,
+    WATER_BGR,
+    YELLOW_BGR,
     draw_buoy,
     scene_camera_beyaz_sosis,
     scene_camera_fov_kenari,
@@ -222,3 +227,107 @@ def test_menzil_siniri_esik_iki_yani_f55(
     detections = detect_buoys(scene_camera_menzil_siniri(rng), cfg)
     assert len(detections) == 1
     assert abs(detections[0].center_x - 200.0) < 3   # yalnız eşik üstü (r=8)
+
+
+# --------------------------------------------------------------------------- #
+# F-S.9: YOLO-lokalizasyon + girdap HSV-sınıflandırma hibrit yolu
+#
+# ida_topics/perception_node.py'nin kanıtlanmış deseni (eğitilmiş model kutuyu
+# bulur, HSV rengi belirler) BuoyLocalizer + classify_roi_color olarak taşındı.
+# Varsayılan (use_yolo_localizer=False) davranışı DEĞİŞTİRMEZ — yukarıdaki
+# testlerin hepsi hâlâ saf-HSV yolunu (mevcut detect_buoys) doğruluyor.
+# --------------------------------------------------------------------------- #
+
+
+def test_classify_roi_color_turuncu(cfg: CameraBuoyConfig) -> None:
+    roi = np.full((20, 20, 3), ORANGE_BGR, dtype=np.uint8)
+    assert classify_roi_color(roi, cfg) == CLASS_PARKUR_KENARI
+
+
+def test_classify_roi_color_sari(cfg: CameraBuoyConfig) -> None:
+    roi = np.full((20, 20, 3), YELLOW_BGR, dtype=np.uint8)
+    assert classify_roi_color(roi, cfg) == CLASS_ENGEL
+
+
+def test_classify_roi_color_su_arka_plani_none(cfg: CameraBuoyConfig) -> None:
+    """Ne turuncu ne sarı (deniz mavisi arka plan) → None, kutu ATLANIR."""
+    roi = np.full((20, 20, 3), WATER_BGR, dtype=np.uint8)
+    assert classify_roi_color(roi, cfg) is None
+
+
+def test_classify_roi_color_bos_roi_none(cfg: CameraBuoyConfig) -> None:
+    roi = np.zeros((0, 0, 3), dtype=np.uint8)
+    assert classify_roi_color(roi, cfg) is None
+
+
+def test_buoy_localizer_mock_bos_liste_doner() -> None:
+    """Mock lokalizatör (model yolu boş, kutu enjekte edilmedi) kutu üretmez."""
+    localizer = BuoyLocalizer()
+    assert localizer.is_mock is True
+    assert localizer.locate(np.zeros((10, 10, 3), dtype=np.uint8)) == []
+
+
+def test_buoy_localizer_mock_enjekte_edilen_kutulari_doner() -> None:
+    boxes = [RawBox(160.0, 240.0, 60.0, 60.0, 0.9)]
+    localizer = BuoyLocalizer(mock_boxes=boxes)
+    assert localizer.locate(np.zeros((10, 10, 3), dtype=np.uint8)) == boxes
+
+
+def test_detect_buoys_yolo_localized_scene_minimum(
+    cfg: CameraBuoyConfig, rng: np.random.Generator
+) -> None:
+    """F-S.9 uçtan uca: lokalizatör 3 kutu bulur (scene_camera_minimum ile
+    AYNI konumlarda), girdap HSV eşikleri doğru sınıfı (2 turuncu+1 sarı)
+    atar — saf-HSV yolunun (detect_buoys varsayılan) ürettiğiyle eşdeğer.
+    """
+    cfg.use_yolo_localizer = True
+    mock_boxes = [
+        RawBox(160.0, 240.0, 60.0, 60.0, 0.9),   # sol turuncu (r=30)
+        RawBox(480.0, 240.0, 60.0, 60.0, 0.9),   # sağ turuncu (r=30)
+        RawBox(320.0, 320.0, 50.0, 50.0, 0.9),   # sarı (r=25)
+    ]
+    localizer = BuoyLocalizer(mock_boxes=mock_boxes)
+
+    detections = detect_buoys(
+        scene_camera_minimum(rng), cfg, localizer=localizer
+    )
+
+    assert len(detections) == 3
+    classes = sorted(d.class_id for d in detections)
+    assert classes == [CLASS_PARKUR_KENARI, CLASS_PARKUR_KENARI, CLASS_ENGEL]
+
+
+def test_detect_buoys_yolo_localized_hedef_disi_kutu_atlanir(
+    cfg: CameraBuoyConfig,
+) -> None:
+    """Ne turuncu ne sarı olan bir kutu (ör. su/arka plan yanlış pozitifi)
+    sessizce ATLANIR — sahte sınıf uydurulmaz."""
+    cfg.use_yolo_localizer = True
+    frame = np.full((480, 640, 3), WATER_BGR, dtype=np.uint8)
+    localizer = BuoyLocalizer(
+        mock_boxes=[RawBox(320.0, 240.0, 40.0, 40.0, 0.5)]
+    )
+    detections = detect_buoys(frame, cfg, localizer=localizer)
+    assert detections == []
+
+
+def test_detect_buoys_yolo_localized_localizer_yoksa_hsv_yoluna_duser(
+    cfg: CameraBuoyConfig, rng: np.random.Generator
+) -> None:
+    """use_yolo_localizer=True ama localizer=None → GÜVENLİ FALLBACK: saf-HSV
+    yolu çalışır, crash/boş sonuç yok."""
+    cfg.use_yolo_localizer = True
+    detections = detect_buoys(scene_camera_minimum(rng), cfg, localizer=None)
+    assert len(detections) == 3   # saf-HSV yoluyla aynı sonuç
+
+
+def test_detect_buoys_yolo_localizer_never_imports_ultralytics(
+    cfg: CameraBuoyConfig,
+) -> None:
+    """Mock mod (model_path boş) ultralytics'i HİÇ import etmemeli — Jetson'a
+    gereksiz bağımlılık taşınmaz (YoloInference ile aynı ilke)."""
+    assert "ultralytics" not in sys.modules
+    cfg.use_yolo_localizer = True
+    localizer = BuoyLocalizer(mock_boxes=[RawBox(100.0, 100.0, 20.0, 20.0, 0.5)])
+    detect_buoys(np.zeros((480, 640, 3), dtype=np.uint8), cfg, localizer=localizer)
+    assert "ultralytics" not in sys.modules

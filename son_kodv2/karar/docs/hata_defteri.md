@@ -191,6 +191,58 @@
   varsayılanlar (kanal 8, PWM 1500). Tek KILL otoritesi (`_trigger_kill`, latch) korunuyor,
   bu yalnız bir tetikleyici daha.
 - **Durum:** KAPANDI (bu oturumda TDD ile eklendi ve test edildi).
+- **⚠️ DÜZELTME (2026-07-14, ekip geri bildirimi):** ArduPilot'ın kendi
+  `RCx_OPTION=31` ("Motor Emergency Stop") firmware özelliği muhtemelen zaten
+  yapılandırılmış — bu, MAVLink/companion computer'a HİÇ gitmeden, gerçek
+  zamanlı ve companion computer'dan GERÇEKTEN bağımsız çalışır. Bu koddaki
+  F-S.1 (mavros_bridge'in `/mavros/rc/in`'i dinlemesi) companion computer'ın
+  İÇİNDE çalışıyor — yani companion computer/mavros donarsa BU kod da aynı
+  anda çalışamaz hale gelir; iddia edilen "bağımsızlık" gerçekte sağlanmıyor.
+  **Aksiyon:** FC ekibine `RCx_OPTION` parametrelerini (31 hangi kanalda)
+  sor. Yapılandırılmışsa F-S.1 kritik değil, en fazla ikincil/loglama katmanı
+  — "kritik güvenlik fix'i" etiketi kaldırılmalı. Kod GERİ ALINMADI (zararsız,
+  FC'nin kendi E-Stop'una ek bir katman) ama önceliği düşürüldü.
+
+### [2026-07-14] F-S.9 — turuncu/sarı tespiti için YOLO-lokalizasyon + HSV hibrit (algı entegrasyonu)
+- **Bağlam:** `girdap_decision`'ın turuncu/sarı (class 0/1) tespiti tamamen HSV
+  segmentasyonu — YOLO yalnız class 2 "hedef" için ayrılmış (Parkur-3). ida_topics'in
+  `best.pt` modeli ise GENEL duba lokalizasyonu için eğitilmiş (renk sınıfı ayrıca
+  HSV ile belirleniyor) — girdap'ın "hedef" kavramıyla AYNI ŞEY DEĞİL, doğrudan o
+  yuvaya takmak yanlış olurdu.
+- **Çözüm:** `camera_buoys.py`'ye YENİ bir alternatif yol eklendi — `BuoyLocalizer`
+  (eğitilmiş genel duba modeli, SINIF ÜRETMEZ) + `classify_roi_color()` (girdap'ın
+  AYARLANMIŞ HSV eşikleriyle kutunun rengini/sınıfını belirler). `use_yolo_localizer`
+  (varsayılan false → mevcut saf-HSV davranışı DEĞİŞMEZ) ile açılır.
+  `perception_camera_node.py`'ye `yolo_localizer_model_path` parametresi eklendi.
+- **Doğrulama:** 10 yeni test (sentetik sahne üzerinde saf-HSV yoluyla eşdeğer
+  sonuç, hedef-dışı kutu atlanır, localizer=None güvenli fallback, ultralytics
+  yalnız gerçek modelde import edilir).
+- **Durum:** KAPANDI. Gerçek `best.pt` dosyası henüz container'a kopyalanmadı —
+  `yolo_localizer_model_path` parametresi verilene kadar mock modda kalır.
+
+### [2026-07-14] F-S.10 — Karar katmanı sentezi: MPPI'ye TDD PID alternatifi (mimari birleşim)
+- **Bağlam:** ida_topics/decision_node.py (basit cascade PID, donanımda kanıtlı) ile
+  girdap_decision'ın RRT*+MPPI'ı (daha yetenekli, ama RRT* girdisi bu oturumda ilk
+  kez bağlandı — F-S.6 — hiç donanımda koşmadı) arasında hangisinin esas alınacağı
+  açık soruydu. Karar: ikisinin GÜÇLÜ yanlarını birleştiren yeni kod.
+- **Çözüm:** `prototype/planning/pid_controller.py` — ida_topics'in cascade heading
+  PID'i (dış döngü heading→yaw_rate, iç döngü yaw_rate→açısal düzeltme) + girdap'ın
+  LiDAR `CircleObstacle` verisiyle potansiyel-alan kaçınması. `MPPIController.step()`
+  ile BİREBİR AYNI arayüz — `PlanningPipelineConfig.control_mode` ("mppi" varsayılan
+  | "pid") ile hiçbir çağıran kod değişmeden seçilir. FSM/mission_manager/mavros_bridge
+  güvenlik çatısı AYNEN korunuyor — yalnız yerel kontrolcü değişiyor.
+- **🐛 Test sırasında bulunan gerçek hata:** ilk tasarımda engel TAM ÖNDEYKEN (radyal
+  itme, hedef vektörünü doğrudan iptal eder) klasik potansiyel-alan "tekil nokta"
+  sorunu kapalı-döngü fiziksel simülasyonda GERÇEK ÇARPIŞMAYA yol açtı
+  (`test_pid_modu_kapali_dongu_engelden_kacar`, min_clearance -2.8 m). Düzeltme:
+  radyal itmeye küçük sabit bir teğetsel (90°) bileşen eklendi (`obstacle_tangential_ratio`,
+  vektörel toplam — açısal işaret/sign-flip yerine), + güvenlik payı fiziksel testle
+  kalibre edildi (3m → 8m). Testler bu hatayı YAKALADI ve düzeltmeyi doğruladı.
+- **Doğrulama:** 17 yeni test (11 birim + 6 PlanningPipeline entegrasyonu) — kapalı-döngü
+  fiziksel simülasyonda hem goal'e ulaşma HEM gerçek engelden kaçınma kanıtlandı
+  (yalnız birim test değil, `CatamaranDynamics.step_rk4` ile gerçek plant simülasyonu).
+- **Durum:** KAPANDI — ama SAHA DOĞRULAMASI GEREKİR (MPPI gibi, PID modu da henüz
+  gerçek donanımda hiç koşmadı; varsayılan hâlâ "mppi", "pid" saha testi bekliyor).
 
 ### [2026-07-14] F-S.2/F-S.3 — sensör sürücüleri (ida_topics) son_kodv2'ye entegre edildi
 - **F-S.2:** `ros2_ws/src/ida_topics_yeni` (Livox UDP, OAK-D depthai, gps_imu MAVROS

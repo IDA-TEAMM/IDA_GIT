@@ -33,6 +33,10 @@ _log = logging.getLogger(__name__)
 
 from prototype.dynamics.catamaran import CatamaranDynamics
 from prototype.planning.mppi import MPPIConfig, MPPIController
+from prototype.planning.pid_controller import (
+    CascadeHeadingPidController,
+    PidControllerConfig,
+)
 from prototype.planning.rrt_star import (
     Bounds,
     CircleObstacle,
@@ -86,6 +90,18 @@ class PlanningPipelineConfig:
     map_width: int = 100                 # hücre
     map_height: int = 100                # hücre
     map_resolution: float = 0.5          # m/hücre → 50 m × 50 m pencere
+    # F-S.10: yerel kontrolcü seçimi — "mppi" (varsayılan, LiDAR cost-map +
+    # RRT* global plan) | "pid" (ida_topics'in donanımda kanıtlanmış cascade
+    # heading PID'i + LiDAR potansiyel-alan kaçınması — MPPI saha kalibrasyonu
+    # tamamlanana kadar ya da beklenmedik davranışta düşme-güvenli yedek).
+    # İkisi de AYNI FSM/parkur/güvenlik çatısı altında çalışır — yalnız
+    # compute_control()'ın iç kontrolcüsü değişir.
+    control_mode: str = "mppi"
+    pid_cfg: PidControllerConfig = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.pid_cfg is None:
+            self.pid_cfg = PidControllerConfig()
 
 
 @dataclass(frozen=True)
@@ -129,6 +145,8 @@ class PlanningPipeline:
         self._mission_state = "BOOT"
 
         self._mppi: Optional[MPPIController] = None   # referans gelince kurulur
+        # F-S.10: PID yedek kontrolcü — cfg.control_mode="pid" iken kullanılır.
+        self._pid = CascadeHeadingPidController(self.cfg.pid_cfg)
 
     # ----- girdi setter'ları -----
 
@@ -137,9 +155,14 @@ class PlanningPipeline:
         self._state[:] = state
 
     def set_waypoints(self, waypoints: List[Tuple[float, float]]) -> None:
-        """Görev hedeflerini ayarla ve global yörüngeyi (yeniden) planla."""
+        """Görev hedeflerini ayarla ve global yörüngeyi (yeniden) planla.
+
+        F-S.10: control_mode="pid" iken RRT*/MPPI hiç kurulmaz — PID hedefe
+        doğrudan seyir eder, global path'e ihtiyaç duymaz (gereksiz CPU
+        harcanmaz).
+        """
         self._waypoints = list(waypoints)
-        if self._waypoints:
+        if self._waypoints and self.cfg.control_mode != "pid":
             self._global_replan()
 
     def set_reference_direct(self, target_x: float, target_y: float) -> None:
@@ -151,7 +174,8 @@ class PlanningPipeline:
         sx, sy = float(self._state[0]), float(self._state[1])
         self._waypoints = [(float(target_x), float(target_y))]
         self._ref_path = [(sx, sy), (float(target_x), float(target_y))]
-        self._rebuild_mppi()
+        if self.cfg.control_mode != "pid":       # F-S.10: PID path'e ihtiyaç duymaz
+            self._rebuild_mppi()
 
     def set_obstacles(self, obstacles: List[CircleObstacle]) -> None:
         """
@@ -179,6 +203,12 @@ class PlanningPipeline:
         # Parkurlar arası geçişte ağırlık profili değişir
         if state in _PARKUR_PROFILES and prev != state and self._ref_path:
             self._rebuild_mppi()
+        # F-S.10: parkur geçişinde PID'in heading-yumuşatma geçmişi de
+        # sıfırlanır — MPPI'nin warm-start korumasıyla aynı ruh (soğuk
+        # başlangıç zikzağı önlenir), ama PID durumsuz olduğundan ref_path
+        # şartı yok.
+        if state in _PARKUR_PROFILES and prev != state:
+            self._pid.reset()
 
     # ----- planlama iç mantığı -----
 
@@ -281,15 +311,25 @@ class PlanningPipeline:
 
     def compute_control(self) -> Optional[np.ndarray]:
         """
-        Tek MPPI step. Dönüş:
-            (2,) [T_left, T_right] (N) — parkur aktif ve MPPI hazırsa
+        Tek kontrol adımı (MPPI ya da PID — cfg.control_mode). Dönüş:
+            (2,) [T_left, T_right] (N) — parkur aktif ve kontrolcü hazırsa
             None — FSM parkur dışı veya referans/kontrolcü henüz yok (motor stop)
         """
         if self._mission_state not in _ACTIVE_STATES:
             return None
+        if self.cfg.control_mode == "pid":
+            return self._compute_control_pid()
         if self._mppi is None:
             return None
         return self._mppi.step(self._state)
+
+    def _compute_control_pid(self) -> Optional[np.ndarray]:
+        """F-S.10: PID yedek kontrolcü — RRT* global path gerekmez, hedefe
+        (son waypoint) doğrudan seyir + LiDAR engel kaçınma."""
+        if not self._waypoints:
+            return None
+        target = self._waypoints[-1]
+        return self._pid.step(self._state, target, self._obstacles)
 
     # ----- sorgu -----
 

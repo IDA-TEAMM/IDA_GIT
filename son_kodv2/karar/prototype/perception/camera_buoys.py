@@ -58,6 +58,13 @@ class CameraBuoyConfig:
     morph_kernel_px: int = 5            # açma/kapama gürültü temizliği
     use_yolo: bool = False              # hedef sınıfı YOLO katmanı
     yolo_model_path: str = ""           # gerçek .pt yolu (boş = mock)
+    # F-S.9: turuncu/sarı (class 0/1) tespiti için ALTERNATİF yol — eğitilmiş
+    # genel duba lokalizatörü (ör. ida_topics/best.pt) + BU config'in AYARLANMIŞ
+    # HSV eşikleriyle renk sınıflandırması. Varsayılan False → mevcut saf-HSV
+    # segmentasyonu (detect_buoys) hiç değişmez, geriye dönük tam uyumlu.
+    use_yolo_localizer: bool = False
+    yolo_localizer_model_path: str = ""     # boş = mock (kutu üretmez)
+    yolo_localizer_min_coverage: float = 0.15  # ROI'de sınıf HSV kaplama eşiği
 
 
 def apply_clahe(frame_bgr: np.ndarray, cfg: CameraBuoyConfig) -> np.ndarray:
@@ -174,28 +181,149 @@ class YoloInference:
         return detections
 
 
+# --------------------------------------------------------------------------- #
+# F-S.9: YOLO-lokalizasyon + girdap HSV-sınıflandırma hibrit yolu.
+#
+# ida_topics/perception_node.py'nin kanıtlanmış yaklaşımı (gerçek eğitilmiş
+# model kutuyu bulur, HSV rengi/sınıfı belirler) buraya taşındı — ama renk
+# eşikleri bu modülün AYARLANMIŞ CameraBuoyConfig değerleridir (iki tarafın
+# güçlü yanı birleşiyor: modelin gerçek-veri lokalizasyonu + tune edilmiş HSV).
+# Varsayılan (use_yolo_localizer=False) mevcut saf-HSV yolunu hiç etkilemez.
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class RawBox:
+    """Lokalizatörün ürettiği ham kutu — HENÜZ sınıfsız (yalnız konum+skor)."""
+
+    center_x: float
+    center_y: float
+    width: float
+    height: float
+    score: float
+
+
+class BuoyLocalizer:
+    """Eğitilmiş genel duba lokalizatörü — SINIF ÜRETMEZ, yalnız kutu+skor.
+
+    `YoloInference`'dan (hedef sınıfı için, class_id döner) kasıtlı FARKLI:
+    ida_topics/best.pt modeli gibi "burada bir duba var" der, rengi/sınıfı
+    `classify_roi_color` ayrıca HSV ile belirler. Mock mod (model_path boş)
+    hiç kutu üretmez — testler `mock_boxes` ile enjekte eder.
+    """
+
+    def __init__(
+        self,
+        model_path: str = "",
+        mock: bool = True,
+        mock_boxes: Optional[list[RawBox]] = None,
+    ) -> None:
+        self._model_path = model_path
+        self._mock = mock or not model_path
+        self._mock_boxes = mock_boxes
+        self._model: Any = None
+
+    @property
+    def is_mock(self) -> bool:
+        return self._mock
+
+    def locate(self, frame_bgr: np.ndarray) -> list[RawBox]:
+        if self._mock:
+            return list(self._mock_boxes) if self._mock_boxes else []
+        return self._locate_real(frame_bgr)
+
+    def _locate_real(self, frame_bgr: np.ndarray) -> list[RawBox]:
+        if self._model is None:
+            from ultralytics import YOLO          # lazy — mock modda import yok
+            self._model = YOLO(self._model_path)
+        boxes: list[RawBox] = []
+        for result in self._model(frame_bgr, conf=0.15, verbose=False):
+            for box in result.boxes:
+                cx, cy, w, h = box.xywh[0].tolist()
+                boxes.append(RawBox(cx, cy, w, h, float(box.conf)))
+        return boxes
+
+
+def classify_roi_color(roi_bgr: np.ndarray, cfg: CameraBuoyConfig) -> Optional[int]:
+    """Bir lokalizasyon kutusunun ROI'sini girdap'ın HSV eşikleriyle sınıflar.
+
+    inRange KAPLAMA ORANI kullanılır (ida_topics'in ortalama-H yaklaşımından
+    daha sağlam — kısmi gölge/parlama tek bir pikselin ortalamayı bozmasını
+    engeller). Hiçbir sınıf `yolo_localizer_min_coverage` eşiğini aşmıyorsa
+    (ör. "hedef" nesnesi ya da arka plan) None — bu kutu ATLANIR.
+    """
+    if roi_bgr.size == 0:
+        return None
+    hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
+    total = hsv.shape[0] * hsv.shape[1]
+    if total == 0:
+        return None
+    orange_mask = cv2.inRange(
+        hsv, np.array(cfg.hsv_orange_lo, np.uint8), np.array(cfg.hsv_orange_hi, np.uint8)
+    )
+    yellow_mask = cv2.inRange(
+        hsv, np.array(cfg.hsv_yellow_lo, np.uint8), np.array(cfg.hsv_yellow_hi, np.uint8)
+    )
+    orange_cov = float(np.count_nonzero(orange_mask)) / total
+    yellow_cov = float(np.count_nonzero(yellow_mask)) / total
+    min_cov = cfg.yolo_localizer_min_coverage
+    if orange_cov < min_cov and yellow_cov < min_cov:
+        return None
+    return CLASS_PARKUR_KENARI if orange_cov >= yellow_cov else CLASS_ENGEL
+
+
+def _detect_buoys_yolo_localized(
+    frame_bgr: np.ndarray, cfg: CameraBuoyConfig, localizer: BuoyLocalizer
+) -> list[Detection]:
+    """F-S.9: lokalizatör kutuyu bulur, girdap HSV eşikleri rengi/sınıfı verir."""
+    balanced = apply_clahe(frame_bgr, cfg)
+    h_frame, w_frame = balanced.shape[:2]
+    detections: list[Detection] = []
+    for box in localizer.locate(balanced):
+        x1 = max(0, int(box.center_x - box.width / 2))
+        y1 = max(0, int(box.center_y - box.height / 2))
+        x2 = min(w_frame, int(box.center_x + box.width / 2))
+        y2 = min(h_frame, int(box.center_y + box.height / 2))
+        roi = balanced[y1:y2, x1:x2]
+        class_id = classify_roi_color(roi, cfg)
+        if class_id is None:
+            continue                              # ne turuncu ne sarı — atla
+        detections.append(
+            Detection(box.center_x, box.center_y, box.width, box.height,
+                      class_id, box.score)
+        )
+    return detections
+
+
 def detect_buoys(
     frame_bgr: np.ndarray,
     cfg: CameraBuoyConfig,
     yolo: Optional[YoloInference] = None,
+    localizer: Optional[BuoyLocalizer] = None,
 ) -> list[Detection]:
-    """Tam pipeline: CLAHE → HSV → turuncu/sarı bbox (+ opsiyonel YOLO hedef).
+    """Tam pipeline: CLAHE → turuncu/sarı bbox (+ opsiyonel YOLO hedef).
 
+    turuncu/sarı için iki yol vardır (cfg.use_yolo_localizer ile seçilir):
+        False (varsayılan): saf HSV segmentasyonu (mevcut davranış, DEĞİŞMEDİ).
+        True: F-S.9 hibrit — eğitilmiş lokalizatör + girdap HSV sınıflandırma.
     Boş/geçersiz girişte boş liste (defensive).
     """
     if frame_bgr is None or frame_bgr.size == 0:
         return []
-    balanced = apply_clahe(frame_bgr, cfg)
-    hsv = cv2.cvtColor(balanced, cv2.COLOR_BGR2HSV)
 
-    orange = color_mask(
-        hsv, cfg.hsv_orange_lo, cfg.hsv_orange_hi, cfg.morph_kernel_px
-    )
-    yellow = color_mask(
-        hsv, cfg.hsv_yellow_lo, cfg.hsv_yellow_hi, cfg.morph_kernel_px
-    )
-    detections = mask_to_detections(orange, CLASS_PARKUR_KENARI, cfg)
-    detections += mask_to_detections(yellow, CLASS_ENGEL, cfg)
+    if cfg.use_yolo_localizer and localizer is not None:
+        detections = _detect_buoys_yolo_localized(frame_bgr, cfg, localizer)
+    else:
+        balanced = apply_clahe(frame_bgr, cfg)
+        hsv = cv2.cvtColor(balanced, cv2.COLOR_BGR2HSV)
+        orange = color_mask(
+            hsv, cfg.hsv_orange_lo, cfg.hsv_orange_hi, cfg.morph_kernel_px
+        )
+        yellow = color_mask(
+            hsv, cfg.hsv_yellow_lo, cfg.hsv_yellow_hi, cfg.morph_kernel_px
+        )
+        detections = mask_to_detections(orange, CLASS_PARKUR_KENARI, cfg)
+        detections += mask_to_detections(yellow, CLASS_ENGEL, cfg)
 
     if cfg.use_yolo and yolo is not None:
         detections += yolo.infer(frame_bgr)       # hedef sınıfı (Parkur-3)

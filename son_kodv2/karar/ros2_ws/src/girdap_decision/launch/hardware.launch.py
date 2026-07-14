@@ -98,6 +98,10 @@ _CAMERA_DEFAULTS: dict[str, tuple[object, type]] = {
     "morph_kernel_px": (5, int),
     "use_yolo": (False, bool),
     "yolo_model_path": ("", str),
+    # F-S.9: turuncu/sarı için alternatif yol (eğitilmiş lokalizatör + HSV).
+    "use_yolo_localizer": (False, bool),
+    "yolo_localizer_model_path": ("", str),
+    "yolo_localizer_min_coverage": (0.15, float),
     "log_period_s": (5.0, float),
 }
 # perception.fusion varsayılanları — kamera-LiDAR bearing füzyonu (Sprint 3).
@@ -256,6 +260,13 @@ def generate_launch_description() -> LaunchDescription:
             "use_rrt", default_value=_bool_default(hw["use_rrt"]),
             description="true: RRT* global plan | false: düz hedef → MPPI (video)",
         ),
+        # F-S.10: yerel kontrolcü seçimi — mppi (varsayılan) | pid (ida_topics
+        # cascade PID + LiDAR kaçınma, MPPI saha kalibrasyonu tamamlanana
+        # kadar düşme-güvenli yedek).
+        DeclareLaunchArgument(
+            "control_mode", default_value="mppi",
+            description="planning_node yerel kontrolcüsü: mppi | pid (F-S.10)",
+        ),
         DeclareLaunchArgument(
             "use_onboard_camera", default_value="false",
             description="F3.1: true → HSV yedek kamera node'u açılır. "
@@ -365,6 +376,7 @@ def generate_launch_description() -> LaunchDescription:
             "use_sim_time": use_sim_time,
             "mode_name": str(hw["planning_mode"]),
             "use_rrt": ParameterValue(use_rrt, value_type=bool),
+            "control_mode": LaunchConfiguration("control_mode"),
         },
     ]
     # mission_file: config/ altında çözülen tam yol (video ↔ competition).
