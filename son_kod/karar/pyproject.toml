@@ -1,0 +1,19 @@
+[tool.black]
+line-length = 88
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "I"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["prototype/tests"]
+# F16.1: ROS source'lu ortamda launch_testing plugin'i toplama sırasında her
+# modülü hevesle import eder; tek kırık import tüm suite'i öldürür, ignore'la
+# da "0 test, exit 0" yanlış-yeşiline düşer. Repo'da launch testi yok → kapat.
+addopts = "-p no:launch_testing -p no:launch_ros"

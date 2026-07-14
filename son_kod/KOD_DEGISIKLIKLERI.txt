@@ -1,0 +1,90 @@
+================================================================
+GİRDAP İDA — son_kod DEĞİŞİKLİK ÖZETİ (14 Temmuz 2026)
+================================================================
+Bu klasör, girdap-video reposunun (14.07 zip) ve dünkü B1/B2
+fix'li girdap-decision kopyasının 3-yönlü git birleşimidir.
+Doğrulama: 267 test geçti / 0 hata (e2e video senaryosu dahil).
+
+----------------------------------------------------------------
+1) VIDEO REPOSUNA GÖRE EKLENENLER (dünkü B1/B2 fix'leri + bugün)
+----------------------------------------------------------------
+[B1 — mod savaşı fix'i]
+- config/hardware.yaml: AUTO video bloğu eklendi:
+    fsm.start_on_mode: "AUTO"     (QGC'den AUTO = görev başlar)
+    bridge.auto_guided: false     (köprü modu GUIDED'a ZORLAMAZ;
+                                   yoksa FC AUTO görevinden atılır)
+
+[B2 — Ekran-2 sahte veri fix'i]
+- telemetry_node.py (+95 satır): setpoint_source parametresi:
+    "girdap" = GUIDED/MPPI (yarışma varsayılanı, davranış aynı)
+    "fc"     = AUTO video: thrust /mavros/rc/out PWM'inden
+               (% normalize), MPPI thrust'ı YOK SAYILIR,
+               hiz_setpoint görev aktifken fc_cruise_setpoint_mps
+- config/hardware.yaml: telemetry.setpoint_source: "fc",
+    fc_cruise_setpoint_mps: 1.0 (= WP_SPEED; Yahya duruma göre
+    değiştirir — değişince FC paramı + ground_speed_publisher.py
+    ile SENKRON tutulmalı!), fc_thrust_left_ch: 1 / right_ch: 3
+- config/params.yaml: aynı parametrelerin yarışma varsayılanları
+- csv_logger.py (+22): pwm_to_thrust_pct() (1500±500 → ±%100)
+- hardware.launch.py (+50): yeni telemetry parametrelerinin
+  launch kablolaması
+- test_telemetry_node.py (+73): fc modu testi (rc/out'tan thrust,
+  MPPI yok sayma, cruise setpoint)
+- test_telemetry_logger.py (+34): pwm_to_thrust_pct testleri
+
+[Doc düzeltmeleri — bugün]
+- 8 doc/kod dosyasında RFD868 → MicoAir (gerçek telemetri modülü);
+  "868 MHz" iddiaları "frekans teyidi BEKLİYOR" oldu
+  (2.4 GHz çıkarsa şartname md 4.1 yasak!).
+  Tarihli günlükler (donanim/pc_gunlugu) bilerek DOKUNULMADI.
+
+----------------------------------------------------------------
+2) DECISION(2) KOPYASINA GÖRE EKLENENLER (video reposundan gelen)
+----------------------------------------------------------------
+- scripts/girdap-karar.service: Jetson systemd servisi — güç ver,
+  yığın kendiliğinden kalkar (mission_source=fc, ROS_DOMAIN_ID=42,
+  Restart=on-failure). Kurulum 3 komutu dosyanın başında.
+- mavros_bridge_node.py (F-M.3): FSM KILL'e düşünce FCU da disarm
+  edilir (KILL latch güvenlik yaması).
+- prototype/tests/test_video_e2e.py: uçtan uca video senaryosu
+  testi (sahte QGC+FCU+GPS ile fsm+mission_manager+planning+
+  telemetry birlikte).
+- prototype/tests/test_hardware_launch_config.py: launch config
+  doğrulama testi.
+- hardware.launch.py (F-V.5): config fallback'i artık SESSİZ değil
+  (yazım hatası video bayraklarını kaybettirirse operatör görür).
+- docs/hata_defteri.md + kök dizinde test-plani.md, testler/,
+  kontrol-listesi.md.
+- planning_node: test enjeksiyonu (parameter_overrides passthrough);
+  mission_manager + video_mission.yaml: F-V.4 doc netleştirmesi
+  (4 nokta, dönüş MANUEL).
+
+----------------------------------------------------------------
+3) BİRLEŞİM SIRASINDA YAPILAN EK DÜZELTMELER (bugün)
+----------------------------------------------------------------
+- test_telemetry_node.py çakışması: iki tarafın eklediği İKİ test
+  de tutuldu (fc-thrust testi + görev-dışı-boş-setpoint testi).
+- test_video_e2e.py: importorskip kapısı eklendi — yoksa ROS'suz
+  ortamda (CI dahil) TÜM test koleksiyonu kırılıyordu.
+- girdap-karar.service yorumu: GUIDED → AUTO (gerçek video modu).
+
+----------------------------------------------------------------
+4) YAN DOSYALAR (repo dışı, canlı izleme/test)
+----------------------------------------------------------------
+- ground_speed_publisher.py: WP_SPEED 5.0 → 1.0; görev dışında
+  setpoint artık YAYINLANMIYOR (0 çizgisi yerine grafikte boşluk).
+- plotjuggler_girdap.xml: gereksiz "return 5.0" snippet'i silindi;
+  AUTO'da boş kalan cmd_vel + target_attitude abonelikten çıkarıldı.
+- fake_mavros_publisher.py (YENİ): Pixhawk/MAVROS olmadan masa
+  testi için sahte veri üretici (dikdörtgen tur senaryosu).
+  UYARI: gerçek MAVROS çalışırken ASLA açma (aynı topic'lere yazar).
+
+----------------------------------------------------------------
+BEKLEYENLER
+----------------------------------------------------------------
+- son_kod'un git push'u + Jetson'a deploy + servis kurulumu
+- SERVO1=73 / SERVO3=74 kanal eşlemesi saha teyidi
+- MicoAir frekans teyidi (2.4 GHz ise yasak)
+- FC'ye WP_SPEED vb. parametrelerin yazılması
+- Laptop hatırlatması: Jetson topic'leri için export ROS_DOMAIN_ID=42
+================================================================

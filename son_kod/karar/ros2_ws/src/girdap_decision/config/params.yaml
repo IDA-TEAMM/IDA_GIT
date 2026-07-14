@@ -1,0 +1,138 @@
+# Girdap İDA — karar yığını ROS 2 parametreleri.
+# Sahada saha kalibrasyon değerleriyle override edilecek; varsayılanlar
+# Layer 0 prototip ölçümlerinden gelir.
+
+fusion_node:
+  ros__parameters:
+    use_isam2: true          # yarışma: iSAM2. Video: hardware.yaml false override
+    publish_rate_hz: 10.0    # odom yayını = smoother flush hızı (10 Hz); daha
+                             # hızlı republish yeni bilgi taşımaz, gereksiz yük
+    odom_period_s: 0.1       # IMU step → smoother flush periyodu (10 Hz)
+    gps_sigma_xy: 0.30       # m, mock için; saha RTK fix'te 0.05
+    imu_sigma_xy: 0.05       # m, pre-integration adımı
+    imu_sigma_psi: 0.01      # rad
+
+mock_sensors:
+  ros__parameters:
+    imu_rate_hz: 50.0
+    gps_rate_hz: 1.0
+    vel_sigma: 0.05          # m/s
+    omega_sigma: 0.005       # rad/s
+    gps_sigma_xy: 0.30       # m
+    seed: 0
+
+planning_node:
+  ros__parameters:
+    control_rate_hz: 10.0    # CPU'da K=1000 rollout ~100 ms → 10 Hz (100 ms
+                             # periyot) gerçekçi. 20 Hz senkron step'i tutamaz
+                             # (executor birikir, cmd_vel gecikir/titrer → istemsiz
+                             # hareket). CUDA portu gelince 50 Hz'e çıkılır (CLAUDE.md).
+    bounds_x: [0.0, 200.0]   # m, yarışma alanı temsili
+    bounds_y: [0.0, 200.0]
+    replan_proximity: 2.0    # m, RRT* replan tetiği
+    mppi_K: 1000             # rollout sayısı (CLAUDE.md)
+    mppi_T: 50               # horizon adımı (2.5 s @ dt=0.05)
+    mode_name: "GUIDED"      # mod geçidi — mavros_bridge ile aynı olmalı
+    map_rate_hz: 10.0        # Dosya-3 yerel harita yayım hızı
+    use_rrt: true            # yarışma: RRT*. Video: hardware.yaml false override
+
+fsm_node:
+  ros__parameters:
+    tick_rate_hz: 10.0       # görev yönetimi düşük frekans yeter
+    shock_threshold_g: 5.0   # |a|/g, kamikaze çarpma algılama
+    last_waypoint_xy: [0.0, 0.0]  # [0,0]=DEVRE DIŞI (F12.1: kimse override
+                             # etmiyordu; gerçek P1→P2 tetiği artık
+                             # waypoint_reached index'i — bkz. fsm_node).
+                             # Elle gerçek ENU koordinatı verilirse odom-mesafe
+                             # yolu da çalışır (yedek).
+    p1_to_p2_dist: 1.5       # m (CLAUDE.md FSM bölümü)
+    start_on_mode: "GUIDED"  # md 3.3.1(3) YKİ'den başlatma: BEKLEMEDE'de
+                             # operatör modu buna ÇEVİRİNCE görev başlar
+                             # (QGC mod menüsü → RFD868). Kenar tetikli —
+                             # önce ARM, SONRA GUIDED'a geç; boot'ta zaten
+                             # GUIDED ise HOLD/MANUAL'a alıp geri dön.
+                             # "" → kapalı (yalnız /girdap/mission/start).
+    mission_file: ""         # Sprint 4 parkur katmanı görev dosyası (hardware.
+                             # launch geçer). Boş → tek parkur (video), PARKUR_1
+
+mavros_bridge_node:
+  ros__parameters:
+    heartbeat_timeout_s: 5.0     # /mavros/state sessizliği → KILL (CLAUDE.md)
+    mode_name: "GUIDED"          # ArduRover otonomi modu (Şartname 4.1)
+    monitor_rate_hz: 2.0         # güvenlik izleme döngüsü
+    auto_guided: true            # bağlıyken mod hedefte değilse otomatik set_mode
+    arming_retry_max: 3          # ArduRover pre-arm reddinde yeniden deneme
+    arming_retry_delay_s: 2.0    # denemeler arası bekleme (EKF yakınsaması)
+
+perception_lidar_node:
+  ros__parameters:
+    z_min: 0.1               # base_link'e göre su üstü kesim (m)
+    z_max: 3.0               # yüksek yansımaları at (m)
+    cluster_tolerance: 0.5   # Öklid clustering komşuluk yarıçapı (m)
+    min_cluster_size: 5      # bu altı noise
+    max_cluster_size: 500    # bu üstü büyük yapı (iskele/duvar) → bölünür (F5.4)
+    split_cell_m: 1.0        # büyük küme bölme ızgarası XY hücre kenarı (m)
+    max_range: 25.0          # yatay menzil filtresi (m)
+    voxel_size: 0.1          # m, clustering öncesi voxel downsample (F5.3;
+                             # 20k nokta/mesaj 10 Hz bütçesi; 0 = kapalı)
+    log_period_s: 5.0        # engel sayısı INFO log periyodu
+
+perception_camera_node:
+  ros__parameters:
+    clahe_clip_limit: 2.0    # su parlaması kontrast dengesi (CLAHE)
+    clahe_tile: 8            # CLAHE karo ızgarası (8×8)
+    min_area_px: 150         # bu altı kontur noise
+    morph_kernel_px: 5       # maske açma/kapama çekirdeği (px)
+    use_yolo: false          # hedef sınıfı YOLO katmanı (Parkur-3)
+    yolo_model_path: ""      # gerçek .pt yolu; boş = mock inference
+    log_period_s: 5.0        # duba sayısı INFO log periyodu
+    # HSV aralıkları (OpenCV: H 0-179, S/V 0-255) — RAL kodlarına yakın
+    hsv_orange_lo: [5, 120, 120]     # turuncu (RAL 2003, şartname) alt sınır
+    hsv_orange_hi: [20, 255, 255]
+    hsv_yellow_lo: [21, 120, 120]    # sarı (RAL 1026, şartname) alt sınır
+    hsv_yellow_hi: [35, 255, 255]
+
+perception_fusion_node:
+  ros__parameters:
+    bearing_tolerance_rad: 0.15   # ~8.6° eşleşme kabul eşiği
+    camera_hfov_rad: 1.2          # OAK-D Lite yatay FOV yaklaşık değeri
+    camera_image_width_px: 640    # /perception/buoys bbox normalizasyonu
+    camera_image_height_px: 480
+    sync_slop_s: 0.1               # ApproximateTimeSynchronizer toleransı
+    log_period_s: 5.0              # füzyon özet INFO log periyodu
+
+telemetry_node:
+  ros__parameters:
+    csv_output_dir: ""       # boş → ~/girdap_logs/telemetry (MUTLAK; göreli yol
+                             # systemd'de cwd=/ → PermissionError → Dosya-2 yok = 5 ceza)
+    log_rate_hz: 2.0         # Şartname 4.2 ≥1 Hz garantisi
+    # Ekran-2 setpoint/thrust kaynağı (AUTO video kararı 2026-07-13):
+    #   "girdap" → GUIDED/MPPI (yarışma varsayılanı — davranış birebir eski)
+    #   "fc"     → AUTO: thrust /mavros/rc/out PWM'inden (% normalize),
+    #              hiz_setpoint görev aktifken fc_cruise_setpoint_mps.
+    # Video override'ı hardware.yaml `telemetry:` bloğundan gelir.
+    setpoint_source: "girdap"
+    fc_cruise_setpoint_mps: 0.0   # 0 = boş; QGC WP_SPEED ile AYNI değeri gir
+    fc_thrust_left_ch: 1          # SERVO1 = ThrottleLeft(73) — FC ekibi teyit
+    fc_thrust_right_ch: 3         # SERVO3 = ThrottleRight(74) — FC ekibi teyit
+    fc_pwm_neutral: 1500          # µs, sıfır itki
+    fc_pwm_range: 500             # µs, ±tam itki
+
+local_map_node:
+  ros__parameters:
+    dump_rate_hz: 1.0        # Şartname 4.2 Dosya-3 ≥1 Hz garantisi
+    output_dir: ""           # boş → ~/girdap_logs/local_map/session_.../
+
+mission_manager_node:
+  ros__parameters:
+    mission_source: "file"   # "file" | "fc" — hardware.launch/CLI override eder (T0-f)
+    mission_file: ""         # hardware.launch video_mission.yaml yolunu geçer
+    publish_rate_hz: 5.0     # current_target yayımı (MPPI referansı taze)
+    skip_home_seq0: true     # fc modu: ArduPilot görev index 0 = home, atla
+    # F-M.1: bir waypoint mevcut konumdan bundan uzaksa görev REDDEDİLİR
+    # (fix'siz (0,0) konum + gerçek koordinat = binlerce km sahte hedef).
+    max_target_distance_m: 10000.0
+    # fc modu görev config'i (file modunda mission_file YAML'ı kazanır):
+    arrival_radius_m: 2.0    # waypoint "varıldı" yarıçapı (m)
+    dwell_time_s: 2.0        # her waypoint'te bekleme (video netliği, s)
+    cruise_velocity_mps: 1.0 # referans seyir hızı (MPPI hedef hızı)

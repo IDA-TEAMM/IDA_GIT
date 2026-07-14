@@ -1,0 +1,28 @@
+# Girdap İDA — Otonomi Kabiliyeti videosu görev tanımı.
+#
+# Senaryo (md 3.3.1(2)+(3)): DİKDÖRTGEN oluşturan TAM 4 GPS waypoint.
+# 4. (SON) noktada otonom görev TAMAMLANIR; başlangıca dönüş MANUELDİR —
+# F-V.4: 5. bir "P1_return" noktası EKLENMEZ ("4 noktalı görev" tanımını
+# bozar ve dönüşü otonomlaştırır).
+# mission_manager_node boot'ta bu dosyayı okur; waypoint'ler arası haversine
+# ile local ENU referansı üretip /girdap/mission/current_target yayınlar.
+# NOT: bu dosya yalnız PROVA içindir (mission_source=file); çekimde görev
+# QGC'den yüklenir (mission_source:=fc, md 3.3.1(2) "YKİ'den gönderilecek").
+#
+# KOORDİNAT DOLDURMA (göl kenarı, prova günü):
+#   1. Aracı P1 noktasına koy, telefon GPS / H-RTK ile lat/lon oku, yaz.
+#   2. Dikdörtgeni saat yönünde P1→P2→P3→P4 gez, her köşeyi ölç.
+#   3. home_ref runtime'da ilk arm noktasında set edilir (0.0 kalabilir).
+# Ondalık: en az 7 basamak (~1 cm çözünürlük).
+
+home_ref: {lat: 0.0, lon: 0.0}     # ilk arm noktası runtime'da set edilir
+
+waypoints:
+  - {lat: 0.0, lon: 0.0, name: "P1"}
+  - {lat: 0.0, lon: 0.0, name: "P2"}
+  - {lat: 0.0, lon: 0.0, name: "P3"}
+  - {lat: 0.0, lon: 0.0, name: "P4"}
+
+arrival_radius_m: 2.0          # bu yarıçapa girince waypoint'e "varıldı"
+dwell_time_s: 2.0              # her waypoint'te bekleme (video netliği)
+cruise_velocity_mps: 1.0      # referans seyir hızı (MPPI hedef hızı)
