@@ -51,7 +51,7 @@ fsm_node:
     p1_to_p2_dist: 1.5       # m (CLAUDE.md FSM bölümü)
     start_on_mode: "GUIDED"  # md 3.3.1(3) YKİ'den başlatma: BEKLEMEDE'de
                              # operatör modu buna ÇEVİRİNCE görev başlar
-                             # (QGC mod menüsü → RFD868). Kenar tetikli —
+                             # (QGC mod menüsü → MicoAir 868 telemetri). Kenar tetikli —
                              # önce ARM, SONRA GUIDED'a geç; boot'ta zaten
                              # GUIDED ise HOLD/MANUAL'a alıp geri dön.
                              # "" → kapalı (yalnız /girdap/mission/start).
