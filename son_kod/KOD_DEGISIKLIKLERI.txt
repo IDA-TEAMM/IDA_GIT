@@ -80,6 +80,26 @@ Doğrulama: 267 test geçti / 0 hata (e2e video senaryosu dahil).
   UYARI: gerçek MAVROS çalışırken ASLA açma (aynı topic'lere yazar).
 
 ----------------------------------------------------------------
+5) SÜRÜCÜ ENTEGRASYONU (14 Tem akşam — son_kod artık TAM bağımsız)
+----------------------------------------------------------------
+- ida_topics paketi (IDA_GIT'in 13 Tem doğrulanmış hali) repoya alındı:
+  karar/ros2_ws/src/ida_topics_yeni — Livox UDP sürücüsü (SDK'sız,
+  doğrulanmış IP 192.168.117.100/port 56301), OAK-D depthai sürücüsü,
+  gps_imu MAVROS köprüsü, kamera_kayit (= ŞARTNAME DOSYA-1 mp4 üreticisi!)
+- setup.py: 6 eksik entry point eklendi (sürücüler ros2 run ile çağrılabilir)
+- hardware.launch.py: with_drivers:=true bayrağı — Livox+OAK+kamera_kayit
+  remap'lerle başlar (/lidar/points→/livox/lidar, /camera/image_raw→
+  /oak/rgb/image_raw). Video günü varsayılan KAPALI (MAVROS yeter).
+- kamera_kayit: /tmp/kamera → ~/girdap_logs/kamera (reboot'ta Dosya-1
+  kaybı = 5 ceza riski kapandı) + output_dir parametresi
+- 4 sürücü main'ine KeyboardInterrupt temiz kapanışı
+- "Sürücüler başka arkadaşta" notları güncellendi (hardware.yaml,
+  launch, CLAUDE.md)
+CANLI TESTLER: Livox sahte UDP → PointCloud2 birebir (x=5.150 ✓) ·
+OAK cihazsız zarif hata + ayakta ✓ · kamera_kayit 7.6 sn geçerli MP4 ✓ ·
+gps_imu köprüsü fake_mavros ile ✓ · tam paket 269 test ✓
+
+----------------------------------------------------------------
 BEKLEYENLER
 ----------------------------------------------------------------
 - son_kod'un git push'u + Jetson'a deploy + servis kurulumu

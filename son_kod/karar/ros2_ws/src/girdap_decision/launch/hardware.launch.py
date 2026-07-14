@@ -285,6 +285,15 @@ def generate_launch_description() -> LaunchDescription:
             "mission_source", default_value=str(hw["mission_source"]),
             description="Görev kaynağı: file (araç üstü YAML) | fc (YKİ→MAVROS)",
         ),
+        # with_drivers — sensör sürücüleri (ida_topics paketi, artık BU
+        # repoda). false = video günü (AUTO görevine sensör gerekmez, MAVROS
+        # yeter); true = final/algı testleri (Livox UDP + OAK-D + Dosya-1
+        # kamera kaydı). OAK sürücüsü depthai pip paketi ister (Jetson'da
+        # kurulu); cihaz yoksa node gerekçeli hata verir, yığını düşürmez.
+        DeclareLaunchArgument(
+            "with_drivers", default_value="false",
+            description="Sensör sürücülerini başlat: Livox + OAK-D + kamera kaydı",
+        ),
     ]
 
     # --- MAVROS: ArduRover apm.launch (XML) include ---
@@ -438,6 +447,30 @@ def generate_launch_description() -> LaunchDescription:
              output="screen"),
     ]
 
+    # --- Sensör sürücüleri (ida_topics paketi — with_drivers:=true) ---
+    # Topic hizalaması remap ile: sürücüler kendi isimlerinde yayınlar,
+    # girdap perception /livox/lidar + /oak/rgb/image_raw bekler.
+    _drv = IfCondition(LaunchConfiguration("with_drivers"))
+    driver_nodes = [
+        # Livox Mid-360 — saf Python UDP (SDK'sız). IP/port değerleri gerçek
+        # cihazda doğrulandı (2026-07-13): 192.168.117.100, data 56301.
+        Node(package="ida_topics", executable="livox_driver_node",
+             name="livox_driver_node", condition=_drv, output="screen",
+             remappings=[("/lidar/points", "/livox/lidar"),
+                         ("/lidar/scan", "/livox/scan")]),
+        # OAK-D Lite — depthai pip paketi gerekir (yalnız Jetson'da kurulu).
+        Node(package="ida_topics", executable="oakd_driver_node",
+             name="oakd_driver_node", condition=_drv, output="screen",
+             remappings=[("/camera/image_raw", "/oak/rgb/image_raw")]),
+        # Dosya-1 (Şartname 4.2): işlenmiş kamera mp4'ü (bbox overlay +
+        # zaman etiketi) → ~/girdap_logs/kamera. Girdap algı çıktısına
+        # remap: /perception/buoys (turuncu+sarı tek topic'te, class_id'li).
+        Node(package="ida_topics", executable="kamera_kayit_node",
+             name="kamera_kayit_node", condition=_drv, output="screen",
+             remappings=[("/camera/image_raw", "/oak/rgb/image_raw"),
+                         ("/perception/orange_buoys", "/perception/buoys")]),
+    ]
+
     return LaunchDescription(
         [
             *declared,
@@ -451,13 +484,15 @@ def generate_launch_description() -> LaunchDescription:
             mavros,
             *static_tfs,
             # =============================================================== #
-            # SENSOR DRIVERS: added by hardware teammate
-            #   Livox Mid-360 sürücüsü (livox_ros_driver2) → /livox/lidar
-            #   ⚠ OAK-D Lite: depthai_ros SÜRÜCÜSÜ EKLEME! (F3.1) Kamerayı
-            #   algı ekibinin node'u DOĞRUDAN DepthAI ile açar (VPU'da YOLO);
-            #   ikinci bir süreç USB cihazını açamaz, kamera tamamen ölür.
-            #   Bu launch KARAR yazılımıdır; sensör bring-up buraya EKLENMEZ.
+            # SENSÖR SÜRÜCÜLERİ (2026-07-14: artık BU repoda — ida_topics
+            # paketi, ros2_ws/src/ida_topics_yeni). with_drivers:=true ile
+            # açılır; video günü varsayılan KAPALI (AUTO görevi MAVROS'la
+            # yeter). ⚠ USB tek-sahip kuralı geçerli: oakd_driver_node
+            # kamerayı DepthAI ile kendisi açar — algı ekibinin ayrı YOLO
+            # node'u kullanılacaksa with_drivers'ı açık bırakıp oakd'yi
+            # çakıştırma (iki süreç aynı OAK'ı açamaz).
             # =============================================================== #
+            *driver_nodes,
             *decision_nodes,
         ]
     )

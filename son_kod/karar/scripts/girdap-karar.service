@@ -25,6 +25,10 @@ Environment=ROS_DOMAIN_ID=42
 # F4.1/F15.1 dersi: cwd=/ olmasin — goreli yol kazalarina karsi HOME'dan kos.
 WorkingDirectory=/home/__USER__
 ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source __WS__/install/setup.bash && exec ros2 launch girdap_decision hardware.launch.py mission_source:=fc'
+# SIGINT = ROS'ta temiz kapanış: kamera_kayit MP4 finalize + CSV fsync.
+# Varsayılan SIGTERM'de VideoWriter release edilmez → Dosya-1 mp4 BOZUK kalır.
+KillSignal=SIGINT
+TimeoutStopSec=20
 Restart=on-failure
 RestartSec=10
 

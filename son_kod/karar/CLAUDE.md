@@ -403,7 +403,11 @@ girdap-decision/
   (Otonomi videosu senaryosu), (3) Statik engel + waypoint zinciri,
   (4) Hareketli engel/akıntı, (5) Parkur-3 kamikaze çoklu hedef.
 - **Simülasyon:** İlk başta 2D matplotlib simülatörü yeter. Gazebo Layer 2'ye
-  gelince devreye girer (arkadaşın üstleniyor).
+  gelince devreye girer.
+- **Sensör sürücüleri (2026-07-14):** ida_topics paketi ARTIK BU REPODA
+  (`ros2_ws/src/ida_topics_yeni`): Livox UDP sürücüsü (SDK'sız, doğrulanmış
+  IP 192.168.117.100/port 56301), OAK-D depthai sürücüsü, Dosya-1 kamera
+  kayıt node'u, gps_imu MAVROS köprüsü. `with_drivers:=true` ile açılır.
 - **CI:** `.github/workflows/ci.yml` (F16.4 kapandı) — GitHub Actions'ta
   ROS'suz çekirdek job: Python 3.10 + `pip install -r requirements.txt` +
   `pytest prototype/tests/`. Node testleri rclpy/mavros yokluğunda gerekçeli

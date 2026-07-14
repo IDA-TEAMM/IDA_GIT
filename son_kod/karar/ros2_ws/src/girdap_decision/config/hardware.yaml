@@ -115,8 +115,10 @@ perception:
 
 # --- Sensör / perception topic isimleri ---
 # gps + imu doğrudan mavros'tan gelir (karar yığını bunlara abone).
-# livox + oak_* sensör sürücüleri BAŞKA arkadaşta; burada referans/remapping
-# amaçlı listelenir (perception cost map + Dosya 1a/1b üretimi).
+# livox + oak sürücüleri ARTIK BU REPODA (ros2_ws/src/ida_topics_yeni,
+# 2026-07-14): hardware.launch with_drivers:=true ile başlar ve sürücü
+# çıkışları buradaki isimlere REMAP edilir (/lidar/points→/livox/lidar,
+# /camera/image_raw→/oak/rgb/image_raw). Dosya-1 mp4 = kamera_kayit_node.
 topics:
   livox:     /livox/lidar
   oak_rgb:   /oak/rgb/image_raw
