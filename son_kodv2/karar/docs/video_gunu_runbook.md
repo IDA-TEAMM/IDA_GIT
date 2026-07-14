@@ -33,6 +33,10 @@ görevi FC kendi uçurur, MPPI cmd_vel basmaz. Değişen operatör adımları:
    `ros2 param get /mission_manager_node dwell_time_s` → **0.0** olmalı;
    journalctl'de "FC akış hızı isteniyor: 10 Hz" satırı olmalı. Biri
    tutmuyorsa: `sudo systemctl restart girdap-karar` → tekrar sorgula.
+   ⏱️ **Boot/restart sonrası ~1 dk bekle:** ttyACM0 kısa süre meşgul kalıyor
+   (F-M.8, ModemManager şüphesi) → mavros FC'ye ~45 sn'de bağlanır. KILL
+   basmaz (F-M.7 fix'i), sadece geç hazır olur — "10 Hz" satırı gelmeden
+   ARM'a geçme.
 5. Görev bitişi artık FC'nin kendi varış sinyalinden de senkronlanır
    (F-V.8) — 4. noktada FSM TAMAMLANDI'ya düşer, setpoint çizgileri kesilir;
    manuel dönüşte setpoint görünmesi = bir şeyler ters, çekimi yeniden planla.

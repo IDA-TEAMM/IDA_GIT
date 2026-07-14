@@ -272,8 +272,12 @@ class MavrosBridgeNode(Node):
     # ----- güvenlik izleme -----
 
     def _on_monitor(self) -> None:
-        # Henüz FCU state gelmediyse izleme başlamaz (başlangıçta yanlış KILL yok).
-        if self._bridge.last_state is None or self._killed:
+        # F-M.7: izleme ancak FC en az bir kez connected=true görüldükten sonra
+        # başlar. mavros bağlanamazken de state (connected=false) basar; restart
+        # port devrinde >5 sn'lik state boşluğu FC hiç görülmeden KILL
+        # latch'liyordu (journal 2026-07-14 18:13). İlk bağlantı öncesi thrust'ı
+        # control_gate zaten "FCU baglantisi yok" ile kesiyor.
+        if not self._bridge.ever_connected or self._killed:
             return
 
         now = self._now()

@@ -301,6 +301,28 @@ def test_stream_rate_yeniden_baglantida_tekrar_istenir() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# F-M.7 — ever_connected (boot/restart yarışı)
+# --------------------------------------------------------------------------- #
+
+
+def test_fm7_ever_connected_fc_gorulmeden_false() -> None:
+    """mavros ayakta ama FC yok (connected=False) → bekçi kurulmamalı."""
+    b = MavrosBridge()
+    assert not b.ever_connected
+    b.update_state(0.0, connected=False, armed=False, guided=False, mode="MANUAL")
+    assert not b.ever_connected
+
+
+def test_fm7_ever_connected_ilk_baglanti_kalici() -> None:
+    """FC bir kez görüldü → kalıcı; sonraki kopma (M6d) latch'i sıfırlamaz."""
+    b = MavrosBridge()
+    b.update_state(0.0, connected=True, armed=False, guided=False, mode="MANUAL")
+    assert b.ever_connected
+    b.update_state(1.0, connected=False, armed=False, guided=False, mode="MANUAL")
+    assert b.ever_connected
+
+
+# --------------------------------------------------------------------------- #
 # RC donanım kill-switch — F-S.1
 # --------------------------------------------------------------------------- #
 

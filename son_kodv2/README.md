@@ -6,10 +6,11 @@ Video gönderilmezse/geçmezse yarışmaya katılım yok (şartname md 3, 3.3); 
 ## Bu repo ne?
 
 1. **`karar/` = videoda koşacak kodun DONDURULMUŞ kopyası** (girdap-decision @ `15dc238`
-   + **F-M.3 yaması** 2026-07-14: servis-KILL artık FCU'yu da disarm ediyor —
-   masa Oturum 2'de bulundu, TDD + gerçek FCU'da doğrulandı; Jetson runtime klonunda
-   lokal commit `8050ceb`, suite yeni taban 267/2. Önceki: 20 fazlı video denetimi
-   sonrası F-V.1 yon_setpoint AÇI + F-V.2/4/5 düzeltmeleri + e2e test; `c77dca3`).
+   + 2026-07-14 yamaları: **F-M.3** (servis-KILL → FCU disarm) + **B1/B2 AUTO dönüşü +
+   F-M.6** (10 Hz akış, canlı 9.99 Hz teyitli) + **AUTO denetimi F-V.6/7/8 + F-P.1** +
+   **F-M.7** (restart/boot'ta FC hiç bağlanmadan heartbeat-KILL latch'i — bekçi artık
+   ilk `connected=true`'dan sonra kurulur). Jetson runtime klonunda son lokal commit
+   `c2d7a10`, suite yeni taban **302/2**. Ayrıntı: `karar/docs/hata_defteri.md`.
    Geliştirme başka repolarda devam etse bile videonun kodu burada sabit kalır.
    Güncelleme yalnız BİLİNÇLİ kararla: `git subtree pull --prefix=karar
    /home/eyup/girdap-decision main` + bu README'deki commit'i güncelle.

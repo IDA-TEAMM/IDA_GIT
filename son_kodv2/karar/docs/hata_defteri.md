@@ -20,6 +20,56 @@
 
 ## 🔴 AÇIK HATALAR
 
+### [2026-07-14] F-M.9 — USB düşünce mavros ÖLÜYOR + geri gelmiyor (respawn yok) → yığın kalıcı KILL (🔴 video-günü süreklilik riski)
+- **Belirti (boot provası SONRASI, 18:55):** Pixhawk USB'si düştü → mavros_node
+  `mavconn serial1: receive: End of file` + std::system_error → çöktü (exit -6) → GERİ
+  GELMEDİ → köprü 5.5 sn'de doğru KILL bastı → yığın kalıcı KILL'de takıldı (F14.4 latch).
+  Kurtarma yalnız `sudo systemctl restart girdap-karar`.
+- **Debug verisi:** `apm.launch:11` `respawn_mavros default=false` + hardware.launch include'u
+  bu argı SET ETMİYOR → mavros respawn'suz. Kernel: `18:55:01 usb 1-2.1 USB disconnect
+  device 4` → 4 dk boşluk → `18:59:06 device 9` (yalnız ttyACM0!) → 5 sn sonra `18:59:11
+  device 9 disconnect → device 10` (bu kez ttyACM0+ttyACM1 ikisi). **Pixhawk bir USB
+  HUB'ında** (1-2:1.0, 4 port; kardeş cihazlar: Fantech fare 1-2.4, +1 cihaz 1-2.2).
+- **Kök neden (2 katman):** (1) mavros respawn kapalı → USB hıçkırığında süreç ölür kalır;
+  (2) F14.4 — heartbeat KILL kalıcı latch, histerezis yok → mavros geri gelse bile KILL
+  temizlenmez. İkisi birleşince: kısa USB blibi = ölü yığın = elle restart.
+- **Etki:** md 3.3.1/6 "tek kesintisiz çekim" — çekim ortasında 2 sn USB hıçkırığı bile
+  video'yu yakar (operatör sudo restart atmak zorunda). KILL'in KENDİSİ doğru davranış
+  (gerçek hat kaybında güvenlik); sıkıntı KURTARILAMAMASI.
+- **✅ DONANIM ONAYLANDI (Eyüp 2026-07-14): "ben çekmedim, Type-C portunda bağlıydı."**
+  Kanıt zinciri: (a) kopma anında `tegra-xusb WARN Event TRB slot 4 ep 4 with no TDs queued`
+  = veri akarken ANİ fiziksel kesinti (yazılım reset/FC reboot bu uyarıyı vermez); (b) ~4 dk
+  açık kaldı, kimse dokunmadan geri geldi; (c) replug'da yarım→tam çift-enumerasyon = kötü
+  kontak/soğuk lehim imzası; (d) Jetson'da undervoltage/güç uyarısı YOK → sebep Jetson değil,
+  FC ucundaki **USB-C soketi/kablosu.** Kardeş cihaz (fare 1-2.4) düşmedi → hub değil, cihaz ucu.
+  → **"USB-C tamirli+çalışıyor" (FC OLAY kapanışı) BAYAT; tamir TUTMADI, aralıklı açılıyor.**
+- **Etki (güncel):** Jetson↔Pixhawk MAVLink'in TAMAMI bu soketten. Suda/çekimde aralıklı
+  kopma = mavros ölür (F-M.9) = KILL latch = ölü yığın = video yanar; yarışmada görev kaybı.
+- **Durum:** 🔴 AÇIK — **video ÖNCESİ DONANIM BLOKERİ.** Aksiyonlar: (1) FC/mekanik ekip
+  soketi KESİN çöz / DEĞİŞTİR + gerginlik boşaltma (strain relief); (2) yedek hat hazırla+test:
+  TELEM2 FTDI serial `fcu_url=serial:///dev/ttyUSB0:57600` (57600'de IMU ~10 Hz = F-M.6 için
+  bize yeten hız; FTDI kablo mevcut mu + port çakışması QGC MicoAir ile SORULACAK). Yazılım
+  respawn/histerezis (F14.4) bu arızayı ÖRTME aracı DEĞİL — kırılgan güvenlik hattını yazılımla
+  otomatik kurtarmak suda tanımsız duruma dönebilir; kök çözüm donanım.
+
+### [2026-07-14] F-M.8 — taze boot'ta bile ttyACM0 "busy" → mavros ~30 sn geç bağlanıyor (🟡 T1, kozmetik gecikme)
+- **Belirti (BOOT PROVASI, 2026-07-14 18:42 reboot):** eski-instance teorisi tek başına
+  yetmiyor — TAZE boot'ta da (tutucu eski süreç YOK) aynı desen: `18:42:53` mavros
+  `link[1000] open failed: Device or resource busy` → mavros_router hardcoded 30 sn
+  retry → `18:43:23` reconnected + `Got HEARTBEAT`. Boot→FC bağlantısı toplam ~44 sn.
+- **Debug verisi (journalctl, 2026-07-14 boot):** `uptime -s = 18:42:39` · servis Started
+  `18:42:51` · busy `18:42:53` · **ModemManager active+enabled ve ACM portlarını yokluyor:**
+  `18:43:02 ModemManager: could not grab port ttyACM0/ttyACM1 (unhandled port type)` —
+  MM probe'u portu kısa süre açık tutar, busy'nin baş şüphelisi. Ayrıca `18:44:43`
+  `TM: Time jump detected` (boot sonrası NTP saat sıçraması, zararsız).
+- **Kök neden:** araştırılıyor — baş şüpheli ModemManager'ın seri-port probe'u;
+  mavros_router'ın 30 sn sabit retry'ı (parametresiz, mavros_router.hpp:167) gecikmeyi büyütüyor.
+- **Etki:** F-M.7 fix'i sayesinde ZARARSIZ (KILL yok, yığın sadece ~45 sn geç hazır olur).
+  Video/yarışma sabahı operatör boot sonrası ~1 dk beklemeli (runbook notu).
+- **Durum:** AÇIK, T1 iyileştirme (sudo, karar Eyüp'te). Seçenekler: (a) udev kuralı
+  `ID_MM_DEVICE_IGNORE=1` (Pixhawk idVendor 3162) — en temiz; (b) `systemctl disable
+  ModemManager` (teknede modem yok); (c) servise `ExecStartPre` port-boş-bekleme.
+
 ### [2026-07-14] F-V.6 — "önce AUTO, sonra ARM" akışında görev FSM'de HİÇ başlamıyor (🔴 VİDEO-KATİL)
 - **Belirti (kod denetimi, AUTO dönüşü sonrası):** `fsm_node._on_mav_state` başlatma tetiği
   KENAR şartlı (`_last_mode != start_mode` → `== start_mode`) VE FSM `BEKLEMEDE`'de olmalı;
@@ -131,7 +181,7 @@
   fsm_node servisi) — `ida_topics/control_node.py`'deki RC kanal 8 donanım kill-switch'inin
   (companion computer'dan bağımsız, tek RC alıcısı üzerinden) karşılığı yoktu.
 - **Debug verisi:** `grep -rn "rc/in\|RCIn\|RC_KILL"` girdap_decision ağacında sıfır sonuç
-  verdi (2026-07-14, sude_memory/project_ida_captain_decision_repo.md karşılaştırması).
+  verdi (2026-07-14, sude_memory tarafında dış karşılaştırma — bkz IDA_GIT/son_kodv2).
 - **Etki:** companion computer donarsa/mavros_bridge çökerse yazılım KILL yollarının
   hiçbiri tetiklenemez; tek koruma fiziksel güç-kesme anahtarıydı (md 3.3.1/4) — RC
   üzerinden ikinci, bağımsız bir kill yolu yoktu.
@@ -139,11 +189,13 @@
   `mavros_bridge_node._on_rc_in()` (`/mavros/rc/in`, `sensor_data_qos()` BEST_EFFORT,
   4 test) — `rc_kill_channel`/`rc_kill_threshold_pwm` parametreleri ida_topics ile aynı
   varsayılanlar (kanal 8, PWM 1500). Tek KILL otoritesi (`_trigger_kill`, latch) korunuyor,
-  bu yalnız bir tetikleyici daha. Suite 296→306.
-- **⚠ Not:** Bu düzeltme `sude_memory` tarafında (IDA_GIT reposu `son_kodv2/`) yapıldı,
-  henüz `EyupEker1/girdap-video`'ya upstream edilmedi — Eyüp'e iletilip gerçek repoya
-  taşınması gerekiyor.
-- **Durum:** KAPANDI (bu kopyada; upstream senkronu BEKLİYOR).
+  bu yalnız bir tetikleyici daha.
+- **Durum:** KAPANDI (bu oturumda TDD ile eklendi ve test edildi).
+
+### [2026-07-14] F-M.3 — servis yoluyla KILL FCU'yu DISARM etmiyor (🟠, KAPANDI'ya bkz)
+- Bu madde koda göre zaten düzeltilmişti (`_on_mission_state` KILL gözleyince
+  `_trigger_kill()` çağırıyor, `test_fm3_*` testleri PASSED) — doc-senkron gecikmesiyle
+  "AÇIK" bırakılmıştı. KAPANANLAR tablosuna taşındı.
 
 ### [2026-07-14] F-M.5 — seri hat kopunca mavros_node SIGABRT ile ölüyor, respawn yok (🟡 not)
 - **Belirti:** M6d USB-çekme testinde `mavconn: serial0: receive: End of file` →
@@ -240,6 +292,8 @@
 | F5.4 | 500+ nokta kümesi sessizce siliniyordu → böl | `798ff4d` |
 | Bearing (F6.1/F5.9) | işaret hatası + üreteç maskesi | `e66cb40` |
 | F16.1 | pytest yanlış-yeşil (launch_testing) | pyproject addopts |
-| F-M.3 | servis-KILL FCU'yu disarm etmiyordu (yalnız FSM/thrust sıfırlanıyordu) | `_on_mission_state` artık KILL gözleyince `_trigger_kill()` çağırıyor (bkz kod + `test_fm3_*`); bu satır 2026-07-14'te AÇIK bırakılmıştı, kod zaten düzeltilmişti — doc-senkron gecikmesi, 2026-07-14'te (Sude/Claude karşılaştırması) fark edilip buraya taşındı |
+| F-M.7 | restart/boot'ta FC hiç bağlanmadan heartbeat-KILL latch (`ever_connected` bekçisi) | `c2d7a10` / girdap-video `8af6c4c`; ✅ CANLI DOĞRULANDI (2026-07-14 boot provası: 30 sn busy penceresinde FAILSAFE 0, state ARM) |
+| F-M.3 | servis-KILL FCU'yu disarm etmiyordu (yalnız FSM/thrust sıfırlanıyordu) | `_on_mission_state` KILL gözleyince `_trigger_kill()` çağırıyor (`test_fm3_*`); bu satır AÇIK bırakılmıştı, kod zaten düzeltilmişti — doc-senkron düzeltmesi (Sude/Claude, 2026-07-14) |
+| F-S.1 | girdap_decision'da RC donanım kill-switch (companion computer'dan bağımsız) hiç yoktu | `MavrosBridge.is_rc_kill_active()` + `mavros_bridge_node._on_rc_in()` (`/mavros/rc/in`, ida_topics ile aynı kanal/eşik), Sude/Claude 2026-07-14 |
 
 Tam liste ve kanıtlar: `docs/kod_denetimi.md`.

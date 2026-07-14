@@ -94,6 +94,12 @@ class MavrosBridge:
         # F-M.6: FC akış hızı (SR0) bu bağlantı için istendi mi? Bağlantı
         # koptuğunda sıfırlanır → yeniden bağlanışta hız yeniden istenir.
         self._stream_rate_requested: bool = False
+        # F-M.7: FC en az bir kez connected=true görüldü mü? mavros FC'ye
+        # bağlanamazken de /mavros/state (connected=false) basar; heartbeat
+        # bekçisi ancak bu bayrak set olduktan sonra anlamlıdır — boot/restart
+        # port devri sırasındaki state boşluğu FC hiç görülmeden KILL
+        # latch'lememeli. Bilinçli KALICI: sonraki kopmalar sıfırlamaz (M6d).
+        self._ever_connected: bool = False
 
     # ----- config / durum erişimi -----
 
@@ -104,6 +110,11 @@ class MavrosBridge:
     @property
     def last_state(self) -> Optional[MavStateSnapshot]:
         return self._last
+
+    @property
+    def ever_connected(self) -> bool:
+        """FC bu oturumda en az bir kez connected=true görüldü mü? (F-M.7)"""
+        return self._ever_connected
 
     def update_state(
         self,
@@ -124,6 +135,8 @@ class MavrosBridge:
         # F-M.6: bağlantı düştü → FC'nin akış hızı ayarı da uçtu sayılır.
         if not connected:
             self._stream_rate_requested = False
+        else:
+            self._ever_connected = True          # F-M.7: bekçi artık kurulabilir
 
     def is_armed(self) -> bool:
         return self._last is not None and self._last.armed
