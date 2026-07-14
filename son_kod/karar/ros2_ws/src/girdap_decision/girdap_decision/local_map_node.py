@@ -65,9 +65,21 @@ class LocalMapNode(Node):
         if self._last is None:                          # henüz harita gelmedi
             return
         m = self._last
-        path = self._dumper.write_frame(
-            list(m.data), m.info.width, m.info.height
-        )
+        try:
+            path = self._dumper.write_frame(
+                list(m.data), m.info.width, m.info.height
+            )
+        except ValueError as exc:                       # bozuk OccupancyGrid
+            self.get_logger().error(
+                f"[Dosya-3] kare atlandı: {exc}", throttle_duration_sec=5.0
+            )
+            return
+        if path is None:                                # F-S.5: disk hatası
+            self.get_logger().error(
+                "[Dosya-3] PNG yazılamadı (disk dolu/IO hatası) — kare atlandı",
+                throttle_duration_sec=5.0,
+            )
+            return
         if self._dumper.frame_count % 10 == 1:          # her ~10 karede bir log
             self.get_logger().info(
                 f"[Dosya-3] {self._dumper.frame_count} kare → {path.name}"

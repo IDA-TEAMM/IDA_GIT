@@ -34,9 +34,9 @@ def ros_context():                                       # noqa: ANN201
     rclpy.shutdown()
 
 
-def _state(*, armed: bool) -> MavState:
+def _state(*, armed: bool, connected: bool = True) -> MavState:
     msg = MavState()
-    msg.connected = True
+    msg.connected = connected
     msg.armed = armed
     msg.guided = False
     msg.mode = "MANUAL"                # görev aktif değil → auto_guided devrede değil
@@ -152,5 +152,50 @@ def test_fm3_kill_disi_stateler_tetiklemez(ros_context) -> None:  # noqa: ANN001
         for s in ("BOOT", "ARM", "BEKLEMEDE", "PARKUR1", "TAMAMLANDI"):
             n._on_mission_state(String(data=s))
         assert n._killed is False
+    finally:
+        n.destroy_node()
+
+
+# ---------------------------------------------------------------------------
+# F-M.7 — boot/restart penceresi: FC hiç bağlanmadan heartbeat-KILL atılmaz
+# (Eyüp boot provası bulgusu: mavros_router ~30 sn busy-retry penceresinde
+# state akışı kesikken sahte KILL latch'i yığını kalıcı öldürüyordu).
+# Bekçi ilk connected=True'dan SONRA kurulur.
+# ---------------------------------------------------------------------------
+
+def test_fm7_baglanmadan_heartbeat_kill_yok(ros_context) -> None:  # noqa: ANN001
+    """connected=False state'leri + uzun sessizlik → KILL OLMAMALI.
+
+    Boot senaryosu: mavros ayakta ama FC henüz yok (ttyACM busy). Birkaç
+    connected=False mesajı gelir, sonra akış kesilir. Eski bekçi ilk state
+    MESAJINDA devreye girdiğinden bu sessizlik sahte KILL üretirdi.
+    """
+    n = girdap.MavrosBridgeNode()
+    try:
+        n._on_state(_state(armed=False, connected=False))
+        n._on_monitor()
+        assert n._killed is False
+
+        # Akış kesildi: heartbeat_timeout_s (5 s) fazlasıyla aşılıyor.
+        gercek_now = n._now()
+        n._now = lambda: gercek_now + 60.0     # type: ignore[method-assign]
+        n._on_monitor()
+        assert n._killed is False, "FC hiç bağlanmadan sahte heartbeat-KILL (F-M.7)"
+    finally:
+        n.destroy_node()
+
+
+def test_fm7_baglandiktan_sonra_sessizlik_hala_kill(ros_context) -> None:  # noqa: ANN001
+    """Regresyon bekçisi: ilk connected=True'dan SONRA sessizlik = gerçek KILL."""
+    n = girdap.MavrosBridgeNode()
+    try:
+        n._on_state(_state(armed=False, connected=True))
+        n._on_monitor()
+        assert n._killed is False
+
+        gercek_now = n._now()
+        n._now = lambda: gercek_now + 60.0     # type: ignore[method-assign]
+        n._on_monitor()
+        assert n._killed is True, "gerçek heartbeat kaybında KILL gelmedi"
     finally:
         n.destroy_node()

@@ -117,3 +117,33 @@ def test_local_cost_grid_obstacle_free_unknown() -> None:
     assert (grid == -1).any()                # arena dışı bilinmiyor hücreler
     # Değerler sözleşme aralığında
     assert grid.min() >= -1 and grid.max() <= 100
+
+
+# ---------------------------------------------------------------------------
+# F-S.5 — disk-dolu koruması (Dosya-3 PNG serisi)
+# ---------------------------------------------------------------------------
+
+def test_write_frame_disk_hatasinda_none_doner(tmp_path, monkeypatch) -> None:
+    """img.save OSError'ı sızdırmamalı — None dönmeli, sonraki kare çalışmalı."""
+    dumper = LocalMapDumper(tmp_path)
+    values = [0] * (100 * 100)
+    assert dumper.write_frame(values, 100, 100) is not None
+
+    def _disk_dolu(self, *a, **k):  # noqa: ANN001, ANN002, ANN003, ANN202
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(Image.Image, "save", _disk_dolu)
+    assert dumper.write_frame(values, 100, 100) is None, (
+        "disk hatası exception olarak sızdı (F-S.5)"
+    )
+    monkeypatch.undo()
+    assert dumper.write_frame(values, 100, 100) is not None
+
+
+def test_write_frame_bozuk_grid_net_valueerror(tmp_path) -> None:
+    """Boyut uyuşmazlığı (bozuk OccupancyGrid) NET ValueError yükseltmeli."""
+    import pytest
+
+    dumper = LocalMapDumper(tmp_path)
+    with pytest.raises(ValueError, match="OccupancyGrid"):
+        dumper.write_frame([0] * 50, 100, 100)     # 50 ≠ 100×100

@@ -226,16 +226,18 @@ class PlanningNode(Node):
         return self.get_clock().now().nanoseconds * 1e-9
 
     def _odom_stale(self) -> bool:
-        """F-P.1: odom hiç gelmediyse ya da timeout'tan eskiyse True.
+        """F-P.1: son odom timeout'tan eskiyse True (bayat pozla KÖR sürüş yok).
 
-        Hiç odom yokken pipeline zaten hedefsiz/durağandır ama BAYAT poz
-        MPPI'yi son bilinen konumla salınıma sokar — ikisi de sıfır thrust'a
-        kapılanır. odom_timeout_s <= 0 → bekçi kapalı (test/sim).
+        Odom HİÇ gelmediyse bayat SAYILMAZ: pipeline zaten durum yokken
+        kontrol üretmez (compute_control None → sıfır thrust); boot'ta
+        "bayat" alarmı basmak yanlış alarm olur. Bekçinin hedefi görev
+        SIRASINDA kesilen akış — son bilinen pozla MPPI salınıma girer.
+        odom_timeout_s <= 0 → bekçi kapalı (test/sim).
         """
         if self._odom_timeout_s <= 0.0:
             return False
         if self._last_odom_t is None:
-            return True
+            return False
         return (self._now() - self._last_odom_t) > self._odom_timeout_s
 
     def _on_control_step(self) -> None:

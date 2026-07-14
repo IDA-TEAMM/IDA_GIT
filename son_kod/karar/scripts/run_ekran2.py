@@ -84,6 +84,14 @@ def main() -> None:
     parser.add_argument(
         "--t1", type=float, default=None, help="pencere sonu [s, CSV başından]",
     )
+    # B2: telemetry setpoint_source="fc" ise thrust sütunları FC servo
+    # çıkışının YÜZDESİdir (N değil) — eksen etiketi kaynakla aynı olmalı,
+    # yoksa grafik yanlış birim gösterir (md 3.3.1.1 dürüstlük).
+    parser.add_argument(
+        "--thrust-birim", default="", choices=["", "N", "%"],
+        help="thrust ekseni birimi: %% (fc/AUTO video) | N (girdap/MPPI) | "
+             "boş = birimsiz etiket",
+    )
     args = parser.parse_args()
 
     csv_path = (
@@ -110,9 +118,10 @@ def main() -> None:
     if args.mp4:
         print(f"[ekran2] MP4 render ({args.fps} fps) — uzun kayıtta birkaç "
               "dakika sürebilir...")
-        path = save_mp4(data, out, fps=args.fps)
+        path = save_mp4(data, out, fps=args.fps,
+                        thrust_birim=args.thrust_birim)
     else:
-        path = save_png(data, out)
+        path = save_png(data, out, thrust_birim=args.thrust_birim)
     print(f"[ekran2] kaydedildi: {path}")
 
 

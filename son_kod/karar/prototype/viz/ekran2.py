@@ -117,8 +117,18 @@ def find_latest_graph_csv(directory: Union[str, Path]) -> Path:
     return candidates[-1]  # utc_timestamp() adları sıralanabilir
 
 
-def make_figure(data: Ekran2Data, figsize: tuple = (8.0, 9.0)):
-    """3 panelli Ekran-2 figürü kur (md 3.3.1.1 sinyal sırasıyla)."""
+def make_figure(
+    data: Ekran2Data,
+    figsize: tuple = (8.0, 9.0),
+    thrust_birim: str = "",
+):
+    """3 panelli Ekran-2 figürü kur (md 3.3.1.1 sinyal sırasıyla).
+
+    `thrust_birim`: telemetry setpoint_source ile AYNI olmalı — "girdap"
+    modunda MPPI kuvvet isteği newton ("N"), "fc" modunda FC servo çıkışı
+    yüzdedir ("%", ±100). Boş "" → birimsiz etiket (md 3.3.1.1 birim
+    dayatmaz). Yanlış birim etiketi grafiği yalancı yapar.
+    """
     import matplotlib.pyplot as plt
 
     fig, (ax_hiz, ax_yon, ax_thrust) = plt.subplots(
@@ -150,7 +160,8 @@ def make_figure(data: Ekran2Data, figsize: tuple = (8.0, 9.0)):
     )
     # Birim kaynağa bağlı: girdap modu N (MPPI), fc modu % (rc/out PWM
     # normalize) — md 3.3.1.1 yalnız "kuvvet isteği" der, birim dayatmaz.
-    ax_thrust.set_ylabel("kuvvet isteği")
+    etiket = f"kuvvet isteği ({thrust_birim})" if thrust_birim else "kuvvet isteği"
+    ax_thrust.set_ylabel(etiket)
     ax_thrust.set_xlabel("görev süresi (s)")
 
     for ax in (ax_hiz, ax_yon, ax_thrust):
@@ -163,7 +174,8 @@ def make_figure(data: Ekran2Data, figsize: tuple = (8.0, 9.0)):
 
 
 def save_png(
-    data: Ekran2Data, path: Union[str, Path], dpi: int = 150
+    data: Ekran2Data, path: Union[str, Path], dpi: int = 150,
+    thrust_birim: str = "",
 ) -> Path:
     """Statik tam-zaman-ekseni PNG (kontrol bakışı / KTR görseli)."""
     import matplotlib
@@ -173,7 +185,7 @@ def save_png(
 
     path = Path(path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig = make_figure(data)
+    fig = make_figure(data, thrust_birim=thrust_birim)
     fig.savefig(path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
     return path
@@ -184,6 +196,7 @@ def save_mp4(
     path: Union[str, Path],
     fps: int = 30,
     dpi: int = 100,
+    thrust_birim: str = "",
 ) -> Path:
     """Zaman imleçli MP4 — montajda dış kamera yanına senkron bindirme.
 
@@ -206,7 +219,7 @@ def save_mp4(
     path = Path(path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    fig = make_figure(data)
+    fig = make_figure(data, thrust_birim=thrust_birim)
     cursors = [
         ax.axvline(data.t[0], color=_CURSOR_COLOR, linewidth=1.0, alpha=0.7)
         for ax in fig.axes

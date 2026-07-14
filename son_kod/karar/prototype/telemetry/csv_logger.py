@@ -215,11 +215,21 @@ class TelemetryCsvLogger:
 
     def write_sample(
         self, zaman: str, sample: Union[TelemetrySample, "GraphSample"]
-    ) -> None:
-        """Bir telemetri satırı yaz ve diske senkronize et."""
-        self._writer.writerow(sample.to_row(zaman))
-        self._sync()
+    ) -> bool:
+        """Bir telemetri satırı yaz ve diske senkronize et.
+
+        F-S.5: disk-dolu (OSError) timer callback'ine SIZMAZ — node ölürse
+        Dosya-2 üretimi tamamen durur (bu proje gerçek disk-dolu krizi yaşadı).
+        Dönüş: True = yazıldı, False = disk hatası (örnek atlandı, logger
+        yaşamaya devam eder; disk açılınca kayıt kaldığı yerden sürer).
+        """
+        try:
+            self._writer.writerow(sample.to_row(zaman))
+            self._sync()
+        except OSError:
+            return False
         self._row_count += 1
+        return True
 
     def _sync(self) -> None:
         """flush + fsync: buffer'ı OS'a, OS'u fiziksel diske indir."""

@@ -28,7 +28,6 @@ from mavros_msgs.msg import State, RCIn, OverrideRCIn
 from mavros_msgs.srv import CommandBool, SetMode
 
 import math
-import time
 
 
 # ── Sabitler ──────────────────────────────────────────────────────────────────
@@ -253,9 +252,23 @@ class ControlNode(Node):
                 f'Mod degisiklik sonucu [{mode}]: {f.result()}'))
 
     def _request_guided_and_arm(self):
-        """GUIDED moda gec ve arm et (auto_arm=True ise)."""
-        self._set_mode('GUIDED')
-        time.sleep(1.0)
+        """GUIDED moda gec, mod istegi sonuclaninca arm et (auto_arm=True ise).
+
+        time.sleep executor'u bloklar (timer/subscription callback'leri durur);
+        arm istegi mod isteginin future callback'inden tetiklenir.
+        """
+        if not self.set_mode_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().warn('set_mode servisi hazir degil.')
+            return
+
+        req = SetMode.Request()
+        req.custom_mode = 'GUIDED'
+        future = self.set_mode_client.call_async(req)
+        future.add_done_callback(self._on_guided_mode_set)
+
+    def _on_guided_mode_set(self, future):
+        """GUIDED mod istegi sonuclaninca arm istegini gonderir."""
+        self.get_logger().info(f'Mod degisiklik sonucu [GUIDED]: {future.result()}')
 
         if not self.arming_client.wait_for_service(timeout_sec=3.0):
             self.get_logger().warn('Arming servisi hazir degil.')
@@ -263,8 +276,8 @@ class ControlNode(Node):
 
         arm_req = CommandBool.Request()
         arm_req.value = True
-        future = self.arming_client.call_async(arm_req)
-        future.add_done_callback(
+        arm_future = self.arming_client.call_async(arm_req)
+        arm_future.add_done_callback(
             lambda f: self.get_logger().info(
                 f'Arm sonucu: {f.result()}'))
 

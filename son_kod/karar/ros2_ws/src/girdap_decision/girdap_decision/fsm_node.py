@@ -284,6 +284,14 @@ class FSMNode(Node):
         threshold = float(self.get_parameter("shock_threshold_g").value)
         if a_mag > threshold:
             self._obs.shock_detected_p3 = True
+            # F-S.8: parkur katmanı yalnız /girdap/parkur/impact placeholder'ına
+            # bağlıydı ve onu kimse yayınlamıyor — gerçek IMU darbesi parkur
+            # geçişini de sürmeli, yoksa /girdap/parkur/state PARKUR_3'te kalır.
+            # Yalnız PARKUR_3'teyken: erken dalga çarpması impact latch'ini
+            # kirletmesin (MissionFSM tarafı da şoku yalnız P3'te tüketir).
+            if self._parkur.state is ParkurState.PARKUR_3:
+                self._parkur.confirm_impact()
+                self._emit_parkur_transition()
 
     def _on_gate_passed(self, msg: Bool) -> None:
         """Perception duba ikilisi geçiş tespiti → PARKUR2→PARKUR3 tetiği."""

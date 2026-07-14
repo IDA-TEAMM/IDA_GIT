@@ -99,6 +99,11 @@ class MavrosBridgeNode(Node):
         # Latching durumlar
         self._killed = False
         self._was_armed = False
+        # F-M.7: heartbeat bekçisi ilk connected=True'dan SONRA kurulur.
+        # Boot/restart penceresinde (ttyACM busy → mavros_router ~30 sn retry)
+        # connected=False state'leri ya da tam sessizlik sahte KILL latch'ine
+        # dönüşmemeli — FC hiç bağlanmadıysa kaybedilecek bağlantı da yoktur.
+        self._ever_connected = False
         self._mode_req_pending = False
         self._arm_attempts = 0
         self._arm_retry_timer = None
@@ -161,6 +166,8 @@ class MavrosBridgeNode(Node):
         self._bridge.update_state(
             self._now(), msg.connected, msg.armed, msg.guided, msg.mode
         )
+        if msg.connected:
+            self._ever_connected = True          # F-M.7: bekçi artık kurulu
         # F-M.6: bağlantı yükselen kenarında FC'den 10 Hz akış iste (taze
         # bağlantı ~1 Hz → Ekran-2 basamaklı + fusion odom'u keser).
         if self._stream_rate_hz > 0.0 and self._bridge.should_request_stream_rate(
@@ -214,8 +221,10 @@ class MavrosBridgeNode(Node):
     # ----- güvenlik izleme -----
 
     def _on_monitor(self) -> None:
-        # Henüz FCU state gelmediyse izleme başlamaz (başlangıçta yanlış KILL yok).
-        if self._bridge.last_state is None or self._killed:
+        # F-M.7: FC bir kez GERÇEKTEN bağlanana dek izleme başlamaz — yalnız
+        # "state geldi mi" yetmez; boot'ta connected=False state'leri gelip
+        # akış kesilince (ttyACM busy penceresi) sahte KILL basılıyordu.
+        if not self._ever_connected or self._killed:
             return
 
         now = self._now()

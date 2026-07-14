@@ -175,3 +175,29 @@ def test_save_mp4_creates_nonempty_file(sample_csv, tmp_path):
     out = tmp_path / "ekran2.mp4"
     save_mp4(data, out, fps=5)               # 3 satır × küçük fps = hızlı test
     assert out.exists() and out.stat().st_size > 0
+
+
+def test_thrust_ekseni_birim_alir() -> None:
+    """B2: fc modunda thrust % — eksen 'N' yazarsa Ekran-2 yalan söyler.
+
+    Varsayılan BİRİMSİZ (md 3.3.1.1 birim dayatmaz); kaynak biliniyorsa
+    run_ekran2 --thrust-birim ile açıkça verilir (% = fc/AUTO, N = MPPI).
+    """
+    matplotlib = pytest.importorskip("matplotlib")
+    matplotlib.use("Agg")
+    from prototype.viz.ekran2 import Ekran2Data, make_figure
+
+    n = 5
+    data = Ekran2Data(
+        t=np.arange(n, dtype=float),
+        hiz=np.zeros(n), hiz_setpoint=np.zeros(n),
+        heading_deg=np.zeros(n), yon_setpoint_deg=np.zeros(n),
+        thrust_sol=np.zeros(n), thrust_sag=np.zeros(n),
+        kaynak="test",
+    )
+    fig = make_figure(data)                                  # varsayılan
+    assert fig.axes[2].get_ylabel() == "kuvvet isteği"       # birimsiz
+    fig = make_figure(data, thrust_birim="%")                # fc modu
+    assert "(%)" in fig.axes[2].get_ylabel()
+    fig = make_figure(data, thrust_birim="N")                # MPPI modu
+    assert "(N)" in fig.axes[2].get_ylabel()

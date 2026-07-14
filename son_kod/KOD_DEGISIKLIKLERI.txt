@@ -118,6 +118,60 @@ Doğrulama: suite 276/4 (7 yeni çekirdek testi). KALAN: node-düzeyi
 testler + video_testleri.sh koşumu (memory/kod-duzeltme.md'de liste).
 
 ----------------------------------------------------------------
+7) VİDEO HAZIRLIK TURU (14 Tem gece 2 — sıfırdan kontrol + birleşim)
+----------------------------------------------------------------
+"Testler kötü çıktı" alarmı YANLIŞ ALARMDI: ros2_ws/install/setup.bash
+source'lanmadan koşunca ROS node testleri sessizce SKIP oluyor (227/15
+görünür). Doğru ortamda gerileme YOK. README'ye build+test reçetesi yazıldı.
+
+[son_kodv2/Eyüp bulguları bizde de vardı — kendi kodumuzla kapatıldı]
+- F-M.7: boot bekçisi ilk STATE MESAJINDA değil ilk connected=TRUE'da
+  kurulur (_ever_connected). "1 mesaj + sessizlik" boot penceresi artık
+  sahte KILL latch'i üretmez. 2 test.
+- F-S.8: gerçek IMU darbesi parkur katmanına bağlandı (confirm_impact,
+  yalnız PARKUR_3'te) — yoksa /girdap/parkur/state sonsuza dek P3'te
+  kalırdı. 2 test.
+- F-S.5: disk-dolu koruması — csv_logger.write_sample bool döner,
+  local_map.write_frame None döner (+bozuk grid'e net ValueError); node'lar
+  loglayıp örneği atlar; ida_topics telemetri (+fsync) ve local_map aynı
+  desen. ida_topics telemetri /tmp → ~/girdap_logs/telemetri (Dosya-2
+  reboot kaybı kapandı). 3 test.
+- 8547002 portu: ida_topics perception_node /perception/objects artık TÜM
+  tespitleri yayınlar; control_node time.sleep(1.0) executor-bloklaması
+  future-callback zincirine çevrildi.
+- F-P.1 hizası: odom HİÇ gelmediyse bayat sayılmaz (boot yanlış alarmı);
+  Eyüp tarafının 3 node testi (test_planning_node.py) alındı, bizde geçiyor.
+
+[girdap-video-main (2).zip birleşimi — onların gece deltası]
+- Kod fix'leri zaten bizde bağımsız vardı → KENDİ uygulamalarımız korundu.
+- fcu_url ttyACM0 → ttyUSB0 (F-M.9: USB-C soketi arızalı, Eyüp kararı;
+  zip'te bile henüz yoktu — Eyüp memory'sinden alındı; udev DU0EFEA7 notu).
+- hardware.yaml mission.arrival_radius_m: 2.0 (FC WP_RADIUS senkron notu)
+  + launch kablolaması; params.yaml'a yeni parametrelerin yarışma
+  varsayılanları (start_on_arm_in_mode false, stream_rate_hz, odom_timeout_s,
+  yaw_setpoint_min_dist_m) belgeli eklendi.
+- run_ekran2 --thrust-birim {%,N} (fc modunda eksen % yazar; varsayılan
+  birimsiz). 1 test. docs/hata_defteri.md + video_gunu_runbook.md (§0-A
+  AUTO dönüşü) onların güncel haliyle birleştirildi (3-yönlü, temiz).
+- README.md SIFIRDAN: son_kod kimliği + video akışı + build/test reçetesi
+  + sahte-veri masa testi + senkron kuralları.
+
+[Masa testi altyapısı — YENİ]
+- hardware.launch with_mavros:=false (FC yokken mavros başlatılmaz; sahte
+  yayıncıyla /mavros/state yarışması = sahte disarm/KILL önlenir).
+- fake_mavros_publisher: NavSatFix eklendi (konum entegrasyonu) → görev
+  ilerleyişi artık masa testinde GERÇEK.
+- config/masa_test_mission.yaml: sahte turla birebir hizalı 4 köşe.
+
+DOĞRULAMA (bu tur):
+- Tam suite: 287 passed / 4 skipped (yeni taban; önceki 276).
+- CANLI sahte-veri koşusu (ROS_DOMAIN_ID=77, 155 sn, 0 node ölümü):
+  FSM BEKLEMEDE→PARKUR1→TAMAMLANDI, 4/4 waypoint varışı, Dosya-2 CSV
+  (PARKUR1 satırlarında hiz_sp=1.000 + yon_sp dolu; BOOT/TAMAMLANDI boş =
+  F-V.2 doğru), grafik CSV 1542 satır, Dosya-3 154 PNG, Ekran-2 PNG
+  render (--thrust-birim %) göz teyitli.
+
+----------------------------------------------------------------
 BEKLEYENLER
 ----------------------------------------------------------------
 - son_kod'un git push'u + Jetson'a deploy + servis kurulumu

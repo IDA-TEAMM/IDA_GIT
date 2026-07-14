@@ -289,3 +289,32 @@ def test_pwm_to_thrust_pct_custom_neutral_range() -> None:
     # neutral=1520 (trim kaymış), range=400 → 1920 = +100%, 1720 = +50%
     assert pwm_to_thrust_pct(1920, neutral=1520, pwm_range=400) == 100.0
     assert pwm_to_thrust_pct(1720, neutral=1520, pwm_range=400) == 50.0
+
+
+# ---------------------------------------------------------------------------
+# F-S.5 — disk-dolu (OSError) koruması: bu proje GERÇEK disk-dolu krizi
+# yaşadı; timer callback'inden sızan OSError node'u öldürür → Dosya-2 üretimi
+# tamamen durur (5 ceza + tek örnek değil TÜM kayıt kaybı).
+# ---------------------------------------------------------------------------
+
+def test_write_sample_disk_hatasinda_false_doner(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    """OSError (disk dolu) write_sample'dan SIZMAMALI — False dönmeli."""
+    from prototype.telemetry.csv_logger import TelemetryCsvLogger, TelemetrySample
+
+    logger = TelemetryCsvLogger(tmp_path)
+    ornek = TelemetrySample(lat=1.0, lon=2.0, hiz=0.5, roll=0.0,
+                            pitch=0.0, heading=90.0)
+    assert logger.write_sample("2026-07-14T12:00:00", ornek) is True
+
+    def _disk_dolu(_fd):  # noqa: ANN001, ANN202
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("prototype.telemetry.csv_logger.os.fsync", _disk_dolu)
+    assert logger.write_sample("2026-07-14T12:00:01", ornek) is False, (
+        "disk hatası exception olarak sızdı ya da True döndü (F-S.5)"
+    )
+
+    # Disk açılınca kayıt kaldığı yerden devam etmeli (logger ölmez).
+    monkeypatch.undo()
+    assert logger.write_sample("2026-07-14T12:00:02", ornek) is True
+    logger.close()

@@ -41,7 +41,9 @@ _PKG = "girdap_decision"
 
 # hardware.yaml okunamazsa kullanılacak güvenli varsayılanlar (yarışma modu).
 _HW_DEFAULTS = {
-    "fcu_url": "serial:///dev/ttyACM0:57600",
+    # F-M.9: USB-C soketi güvenilmez → TELEM2 FTDI hattı (Eyüp kararı,
+    # 2026-07-14). Gerçek değer hardware.yaml'dan gelir; bu yalnız fallback.
+    "fcu_url": "serial:///dev/ttyUSB0:57600",
     "gcs_url": "",
     "mode_name": "GUIDED",
     "heartbeat_timeout_s": 5.0,
@@ -116,6 +118,7 @@ def _load_hardware_config() -> dict:
     cfg["mission_source"] = _MISSION_SOURCE_DEFAULT
     cfg["skip_home_seq0"] = _SKIP_HOME_DEFAULT
     cfg["mission_dwell_s"] = None      # F-V.7a: yaml'da yoksa dosya değeri kalır
+    cfg["mission_arrival_m"] = None    # FC WP_RADIUS senkronu; yoksa params kalır
     cfg["fsm"] = dict(_FSM_DEFAULTS)
     cfg["bridge"] = dict(_BRIDGE_DEFAULTS)
     cfg["telemetry"] = dict(_TELEMETRY_DEFAULTS)
@@ -154,6 +157,11 @@ def _load_hardware_config() -> dict:
         # varsa node param'ı olarak geçer (yoksa görev dosyası değeri kalır).
         if "dwell_time_s" in mission_block:
             cfg["mission_dwell_s"] = float(mission_block["dwell_time_s"])
+        # mission.arrival_radius_m: FC'nin WP_RADIUS'u ile senkron tutulur —
+        # farklıysa bizim hedef index'imiz FC'nin gerçek turundan ayrışır
+        # (F-V.8 reached-senkronu toparlar ama log/dwell zamanlaması şaşar).
+        if "arrival_radius_m" in mission_block:
+            cfg["mission_arrival_m"] = float(mission_block["arrival_radius_m"])
         # fsm / bridge / telemetry blokları (AUTO video ↔ GUIDED yarışma)
         fsm_block = data.get("fsm") or {}
         for key in _FSM_DEFAULTS:
@@ -308,6 +316,14 @@ def generate_launch_description() -> LaunchDescription:
             "with_drivers", default_value="false",
             description="Sensör sürücülerini başlat: Livox + OAK-D + kamera kaydı",
         ),
+        # Masa testi: FC yokken mavros'u başlatma — hem boşuna retry spam'i
+        # olur hem de mavros'un connected=false /mavros/state'i sahte
+        # yayıncıyla (fake_mavros_publisher.py) yarışıp köprüde sahte
+        # disarm/KILL üretir. Sahada DAİMA true (varsayılan).
+        DeclareLaunchArgument(
+            "with_mavros", default_value="true",
+            description="MAVROS'u başlat (masa testi/fake veri için false)",
+        ),
     ]
 
     # --- MAVROS: ArduRover apm.launch (XML) include ---
@@ -317,6 +333,7 @@ def generate_launch_description() -> LaunchDescription:
     mavros = IncludeLaunchDescription(
         AnyLaunchDescriptionSource(mavros_apm),
         launch_arguments={"fcu_url": fcu_url, "gcs_url": gcs_url}.items(),
+        condition=IfCondition(LaunchConfiguration("with_mavros")),
     )
 
     # --- Static TF (kalibre edilmemiş; mekanik ekip gerçek ölçümle günceller) ---
@@ -397,6 +414,8 @@ def generate_launch_description() -> LaunchDescription:
     # (AUTO'da FC durmaz — sahte dwell hedef index'ini geride bırakır).
     if hw["mission_dwell_s"] is not None:
         mission_overrides["dwell_time_s"] = float(hw["mission_dwell_s"])
+    if hw["mission_arrival_m"] is not None:
+        mission_overrides["arrival_radius_m"] = float(hw["mission_arrival_m"])
     mission_params = [params_file, mission_overrides]
     # fsm: parkur katmanı için aynı görev dosyası (waypoint parkur etiketleri).
     # start_on_mode: md 3.3.1(3) başlatma modu (video-AUTO ↔ yarışma-GUIDED).

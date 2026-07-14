@@ -9,6 +9,39 @@
 > Revizyon: 2026-07-13 — 20 fazlı video denetimi (docs/video_denetimi.md)
 > sonrası: F-V.1 (yon_setpoint AÇI) uygulandı, Şekil-1 yerleşimi §6'ya,
 > "4 nokta — dönüş noktası EKLEME" kuralı §3'e işlendi (F-V.4).
+> Revizyon: 2026-07-14 — **AUTO DÖNÜŞÜ (§0-A)**. Aşağıdaki §1/§4'teki
+> "GUIDED" başlatma anlatımı ESKİ plandır; §0-A geçerli olandır.
+
+## 0-A. ⚠️ 2026-07-14 AUTO DÖNÜŞÜ — bu bölüm eski GUIDED adımlarını EZER
+
+Video artık **AUTO+FC** ile koşulur (B1/B2 + F-V.6/7/8, hata_defteri):
+görevi FC kendi uçurur, MPPI cmd_vel basmaz. Değişen operatör adımları:
+
+1. **Başlatma modu GUIDED değil AUTO.** QGC'den mod→**AUTO** (ya da QGC
+   "Start Mission"). Sıra FARK ETMEZ: önce ARM sonra AUTO da, önce AUTO
+   sonra ARM da çalışır (F-V.6 `start_on_arm_in_mode: true`). Eski §1'deki
+   "boot'ta GUIDED'daysa HOLD'a al geri dön" cambazlığı GEREKSİZ.
+2. **Ekran-2 thrust'ı FC servo çıkışından, YÜZDE cinsinden** gelir
+   (`telemetry.setpoint_source: "fc"`). Montajda:
+   `python scripts/run_ekran2.py --mp4 --thrust-birim %` — **`--thrust-birim %`
+   UNUTMA**, yoksa eksen "N" yazar (yanlış birim = md 3.3.1.1 riski).
+3. **hız_setpoint sabit çizgidir** (= `fc_cruise_setpoint_mps` = FC `WP_SPEED`).
+   Çekimden önce FC ekibinden `WP_SPEED` değerini alıp
+   `hardware.yaml telemetry.fc_cruise_setpoint_mps` ile AYNI yap.
+4. **Çekim sabahı deploy kontrolü** (servis yeni kodla mı):
+   `ros2 param get /fsm_node start_on_arm_in_mode` → **true** olmalı;
+   `ros2 param get /mission_manager_node dwell_time_s` → **0.0** olmalı;
+   journalctl'de "FC akış hızı isteniyor: 10 Hz" satırı olmalı. Biri
+   tutmuyorsa: `sudo systemctl restart girdap-karar` → tekrar sorgula.
+   ⏱️ **Boot/restart sonrası ~1 dk bekle:** ttyACM0 kısa süre meşgul kalıyor
+   (F-M.8, ModemManager şüphesi) → mavros FC'ye ~45 sn'de bağlanır. KILL
+   basmaz (F-M.7 fix'i), sadece geç hazır olur — "10 Hz" satırı gelmeden
+   ARM'a geçme.
+5. Görev bitişi artık FC'nin kendi varış sinyalinden de senkronlanır
+   (F-V.8) — 4. noktada FSM TAMAMLANDI'ya düşer, setpoint çizgileri kesilir;
+   manuel dönüşte setpoint görünmesi = bir şeyler ters, çekimi yeniden planla.
+6. WiFi kapalı (rfkill) — **Bluetooth da kapat**: `rfkill block bluetooth`
+   (BT klavye kullanılıyorsa USB klavye getir; md 4.1 2.4 GHz yasağı).
 
 ## 0. Şartname → runbook eşlemesi
 

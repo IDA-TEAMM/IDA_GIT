@@ -27,9 +27,16 @@ import rclpy
 from rclpy.node import Node
 
 from geometry_msgs.msg import TwistStamped
-from sensor_msgs.msg import Imu
+from sensor_msgs.msg import Imu, NavSatFix
 from std_msgs.msg import Float64
 from mavros_msgs.msg import State, RCOut, NavControllerOutput
+
+# Sahte GPS tabani — masa_test_mission.yaml'daki dikdortgen bu noktadan
+# baslar (P4 = taban, tur: kuzey→dogu→guney→bati, kenar ~30 m).
+BASE_LAT = 40.0000000
+BASE_LON = 29.0000000
+M_PER_DEG_LAT = 111320.0
+M_PER_DEG_LON = M_PER_DEG_LAT * math.cos(math.radians(BASE_LAT))
 
 
 class FakeMavros(Node):
@@ -48,8 +55,13 @@ class FakeMavros(Node):
         self.pub_nav = self.create_publisher(
             NavControllerOutput, '/mavros/nav_controller_output/output', 10)
         self.pub_rc = self.create_publisher(RCOut, '/mavros/rc/out', 10)
+        # GPS: mission_manager bunsuz hedef uretmez → yon_setpoint bos kalirdi
+        self.pub_gps = self.create_publisher(
+            NavSatFix, '/mavros/global_position/global', 10)
 
         self.t = 0.0
+        self.x_e = 0.0   # dogu konumu [m], BASE'e gore
+        self.y_n = 0.0   # kuzey konumu [m]
         self.create_timer(0.1, self.tick)        # 10 Hz veri
         self.create_timer(1.0, self.tick_state)  # 1 Hz state
         self.get_logger().info('Sahte MAVROS basladi (AUTO+armed, 10 Hz).')
@@ -77,6 +89,17 @@ class FakeMavros(Node):
         v.twist.linear.x = vx
         v.twist.linear.y = vy
         self.pub_vel.publish(v)
+
+        # Konumu entegre et → sahte GPS (dikdortgen tur BASE'den baslar)
+        self.x_e += vx * 0.1
+        self.y_n += vy * 0.1
+        gps = NavSatFix()
+        gps.header.stamp = now
+        gps.header.frame_id = 'base_link'
+        gps.status.status = 0                       # STATUS_FIX
+        gps.latitude = BASE_LAT + self.y_n / M_PER_DEG_LAT
+        gps.longitude = BASE_LON + self.x_e / M_PER_DEG_LON
+        self.pub_gps.publish(gps)
 
         # Body hiz (tekne hep burnuna dogru gider) — telemetry_node bunu dinler
         vb = TwistStamped()

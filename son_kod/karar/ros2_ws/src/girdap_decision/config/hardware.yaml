@@ -10,9 +10,15 @@
 # DEĞİLDİR. Algoritma parametreleri (MPPI K/T, fusion hızları vb.) config/
 # params.yaml'da kalır; hardware.launch ikisini birleştirir.
 
-# --- MAVLink bağlantısı (Pixhawk 6C USB/UART) ---
-# ArduRover telemetri/USB portu. ACM0 = USB CDC; gerçek baud FC ayarına bağlı.
-fcu_url: "serial:///dev/ttyACM0:57600"
+# --- MAVLink bağlantısı (Pixhawk 6C UART) ---
+# F-M.9 (2026-07-14, Eyüp KARARI — USB-C'ye DÖNÜŞ YOK): Pixhawk USB-C soketi
+# aralıklı kopuyor (tamir tutmadı; TRB-mid-transfer kanıtı) → hat artık
+# TELEM2 üzerinden FTDI seri (ttyUSB0, 57600, MAVLink2, IMU ~8.1 Hz stabil).
+# ⚠ ttyUSB0 adı kırılgan (Jetson'da 2 FTDI var, reboot'ta takas olabilir) —
+#   Jetson'da udev symlink kur: FT231X seri no DU0EFEA7 → /dev/pixhawk_telem2
+#   ve fcu_url'i symlink'e çevir. Masa/geliştirmede USB-C takılıysa eski değer:
+#   "serial:///dev/ttyACM0:57600".
+fcu_url: "serial:///dev/ttyUSB0:57600"
 gcs_url: ""                       # YKİ köprüsü yok (Şartname 4.1: tek yönlü)
 
 # --- mavros_bridge_node güvenlik/mod ayarları ---
@@ -96,6 +102,10 @@ mission:
   # hedef index'imiz dwell kadar geride kalır ve yon_setpoint arkadaki
   # waypoint'i gösterir. Video (AUTO) → 0.0; YARIŞMA (GUIDED/MPPI) → 2.0.
   dwell_time_s: 0.0
+  # FC'nin WP_RADIUS'u ile AYNI olmalı (ArduRover varsayılanı 2 m).
+  # ⚠ FC ekibinden TEYİT AL — farklıysa hedef index'imiz FC'den ayrışır
+  # (F-V.8 reached-senkronu toparlar ama log/zamanlama şaşar).
+  arrival_radius_m: 2.0
 
 # --- Perception: LiDAR engel tespiti (Sprint 1) ---
 # perception_lidar_node parametreleri; hardware.launch launch-arg olarak açar

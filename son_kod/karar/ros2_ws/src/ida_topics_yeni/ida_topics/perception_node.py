@@ -79,7 +79,9 @@ class PerceptionNode(Node):
                 elif color == 'yellow':
                     yellow_detections.detections.append(det)
 
-        self.objects_pub.publish(orange_detections)
+        # /perception/objects TÜM tespitleri taşır (turuncu+sarı+diğer);
+        # önceden sessizce yalnız turuncu yayınlanıyordu (8547002 fix'i).
+        self.objects_pub.publish(all_detections)
         self.buoy_target_pub.publish(orange_detections)
         self.orange_pub.publish(orange_detections)
         self.yellow_pub.publish(yellow_detections)

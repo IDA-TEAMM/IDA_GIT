@@ -163,3 +163,36 @@ def test_parkur_state_published(node) -> None:           # noqa: ANN001
             assert time.monotonic() < deadline, "PARKUR_2 yayını gelmedi"
     finally:
         helper.destroy_node()
+
+
+def test_gercek_imu_darbesi_parkur3u_tamamlar(node) -> None:  # noqa: ANN001
+    """F-S.8: gerçek IMU şok yolu parkur katmanını da TAMAMLANDI'ya taşımalı.
+
+    `/girdap/parkur/impact` Sprint-5 placeholder'ı ve onu publish eden HİÇBİR
+    node yok — `_on_imu` yalnız MissionFSM gözlemini (`shock_detected_p3`)
+    besliyordu, `ParkurTransitionLogic.confirm_impact()` çağrılmıyordu →
+    yarışmada /girdap/parkur/state sonsuza dek PARKUR_3'te kalırdı.
+    """
+    from sensor_msgs.msg import Imu
+
+    _feed_reached(node, 1)
+    _feed_reached(node, 3)
+    assert node._parkur.state is ParkurState.PARKUR_3
+
+    msg = Imu()
+    msg.linear_acceleration.x = 80.0            # ~8.2 g > shock_threshold_g=5
+    node._on_imu(msg)
+    assert node._parkur.state is ParkurState.COMPLETED, (
+        "IMU darbesi parkur katmanına iletilmedi (F-S.8)"
+    )
+
+
+def test_erken_darbe_parkur_katmanini_kirletmez(node) -> None:  # noqa: ANN001
+    """F-S.8 bekçisi: PARKUR_1'deki dalga çarpması impact latch'i kurmamalı."""
+    from sensor_msgs.msg import Imu
+
+    msg = Imu()
+    msg.linear_acceleration.x = 80.0
+    node._on_imu(msg)
+    assert node._parkur.state is ParkurState.PARKUR_1
+    assert node._parkur.impact_confirmed is False

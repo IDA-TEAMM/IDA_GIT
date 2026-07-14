@@ -20,6 +20,161 @@
 
 ## 🔴 AÇIK HATALAR
 
+### [2026-07-14] F-M.9 — USB düşünce mavros ÖLÜYOR + geri gelmiyor (respawn yok) → yığın kalıcı KILL (🔴 video-günü süreklilik riski)
+- **Belirti (boot provası SONRASI, 18:55):** Pixhawk USB'si düştü → mavros_node
+  `mavconn serial1: receive: End of file` + std::system_error → çöktü (exit -6) → GERİ
+  GELMEDİ → köprü 5.5 sn'de doğru KILL bastı → yığın kalıcı KILL'de takıldı (F14.4 latch).
+  Kurtarma yalnız `sudo systemctl restart girdap-karar`.
+- **Debug verisi:** `apm.launch:11` `respawn_mavros default=false` + hardware.launch include'u
+  bu argı SET ETMİYOR → mavros respawn'suz. Kernel: `18:55:01 usb 1-2.1 USB disconnect
+  device 4` → 4 dk boşluk → `18:59:06 device 9` (yalnız ttyACM0!) → 5 sn sonra `18:59:11
+  device 9 disconnect → device 10` (bu kez ttyACM0+ttyACM1 ikisi). **Pixhawk bir USB
+  HUB'ında** (1-2:1.0, 4 port; kardeş cihazlar: Fantech fare 1-2.4, +1 cihaz 1-2.2).
+- **Kök neden (2 katman):** (1) mavros respawn kapalı → USB hıçkırığında süreç ölür kalır;
+  (2) F14.4 — heartbeat KILL kalıcı latch, histerezis yok → mavros geri gelse bile KILL
+  temizlenmez. İkisi birleşince: kısa USB blibi = ölü yığın = elle restart.
+- **Etki:** md 3.3.1/6 "tek kesintisiz çekim" — çekim ortasında 2 sn USB hıçkırığı bile
+  video'yu yakar (operatör sudo restart atmak zorunda). KILL'in KENDİSİ doğru davranış
+  (gerçek hat kaybında güvenlik); sıkıntı KURTARILAMAMASI.
+- **✅ DONANIM ONAYLANDI (Eyüp 2026-07-14): "ben çekmedim, Type-C portunda bağlıydı."**
+  Kanıt zinciri: (a) kopma anında `tegra-xusb WARN Event TRB slot 4 ep 4 with no TDs queued`
+  = veri akarken ANİ fiziksel kesinti (yazılım reset/FC reboot bu uyarıyı vermez); (b) ~4 dk
+  açık kaldı, kimse dokunmadan geri geldi; (c) replug'da yarım→tam çift-enumerasyon = kötü
+  kontak/soğuk lehim imzası; (d) Jetson'da undervoltage/güç uyarısı YOK → sebep Jetson değil,
+  FC ucundaki **USB-C soketi/kablosu.** Kardeş cihaz (fare 1-2.4) düşmedi → hub değil, cihaz ucu.
+  → **"USB-C tamirli+çalışıyor" (FC OLAY kapanışı) BAYAT; tamir TUTMADI, aralıklı açılıyor.**
+- **Etki (güncel):** Jetson↔Pixhawk MAVLink'in TAMAMI bu soketten. Suda/çekimde aralıklı
+  kopma = mavros ölür (F-M.9) = KILL latch = ölü yığın = video yanar; yarışmada görev kaybı.
+- **Durum:** 🔴 AÇIK — **video ÖNCESİ DONANIM BLOKERİ.** Aksiyonlar: (1) FC/mekanik ekip
+  soketi KESİN çöz / DEĞİŞTİR + gerginlik boşaltma (strain relief); (2) yedek hat hazırla+test:
+  TELEM2 FTDI serial `fcu_url=serial:///dev/ttyUSB0:57600` (57600'de IMU ~10 Hz = F-M.6 için
+  bize yeten hız; FTDI kablo mevcut mu + port çakışması QGC MicoAir ile SORULACAK). Yazılım
+  respawn/histerezis (F14.4) bu arızayı ÖRTME aracı DEĞİL — kırılgan güvenlik hattını yazılımla
+  otomatik kurtarmak suda tanımsız duruma dönebilir; kök çözüm donanım.
+
+### [2026-07-14] F-M.8 — taze boot'ta bile ttyACM0 "busy" → mavros ~30 sn geç bağlanıyor (🟡 T1, kozmetik gecikme)
+- **Belirti (BOOT PROVASI, 2026-07-14 18:42 reboot):** eski-instance teorisi tek başına
+  yetmiyor — TAZE boot'ta da (tutucu eski süreç YOK) aynı desen: `18:42:53` mavros
+  `link[1000] open failed: Device or resource busy` → mavros_router hardcoded 30 sn
+  retry → `18:43:23` reconnected + `Got HEARTBEAT`. Boot→FC bağlantısı toplam ~44 sn.
+- **Debug verisi (journalctl, 2026-07-14 boot):** `uptime -s = 18:42:39` · servis Started
+  `18:42:51` · busy `18:42:53` · **ModemManager active+enabled ve ACM portlarını yokluyor:**
+  `18:43:02 ModemManager: could not grab port ttyACM0/ttyACM1 (unhandled port type)` —
+  MM probe'u portu kısa süre açık tutar, busy'nin baş şüphelisi. Ayrıca `18:44:43`
+  `TM: Time jump detected` (boot sonrası NTP saat sıçraması, zararsız).
+- **Kök neden:** araştırılıyor — baş şüpheli ModemManager'ın seri-port probe'u;
+  mavros_router'ın 30 sn sabit retry'ı (parametresiz, mavros_router.hpp:167) gecikmeyi büyütüyor.
+- **Etki:** F-M.7 fix'i sayesinde ZARARSIZ (KILL yok, yığın sadece ~45 sn geç hazır olur).
+  Video/yarışma sabahı operatör boot sonrası ~1 dk beklemeli (runbook notu).
+- **Durum:** AÇIK, T1 iyileştirme (sudo, karar Eyüp'te). Seçenekler: (a) udev kuralı
+  `ID_MM_DEVICE_IGNORE=1` (Pixhawk idVendor 3162) — en temiz; (b) `systemctl disable
+  ModemManager` (teknede modem yok); (c) servise `ExecStartPre` port-boş-bekleme.
+
+### [2026-07-14] F-V.6 — "önce AUTO, sonra ARM" akışında görev FSM'de HİÇ başlamıyor (🔴 VİDEO-KATİL)
+- **Belirti (kod denetimi, AUTO dönüşü sonrası):** `fsm_node._on_mav_state` başlatma tetiği
+  KENAR şartlı (`_last_mode != start_mode` → `== start_mode`) VE FSM `BEKLEMEDE`'de olmalı;
+  BEKLEMEDE'ye de ancak ARM olunca giriliyor. Operatör QGC'de **önce modu AUTO yapıp
+  SONRA arm ederse** (QGC "Start Mission" akışı; ArduRover AUTO'da arm olunca görevi
+  başlatır) kenar hiç oluşmaz → FSM BEKLEMEDE'de KALIR.
+- **Etki:** FC görevi koşar, tekne 4 noktayı gezer — ama `mission_state="BEKLEMEDE"` →
+  telemetry F-V.2 gereği `hiz_setpoint`/`yon_setpoint` sütunlarını BOŞ bırakır →
+  **Ekran-2'nin ZORUNLU setpoint eğrileri boş çıkar (md 3.3.1.1)**. Video TEK ÇEKİM +
+  kesintisiz (md 3.3.1/6) → çekim sırasında fark edilmez, montajda anlaşılır = video yanar.
+- **Kök neden:** kenar şartı GUIDED+MPPI için tasarlanmıştı (boot'ta zaten GUIDED ise
+  MPPI kendiliğinden motor sürmesin). AUTO'da FSM motor sürmüyor (planning geçidi GUIDED
+  bekler) → orada kenar şartı korumuyor, sadece engelliyor.
+- **Durum:** ✅ TDD DÜZELTİLDİ — `fsm_node.start_on_arm_in_mode` (YARIŞMA varsayılanı
+  **false**, güvenlik korunur; `hardware.yaml` VİDEO için **true**): BEKLEMEDE'ye armed
+  girildiğinde mod zaten `start_on_mode` ise görev başlar (FC zaten koşuyor, FSM İZLİYOR).
+  3 test (kenarsız başlatma + yarışma güvenliği + kenar regresyonu).
+
+### [2026-07-14] F-P.1 — planning bayat pozla MPPI koşmaya devam ediyordu (🟠 yarışma; videoda etkisiz)
+- **Belirti (kod denetimi):** `fusion_node` F8.2 bekçisi poz kaynağı susunca odom yayınını
+  KESİYOR ("bayat pozla plan yapılmasın") — ama `planning_node._on_odom` son durumu saklıyor,
+  `_on_control_step` odom'un YAŞINA BAKMADAN 10 Hz MPPI koşmaya devam ediyordu.
+  Yani F8.2'nin niyeti planning tarafında KARŞILIKSIZDI.
+- **Etki:** GPS/EKF kesilirse (fix kaybı, mavros kopması) araç son bilinen pozla KÖR sürer →
+  yarışmada dubaya/parkur dışına gider; md 3.3.1.1 anlamında istemsiz hareket.
+  **AUTO videosunda ETKİSİZ** (planning cmd_vel basmıyor, mod geçidi GUIDED bekliyor).
+- **Durum:** ✅ TDD DÜZELTİLDİ — `planning_node.odom_timeout_s` (varsayılan 1.0 s, fusion'ın
+  `pose_timeout_s`'iyle aynı mantık; 0 → kapalı): bayatsa thrust SIFIR + saniyede bir ERROR.
+  odom hiç gelmediyse yanlış alarm basmaz (boot). 3 test.
+
+### [2026-07-14] F-V.7 — AUTO'da yon_setpoint waypoint üstünde savruluyor + sahte bekleme (🟠)
+- **Belirti (kod denetimi):** iki ayrı kusur, ikisi de Ekran-2b'nin ZORUNLU eğrisini bozar:
+  1. `mission_manager` DWELL evresinde hedef index'ini 2 sn ilerletmiyor (`dwell_time_s: 2.0`).
+     GUIDED'da tekneyi BİZ sürdüğümüz için gerçek bekleme; **AUTO'da FC durmaz** → tekne
+     waypoint'i geçip giderken bizim hedefimiz 2 sn boyunca ARKADA kalan noktayı gösterir.
+  2. `telemetry._on_target` = `atan2(y, x)`; waypoint'in üstünden geçerken ofset ~0 →
+     açı savrulur, sonra ~180° döner. Her waypoint'te çöp sıçrama.
+- **Etki:** md 3.3.1.1 "görüntü/hareket net değilse BAŞARISIZ" + yön setpoint eğrisi yalan söyler.
+- **Durum:** ✅ DÜZELTİLDİ — (1) `hardware.yaml mission.dwell_time_s: 0.0` (yarışmada 2.0
+  kalır, launch'tan geçirilir); (2) `telemetry.yaw_setpoint_min_dist_m: 0.5` — bu mesafeden
+  yakında açı GÜNCELLENMEZ, son geçerli istek korunur (TDD).
+- **⚠ AÇIK KALAN (hafifledi, bkz. F-V.8):** `arrival_radius_m` ↔ FC `WP_RADIUS` teyidi hâlâ
+  iyi pratik ama artık KRİTİK değil — F-V.8 FC'nin kendi varış sinyalini dinliyor. Ayrıca
+  `/mavros/nav_controller_output/output` (FC'nin nav_bearing'i) T1 fikri olarak duruyor —
+  konvansiyon dönüşümü (pusula→ENU) suda doğrulanmadan KONMAZ.
+
+### [2026-07-14] F-V.8 — AUTO'da görev ilerlemesi FC'den senkronlanmıyordu (🔴 → düzeltildi)
+- **Belirti (2. denetim turu):** görev BİTİŞİ ve waypoint ilerlemesi YALNIZ bizim
+  `arrival_radius_m` tespitimize bağlıydı; FC'nin `MISSION_ITEM_REACHED`'i hiç dinlenmiyordu.
+  AUTO'da rover köşeyi bizim 2 m yarıçapımıza GİRMEDEN dönerse (WP_RADIUS farkı + dönüş
+  yarıçapı) index TAKILIR: yon_setpoint görev sonuna kadar GERİYİ gösterir, COMPLETE hiç
+  gelmez, FSM PARKUR1'de kalır → manuel dönüşte setpoint yazılmaya devam eder (Ekran-2 yalan).
+- **Düzeltme (TDD):** `MissionManager.notify_external_reached(idx)` (yalnız İLERİ senkron;
+  IDLE/geride/aralık-dışı yok sayılır) + `fc_items_to_waypoints_with_seqs` (wp_seq→index
+  eşlemesi, filtre tek yerde) + node `/mavros/mission/reached` aboneliği (yalnız fc modu) +
+  `_publish_reached_once` (kendi varışımızla FC sinyali aynı index'i iki kez basmasın —
+  parkur katmanı Int32 tüketiyor). 7 test (5 çekirdek + 2 node).
+- **⚠ QoS tuzağı (canlıdan ölçüldü):** `/mavros/mission/reached` yayıncısı TRANSIENT_LOCAL —
+  latched abone olsaydık BİR ÖNCEKİ koşunun son mesajı boot'ta tekrar gelirdi. BİLEREK
+  volatile abonelik + IDLE koruması (çift emniyet).
+- **Yarışma etkisi YOK:** GUIDED'da FC görev koşmaz → topic hiç akmaz → davranış değişmez.
+
+### [2026-07-14] F-M.6 — FC taze bağlantıda ~1 Hz yayınlıyor; yazılım hiç akış hızı istemiyor (🔴)
+- **Belirti:** Oturum 2 masa testi: USB bağlantısı kurulduğunda `/mavros/imu/data` ~1 Hz.
+  Elle `ros2 service call /mavros/set_stream_rate ... {stream_id: 0, message_rate: 50,
+  on_off: true}` → ~39 Hz. İstek OTURUMLUK: servis/boot yolunda kimse istemiyordu, yani
+  her taze bağlantıda (boot, USB tak-çıkar, mavros restart) FC yine 1 Hz'e düşüyor.
+- **Debug verisi:** `~/girdap_logs/masa_testi/` Oturum 2 notları; 2026-07-14 ölçümü:
+  elle istek sonrası `/mavros/rc/out` 35 Hz (bağlantı ayakta kaldığı sürece korunuyor).
+  ArduPilot tarafı: SR0_* parametreleri (USB=SERIAL0, bant kısıtı YOK).
+- **Kök neden:** ArduPilot taze bağlantıda SR0_* parametrelerine göre yayınlar; bizim
+  yığın REQUEST_DATA_STREAM göndermiyordu. (FC EEPROM'undaki SR0_* değerleri düşük.)
+- **Etki — üç katman, hepsi VİDEO-kritik:**
+  1. **Ekran-2 (md 3.3.1.1):** hız/heading/thrust eğrileri 1 Hz basamaklı → "görüntü
+     net değilse BAŞARISIZ". AUTO+FC videosunda üç eğri de FC akışından geldiği için
+     (ATTITUDE/VFR_HUD/SERVO_OUTPUT_RAW) etki DAHA büyük.
+  2. **fusion_node F8.2 bekçisi:** `pose_timeout_s=1.0` — 1 Hz'lik `local_position/pose`
+     akışında yaş eşiği jitter'la sürekli aşılır → `/girdap/fusion/odom` yayını KESİLİR
+     ("poz kaynağı bayat" WARN spam'i). Bekçi 1 Hz akışı arıza sanıyor.
+  3. **planning_node:** `_on_odom` son pozu saklar, `_on_control_step` 10 Hz'te pozun
+     YAŞINA BAKMADAN MPPI koşar → 1 m/s seyirde 1 metreye kadar bayat pozla düzeltme
+     → salınım/zikzak = md 3.3.1.1 "istemsiz hareket → BAŞARISIZ".
+- **Durum:** TDD DÜZELTİLDİ (bu oturum, F-M.6): `MavrosBridge.should_request_stream_rate()`
+  (bağlantı yükselen kenarı, çekirdek) + `mavros_bridge_node._maybe_request_stream_rate()`
+  → `/mavros/set_stream_rate` (STREAM_ALL, `stream_rate_hz`=10, oturumluk — FC EEPROM'una
+  YAZMAZ, Eyüp'ün "FC paramlarına dokunmayın" kuralı korunur). Yeniden bağlanışta tekrar
+  istenir; `stream_rate_hz: 0` → devre dışı. 8 test (5 çekirdek + 3 node).
+  ✅ **CANLI DOĞRULANDI (2026-07-14 akşam, servise DOKUNMADAN):** Pixhawk 6C ikinci USB
+  kanalı `/dev/ttyACM1` boştaydı → izole `ROS_DOMAIN_ID=77`'de taze mavros oturumu açıldı
+  (servisin ACM0 kanalı ve node'ları hiç etkilenmedi).
+  - **Fix'siz taze bağlantı (= boot davranışı):** `/mavros/imu/data` **1.000 Hz**,
+    `/mavros/rc/out` **1.000 Hz**, `/mavros/global_position/global` **0.999 Hz**.
+    → "boot'ta 1 Hz" iddiası KANITLANDI (varsayım değil, ölçüm).
+  - **Yeni köprü çalışınca:** log `FC akış hızı isteniyor: 10 Hz (STREAM_ALL)` →
+    aynı üç akış **9.99 Hz**. İlk state'te servis hazır değildi ("istek ertelendi"),
+    ~1 s sonraki state'te gitti — tasarlanan retry yolu gerçek FCU'da çalıştı.
+  - **Yük:** mavros süreci ~%50 (tek çekirdek, 6 çekirdekli Orin'de ~%8 toplam),
+    CPU 50°C / tj 51°C, loadavg 3.4. 10 Hz'te yük/termal sorunu YOK
+    (arkadaşın "35 Hz'de yük biner" itirazının ölçülmüş cevabı: 10 Hz ≠ 35 Hz).
+  - `/mavros/local_position/pose` kapalı mekânda hiç yayınlanmıyor (GPS fix yok →
+    EKF pozu yok) — BEKLENEN; F-M.6'dan bağımsız, açık alanda ölçülecek.
+  - ⏳ **KALAN (ops):** servis hâlâ ESKİ kodu bellekte çalıştırıyor →
+    `sudo systemctl restart girdap-karar` ile deploy edilmeli (sudo = Eyüp).
+  Kalıcı çözümü FC ekibi SR0_* yazarak seçerse bu istek zararsız kalır (aynı hızı ister).
+
 ### [2026-07-14] F-M.3 — servis yoluyla KILL FCU'yu DISARM etmiyor (🟠)
 - **Belirti:** Oturum 2 masa testi (M6a): `/girdap/mission/kill` çağrısı sonrası FSM=KILL ✓,
   thrust [0,0] ✓, AMA `/mavros/state` `armed: true` KALDI (5+ sn sonra tekrar teyit).
@@ -130,5 +285,6 @@
 | F5.4 | 500+ nokta kümesi sessizce siliniyordu → böl | `798ff4d` |
 | Bearing (F6.1/F5.9) | işaret hatası + üreteç maskesi | `e66cb40` |
 | F16.1 | pytest yanlış-yeşil (launch_testing) | pyproject addopts |
+| F-M.7 | restart/boot'ta FC hiç bağlanmadan heartbeat-KILL latch (`ever_connected` bekçisi) | `c2d7a10` / girdap-video `8af6c4c`; ✅ CANLI DOĞRULANDI (2026-07-14 boot provası: 30 sn busy penceresinde FAILSAFE 0, state ARM) |
 
 Tam liste ve kanıtlar: `docs/kod_denetimi.md`.

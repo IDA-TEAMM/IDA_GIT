@@ -5,7 +5,7 @@
 - [Büyük işleri kaydet](feedback-buyuk-isleri-kaydet.md) — her büyük değişiklik/iş sonunda sormadan hafızaya kaydet
 
 ## İDA Projesi
-- [Eyüp memory senkron](eyup-memory-senkron.md) — 🔴 Eyüp B1/B2'yi bağımsız yazdı, JETSON'DA ONUN girdap-video'su kurulu; F-M.6 bizde yok; SERVO teyit + FC olay kapandı
+- [Eyüp memory senkron](eyup-memory-senkron.md) — 🔴 JETSON'DA ONUN girdap-video'su kurulu (taban 302/2); F-M.9: fcu_url=ttyUSB0 (USB-C arızalı, udev DU0EFEA7); son_kodv2 F-S bulguları; P0=video-eleme listesi
 - [Şartname 2026 uygunluk](ida-sartname-2026.md) — V1.2 denetimi: uyumlular + 5 kritik risk (RC/MicoAir frekans, Wi-Fi, güç-kesme rölesi, Dosya-1); değişimler buna göre
 - [İDA proje genel](ida-project.md) — GİRDAP İDA, TEKNOFEST 2026, katamaran USV + İHA, 3 parkur
 - [Yazılım durumu](ida-software-status.md) — 5 katman + boşluk analizi; planlama/kontrol darboğazı
@@ -20,4 +20,4 @@
 - [Video AUTO kararı](ida-video-auto.md) — video (21.07) AUTO modla; B1/B2 kod fixleri, FC param planı, 20×30 m + upload→ARM→AUTO sıra kuralı, Jetson pasif kayıtçı
 - [Batarya izleme PM06](ida-batarya-pm06.md) — Daly BMS CAN çıkmazı; PM06→POWER1 planı, 6C param değerleri, kalan iş: voltage_battery teşhisi + kalibrasyon
 - [Decision repo inceleme](ida-decision-repo-review.md) — tam mimari/test/risk incelemesi; KANONİK: ~/Desktop/son_kod (birleşik repo + memory kopyası)
-- [Kod düzeltme günlüğü](kod-duzeltme.md) — fix günlüğü; 14 Tem: setpoint 1.0, MicoAir doc, video+decision 3-yönlü birleşim (267 test ✓), ROS_DOMAIN_ID=42 tuzağı
+- [Kod düzeltme günlüğü](kod-duzeltme.md) — fix günlüğü; son_kod VİDEOYA HAZIR (14 Tem gece: suite 287/4 + canlı sahte-veri turu TAMAMLANDI); "testler kötü"=source eksikliği tuzağı; ROS_DOMAIN_ID=42/77

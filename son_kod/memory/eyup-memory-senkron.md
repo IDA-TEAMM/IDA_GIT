@@ -9,6 +9,13 @@ metadata:
 
 **Eyüp'ün Claude hafızası okundu (2026-07-14, github.com/EyupEker1/memory).** Kaynak gerçekler:
 
+**🔴 GÜNCELLEME (14.07 gece 2 — 2. okuma + son_kodv2):**
+- **F-M.9: fcu_url artık ttyUSB0!** Pixhawk USB-C soketi ARIZALI (tamir tutmadı, kendi düştü, TRB-mid-transfer kanıtı) → TELEM2 FTDI seri CANLI: ttyUSB0 (FT231X seri DU0EFEA7, 57600, IMU ~8.1 Hz stabil, 2+ dk kopmasız). Eyüp kararı: USB-C'ye DÖNÜŞ YOK (ideal hız isterse SERIAL2_BAUD 921600). ⚠ ttyUSB0 adı kırılgan (2 FTDI) → udev symlink DU0EFEA7 reçetesi. FC güç=batarya (pervane söküldü). son_kod hardware.yaml GÜNCELLENDİ ✓.
+- **F-M.7** (boot'ta FC bağlanmadan heartbeat-KILL latch — canlı doğrulandı) + **F-M.8** (ModemManager ttyACM busy → mavros ~30-45 sn geç; zararsız, boot sonrası ~1 dk bekle) onların tabanı **302/2**. F-M.7 bizde de vardı → kapatıldı ✓.
+- **IDA_GIT'te `son_kodv2/`** (Sude'nin Claude'u): Eyüp'ün güncel kodu + F-S.1..S.10 denetimi. Bizi ilgilendirenler işlendi (bkz [[kod-duzeltme]] girdi 8); karar bekleyenler: F-S.1/S.4 (RC kill/override — RCx_OPTION=31 cevabına bağlı), F-S.6 (RRT girdisi hiç publish edilmiyor — YARIŞMA kritik), F-S.9/S.10 (özellikler).
+- **Saha öncelik listesi (Eyüp):** KOD BİTTİ → P0 VİDEO-ELEME (~7 gün): suda prova (HİÇ yapılmadı) + RC yasal band + kablo strain-relief + FC'den WP_SPEED/WP_RADIUS + failsafe paramları. Video ÖLÇÜM GEREKTİRMEZ.
+- kaptan_memory.md commit'imiz Eyüp reposunun 10 commit GERİSİNDE — push öncesi rebase şart.
+
 **🔴 EN KRİTİK — repo çatallanması:** Eyüp kararı (14.07): video işi YALNIZ **github.com/EyupEker1/girdap-video** (karar/ = 15dc238 + F-M.3 `98b5386` + B1/B2 `aedf6ae`). **JETSON'DA KURULU OLAN BU** (symlink install: kaynak klon = çalışan kod; .py düzeltmesi → servis restart yeter, rebuild gerekmez). Bizim son_kod paralel/ayrık bir hat — Jetson'da DEĞİL. Eyüp'ün notu: "⚠️ Yahya paralel push atarsa çakışır — kodu biz yazdık, Yahya gözden geçirsin."
 
 **B1/B2'yi Eyüp BAĞIMSIZ yazdı** (bizim decision(2) kodumuz ona hiç ulaşmamış; KOD_DEGISIKLIKLERI.txt özetinden yola çıkmış): B1 = yalnız config (start_on_mode AUTO + auto_guided false; mode_name GUIDED BİLEREK kaldı → AUTO'da planning cmd_vel basmaz). B2 = setpoint_source fc, thrust rc/out ±%100, PWM=0→BOŞ, `run_ekran2 --thrust-birim %`. Suite tabanları: 267/2 (F-M.3) → **282/2** (B1/B2+F-M.6).

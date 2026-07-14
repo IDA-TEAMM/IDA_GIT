@@ -171,20 +171,26 @@ class LocalMapNode(Node):
         img[grid == 100] = 0    # engel   → siyah
         img[grid == -1]  = 128  # bilinmiyor → gri
 
-        # PGM yaz
-        with open(pgm_path, 'wb') as f:
-            f.write(f'P5\n{self.width} {self.height}\n255\n'.encode())
-            f.write(img.tobytes())
+        # PGM + YAML yaz — F-S.5: disk hatası node'u öldürmez, kare atlanır.
+        try:
+            with open(pgm_path, 'wb') as f:
+                f.write(f'P5\n{self.width} {self.height}\n255\n'.encode())
+                f.write(img.tobytes())
 
-        # YAML metadata
-        with open(yaml_path, 'w') as f:
-            f.write(f"""image: {pgm_path}
+            # YAML metadata
+            with open(yaml_path, 'w') as f:
+                f.write(f"""image: {pgm_path}
 resolution: {self.resolution}
 origin: [{self.origin_x}, {self.origin_y}, 0.0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.196
 """)
+        except OSError:
+            self.get_logger().error(
+                'Harita yazılamadı (disk dolu/IO hatası) — kare atlandı',
+                throttle_duration_sec=5.0)
+            return
         self.get_logger().info(f'Harita kaydedildi: {pgm_path}')
 
 

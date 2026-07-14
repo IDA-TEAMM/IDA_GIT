@@ -73,15 +73,28 @@ class LocalMapDumper:
 
     def write_frame(
         self, values: Sequence[int], width: int, height: int
-    ) -> Path:
-        """Bir OccupancyGrid'i (satır-major, ROS) PNG'ye çevirip diske yaz."""
+    ) -> Optional[Path]:
+        """Bir OccupancyGrid'i (satır-major, ROS) PNG'ye çevirip diske yaz.
+
+        F-S.5: disk hatasında (OSError, örn. disk dolu) None döner — exception
+        node timer'ına sızıp Dosya-3 üretimini kalıcı durdurmasın. Bozuk grid
+        (len ≠ width×height) ise veri hatasıdır → net ValueError.
+        """
+        if len(values) != width * height:
+            raise ValueError(
+                f"OccupancyGrid boyut uyuşmazlığı: {len(values)} hücre, "
+                f"{width}×{height}={width * height} bekleniyordu"
+            )
         arr = np.asarray(values, dtype=np.int16).reshape(height, width)
         # ROS satır 0 = güney → PNG üst satır kuzey olsun diye dikey çevir.
         arr = np.flipud(arr)
         gray = _grid_to_gray(arr)
         img = Image.fromarray(gray, mode="L")
         path = self.session_dir / f"frame_{self._count:05d}.png"
-        img.save(path)
+        try:
+            img.save(path)
+        except OSError:
+            return None
         self._count += 1
         return path
 

@@ -35,6 +35,9 @@ planning_node:
     mode_name: "GUIDED"      # mod geçidi — mavros_bridge ile aynı olmalı
     map_rate_hz: 10.0        # Dosya-3 yerel harita yayım hızı
     use_rrt: true            # yarışma: RRT*. Video: hardware.yaml false override
+    odom_timeout_s: 1.0      # F-P.1: son odom bundan eskiyse thrust SIFIR
+                             # (bayat pozla kör sürüş yok; fusion pose_timeout_s
+                             # ile aynı mantık). 0 → bekçi kapalı (test/sim).
 
 fsm_node:
   ros__parameters:
@@ -54,6 +57,10 @@ fsm_node:
                              # "" → kapalı (yalnız /girdap/mission/start).
     mission_file: ""         # Sprint 4 parkur katmanı görev dosyası (hardware.
                              # launch geçer). Boş → tek parkur (video), PARKUR_1
+    # F-V.6: BEKLEMEDE'ye armed girildiğinde mod ZATEN start_on_mode ise
+    # (kenar yok) görev başlasın mı? YARIŞMA: false (GUIDED'dayken arm →
+    # MPPI kendiliğinden sürerdi). AUTO VİDEO: hardware.yaml true yapar.
+    start_on_arm_in_mode: false
 
 mavros_bridge_node:
   ros__parameters:
@@ -63,6 +70,11 @@ mavros_bridge_node:
     auto_guided: true            # bağlıyken mod hedefte değilse otomatik set_mode
     arming_retry_max: 3          # ArduRover pre-arm reddinde yeniden deneme
     arming_retry_delay_s: 2.0    # denemeler arası bekleme (EKF yakınsaması)
+    # F-M.6: bağlantı yükselen kenarında FC'den istenen MAVLink akış hızı (Hz).
+    # ArduPilot taze bağlantıda SR0_* paramlarına göre ~1 Hz yayınlar (masa
+    # ölçümü) → Ekran-2 basamaklı + fusion odom bekçisi keser. Oturumluk istek,
+    # FC EEPROM'una YAZMAZ. 0 → devre dışı; ALT SINIR 5 (fusion pose_timeout_s).
+    stream_rate_hz: 10.0
 
 perception_lidar_node:
   ros__parameters:
@@ -117,6 +129,9 @@ telemetry_node:
     fc_thrust_right_ch: 3         # SERVO3 = ThrottleRight(74) — FC ekibi teyit
     fc_pwm_neutral: 1500          # µs, sıfır itki
     fc_pwm_range: 500             # µs, ±tam itki
+    # F-V.7b: hedef ofseti bu mesafenin ALTINDAYKEN yon_setpoint güncellenmez
+    # (waypoint üstünde atan2 savrulması → Ekran-2b'de çöp sıçrama olurdu).
+    yaw_setpoint_min_dist_m: 0.5
 
 local_map_node:
   ros__parameters:

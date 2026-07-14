@@ -51,9 +51,14 @@ class TelemetriNode(Node):
         self.setpoint_yon  = 0.0  # cmd_vel angular
 
         # ── CSV dosyası ───────────────────────────────────────────────────────
-        os.makedirs('/tmp/telemetri', exist_ok=True)
+        # /tmp tmpfs'tir — reboot'ta Dosya-2 kaybolur (şartname 4.2, 5 ceza).
+        # kamera_kayit'taki fix'le aynı desen: kalıcı ~/girdap_logs altı.
+        self.declare_parameter('output_dir', '~/girdap_logs/telemetri')
+        out_dir = os.path.expanduser(
+            self.get_parameter('output_dir').get_parameter_value().string_value)
+        os.makedirs(out_dir, exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        self.csv_path = f'/tmp/telemetri/telemetri_{timestamp}.csv'
+        self.csv_path = os.path.join(out_dir, f'telemetri_{timestamp}.csv')
 
         self.csv_file = open(self.csv_path, 'w', newline='')
         self.csv_writer = csv.writer(self.csv_file)
@@ -115,20 +120,27 @@ class TelemetriNode(Node):
     # ── CSV kayıt ─────────────────────────────────────────────────────────────
 
     def _kaydet(self):
-        """1Hz'de CSV'ye yaz."""
+        """1Hz'de CSV'ye yaz. F-S.5: disk hatası node'u öldürmez, örnek atlanır."""
         zaman = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-        self.csv_writer.writerow([
-            f'{self.lat:.8f}',
-            f'{self.lon:.8f}',
-            f'{self.hiz:.3f}',
-            f'{self.roll:.2f}',
-            f'{self.pitch:.2f}',
-            f'{self.heading:.2f}',
-            f'{self.setpoint_hiz:.3f}',
-            f'{self.setpoint_yon:.3f}',
-            zaman
-        ])
-        self.csv_file.flush()
+        try:
+            self.csv_writer.writerow([
+                f'{self.lat:.8f}',
+                f'{self.lon:.8f}',
+                f'{self.hiz:.3f}',
+                f'{self.roll:.2f}',
+                f'{self.pitch:.2f}',
+                f'{self.heading:.2f}',
+                f'{self.setpoint_hiz:.3f}',
+                f'{self.setpoint_yon:.3f}',
+                zaman
+            ])
+            self.csv_file.flush()
+            os.fsync(self.csv_file.fileno())
+        except OSError:
+            self.get_logger().error(
+                'CSV yazılamadı (disk dolu/IO hatası) — örnek atlandı',
+                throttle_duration_sec=5.0)
+            return
 
         self.get_logger().info(
             f'[TEL] lat={self.lat:.6f} lon={self.lon:.6f} '
