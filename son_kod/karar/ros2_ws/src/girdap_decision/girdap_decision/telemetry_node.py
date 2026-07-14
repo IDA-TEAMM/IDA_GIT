@@ -112,6 +112,10 @@ class TelemetryNode(Node):
         self.declare_parameter("fc_thrust_right_ch", 3)   # (73/74 çıkışları)
         self.declare_parameter("fc_pwm_neutral", 1500)    # µs, sıfır itki
         self.declare_parameter("fc_pwm_range", 500)       # µs, ±tam itki
+        # F-V.7b: waypoint ÜSTÜNDEN geçerken hedef ofseti ~0 olur ve atan2
+        # açıyı savurur (~180° sıçrama) → Ekran-2b yön-setpoint eğrisi yalan
+        # söyler. Ofset bu eşiğin altındaysa SON açı korunur. 0 = kapalı.
+        self.declare_parameter("yaw_setpoint_min_dist_m", 0.5)
 
         out_dir = str(self.get_parameter("csv_output_dir").value)
         if not out_dir:
@@ -183,6 +187,9 @@ class TelemetryNode(Node):
         self._fc_cruise = float(
             self.get_parameter("fc_cruise_setpoint_mps").value
         )
+        self._yaw_sp_min_dist = float(
+            self.get_parameter("yaw_setpoint_min_dist_m").value
+        )
         if self._source_fc:
             # mavros_msgs yalnız fc modunda gerekir (lazy import) — girdap
             # modunda node mavros_msgs'siz ortamda da (CI) import edilebilir.
@@ -252,6 +259,9 @@ class TelemetryNode(Node):
         # Araç-göreli ENU ofsetten istenen rota açısı (heading ile aynı
         # konvansiyon). IDLE/COMPLETE'te yayın durur → son açı cache kalır.
         p = msg.pose.position
+        # F-V.7b: waypoint üstünde atan2 savrulur — eşik altında son açıyı koru.
+        if math.hypot(p.x, p.y) < self._yaw_sp_min_dist:
+            return
         self._yaw_sp = math.atan2(p.y, p.x)
 
     def _on_odom(self, msg: Odometry) -> None:

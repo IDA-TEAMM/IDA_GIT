@@ -87,6 +87,8 @@ class MavrosBridge:
         # F14.3: görev-aktif bayrağı — FSM durumu bildirilene kadar False,
         # yani auto-GUIDED görev başlamadan asla mod zorlamaz.
         self._mission_active: bool = False
+        # F-M.6: FCU bağlantısının yükselen kenarı izleme — akış hızı isteği.
+        self._stream_rate_seen_connected: bool = False
 
     # ----- config / durum erişimi -----
 
@@ -117,6 +119,21 @@ class MavrosBridge:
 
     def is_armed(self) -> bool:
         return self._last is not None and self._last.armed
+
+    # ----- FC akış hızı isteği — F-M.6 -----
+
+    def should_request_stream_rate(self, connected: bool) -> bool:
+        """FCU bağlantısının YÜKSELEN kenarında True (F-M.6).
+
+        ArduPilot taze bağlantıda telemetriyi ~1 Hz yayınlar; bu hızla
+        Ekran-2 basamaklı çıkar ve fusion pose_timeout bekçisi pozu bayat
+        sayar. Köprü bu kenarda /mavros/set_stream_rate isteği atmalıdır.
+        İstek OTURUMLUKTUR (FC EEPROM'una yazılmaz) → kopuş sonrası her
+        yeniden bağlantıda kenar tekrar üretilir ve istek tekrarlanır.
+        """
+        rising = bool(connected) and not self._stream_rate_seen_connected
+        self._stream_rate_seen_connected = bool(connected)
+        return rising
 
     # ----- beklenen (komutlu) disarm — F14.2 -----
 

@@ -100,6 +100,24 @@ OAK cihazsız zarif hata + ayakta ✓ · kamera_kayit 7.6 sn geçerli MP4 ✓ ·
 gps_imu köprüsü fake_mavros ile ✓ · tam paket 269 test ✓
 
 ----------------------------------------------------------------
+6) EYÜP BULGULARININ UYGULANMASI (14 Tem gece — kendi kodumuzla)
+----------------------------------------------------------------
+Eyüp'ün AUTO denetimindeki 5 kusur son_kod'da bağımsız düzeltildi
+(onun kodu yalnız sorunları görmek için okundu):
+- F-M.6: köprü FC bağlantı kenarında 10 Hz akış ister (taze FC 1 Hz
+  yayınlar → Ekran-2 basamaklı olurdu). stream_rate_hz param.
+- F-V.6 (VİDEO-KATİL): AUTO-önce-ARM akışında görev başlamıyordu →
+  fsm start_on_arm_in_mode (video true / yarışma false).
+- F-V.7: AUTO'da sahte dwell (dwell_time_s: 0.0) + waypoint üstünde
+  açı savrulması (yaw_setpoint_min_dist_m: 0.5).
+- F-V.8: görev ilerlemesi FC'nin /mavros/mission/reached'i ile İLERİ
+  senkron (bilerek volatile QoS + IDLE koruması).
+- F-P.1: bayat odom'la kör sürüş → odom_timeout_s 1.0, thrust sıfır.
+- mission_source varsayılanı "fc" (elle launch tuzağı kapandı).
+Doğrulama: suite 276/4 (7 yeni çekirdek testi). KALAN: node-düzeyi
+testler + video_testleri.sh koşumu (memory/kod-duzeltme.md'de liste).
+
+----------------------------------------------------------------
 BEKLEYENLER
 ----------------------------------------------------------------
 - son_kod'un git push'u + Jetson'a deploy + servis kurulumu

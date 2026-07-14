@@ -186,10 +186,40 @@ class MissionManagerNode(Node):
             WaypointList, "/mavros/mission/waypoints",
             self._on_fc_waypoints, latched_qos(),
         )
+        # F-V.8: FC'nin MISSION_ITEM_REACHED'i ile hedef index'ini ileri
+        # senkronla. ⚠ QoS BİLEREK volatile (varsayılan depth=10): yayıncı
+        # TRANSIENT_LOCAL'dir — latched abone olsaydık ÖNCEKİ koşunun son
+        # "reached" mesajı boot'ta gelip görevi SAHTE ilerletirdi.
+        from mavros_msgs.msg import WaypointReached
+
+        self._sub_reached = self.create_subscription(
+            WaypointReached, "/mavros/mission/reached",
+            self._on_fc_reached, 10,
+        )
         self.get_logger().info(
             "mission_source=fc — /mavros/mission/waypoints bekleniyor "
             f"(skip_home_seq0={self._skip_home})"
         )
+
+    def _on_fc_reached(self, msg) -> None:                       # noqa: ANN001
+        """F-V.8: FC 'waypoint N'e vardım' dedi → index'i ileri senkronla.
+
+        IDLE koruması: görev başlamadan gelen mesaj yok sayılır (volatile
+        QoS'a ek ikinci savunma hattı). skip_home_seq0: ArduPilot seq 0 =
+        home → bizim liste index'i = wp_seq - 1.
+        """
+        if not self._started:
+            return
+        idx = int(msg.wp_seq) - (1 if self._skip_home else 0)
+        if idx < 0:
+            return
+        if self._mgr.sync_fc_reached(idx):
+            # Parkur katmanı için varış sinyali (fsm_node index tabanlı ilerler).
+            self._pub_reached.publish(Int32(data=idx))
+            self.get_logger().info(
+                f"FC reached seq={msg.wp_seq} → index senkron: hedef "
+                f"{self._mgr.current_index} (faz {self._mgr.phase.name}) — F-V.8"
+            )
 
     def _on_fc_waypoints(self, msg) -> None:                      # noqa: ANN001
         """FC görev listesi geldi → görevi (yeniden) kur. Yalnız başlamadan.

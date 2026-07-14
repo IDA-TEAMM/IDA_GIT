@@ -100,6 +100,14 @@ class FSMNode(Node):
         # md 3.3.1(3): YKİ'den başlatma — bu moda GEÇİŞ görülünce start.
         # "" → tetik kapalı (başlatma yalnız /girdap/mission/start servisi).
         self.declare_parameter("start_on_mode", "GUIDED")
+        # F-V.6 (VİDEO-KATİL): operatör önce AUTO'ya alıp SONRA arm ederse
+        # (QGC "Start Mission" akışı; ArduRover AUTO'da arm olunca görevi
+        # başlatır) mod kenarı hiç oluşmaz → FSM BEKLEMEDE kalır → telemetry
+        # F-V.2 gereği Ekran-2 setpoint sütunları BOŞ çıkar ve tek çekimlik
+        # videoda fark edilmez. true iken start modundayken ARM yükselen
+        # kenarı DA görevi başlatır. YARIŞMADA false kalmalı: GUIDED'da arm
+        # etmek MPPI'yi kendiliğinden başlatmamalı (iki-ayrı-komut ilkesi).
+        self.declare_parameter("start_on_arm_in_mode", False)
 
         self._fsm = MissionFSM()
         self._fsm.P1_TO_P2_DIST = float(
@@ -116,6 +124,14 @@ class FSMNode(Node):
         self._mav_armed: bool = False
         self._start_mode = str(self.get_parameter("start_on_mode").value)
         self._last_mode: str = ""        # "" = henüz mod görülmedi (kenar yok)
+        # F-V.6 durumu: ARM yükselen kenarı takibi + bekleyen başlatma bayrağı
+        # (kenar anında FSM henüz ARM durumunda olabilir; BEKLEMEDE'ye tick ile
+        # geçer → bayrak tick'te tüketilir).
+        self._start_on_arm = bool(
+            self.get_parameter("start_on_arm_in_mode").value
+        )
+        self._last_armed: bool = False
+        self._pending_arm_start: bool = False
 
         # --- Subscribers ---
         self._sub_mav = self.create_subscription(
@@ -230,6 +246,20 @@ class FSMNode(Node):
                 f"görev başlatıldı (md 3.3.1/3)"
             )
         self._last_mode = msg.mode
+        # F-V.6: start modundayken ARM yükselen kenarı da başlatma tetiğidir
+        # (AUTO-önce-ARM akışı mod kenarını üretmez). Bayrak; disarm ya da
+        # moddan çıkışta iptal edilir, _on_tick'te BEKLEMEDE'de tüketilir.
+        if (
+            self._start_on_arm
+            and self._start_mode
+            and msg.mode == self._start_mode
+            and msg.armed
+            and not self._last_armed
+        ):
+            self._pending_arm_start = True
+        if not msg.armed or msg.mode != self._start_mode:
+            self._pending_arm_start = False
+        self._last_armed = msg.armed
 
     def _on_odom(self, msg: Odometry) -> None:
         self._pose_xy = (
@@ -339,6 +369,19 @@ class FSMNode(Node):
         self._obs.kill_switch_off = self._mav_armed
 
         new_state = self._fsm.tick(self._obs)
+
+        # F-V.6: ARM-kenarı başlatması — FSM BEKLEMEDE'ye ulaştığında tüket.
+        if (
+            self._pending_arm_start
+            and new_state is MissionState.BEKLEMEDE
+        ):
+            self._pending_arm_start = False
+            self._fsm.request_start()
+            self.get_logger().info(
+                f"ARM kenarı ({self._start_mode} modunda) — görev başlatıldı "
+                "(F-V.6: AUTO-önce-ARM akışı)"
+            )
+            new_state = self._fsm.tick(self._obs)
 
         # Tek atış sinyalleri tüketildiğinde sıfırla
         if self._obs.last_gate_passed_p2 and new_state is MissionState.PARKUR3:

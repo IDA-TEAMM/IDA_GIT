@@ -200,6 +200,37 @@ class MissionManager:
 
         return east, north
 
+    # ----- FC görev ilerleme senkronu — F-V.8 -----
+
+    def sync_fc_reached(self, reached_idx: int) -> bool:
+        """FC MISSION_ITEM_REACHED ile hedef index'ini İLERİ senkronla (F-V.8).
+
+        AUTO'da görevi FC sürer; rover köşeyi bizim `arrival_radius`
+        yarıçapımıza hiç girmeden dönebilir → bizim index TAKILIR
+        (yon_setpoint geriyi gösterir, COMPLETE gelmez). FC'nin "vardım"
+        dediği index gerçeğin kaynağıdır: hedef yalnız İLERİ taşınır
+        (geri asla), IDLE/COMPLETE'te etkisizdir.
+
+        reached_idx: BİZİM waypoint listemizdeki varılan index (home
+        atlaması çağıran tarafından düşülmüş olmalı). Dönüş: durum değişti mi.
+        """
+        if self._phase in (MissionPhase.IDLE, MissionPhase.COMPLETE):
+            return False
+        if not self._wps or reached_idx < 0:
+            return False
+        if reached_idx >= len(self._wps) - 1:
+            # Son waypoint'e varıldı → görev tamam.
+            self._idx = len(self._wps) - 1
+            self._phase = MissionPhase.COMPLETE
+            self._dwell_start = None
+            return True
+        if reached_idx + 1 > self._idx:
+            self._idx = reached_idx + 1
+            self._phase = MissionPhase.ACTIVE
+            self._dwell_start = None
+            return True
+        return False
+
     # ----- sorgu -----
 
     @property

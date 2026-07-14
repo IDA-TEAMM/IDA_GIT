@@ -49,18 +49,31 @@ fsm:
   # md 3.3.1(3) başlatma komutu: QGC'den modu AUTO'ya çevirmek hem FC
   # görevini hem FSM'i AYNI komutla başlatır (kenar tetikli; önce ARM).
   start_on_mode: "AUTO"
+  # F-V.6 (VİDEO-KATİL fix'i): operatör önce AUTO'ya alıp SONRA arm ederse
+  # (QGC Start Mission akışı) mod kenarı oluşmaz → Ekran-2 setpoint'leri boş
+  # kalırdı. true → AUTO'dayken ARM kenarı da görevi başlatır. YARIŞMADA
+  # false (GUIDED'da arm etmek MPPI'yi kendiliğinden başlatmamalı).
+  start_on_arm_in_mode: true
 bridge:
   # KRİTİK (B1): true kalırsa köprü görev sırasında (PARKUR1/2/3) modu
   # GUIDED'a ZORLAR → FC AUTO görevinden atılır (mod savaşı). Video AUTO
   # koşusunda mod otoritesi tamamen operatörde olmalı.
   auto_guided: false
+  # F-M.6: FC taze bağlantıda ~1 Hz yayınlar (gerçek FCU'da ölçülmüş) →
+  # Ekran-2 basamaklı + fusion odom'u keser. Köprü bağlantı kenarında bu
+  # hızı ister (oturumluk; FC EEPROM'una yazmaz; yalnız USB kanalı,
+  # 868 MHz telemetri hattına yük binmez). 0 = kapalı; ALT SINIR 5.
+  stream_rate_hz: 10.0
 telemetry:
   # B2: AUTO'da MPPI thrust'ı aracı sürmez → Ekran-2c sahte olurdu.
   # "fc" → thrust /mavros/rc/out (FC'nin gerçek PWM çıkışı, % normalize).
   setpoint_source: "fc"
   fc_cruise_setpoint_mps: 1.0   # QGC WP_SPEED/CRUISE_SPEED ile AYNI değer!
-  fc_thrust_left_ch: 1          # SERVO1 = ThrottleLeft(73) — FC ekibi teyit
-  fc_thrust_right_ch: 3         # SERVO3 = ThrottleRight(74) — FC ekibi teyit
+  fc_thrust_left_ch: 1          # SERVO1 = ThrottleLeft(73) — FC ekibi TEYİTLİ
+  fc_thrust_right_ch: 3         # SERVO3 = ThrottleRight(74) — FC ekibi TEYİTLİ
+  # F-V.7b: waypoint üstünde hedef ofseti ~0 → atan2 açıyı savurur (~180°).
+  # Eşiğin altında son açı korunur (Ekran-2b yön-setpoint dürüstlüğü).
+  yaw_setpoint_min_dist_m: 0.5
 
 # --- Görev dosyası seçimi (Sprint 4 parkur katmanı) ---
 # hardware.launch bu dosya adını config/ altında çözer ve HEM mission_manager
@@ -74,10 +87,15 @@ mission:
   #   "fc"   → YKİ→Pixhawk→MAVROS /mavros/mission/waypoints. Şartname
   #            md 3.3.1(2) + md 5.5.2.2: görev YKİ'de tanımlanıp İDA'ya
   #            YÜKLENİR → VİDEO ve YARIŞMA günü ZORUNLU mod.
-  # Sahada: QGC'den görevi Pixhawk'a yükle, sonra "fc" seç (ya da launch'ta
-  #         mission_source:=fc). Not: ros-humble-mavros-msgs kurulu olmalı.
-  mission_source: "file"
+  # VARSAYILAN "fc" (14.07): servis zaten :=fc geçiyordu ama ELLE launch'ta
+  # sessizce araç-üstü YAML'a düşülüyordu = md 3.3.1(2) ihlali tuzağı.
+  # Offline/geliştirme için launch'ta mission_source:=file verilebilir.
+  mission_source: "fc"
   skip_home_seq0: true    # fc: ArduPilot görev index 0 = home konumu, atla
+  # F-V.7a: AUTO'da dwell SAHTE beklemedir — FC waypoint'te durmaz; bizim
+  # hedef index'imiz dwell kadar geride kalır ve yon_setpoint arkadaki
+  # waypoint'i gösterir. Video (AUTO) → 0.0; YARIŞMA (GUIDED/MPPI) → 2.0.
+  dwell_time_s: 0.0
 
 # --- Perception: LiDAR engel tespiti (Sprint 1) ---
 # perception_lidar_node parametreleri; hardware.launch launch-arg olarak açar

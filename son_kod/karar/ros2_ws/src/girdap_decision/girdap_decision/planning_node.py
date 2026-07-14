@@ -73,6 +73,10 @@ class PlanningNode(Node):
         self.declare_parameter("heartbeat_timeout_s", 5.0)  # MAVROS geçidi
         self.declare_parameter("mode_name", "GUIDED")        # otonomi modu
         self.declare_parameter("map_rate_hz", 10.0)          # Dosya-3 yayım hızı
+        # F-P.1: fusion odom'u kesse bile (F8.2) planning SON pozla MPPI
+        # koşmaya devam ediyordu → GPS/EKF kesintisinde KÖR sürüş. Odom bu
+        # süreden bayatsa thrust sıfırlanır. 0 = kapalı (test/sim).
+        self.declare_parameter("odom_timeout_s", 1.0)
         self.declare_parameter("use_rrt", True)              # false → video bypass
 
         bx = self.get_parameter("bounds_x").value
@@ -90,6 +94,11 @@ class PlanningNode(Node):
         # doğrudan MPPI referansı. Son poz absolute hedef hesabı için tutulur.
         self._use_rrt = bool(self.get_parameter("use_rrt").value)
         self._last_xy: Optional[tuple] = None
+        # F-P.1: son odom zamanı (node saati) — bayatlık bekçisi.
+        self._odom_timeout_s = float(
+            self.get_parameter("odom_timeout_s").value
+        )
+        self._last_odom_t: Optional[float] = None
 
         # MAVROS mod/arm geçidi — mavros_bridge ile aynı karar çekirdeği (DRY).
         # Hedef mod (mode_name) değilse cmd_vel yayınlanmaz; armed değilse thrust
@@ -165,6 +174,7 @@ class PlanningNode(Node):
         w = msg.twist.twist.angular
         self._pipe.set_state(np.array([p.x, p.y, psi, v.x, v.y, w.z]))
         self._last_xy = (p.x, p.y)               # bypass absolute hedef için
+        self._last_odom_t = self._now()          # F-P.1: tazelik damgası
 
     def _on_obstacles(self, msg: PoseArray) -> None:
         """PLACEHOLDER şema: position.{x,y} merkez, orientation.z yarıçap."""
@@ -215,6 +225,19 @@ class PlanningNode(Node):
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
 
+    def _odom_stale(self) -> bool:
+        """F-P.1: odom hiç gelmediyse ya da timeout'tan eskiyse True.
+
+        Hiç odom yokken pipeline zaten hedefsiz/durağandır ama BAYAT poz
+        MPPI'yi son bilinen konumla salınıma sokar — ikisi de sıfır thrust'a
+        kapılanır. odom_timeout_s <= 0 → bekçi kapalı (test/sim).
+        """
+        if self._odom_timeout_s <= 0.0:
+            return False
+        if self._last_odom_t is None:
+            return True
+        return (self._now() - self._last_odom_t) > self._odom_timeout_s
+
     def _on_control_step(self) -> None:
         """20 Hz'te MPPI step → thrust komut + Twist setpoint (MAVROS geçitli).
 
@@ -229,6 +252,12 @@ class PlanningNode(Node):
             u = np.zeros(2)
         if gate.zero_thrust:                         # disarm / KILL → motor stop
             u = np.zeros(2)
+        if self._odom_stale():                       # F-P.1: bayat pozla KÖR sürüş yok
+            u = np.zeros(2)
+            self.get_logger().warn(
+                "odom bayat (F-P.1) — thrust sıfırlandı; GPS/EKF akışını kontrol et",
+                throttle_duration_sec=5.0,
+            )
 
         self._publish_thrust(u)
         if gate.allow_cmd_vel:                       # yalnız GUIDED + armed

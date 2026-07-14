@@ -55,7 +55,7 @@ import rclpy
 from rclpy.node import Node
 
 from mavros_msgs.msg import State as MavState
-from mavros_msgs.srv import CommandBool, SetMode
+from mavros_msgs.srv import CommandBool, SetMode, StreamRate
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
@@ -76,6 +76,12 @@ class MavrosBridgeNode(Node):
         # ArduRover pre-arm (EKF/GPS/pusula) reddinde yeniden deneme politikası.
         self.declare_parameter("arming_retry_max", 3)
         self.declare_parameter("arming_retry_delay_s", 2.0)
+        # F-M.6: FC taze bağlantıda ~1 Hz yayınlar (gerçek FCU'da ölçüldü) —
+        # köprü bağlantı kenarında bu hızı ister. 0 = kapalı. ALT SINIR 5 Hz:
+        # altında fusion pose_timeout bekçisi odom'u bayat sayıp keser.
+        # İstek oturumluktur, FC SR0_* EEPROM parametrelerine YAZMAZ; yalnız
+        # kendi (USB/SERIAL0) kanalını etkiler — 868 MHz telemetri ayrı port.
+        self.declare_parameter("stream_rate_hz", 10.0)
 
         cfg = MavrosBridgeConfig(
             heartbeat_timeout_s=float(
@@ -112,6 +118,20 @@ class MavrosBridgeNode(Node):
         self._cli_mode = self.create_client(SetMode, "/mavros/set_mode")
         self._cli_arm = self.create_client(CommandBool, "/mavros/cmd/arming")
         self._cli_kill = self.create_client(Trigger, "/girdap/mission/kill")
+        # F-M.6: akış hızı isteği istemcisi + bekleyen-istek bayrağı (servis
+        # ilk state anında hazır olmayabilir → sonraki state'lerde tekrar dene).
+        self._cli_stream = self.create_client(
+            StreamRate, "/mavros/set_stream_rate"
+        )
+        self._stream_rate_hz = float(
+            self.get_parameter("stream_rate_hz").value
+        )
+        if 0.0 < self._stream_rate_hz < 5.0:
+            self.get_logger().warn(
+                f"stream_rate_hz={self._stream_rate_hz} < 5 — fusion "
+                "pose_timeout bekçisi odom'u bayat sayabilir (F-M.6 alt sınır)"
+            )
+        self._stream_rate_pending = False
 
         # --- Operatör arm/disarm servisleri ---
         self._srv_arm = self.create_service(
@@ -141,7 +161,32 @@ class MavrosBridgeNode(Node):
         self._bridge.update_state(
             self._now(), msg.connected, msg.armed, msg.guided, msg.mode
         )
+        # F-M.6: bağlantı yükselen kenarında FC'den 10 Hz akış iste (taze
+        # bağlantı ~1 Hz → Ekran-2 basamaklı + fusion odom'u keser).
+        if self._stream_rate_hz > 0.0 and self._bridge.should_request_stream_rate(
+            msg.connected
+        ):
+            self._stream_rate_pending = True
+        self._maybe_request_stream_rate()
         self._maybe_auto_guided()
+
+    def _maybe_request_stream_rate(self) -> None:
+        """Bekleyen F-M.6 isteğini servis hazırsa gönder (hazır değilse
+        bir sonraki /mavros/state mesajında tekrar denenir)."""
+        if not self._stream_rate_pending:
+            return
+        if not self._cli_stream.service_is_ready():
+            return
+        req = StreamRate.Request()
+        req.stream_id = 0                       # STREAM_ALL
+        req.message_rate = int(round(self._stream_rate_hz))
+        req.on_off = True
+        self._cli_stream.call_async(req)
+        self._stream_rate_pending = False
+        self.get_logger().info(
+            f"FC akış hızı isteniyor: {req.message_rate} Hz (STREAM_ALL, "
+            "oturumluk — F-M.6)"
+        )
 
     def _on_mission_state(self, msg: String) -> None:
         self._bridge.set_mission_state(msg.data)

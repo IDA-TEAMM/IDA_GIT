@@ -252,3 +252,32 @@ def test_planning_gate_expects_configured_mode_auto() -> None:
     assert b.control_gate(0.1).state is GateState.ACTIVE       # AUTO → aktif
     b.update_state(0.0, connected=True, armed=True, guided=True, mode="GUIDED")
     assert b.control_gate(0.1).state is GateState.NOT_GUIDED   # GUIDED beklenmiyor
+
+
+# ----- F-M.6: FC akış hızı isteği kenar tespiti -----
+
+
+def test_stream_rate_rising_edge_once() -> None:
+    """Bağlantı yükselen kenarında BİR KEZ True; sonrası False (F-M.6)."""
+    b = MavrosBridge()
+    assert b.should_request_stream_rate(connected=True) is True
+    assert b.should_request_stream_rate(connected=True) is False
+    assert b.should_request_stream_rate(connected=True) is False
+
+
+def test_stream_rate_reconnect_requests_again() -> None:
+    """Kopuş sonrası yeniden bağlantı = yeni kenar → istek TEKRARLANIR.
+
+    set_stream_rate isteği oturumluktur (FC EEPROM'una yazılmaz); FC
+    yeniden bağlanınca 1 Hz'e döner — kenar her bağlantıda üretilmeli.
+    """
+    b = MavrosBridge()
+    assert b.should_request_stream_rate(connected=True) is True
+    assert b.should_request_stream_rate(connected=False) is False
+    assert b.should_request_stream_rate(connected=True) is True
+
+
+def test_stream_rate_no_edge_while_disconnected() -> None:
+    b = MavrosBridge()
+    assert b.should_request_stream_rate(connected=False) is False
+    assert b.should_request_stream_rate(connected=False) is False

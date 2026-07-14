@@ -262,3 +262,54 @@ def test_farthest_waypoint_m_null_island_istanbul() -> None:
     ]
     d = farthest_waypoint_m(0.0, 0.0, wps)
     assert d > 4_000_000.0                     # > 4000 km — makullükten fersah uzak
+
+
+# ----- F-V.8: FC MISSION_ITEM_REACHED ileri senkronu -----
+
+
+def _dort_nokta():
+    return [
+        Waypoint(lat=40.0000, lon=29.0000, name="P1", parkur=1),
+        Waypoint(lat=40.0002, lon=29.0000, name="P2", parkur=1),
+        Waypoint(lat=40.0002, lon=29.0003, name="P3", parkur=1),
+        Waypoint(lat=40.0000, lon=29.0003, name="P4", parkur=1),
+    ]
+
+
+def test_sync_fc_reached_fast_forwards_index() -> None:
+    """FC 'wp 1'e vardım' der → hedef index 2'ye atlar (arrival beklemeden).
+
+    F-V.8: AUTO'da rover köşeyi arrival_radius'a girmeden dönebilir; FC'nin
+    reached mesajı gerçeğin kaynağıdır.
+    """
+    m = MissionManager(_dort_nokta(), MissionManagerConfig())
+    m.start()
+    assert m.current_index == 0
+    assert m.sync_fc_reached(1) is True
+    assert m.current_index == 2
+    assert m.phase is MissionPhase.ACTIVE
+
+
+def test_sync_fc_reached_never_goes_backward() -> None:
+    m = MissionManager(_dort_nokta(), MissionManagerConfig())
+    m.start()
+    m.sync_fc_reached(2)                       # hedef → 3
+    assert m.current_index == 3
+    assert m.sync_fc_reached(0) is False       # geri senkron YOK
+    assert m.current_index == 3
+
+
+def test_sync_fc_reached_last_waypoint_completes() -> None:
+    """Son waypoint'e varış → COMPLETE (manuel dönüşte setpoint yazılmaz)."""
+    m = MissionManager(_dort_nokta(), MissionManagerConfig())
+    m.start()
+    assert m.sync_fc_reached(3) is True
+    assert m.phase is MissionPhase.COMPLETE
+
+
+def test_sync_fc_reached_idle_guard() -> None:
+    """Görev başlamadan (IDLE) gelen reached YOK SAYILIR — volatile QoS'a
+    ek ikinci savunma hattı (önceki koşu kalıntısı görevi başlatmamalı)."""
+    m = MissionManager(_dort_nokta(), MissionManagerConfig())
+    assert m.sync_fc_reached(1) is False
+    assert m.phase is MissionPhase.IDLE

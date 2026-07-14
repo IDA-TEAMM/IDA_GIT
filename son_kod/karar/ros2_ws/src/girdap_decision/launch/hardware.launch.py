@@ -51,13 +51,20 @@ _HW_DEFAULTS = {
 _ALGO_DEFAULTS = {"use_isam2": True, "use_rrt": True, "use_mppi": True}
 # fsm/bridge/telemetry blokları — AUTO video kararı (2026-07-13). Varsayılanlar
 # YARIŞMA (GUIDED) davranışı; video-AUTO override'ları hardware.yaml'dan gelir.
-_FSM_DEFAULTS = {"start_on_mode": "GUIDED"}
-_BRIDGE_DEFAULTS = {"auto_guided": True}
+_FSM_DEFAULTS = {
+    "start_on_mode": "GUIDED",
+    "start_on_arm_in_mode": False,     # F-V.6: yalnız video-AUTO'da true
+}
+_BRIDGE_DEFAULTS = {
+    "auto_guided": True,
+    "stream_rate_hz": 10.0,            # F-M.6: FC taze bağlantı 1 Hz fix'i
+}
 _TELEMETRY_DEFAULTS: dict[str, object] = {
     "setpoint_source": "girdap",       # "fc" → AUTO: thrust /mavros/rc/out
     "fc_cruise_setpoint_mps": 0.0,
     "fc_thrust_left_ch": 1,
     "fc_thrust_right_ch": 3,
+    "yaw_setpoint_min_dist_m": 0.5,    # F-V.7b: waypoint üstü atan2 savrulması
 }
 # mission bloğu varsayılanı: görev dosyası (video ↔ competition). Sprint 4.
 _MISSION_DEFAULT = "video_mission.yaml"
@@ -108,6 +115,7 @@ def _load_hardware_config() -> dict:
     cfg["mission_file"] = _MISSION_DEFAULT
     cfg["mission_source"] = _MISSION_SOURCE_DEFAULT
     cfg["skip_home_seq0"] = _SKIP_HOME_DEFAULT
+    cfg["mission_dwell_s"] = None      # F-V.7a: yaml'da yoksa dosya değeri kalır
     cfg["fsm"] = dict(_FSM_DEFAULTS)
     cfg["bridge"] = dict(_BRIDGE_DEFAULTS)
     cfg["telemetry"] = dict(_TELEMETRY_DEFAULTS)
@@ -142,13 +150,19 @@ def _load_hardware_config() -> dict:
         cfg["skip_home_seq0"] = bool(
             mission_block.get("skip_home_seq0", _SKIP_HOME_DEFAULT)
         )
+        # mission.dwell_time_s (F-V.7a): AUTO'da sahte bekleme fix'i — yaml'da
+        # varsa node param'ı olarak geçer (yoksa görev dosyası değeri kalır).
+        if "dwell_time_s" in mission_block:
+            cfg["mission_dwell_s"] = float(mission_block["dwell_time_s"])
         # fsm / bridge / telemetry blokları (AUTO video ↔ GUIDED yarışma)
         fsm_block = data.get("fsm") or {}
-        if "start_on_mode" in fsm_block:
-            cfg["fsm"]["start_on_mode"] = str(fsm_block["start_on_mode"])
+        for key in _FSM_DEFAULTS:
+            if key in fsm_block:
+                cfg["fsm"][key] = fsm_block[key]
         bridge_block = data.get("bridge") or {}
-        if "auto_guided" in bridge_block:
-            cfg["bridge"]["auto_guided"] = bool(bridge_block["auto_guided"])
+        for key in _BRIDGE_DEFAULTS:
+            if key in bridge_block:
+                cfg["bridge"][key] = bridge_block[key]
         telemetry_block = data.get("telemetry") or {}
         for key in _TELEMETRY_DEFAULTS:
             if key in telemetry_block:
@@ -328,6 +342,7 @@ def generate_launch_description() -> LaunchDescription:
             "heartbeat_timeout_s": float(hw["heartbeat_timeout_s"]),
             "arming_retry_max": int(hw["arming_retry_max"]),
             "auto_guided": bool(hw["bridge"]["auto_guided"]),
+            "stream_rate_hz": float(hw["bridge"]["stream_rate_hz"]),
         },
     ]
     # telemetry: Ekran-2 kaynağı (girdap=GUIDED/MPPI ↔ fc=AUTO /mavros/rc/out).
@@ -341,6 +356,9 @@ def generate_launch_description() -> LaunchDescription:
             ),
             "fc_thrust_left_ch": int(hw["telemetry"]["fc_thrust_left_ch"]),
             "fc_thrust_right_ch": int(hw["telemetry"]["fc_thrust_right_ch"]),
+            "yaw_setpoint_min_dist_m": float(
+                hw["telemetry"]["yaw_setpoint_min_dist_m"]
+            ),
         },
     ]
     # fusion: algorithm.use_isam2 (video → MAVROS EKF pass-through).
@@ -369,15 +387,17 @@ def generate_launch_description() -> LaunchDescription:
     # mission_source (file↔fc) LaunchConfiguration'dan (CLI override); skip_home
     # hardware.yaml'dan. fc modunda mission_file yerine /mavros/mission/waypoints
     # okunur (T0-f).
-    mission_params = [
-        params_file,
-        {
-            "use_sim_time": use_sim_time,
-            "mission_file": mission_path,
-            "mission_source": LaunchConfiguration("mission_source"),
-            "skip_home_seq0": bool(hw["skip_home_seq0"]),
-        },
-    ]
+    mission_overrides = {
+        "use_sim_time": use_sim_time,
+        "mission_file": mission_path,
+        "mission_source": LaunchConfiguration("mission_source"),
+        "skip_home_seq0": bool(hw["skip_home_seq0"]),
+    }
+    # F-V.7a: hardware.yaml mission.dwell_time_s varsa görev dosyasını ezer
+    # (AUTO'da FC durmaz — sahte dwell hedef index'ini geride bırakır).
+    if hw["mission_dwell_s"] is not None:
+        mission_overrides["dwell_time_s"] = float(hw["mission_dwell_s"])
+    mission_params = [params_file, mission_overrides]
     # fsm: parkur katmanı için aynı görev dosyası (waypoint parkur etiketleri).
     # start_on_mode: md 3.3.1(3) başlatma modu (video-AUTO ↔ yarışma-GUIDED).
     fsm_params = [
@@ -386,6 +406,7 @@ def generate_launch_description() -> LaunchDescription:
             "use_sim_time": use_sim_time,
             "mission_file": mission_path,
             "start_on_mode": str(hw["fsm"]["start_on_mode"]),
+            "start_on_arm_in_mode": bool(hw["fsm"]["start_on_arm_in_mode"]),
         },
     ]
     # perception: launch-arg'lar tip korunarak node parametresine geçer.

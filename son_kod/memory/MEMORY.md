@@ -5,6 +5,7 @@
 - [Büyük işleri kaydet](feedback-buyuk-isleri-kaydet.md) — her büyük değişiklik/iş sonunda sormadan hafızaya kaydet
 
 ## İDA Projesi
+- [Eyüp memory senkron](eyup-memory-senkron.md) — 🔴 Eyüp B1/B2'yi bağımsız yazdı, JETSON'DA ONUN girdap-video'su kurulu; F-M.6 bizde yok; SERVO teyit + FC olay kapandı
 - [Şartname 2026 uygunluk](ida-sartname-2026.md) — V1.2 denetimi: uyumlular + 5 kritik risk (RC/MicoAir frekans, Wi-Fi, güç-kesme rölesi, Dosya-1); değişimler buna göre
 - [İDA proje genel](ida-project.md) — GİRDAP İDA, TEKNOFEST 2026, katamaran USV + İHA, 3 parkur
 - [Yazılım durumu](ida-software-status.md) — 5 katman + boşluk analizi; planlama/kontrol darboğazı
