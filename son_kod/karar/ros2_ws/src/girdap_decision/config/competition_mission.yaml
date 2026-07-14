@@ -1,0 +1,30 @@
+# Girdap İDA — Yarışma görev tanımı (Parkur 1-2-3 waypoint dizisi).
+#
+# mission_manager_node + fsm_node boot'ta bu dosyayı okur. Her waypoint'te
+# `parkur` etiketi (1/2/3) vardır; fsm_node ParkurTransitionLogic bu etiketlerden
+# her parkurun SON waypoint index'ini hesaplar ve parkur geçişini oradan tetikler
+# (Şartname: sıralı geçiş, duba sayısına bağlı akış YASAK).
+#
+# ⚠ VARSAYIM: waypoint'ler parkur sırasına göre monoton dizilir (parkur bloğu
+# bitmeden sonrakine geçilmez). Parser tek fonksiyonda izole
+# (parkur_fsm.load_parkur_labels) — gerçek görev formatı gelince yalnız orası
+# değişir; bu dosyanın şeması ve node'lar aynı kalır.
+#
+# KOORDİNAT DOLDURMA: saha günü her waypoint lat/lon'u H-RTK ile ölçülüp yazılır
+# (≥7 ondalık). Aşağıdaki 0.0'lar placeholder.
+
+home_ref: {lat: 0.0, lon: 0.0}     # ilk arm noktası runtime'da set edilir
+
+waypoints:
+  # --- Parkur-1: Nokta Takip ---
+  - {lat: 0.0, lon: 0.0, parkur: 1, name: "P1_WP1"}
+  - {lat: 0.0, lon: 0.0, parkur: 1, name: "P1_WP2"}
+  # --- Parkur-2: Engelli Takip ---
+  - {lat: 0.0, lon: 0.0, parkur: 2, name: "P2_WP1"}
+  - {lat: 0.0, lon: 0.0, parkur: 2, name: "P2_WP2"}
+  # --- Parkur-3: Kamikaze (hedef duba) ---
+  - {lat: 0.0, lon: 0.0, parkur: 3, name: "P3_target"}
+
+arrival_radius_m: 2.0          # bu yarıçapa girince waypoint'e "varıldı"
+dwell_time_s: 2.0              # her waypoint'te bekleme
+cruise_velocity_mps: 1.0      # referans seyir hızı (MPPI hedef hızı)

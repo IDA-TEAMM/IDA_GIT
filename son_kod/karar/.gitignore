@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+.mypy_cache/
+.pytest_cache/
+*.egg
+
+# C++ / CMake
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+*.o
+*.a
+*.so
+Makefile
+
+# ROS 2
+log/
+install/
+build/
+devel/
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# Data / logs (runtime çıktısı — alt dizinler dahil)
+data/**/*.csv
+data/**/*.bag
+data/**/*.db3
+data/*.csv
+data/*.bag
+data/*.db3
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+.cache/
