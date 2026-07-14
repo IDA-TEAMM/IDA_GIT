@@ -79,7 +79,7 @@ class PerceptionNode(Node):
                 elif color == 'yellow':
                     yellow_detections.detections.append(det)
 
-        self.objects_pub.publish(orange_detections)
+        self.objects_pub.publish(all_detections)
         self.buoy_target_pub.publish(orange_detections)
         self.orange_pub.publish(orange_detections)
         self.yellow_pub.publish(yellow_detections)

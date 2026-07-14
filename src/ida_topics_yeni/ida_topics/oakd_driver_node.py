@@ -5,7 +5,7 @@ IDA/Girdap USV - OAK-D Lite Kamera Driver Node
 DepthAI SDK üzerinden OAK-D Lite kamera verisi
 
 Publish:
-  /camera/image_raw  → sensor_msgs/Image (RGB, 640x480, 30fps)
+  /camera/image_raw  → sensor_msgs/Image (bgr8, 640x480, 30fps)
 
 Gereksinim: pip3 install depthai
 
@@ -126,6 +126,8 @@ def main(args=None):
     node = OakdDriverNode()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass  # launch/systemd SIGINT'i normal kapanıştır (traceback basma)
     finally:
         node.destroy_node()
         rclpy.shutdown()

@@ -5,7 +5,7 @@ IDA/Girdap USV - Kamera Kayıt Node
 Şartname zorunlu MP4 kaydı:
   - İşlenmiş kamera görüntüsü (YOLO bbox overlay ile)
   - Minimum 1Hz (gerçekte kamera FPS'inde kaydeder)
-  - /tmp/kamera/ klasörüne MP4 olarak kaydeder
+  - ~/girdap_logs/kamera/ klasörüne MP4 kaydeder (output_dir parametresi)
 
 Kaynak topic'ler:
   /camera/image_raw              → ham kamera görüntüsü
@@ -43,16 +43,25 @@ class KameraKayitNode(Node):
         self.width  = self.get_parameter('width').value
         self.height = self.get_parameter('height').value
 
+        # Şartname 4.2 Dosya-1 teslim dosyası — /tmp KULLANMA: tmpfs'te
+        # reboot/güç kesintisinde kaybolur (dosya başı 5 ceza puanı).
+        # telemetry_node ~/girdap_logs deseniyle aynı.
+        self.declare_parameter('output_dir', '')
+
         # ── Durum değişkenleri ────────────────────────────────────────────────
         self.latest_frame      = None
         self.orange_detections = []
         self.yellow_detections = []
         self.frame_count       = 0
 
+        self.output_dir = self.get_parameter('output_dir').value or \
+            os.path.expanduser('~/girdap_logs/kamera')
+
         # ── Video yazıcı ──────────────────────────────────────────────────────
-        os.makedirs('/tmp/kamera', exist_ok=True)
+        os.makedirs(self.output_dir, exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        self.video_path = f'/tmp/kamera/kamera_{timestamp}.mp4'
+        self.video_path = os.path.join(
+            self.output_dir, f'kamera_{timestamp}.mp4')
 
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         self.writer = cv2.VideoWriter(
@@ -187,6 +196,8 @@ def main(args=None):
     node = KameraKayitNode()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass  # launch/systemd SIGINT'i normal kapanıştır (traceback basma)
     finally:
         node.destroy_node()
         rclpy.shutdown()
