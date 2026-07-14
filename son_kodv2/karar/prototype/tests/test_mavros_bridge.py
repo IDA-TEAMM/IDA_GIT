@@ -298,3 +298,43 @@ def test_stream_rate_yeniden_baglantida_tekrar_istenir() -> None:
     b.update_state(1.0, connected=False, armed=False, guided=False, mode="HOLD")
     b.update_state(2.0, connected=True, armed=False, guided=False, mode="HOLD")
     assert b.should_request_stream_rate() is True
+
+
+# --------------------------------------------------------------------------- #
+# RC donanım kill-switch — F-S.1
+# --------------------------------------------------------------------------- #
+
+
+def test_rc_kill_esik_alti_pwm_aktif() -> None:
+    b = MavrosBridge(MavrosBridgeConfig(rc_kill_threshold_pwm=1500))
+    assert b.is_rc_kill_active(900) is True
+
+
+def test_rc_kill_esik_ustu_pwm_pasif() -> None:
+    b = MavrosBridge(MavrosBridgeConfig(rc_kill_threshold_pwm=1500))
+    assert b.is_rc_kill_active(1800) is False
+
+
+def test_rc_kill_esik_tam_sinirda_pasif() -> None:
+    # <, <= değil: eşiğin TAM üstünde/eşit değeri kill saymaz (ida_topics
+    # control_node.py'deki RC_KILL_THRESHOLD karşılaştırmasıyla aynı yön).
+    b = MavrosBridge(MavrosBridgeConfig(rc_kill_threshold_pwm=1500))
+    assert b.is_rc_kill_active(1500) is False
+
+
+def test_rc_kill_none_pwm_pasif() -> None:
+    """Kanal hiç gelmediyse (mesaj kısa/eksik) kill SAYILMAZ."""
+    b = MavrosBridge()
+    assert b.is_rc_kill_active(None) is False
+
+
+def test_rc_kill_sifir_pwm_pasif() -> None:
+    """PWM=0 (alıcı/kanal kaybı) geçersiz sayılır, kill'e YOL AÇMAZ."""
+    b = MavrosBridge()
+    assert b.is_rc_kill_active(0) is False
+
+
+def test_rc_kill_ozel_esik_config() -> None:
+    b = MavrosBridge(MavrosBridgeConfig(rc_kill_threshold_pwm=1000))
+    assert b.is_rc_kill_active(1200) is False
+    assert b.is_rc_kill_active(900) is True

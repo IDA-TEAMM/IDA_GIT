@@ -125,20 +125,25 @@
     `sudo systemctl restart girdap-karar` ile deploy edilmeli (sudo = Eyüp).
   Kalıcı çözümü FC ekibi SR0_* yazarak seçerse bu istek zararsız kalır (aynı hızı ister).
 
-### [2026-07-14] F-M.3 — servis yoluyla KILL FCU'yu DISARM etmiyor (🟠)
-- **Belirti:** Oturum 2 masa testi (M6a): `/girdap/mission/kill` çağrısı sonrası FSM=KILL ✓,
-  thrust [0,0] ✓, AMA `/mavros/state` `armed: true` KALDI (5+ sn sonra tekrar teyit).
-- **Debug verisi:** `~/girdap_logs/masa_testi/masa_stack_2026-07-14_oturum2.log` —
-  yalnız `[fsm_node] *** KILL — motorlar durduruluyor ***` var, bridge'ten disarm logu YOK.
-- **Kök neden:** F14.1 düzeltmesi disarm'ı yalnız `mavros_bridge_node._trigger_kill()`
-  içine koydu (heartbeat kaybı / beklenmedik disarm yolu). Operatör/YKİ kill servisi
-  doğrudan `fsm_node`'a gider; bridge `/girdap/mission/state`'teki `KILL`'i yalnız
-  F14.3 görev-aktif geçidi için okuyor (`_on_mission_state`), disarm TETİKLEMİYOR.
-- **Etki:** masa runbook M6a PASS kriteri ("sıfır thrust + FCU disarm") sağlanmıyor;
-  md 3.3.1(4) güç-kesme gösteriminin yazılım katmanı eksik kalır (fiziksel anahtar asıl
-  mekanizma olduğundan 🟠, 🔴 değil). Araç KILL sonrası ARMED kalır → RC'den gaz riski.
-- **Durum:** AÇIK → TDD düzeltme bu oturumda (bridge `_on_mission_state` KILL gözleyince
-  `_trigger_kill()` çağırsın — disarm + latch; kill servisi çağrısı idempotent).
+### [2026-07-14] F-S.1 — RC donanım kill-switch girdap_decision'da hiç yoktu (🟠, düzeltildi)
+- **Belirti (kod karşılaştırması, ida_topics vs girdap_decision):** `mavros_bridge_node`
+  yalnız yazılım/servis KILL yollarını biliyordu (heartbeat kaybı, beklenmedik disarm,
+  fsm_node servisi) — `ida_topics/control_node.py`'deki RC kanal 8 donanım kill-switch'inin
+  (companion computer'dan bağımsız, tek RC alıcısı üzerinden) karşılığı yoktu.
+- **Debug verisi:** `grep -rn "rc/in\|RCIn\|RC_KILL"` girdap_decision ağacında sıfır sonuç
+  verdi (2026-07-14, sude_memory/project_ida_captain_decision_repo.md karşılaştırması).
+- **Etki:** companion computer donarsa/mavros_bridge çökerse yazılım KILL yollarının
+  hiçbiri tetiklenemez; tek koruma fiziksel güç-kesme anahtarıydı (md 3.3.1/4) — RC
+  üzerinden ikinci, bağımsız bir kill yolu yoktu.
+- **Düzeltme (TDD):** `MavrosBridge.is_rc_kill_active()` (çekirdek, 6 test) +
+  `mavros_bridge_node._on_rc_in()` (`/mavros/rc/in`, `sensor_data_qos()` BEST_EFFORT,
+  4 test) — `rc_kill_channel`/`rc_kill_threshold_pwm` parametreleri ida_topics ile aynı
+  varsayılanlar (kanal 8, PWM 1500). Tek KILL otoritesi (`_trigger_kill`, latch) korunuyor,
+  bu yalnız bir tetikleyici daha. Suite 296→306.
+- **⚠ Not:** Bu düzeltme `sude_memory` tarafında (IDA_GIT reposu `son_kodv2/`) yapıldı,
+  henüz `EyupEker1/girdap-video`'ya upstream edilmedi — Eyüp'e iletilip gerçek repoya
+  taşınması gerekiyor.
+- **Durum:** KAPANDI (bu kopyada; upstream senkronu BEKLİYOR).
 
 ### [2026-07-14] F-M.5 — seri hat kopunca mavros_node SIGABRT ile ölüyor, respawn yok (🟡 not)
 - **Belirti:** M6d USB-çekme testinde `mavconn: serial0: receive: End of file` →
@@ -235,5 +240,6 @@
 | F5.4 | 500+ nokta kümesi sessizce siliniyordu → böl | `798ff4d` |
 | Bearing (F6.1/F5.9) | işaret hatası + üreteç maskesi | `e66cb40` |
 | F16.1 | pytest yanlış-yeşil (launch_testing) | pyproject addopts |
+| F-M.3 | servis-KILL FCU'yu disarm etmiyordu (yalnız FSM/thrust sıfırlanıyordu) | `_on_mission_state` artık KILL gözleyince `_trigger_kill()` çağırıyor (bkz kod + `test_fm3_*`); bu satır 2026-07-14'te AÇIK bırakılmıştı, kod zaten düzeltilmişti — doc-senkron gecikmesi, 2026-07-14'te (Sude/Claude karşılaştırması) fark edilip buraya taşındı |
 
 Tam liste ve kanıtlar: `docs/kod_denetimi.md`.

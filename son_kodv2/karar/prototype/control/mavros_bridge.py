@@ -51,6 +51,10 @@ class MavrosBridgeConfig:
 
     heartbeat_timeout_s: float = 5.0
     target_mode: str = "GUIDED"
+    # F-S.1: RC donanım kill-switch eşiği (PWM). Kanalın kendisi (hangi index)
+    # node parametresidir — burada yalnız "aşağıda ne kadar düşükse kill"
+    # eşiği tutulur, ida_topics/control_node.py RC_KILL_THRESHOLD ile aynı.
+    rc_kill_threshold_pwm: int = 1500
 
 
 @dataclass(frozen=True)
@@ -175,6 +179,27 @@ class MavrosBridge:
     def note_stream_rate_failed(self) -> None:
         """İstek başarısız (servis hatası) → sonraki state mesajında yeniden dene."""
         self._stream_rate_requested = False
+
+    # ----- RC donanım kill-switch — F-S.1 -----
+    #
+    # Şimdiye kadar bu köprü yalnız YAZILIM/servis KILL yollarını biliyordu
+    # (heartbeat kaybı, beklenmedik disarm, fsm_node servisi). Fiziksel RC
+    # anahtarı (companion computer'dan BAĞIMSIZ tek alıcı üzerinden gelen
+    # donanım kill) hiç izlenmiyordu — ida_topics/control_node.py'de bu yol
+    # zaten vardı (RC_KILL_CHANNEL/RC_KILL_THRESHOLD), girdap_decision'da
+    # karşılığı yoktu. Aynı mantık buraya taşındı; tek KILL otoritesi
+    # (_trigger_kill, latch) korunuyor — bu yalnız bir tetikleyici daha.
+
+    def is_rc_kill_active(self, channel_pwm: Optional[int]) -> bool:
+        """RC kill kanalı (donanım anahtarı) aktif mi?
+
+        `channel_pwm` None ya da <=0 ise (kanal henüz gelmedi / alıcı
+        kaybı PWM=0 basar) kill SAYILMAZ — yalnız geçerli, eşiğin altındaki
+        PWM (anahtar aşağıda) kill sayılır.
+        """
+        if channel_pwm is None or channel_pwm <= 0:
+            return False
+        return channel_pwm < self._cfg.rc_kill_threshold_pwm
 
     # ----- görev-aktif bayrağı — F14.3 -----
 

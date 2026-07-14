@@ -26,6 +26,11 @@ Sorumluluklar (CLAUDE.md MAVROS bölümü + Şartname 4.1):
     4. Heartbeat — `heartbeat_timeout_s` içinde `/mavros/state` gelmezse
        bağlantı koptu → KILL. ArduRover /mavros/state ~1 Hz yayınlar; 5 s
        (≈5 kaçan heartbeat) eşiği uygundur.
+    5. RC donanım kill-switch (F-S.1) — `/mavros/rc/in` kanal
+       `rc_kill_channel` (varsayılan 7, 0-indexed = RC kanal 8) eşik PWM'in
+       (`rc_kill_threshold_pwm`, varsayılan 1500) altına düşerse → KILL.
+       Yazılım/servis KILL yollarından bağımsız, companion computer canlı
+       olmasa bile RC alıcısı üzerinden doğrudan çalışır.
 
 KILL, `/girdap/mission/kill` (fsm_node, Trigger) çağrılarak yayılır: FSM KILL
 durumuna geçer, planning_node sıfır thrust yayınlar → motorlar durur. Böylece
@@ -34,6 +39,7 @@ her topic'in tek yazma otoritesi korunur (planning thrust'ı, fsm durumu).
 Subscribed:
     /mavros/state          mavros_msgs/State   (connected, armed, guided, mode)
     /girdap/mission/state  std_msgs/String     (görev-aktif geçidi, F14.3)
+    /mavros/rc/in          mavros_msgs/RCIn    (RC donanım kill-switch, F-S.1)
 Service client:
     /mavros/set_mode       mavros_msgs/SetMode
     /mavros/cmd/arming     mavros_msgs/CommandBool
@@ -54,11 +60,13 @@ from typing import Optional
 import rclpy
 from rclpy.node import Node
 
+from mavros_msgs.msg import RCIn
 from mavros_msgs.msg import State as MavState
 from mavros_msgs.srv import CommandBool, SetMode, StreamRate
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
+from girdap_decision.qos_profiles import sensor_data_qos
 from prototype.control.mavros_bridge import MavrosBridge, MavrosBridgeConfig
 
 
@@ -80,14 +88,22 @@ class MavrosBridgeNode(Node):
         # F-M.6: bağlantı kurulunca FC'den istenecek MAVLink akış hızı (Hz).
         # 0 → devre dışı (FC SR0_* parametreleri elle yönetiliyorsa).
         self.declare_parameter("stream_rate_hz", 10)
+        # F-S.1: RC donanım kill-switch — ida_topics/control_node.py ile aynı
+        # varsayılanlar (RC kanal 8, 0-indexed 7; PWM eşiği 1500).
+        self.declare_parameter("rc_kill_channel", 7)
+        self.declare_parameter("rc_kill_threshold_pwm", 1500)
 
         cfg = MavrosBridgeConfig(
             heartbeat_timeout_s=float(
                 self.get_parameter("heartbeat_timeout_s").value
             ),
             target_mode=str(self.get_parameter("mode_name").value),
+            rc_kill_threshold_pwm=int(
+                self.get_parameter("rc_kill_threshold_pwm").value
+            ),
         )
         self._bridge = MavrosBridge(cfg)
+        self._rc_kill_channel = int(self.get_parameter("rc_kill_channel").value)
         self._auto_guided = bool(self.get_parameter("auto_guided").value)
         self._stream_rate_hz = int(self.get_parameter("stream_rate_hz").value)
         self._arm_retry_max = int(self.get_parameter("arming_retry_max").value)
@@ -111,6 +127,14 @@ class MavrosBridgeNode(Node):
         # görev de FSM'siz koşamayacağı için güvenli taraf budur.
         self._sub_mission = self.create_subscription(
             String, "/girdap/mission/state", self._on_mission_state, 10
+        )
+        # F-S.1: RC donanım kill-switch — companion computer'dan bağımsız,
+        # tek RC alıcısı üzerinden gelen fiziksel anahtar. mavros /mavros/rc/in
+        # BEST_EFFORT yayınlar (bkz ida_topics CLAUDE.md notu) — qos_profiles
+        # sensor_data_qos ile eşlenmezse RELIABLE varsayılanı sessizce veri
+        # kaybına yol açar (hata fırlatmaz).
+        self._sub_rc = self.create_subscription(
+            RCIn, "/mavros/rc/in", self._on_rc_in, sensor_data_qos()
         )
 
         # --- Servis istemcileri ---
@@ -165,6 +189,28 @@ class MavrosBridgeNode(Node):
         # PARKUR1'e girişte /mavros/state'i (~1 Hz) beklemeden hemen dene —
         # görev başlar başlamaz cmd_vel'in kabulü için mod hazır olsun.
         self._maybe_auto_guided()
+
+    # ----- RC donanım kill-switch — F-S.1 -----
+
+    def _on_rc_in(self, msg: RCIn) -> None:
+        """RC donanım kill anahtarı — yazılım/servis KILL yollarından bağımsız.
+
+        ida_topics/control_node.py'de zaten vardı (RC_KILL_CHANNEL=7,
+        RC_KILL_THRESHOLD=1500); girdap_decision'da bu köprü şimdiye kadar
+        yalnız heartbeat/beklenmedik-disarm/fsm-servisi KILL yollarını
+        biliyordu, fiziksel anahtarı hiç izlemiyordu. Aynı tek KILL otoritesi
+        (_trigger_kill, latch) korunuyor — bu yalnız bir tetikleyici daha.
+        """
+        if self._killed:
+            return
+        idx = self._rc_kill_channel
+        channel_pwm = msg.channels[idx] if len(msg.channels) > idx else None
+        if self._bridge.is_rc_kill_active(channel_pwm):
+            self.get_logger().error(
+                f"RC KILL ANAHTARI AKTİF (kanal {idx + 1}, PWM={channel_pwm}) "
+                f"→ FCU disarm (F-S.1)"
+            )
+            self._trigger_kill()
 
     # ----- FC akış hızı (SR0) — F-M.6 -----
 

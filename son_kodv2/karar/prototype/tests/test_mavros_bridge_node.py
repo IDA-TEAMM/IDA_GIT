@@ -156,6 +156,73 @@ def test_fm3_kill_disi_stateler_tetiklemez(ros_context) -> None:  # noqa: ANN001
         n.destroy_node()
 
 
+# ----- F-S.1: RC donanım kill-switch -----
+#
+# girdap_decision şimdiye kadar yalnız yazılım/servis KILL yollarını
+# biliyordu (heartbeat, beklenmedik disarm, fsm servisi) — ida_topics/
+# control_node.py'deki gibi companion computer'dan bağımsız bir RC donanım
+# anahtarı hiç izlenmiyordu. Bu testler o boşluğu kapatan _on_rc_in'i
+# doğrular (karşılaştırma: sude_memory/project_ida_captain_decision_repo.md).
+
+
+def _rc(channels: list[int]) -> "RCIn":  # noqa: F821
+    from mavros_msgs.msg import RCIn
+
+    msg = RCIn()
+    msg.channels = channels
+    return msg
+
+
+def test_fs1_rc_kill_kanali_esik_alti_disarm_tetikler(ros_context) -> None:  # noqa: ANN001
+    n = girdap.MavrosBridgeNode()
+    try:
+        calls = []
+        orijinal = n._trigger_kill
+        n._trigger_kill = lambda: (calls.append(1), orijinal())[1]  # type: ignore[method-assign]
+
+        # 8 kanal, index 7 (RC kanal 8) = 900 → eşiğin (1500) altı → KILL.
+        n._on_rc_in(_rc([1500, 1500, 1500, 1500, 1500, 1500, 1500, 900]))
+        assert calls, "RC kill kanalı eşik altı ama _trigger_kill çağrılmadı (F-S.1)"
+        assert n._killed is True
+    finally:
+        n.destroy_node()
+
+
+def test_fs1_rc_kill_kanali_esik_ustu_tetiklemez(ros_context) -> None:  # noqa: ANN001
+    n = girdap.MavrosBridgeNode()
+    try:
+        n._on_rc_in(_rc([1500] * 7 + [1800]))
+        assert n._killed is False
+    finally:
+        n.destroy_node()
+
+
+def test_fs1_rc_kanal_eksikse_tetiklemez(ros_context) -> None:  # noqa: ANN001
+    """Kısa/eksik RCIn mesajı (kanal hiç yok) sahte KILL üretmemeli."""
+    n = girdap.MavrosBridgeNode()
+    try:
+        n._on_rc_in(_rc([1500, 1500]))          # yalnız 2 kanal, index 7 yok
+        assert n._killed is False
+    finally:
+        n.destroy_node()
+
+
+def test_fs1_zaten_killed_iken_tekrar_tetiklemez(ros_context) -> None:  # noqa: ANN001
+    """İdempotent: bir kez KILL olduktan sonra RC callback'i sessiz kalır."""
+    n = girdap.MavrosBridgeNode()
+    try:
+        calls = []
+        orijinal = n._trigger_kill
+        n._trigger_kill = lambda: (calls.append(1), orijinal())[1]  # type: ignore[method-assign]
+
+        n._on_rc_in(_rc([1500] * 7 + [900]))
+        assert len(calls) == 1
+        n._on_rc_in(_rc([1500] * 7 + [800]))     # hâlâ eşik altı
+        assert len(calls) == 1, "zaten killed iken _trigger_kill tekrar çağrıldı"
+    finally:
+        n.destroy_node()
+
+
 # ----- F-M.6: FC akış hızı (SR0) isteği -----
 #
 # Masa Oturum 2 (2026-07-14): taze USB bağlantısında FC ~1 Hz yayınlıyor; elle
