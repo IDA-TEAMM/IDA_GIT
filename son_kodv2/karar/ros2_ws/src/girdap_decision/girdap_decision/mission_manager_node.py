@@ -29,6 +29,13 @@ Published:
     /girdap/mission/waypoint_reached std_msgs/Int32   (Sprint 4)
         Bir waypoint'e VARILINCA tek atış index yayını (ACTIVE→DWELL geçişi).
         fsm_node parkur katmanı bu sinyalle ilerler (waypoint-index tabanlı).
+    /girdap/mission/waypoints        nav_msgs/Path (base_link, 5 Hz, F-S.6)
+        TÜM görev waypoint'leri — current_target'la AYNI mantık: her poz
+        GÜNCEL GPS pozisyonuna göre ENU ofseti (latlon_to_enu). planning_node
+        (use_rrt=true) bunu kendi son bilinen "map" xy'sine ekleyip mutlak
+        RRT* girdisi üretir (_on_target ile birebir aynı dönüşüm deseni).
+        F-S.6 ÖNCESİ: bu topic'i publish eden HİÇBİR node yoktu — RRT* modu
+        (use_rrt=true) global plan hiç oluşturamıyor, thrust sıfırda kalıyordu.
 
 Not: Görev FSM'den başlar — /girdap/mission/state aktif parkura (PARKUR1)
 geçince MissionManager.start() çağrılır (ayrı servis yerine durum takibi;
@@ -45,6 +52,7 @@ import rclpy
 from rclpy.node import Node
 
 from geometry_msgs.msg import PoseStamped
+from nav_msgs.msg import Path
 from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Bool, Int32, String
 
@@ -57,6 +65,7 @@ from prototype.mission.mission_manager import (
     Waypoint,
     farthest_waypoint_m,
     fc_items_to_waypoints_with_seqs,
+    latlon_to_enu,
 )
 
 # FSM'de aracın hareket ettiği (görev aktif) durumlar.
@@ -136,6 +145,10 @@ class MissionManagerNode(Node):
         # temiz duruş). Latching: bir kez True olunca öyle kalır.
         self._pub_complete = self.create_publisher(
             Bool, "/girdap/mission/complete", 10
+        )
+        # F-S.6: RRT* girdisi — tüm waypoint listesi (bkz. modül docstring'i).
+        self._pub_waypoints = self.create_publisher(
+            Path, "/girdap/mission/waypoints", 10
         )
 
         # --- fc kaynağı: /mavros/mission/waypoints aboneliği ---
@@ -364,9 +377,32 @@ class MissionManagerNode(Node):
     def _now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
 
+    def _publish_waypoints_path(self) -> None:
+        """F-S.6: tüm görev waypoint'lerini base_link-göreli ENU Path yayınla.
+
+        planning_node'un RRT* girdisi — current_target ile AYNI referans
+        (güncel GPS pozisyonuna göre latlon_to_enu); planning_node kendi
+        odom'undan bilinen son xy'ye ekleyip mutlak "map" konumuna çevirir.
+        """
+        if self._mgr.waypoint_count == 0:
+            return
+        msg = Path()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "base_link"
+        for wp in self._mgr.waypoints:
+            east, north = latlon_to_enu(self._lat, self._lon, wp.lat, wp.lon)
+            ps = PoseStamped()
+            ps.header = msg.header
+            ps.pose.position.x = float(east)
+            ps.pose.position.y = float(north)
+            ps.pose.orientation.w = 1.0
+            msg.poses.append(ps)
+        self._pub_waypoints.publish(msg)
+
     def _on_tick(self) -> None:
         if self._lat is None or self._lon is None:
             return
+        self._publish_waypoints_path()
         offset = self._mgr.update(self._lat, self._lon, self._now())
 
         # Görev tamamlandı bayrağını her tick yayınla (latching; fsm_node

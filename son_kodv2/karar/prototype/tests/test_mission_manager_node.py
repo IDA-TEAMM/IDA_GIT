@@ -341,3 +341,77 @@ def test_fv8_baslamadan_gelen_reached_yok_sayilir(ros_context) -> None:  # noqa:
         assert node._last_reached_pub == -1              # yayın da yok
     finally:
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# F-S.6: /girdap/mission/waypoints hiç publish edilmiyordu — planning_node'un
+# RRT* girdisi (use_rrt=true) hiçbir zaman gelmiyordu, global plan hiç
+# oluşmuyordu (thrust sıfırda kalırdı). mission_manager_node artık tüm
+# waypoint listesini current_target'la AYNI referansta (base_link göreli ENU)
+# yayınlıyor.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def mission_file_distinct(tmp_path_factory) -> str:      # noqa: ANN001
+    """2 FARKLI koordinatlı waypoint — ENU dönüşümünü anlamlı doğrulamak için."""
+    path = tmp_path_factory.mktemp("mm_wp") / "m2.yaml"
+    path.write_text(
+        textwrap.dedent(
+            """
+            waypoints:
+              - {lat: 41.001, lon: 29.000, parkur: 1}
+              - {lat: 41.002, lon: 29.001, parkur: 1}
+            arrival_radius_m: 5.0
+            dwell_time_s: 30.0
+            """
+        ),
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def test_fs6_waypoints_path_yayinlanir(ros_context, mission_file_distinct) -> None:  # noqa: ANN001
+    from nav_msgs.msg import Path
+
+    from prototype.mission.mission_manager import latlon_to_enu
+
+    node = girdap.MissionManagerNode(
+        parameter_overrides=[
+            Parameter("mission_file", Parameter.Type.STRING, mission_file_distinct),
+        ]
+    )
+    helper = rclpy.create_node("test_mm_wp_helper")
+    paths: list = []
+    helper.create_subscription(
+        Path, "/girdap/mission/waypoints", lambda m: paths.append(m), 10
+    )
+    gps_pub = helper.create_publisher(
+        NavSatFix, "/mavros/global_position/global", 10
+    )
+    try:
+        fix = NavSatFix()
+        fix.status.status = 0
+        fix.latitude, fix.longitude = 40.999, 28.999   # araç, waypoint'lerden ayrı bir konumda
+
+        deadline = time.monotonic() + 5.0
+        while not paths:
+            gps_pub.publish(fix)
+            rclpy.spin_once(node, timeout_sec=0.05)
+            rclpy.spin_once(helper, timeout_sec=0.05)
+            assert time.monotonic() < deadline, "/girdap/mission/waypoints yayınlanmadı (F-S.6)"
+
+        path_msg = paths[-1]
+        assert path_msg.header.frame_id == "base_link"
+        assert len(path_msg.poses) == 2
+
+        exp0 = latlon_to_enu(fix.latitude, fix.longitude, 41.001, 29.000)
+        exp1 = latlon_to_enu(fix.latitude, fix.longitude, 41.002, 29.001)
+        got0 = (path_msg.poses[0].pose.position.x, path_msg.poses[0].pose.position.y)
+        got1 = (path_msg.poses[1].pose.position.x, path_msg.poses[1].pose.position.y)
+        assert got0 == pytest.approx(exp0, abs=1e-6)
+        assert got1 == pytest.approx(exp1, abs=1e-6)
+        assert got0 != got1                            # 2 farklı waypoint, 2 farklı ofset
+    finally:
+        helper.destroy_node()
+        node.destroy_node()

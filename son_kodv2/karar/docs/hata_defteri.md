@@ -222,6 +222,61 @@
   parametreleri ida_topics ile aynı varsayılanlar (kanal 5, PWM 1700), 3 node testi.
 - **Durum:** KAPANDI (bu oturumda TDD ile eklendi ve test edildi). Suite 310→317.
 
+### [2026-07-14] F-S.5 — disk-dolu (OSError) korumasız yazma noktaları (🔴, düzeltildi)
+- **Belirti (tam sistem taraması):** `TelemetryCsvLogger._sync`/`write_sample`,
+  `LocalMapDumper.write_frame`, `ida_topics/telemetri_node.py`, `local_map_node.py`
+  yazma noktalarının HİÇBİRİNDE try/except yoktu. Bu proje daha önce GERÇEKTEN
+  disk-dolu krizi yaşamıştı (bkz proje notları) — tekrarlarsa timer callback'i
+  içinde yakalanmayan `OSError` node'u tamamen öldürür, Dosya-2/Dosya-3 zorunlu
+  teslimleri sonsuza dek durur (tek örnek kaybı değil).
+- **Düzeltme (TDD):** `TelemetryCsvLogger.write_sample()` artık `bool` döner
+  (True=başarılı, False=disk hatası — exception SIZMAZ), `girdap_decision/
+  telemetry_node.py` dönüş değerini loglar. `LocalMapDumper.write_frame()`
+  disk hatasında `None` döner + boyut uyuşmazlığında (bozuk OccupancyGrid) net
+  bir `ValueError` yükseltir (numpy'nin belirsiz mesajı yerine), `local_map_node.py`
+  ikisini de yakalayıp kareyi atlar. `ida_topics/telemetri_node.py` ve
+  `local_map_node.py`'de aynı desen (`try/except OSError`) + `os.fsync` eklendi.
+  4 yeni test (2 telemetry_logger + 2 local_map).
+- **Durum:** KAPANDI.
+
+### [2026-07-14] F-S.6 — RRT* girdisi (`/girdap/mission/waypoints`) HİÇ publish edilmiyordu (🔴, düzeltildi)
+- **Belirti (tam sistem taraması):** `planning_node`, `/girdap/mission/waypoints`
+  (`nav_msgs/Path`) dinliyordu ama repo genelinde bunu publish eden HİÇBİR node
+  yoktu (`mission_manager_node` yalnızca tekil `current_target` yayınlıyordu).
+  **Sonuç: `use_rrt=true` (gerçek yarışma modu) ile global plan hiç oluşmuyor,
+  `compute_control()` hep `None` dönüyor, thrust sıfırda kalıyordu** — yalnızca
+  video bypass modu (`use_rrt=false`) çalışıyordu, ki bu şimdiye kadar hiç
+  fark edilmemişti çünkü video için zaten `use_rrt=false` kullanılıyor.
+- **Düzeltme:** `mission_manager_node._publish_waypoints_path()` — tüm
+  `MissionManager.waypoints`'i `current_target` ile AYNI referansta (güncel
+  GPS pozisyonuna göre `latlon_to_enu`) `base_link`-göreli `Path` olarak 5 Hz
+  yayınlar. `planning_node._on_waypoints()` artık bu ofseti kendi son bilinen
+  odom xy'sine ekleyip mutlak "map" konumuna çevirir (`_on_target` ile birebir
+  aynı dönüşüm deseni — DRY). 4 yeni test (3 planning_node + 1 mission_manager_node,
+  gerçek `latlon_to_enu` değerleriyle karşılaştırmalı).
+- **Durum:** KAPANDI — ama SAHA DOĞRULAMASI BEKLİYOR (T0 öncesi öncelik):
+  RRT*+MPPI tam yarışma modu şimdiye kadar hiç uçtan-uca test edilmemiş
+  olabilir (video modunda bu kod yolu hiç çalışmadığı için).
+
+### [2026-07-14] F-S.7 — OAK-D okuma thread'i timeout'suz, USB donarsa sonsuza dek asılı kalır (🟡, düzeltildi)
+- **Belirti:** `ida_topics/oakd_driver_node.py:_capture_loop` bloklayan
+  `queue.get()` kullanıyordu — USB glitch'inde thread sessizce sonsuza kadar
+  asılı kalır, hiçbir log/yeniden-deneme yok.
+- **Düzeltme:** `tryGet()` (bloklamayan) + 5s'lik "kare gelmiyor" uyarısı.
+- **Durum:** KAPANDI.
+
+### [2026-07-14] F-S.8 — Parkur-3 çarpma tespiti: iki paralel sistemden yalnız biri bağlıydı (🟠, düzeltildi)
+- **Belirti:** `fsm_node._on_imu` gerçek IMU darbesini üst-katman `MissionFSM`'e
+  (`_obs.shock_detected_p3`) besliyordu — AMA waypoint-index parkur katmanı
+  (`ParkurTransitionLogic.confirm_impact()`) yalnızca hiçbir node'un publish
+  ETMEDİĞİ `/girdap/parkur/impact` (Sprint 5 placeholder) topic'ine bağlıydı.
+  **Sonuç: gerçek yarışmada `/girdap/parkur/state` sonsuza dek PARKUR_3'te
+  takılı kalırdı**, `MissionFSM` doğru TAMAMLANDI'ya geçse bile.
+- **Düzeltme:** `_on_imu` artık darbe eşiği aşılınca HEM `_obs.shock_detected_p3`
+  HEM `self._parkur.confirm_impact()` çağırıyor (idempotent, güvenli). 1 yeni
+  test — placeholder topic'e hiç dokunmadan gerçek IMU yolunu doğrudan test eder.
+- **Durum:** KAPANDI.
+
 ### [2026-07-14] F-M.3 — servis yoluyla KILL FCU'yu DISARM etmiyor (🟠, KAPANDI'ya bkz)
 - Bu madde koda göre zaten düzeltilmişti (`_on_mission_state` KILL gözleyince
   `_trigger_kill()` çağırıyor, `test_fm3_*` testleri PASSED) — doc-senkron gecikmesiyle

@@ -245,6 +245,26 @@ def test_default_header_unchanged_for_dosya2(tmp_path) -> None:
     assert header == CSV_HEADER
 
 
+def test_write_sample_returns_true_on_success(tmp_path) -> None:
+    logger = TelemetryCsvLogger(tmp_path)
+    ok = logger.write_sample("t0", TelemetrySample(lat=1.0))
+    logger.close()
+    assert ok is True
+
+
+def test_write_sample_disk_full_returns_false_not_raises(tmp_path, monkeypatch) -> None:
+    """F-S.5: disk-dolu (OSError) exception sızdırmaz, yalnız False döner."""
+    logger = TelemetryCsvLogger(tmp_path)
+
+    def _patlayan_sync() -> None:
+        raise OSError("disk dolu (simüle)")
+
+    monkeypatch.setattr(logger, "_sync", _patlayan_sync)
+    ok = logger.write_sample("t1", TelemetrySample(lat=2.0))
+    assert ok is False
+    assert logger.row_count == 0     # başarısız satır sayılmadı, logger canlı
+
+
 def test_quat_to_rpy_known_values() -> None:
     """quat_to_rpy referans değerlerde doğru RPY üretmeli."""
     # Kimlik quaternion → sıfır RPY

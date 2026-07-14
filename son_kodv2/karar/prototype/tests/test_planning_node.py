@@ -18,7 +18,8 @@ import pytest
 
 rclpy = pytest.importorskip("rclpy", reason="rclpy yok (.venv) — ROS ortamında koş")
 
-from nav_msgs.msg import Odometry                       # noqa: E402
+from geometry_msgs.msg import PoseStamped               # noqa: E402
+from nav_msgs.msg import Odometry, Path                 # noqa: E402
 from rclpy.parameter import Parameter                   # noqa: E402
 
 pn = pytest.importorskip(
@@ -91,5 +92,65 @@ def test_fp1_kapatilabilir(ros_context) -> None:  # noqa: ANN001
         node._on_odom(_odom())
         t[0] = 999.0
         assert node._odom_stale() is False
+    finally:
+        node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# F-S.6: /girdap/mission/waypoints hiç publish edilmiyordu — RRT* modu
+# (use_rrt=true) global plan hiç oluşturamıyordu, thrust sıfırda kalıyordu.
+# mission_manager_node artık current_target'la AYNI referansta (base_link
+# göreli ENU) tüm waypoint listesini yayınlıyor; burada son bilinen odom
+# xy'sine eklenerek mutlak "map" konumuna çevrilir (_on_target ile aynı desen).
+# --------------------------------------------------------------------------- #
+
+
+def _wp_path(offsets):  # noqa: ANN001, ANN201
+    msg = Path()
+    msg.header.frame_id = "base_link"
+    for east, north in offsets:
+        ps = PoseStamped()
+        ps.pose.position.x = east
+        ps.pose.position.y = north
+        ps.pose.orientation.w = 1.0
+        msg.poses.append(ps)
+    return msg
+
+
+def test_fs6_on_waypoints_son_xyye_ekler(ros_context) -> None:  # noqa: ANN001
+    node = pn.PlanningNode(
+        parameter_overrides=[Parameter("use_rrt", Parameter.Type.BOOL, True)]
+    )
+    try:
+        node._on_odom(_odom(x=10.0))              # _last_xy = (10.0, 0.0)
+        node._on_waypoints(_wp_path([(5.0, 3.0), (8.0, -2.0)]))
+        assert node._pipe._waypoints == [(15.0, 3.0), (18.0, -2.0)], (
+            "waypoints son bilinen xy'ye eklenmedi (F-S.6)"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_fs6_odom_yoksa_waypoints_yok_sayilir(ros_context) -> None:  # noqa: ANN001
+    """Henüz odom gelmediyse (_last_xy None) waypoints işlenmez — crash yok."""
+    node = pn.PlanningNode(
+        parameter_overrides=[Parameter("use_rrt", Parameter.Type.BOOL, True)]
+    )
+    try:
+        node._on_waypoints(_wp_path([(5.0, 3.0)]))
+        assert node._pipe._waypoints == []
+    finally:
+        node.destroy_node()
+
+
+def test_fs6_video_bypass_modda_yok_sayilir(ros_context) -> None:  # noqa: ANN001
+    """use_rrt=false (video bypass) — waypoints RRT*'a hiç girmez."""
+    node = pn.PlanningNode(
+        parameter_overrides=[Parameter("use_rrt", Parameter.Type.BOOL, False)]
+    )
+    try:
+        node._on_odom(_odom(x=10.0))
+        node._on_waypoints(_wp_path([(5.0, 3.0)]))
+        assert node._pipe._waypoints == []
     finally:
         node.destroy_node()

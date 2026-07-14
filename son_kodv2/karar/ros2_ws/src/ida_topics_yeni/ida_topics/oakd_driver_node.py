@@ -19,6 +19,7 @@ from std_msgs.msg import Header
 
 import numpy as np
 import threading
+import time
 
 
 class OakdDriverNode(Node):
@@ -87,16 +88,29 @@ class OakdDriverNode(Node):
             self.queue = None
 
     def _capture_loop(self):
-        """Sürekli kare yakala ve publish et."""
+        """Sürekli kare yakala ve publish et.
+
+        tryGet() (bloklamayan) kullanılır - depthai'nin bloklayan get()'i
+        USB kopmasi/donmasinda thread'i sonsuza kadar askida birakabilirdi,
+        hicbir log/yeniden-baglanma olmadan (F-S.7).
+        """
+        last_frame_time = time.monotonic()
         while self.running:
             if self.queue is None:
-                import time
                 time.sleep(1.0)
                 continue
 
             try:
-                in_rgb = self.queue.get()
-                frame  = in_rgb.getCvFrame()
+                in_rgb = self.queue.tryGet()
+                if in_rgb is None:
+                    if time.monotonic() - last_frame_time > 5.0:
+                        self.get_logger().error(
+                            'OAK-D 5s\'tir kare vermiyor (USB/cihaz sorunu '
+                            'olabilir)', throttle_duration_sec=5.0)
+                    time.sleep(0.01)
+                    continue
+                last_frame_time = time.monotonic()
+                frame = in_rgb.getCvFrame()
 
                 msg = Image()
                 msg.header.stamp    = self.get_clock().now().to_msg()

@@ -39,17 +39,39 @@ class PerceptionNode(Node):
         else:
             return 'other'
 
+    def _decode_frame(self, msg):
+        """Image mesajini step-farkinda BGR numpy dizisine cevirir.
+
+        msg.step >= msg.width*3 olabilir (satir dolgusu) - once step
+        genisliginde satirlara ayrilir, sonra gercek genislige kirpilir.
+        Aksi halde (goruntu drivers'i step doldurursa) reshape yanlis
+        piksel kaymasiyla ya da ValueError ile patlar.
+        """
+        if msg.encoding not in ('bgr8', 'rgb8'):
+            raise ValueError(f'desteklenmeyen encoding: {msg.encoding!r}')
+        buf = np.frombuffer(msg.data, dtype=np.uint8)
+        frame = buf.reshape(msg.height, msg.step)[:, : msg.width * 3]
+        frame = frame.reshape(msg.height, msg.width, 3)
+        if msg.encoding == 'rgb8':
+            frame = frame[:, :, ::-1]              # RGB -> BGR
+        return np.ascontiguousarray(frame)
+
     def image_callback(self, msg):
         self.get_logger().info(f'Encoding: {msg.encoding}', once=True)
-        img = np.frombuffer(msg.data, dtype=np.uint8).reshape(
-            msg.height, msg.width, -1)
-        if msg.encoding == 'rgb8':
-            # Gazebo R8G8B8 → BGR
-            bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-        else:
-            bgr = img
+        try:
+            bgr = self._decode_frame(msg)
+        except Exception as e:
+            self.get_logger().error(
+                f'Goruntu decode hatasi (bozuk/beklenmeyen frame): {e}',
+                throttle_duration_sec=5.0)
+            return
 
-        results = self.model(bgr, conf=0.15, verbose=False)
+        try:
+            results = self.model(bgr, conf=0.15, verbose=False)
+        except Exception as e:
+            self.get_logger().error(
+                f'YOLO cikarim hatasi: {e}', throttle_duration_sec=5.0)
+            return
 
         all_detections = Detection2DArray()
         orange_detections = Detection2DArray()
@@ -93,9 +115,13 @@ class PerceptionNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = PerceptionNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass  # launch/systemd SIGINT'i normal kapanistir (traceback basma)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

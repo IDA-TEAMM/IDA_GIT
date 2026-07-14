@@ -13,6 +13,7 @@ local_map_node ROS-bağımsız çekirdeği (LocalMapDumper) üzerinden doğrular
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from prototype.mapping.local_map import (
@@ -93,6 +94,36 @@ def test_known_cell_mapping(tmp_path) -> None:
     assert img.getpixel((0, 99)) == 255
     # bilinmiyor hücre (ROS satır 80, sütun 80) → görüntü (x=80, y=19) = 128
     assert img.getpixel((80, 19)) == UNKNOWN_GRAY
+
+
+# --------------------------------------------------------------------------- #
+# F-S.5: boyut uyuşmazlığı + disk-dolu koruması
+# --------------------------------------------------------------------------- #
+
+
+def test_write_frame_boyut_uyusmazligi_value_error(tmp_path) -> None:
+    """values uzunluğu width*height ile uyuşmuyorsa net ValueError yükselir."""
+    dumper = LocalMapDumper(base_dir=tmp_path, session="s")
+    _, flat = _fake_grid(100, 100)
+    with pytest.raises(ValueError, match="boyut uyuşmazlığı"):
+        dumper.write_frame(flat, 50, 50)      # 10000 değer ama 50x50=2500 bekleniyor
+    assert dumper.frame_count == 0            # başarısız deneme sayılmadı
+
+
+def test_write_frame_disk_dolu_none_doner_exception_yok(tmp_path, monkeypatch) -> None:
+    """F-S.5: disk-dolu (OSError) exception sızdırmaz, None döner."""
+    dumper = LocalMapDumper(base_dir=tmp_path, session="s")
+    _, flat = _fake_grid(100, 100)
+
+    import PIL.Image as PILImage
+
+    def _patlayan_save(self, path, *a, **kw):  # noqa: ANN001
+        raise OSError("disk dolu (simüle)")
+
+    monkeypatch.setattr(PILImage.Image, "save", _patlayan_save)
+    result = dumper.write_frame(flat, 100, 100)
+    assert result is None
+    assert dumper.frame_count == 0            # başarısız kare sayılmadı
 
 
 # --------------------------------------------------------------------------- #

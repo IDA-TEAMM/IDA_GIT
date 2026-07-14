@@ -11,7 +11,7 @@ Kaynak topic'ler:
   /mavros/vfr_hud                 → hız, heading
   /cmd_vel                        → hız/yön setpoint
 
-Çıktı: /tmp/telemetri/telemetri_YYYYMMDD_HHMMSS.csv (1Hz)
+Çıktı: ~/girdap_logs/telemetri/telemetri_YYYYMMDD_HHMMSS.csv (1Hz)
 
 Yazar: IDA/Girdap Takım 989124 - Alt Alan B
 """
@@ -51,9 +51,15 @@ class TelemetriNode(Node):
         self.setpoint_yon  = 0.0  # cmd_vel angular
 
         # ── CSV dosyası ───────────────────────────────────────────────────────
-        os.makedirs('/tmp/telemetri', exist_ok=True)
+        # Sartname 4.2 Dosya-2 teslim dosyasi - /tmp KULLANMA: tmpfs'te
+        # reboot/guc kesintisinde kaybolur (dosya basi 5 ceza puani).
+        self.declare_parameter('output_dir', '')
+        self.output_dir = self.get_parameter('output_dir').value or \
+            os.path.expanduser('~/girdap_logs/telemetri')
+        os.makedirs(self.output_dir, exist_ok=True)
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        self.csv_path = f'/tmp/telemetri/telemetri_{timestamp}.csv'
+        self.csv_path = os.path.join(
+            self.output_dir, f'telemetri_{timestamp}.csv')
 
         self.csv_file = open(self.csv_path, 'w', newline='')
         self.csv_writer = csv.writer(self.csv_file)
@@ -117,18 +123,27 @@ class TelemetriNode(Node):
     def _kaydet(self):
         """1Hz'de CSV'ye yaz."""
         zaman = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-        self.csv_writer.writerow([
-            f'{self.lat:.8f}',
-            f'{self.lon:.8f}',
-            f'{self.hiz:.3f}',
-            f'{self.roll:.2f}',
-            f'{self.pitch:.2f}',
-            f'{self.heading:.2f}',
-            f'{self.setpoint_hiz:.3f}',
-            f'{self.setpoint_yon:.3f}',
-            zaman
-        ])
-        self.csv_file.flush()
+        try:
+            self.csv_writer.writerow([
+                f'{self.lat:.8f}',
+                f'{self.lon:.8f}',
+                f'{self.hiz:.3f}',
+                f'{self.roll:.2f}',
+                f'{self.pitch:.2f}',
+                f'{self.heading:.2f}',
+                f'{self.setpoint_hiz:.3f}',
+                f'{self.setpoint_yon:.3f}',
+                zaman
+            ])
+            self.csv_file.flush()
+            os.fsync(self.csv_file.fileno())
+        except OSError as e:
+            # Disk dolu / yazma hatasi: bu ornegi atla, node'u OLDURME - Dosya-2
+            # zorunlu teslim dosyasi, tek satir kaybi tum kaydin durmasindan iyi.
+            self.get_logger().error(
+                f'CSV yazma hatasi (disk dolu olabilir): {e}',
+                throttle_duration_sec=5.0)
+            return
 
         self.get_logger().info(
             f'[TEL] lat={self.lat:.6f} lon={self.lon:.6f} '
@@ -148,6 +163,8 @@ def main(args=None):
     node = TelemetriNode()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass  # launch/systemd SIGINT'i normal kapanistir (traceback basma)
     finally:
         node.destroy_node()
         rclpy.shutdown()

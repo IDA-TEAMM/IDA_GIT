@@ -28,6 +28,11 @@ class DecisionNode(Node):
         self.orange_buoys = None
         self.yellow_buoys = None
         self.image_center = 320
+        # Pose tazelik bekcisi: /mavros/local_position/odom donarsa (MAVROS/EKF
+        # kopmasi) process() donmus pos/yaw ile sonsuza kadar cmd_vel basmasin.
+        self.declare_parameter('pose_timeout_s', 1.0)
+        self.pose_timeout_s = self.get_parameter('pose_timeout_s').value
+        self.last_pose_time = None
         mavros_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
@@ -48,6 +53,14 @@ class DecisionNode(Node):
         cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         self.yaw = math.atan2(siny, cosy)
         self.yaw_rate = msg.twist.twist.angular.z
+        self.last_pose_time = self.get_clock().now()
+
+    def _pose_is_stale(self):
+        """Pose hic gelmediyse ya da pose_timeout_s'ten eskiyse True doner."""
+        if self.last_pose_time is None:
+            return False  # henuz hic pose gelmedi; ayri kontrol (yaw is None) zaten durduruyor
+        age = (self.get_clock().now() - self.last_pose_time).nanoseconds / 1e9
+        return age > self.pose_timeout_s
 
     def orange_cb(self, msg):
         self.orange_buoys = msg
@@ -60,6 +73,13 @@ class DecisionNode(Node):
 
     def process(self):
         if self.yaw is None:
+            return
+        if self._pose_is_stale():
+            self.cmd_vel_pub.publish(Twist())
+            self.get_logger().error(
+                f"Pose {self.pose_timeout_s:.1f}s'ten eski (MAVROS/EKF kopmus "
+                f"olabilir) - kor surus onlendi, dur komutu gonderildi.",
+                throttle_duration_sec=2.0)
             return
         if self.wp_index >= len(WAYPOINTS):
             self.cmd_vel_pub.publish(Twist())
@@ -153,9 +173,13 @@ def main(args=None):
     node = DecisionNode()
     executor = rclpy.executors.MultiThreadedExecutor()
     executor.add_node(node)
-    executor.spin()
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        executor.spin()
+    except KeyboardInterrupt:
+        pass  # launch/systemd SIGINT'i normal kapanistir (traceback basma)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 if __name__ == "__main__":
     main()

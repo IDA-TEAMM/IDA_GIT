@@ -351,7 +351,10 @@ class TelemetryNode(Node):
             yon_setpoint=self._yaw_sp if active else None,
             mission_state=self._mission_state,
         )
-        self._csv.write_sample(utc_isoformat(), sample)
+        if not self._csv.write_sample(utc_isoformat(), sample):
+            self.get_logger().error(
+                "Dosya-2 CSV yazma hatası (disk dolu olabilir) — bu satır "
+                "atlandı", throttle_duration_sec=5.0)
 
     def _on_graph_write(self) -> None:
         active = self._mission_active()
@@ -363,7 +366,10 @@ class TelemetryNode(Node):
             thrust_sol=self._thrust_sol,
             thrust_sag=self._thrust_sag,
         )
-        self._graph_csv.write_sample(utc_isoformat(), sample)
+        if not self._graph_csv.write_sample(utc_isoformat(), sample):
+            self.get_logger().error(
+                "Ekran-2 grafik CSV yazma hatası (disk dolu olabilir) — bu "
+                "satır atlandı", throttle_duration_sec=5.0)
 
     # ----- yaşam döngüsü -----
 

@@ -134,6 +134,29 @@ def test_impact_completes_parkur3(node) -> None:         # noqa: ANN001
     assert node._parkur.state is ParkurState.COMPLETED
 
 
+def test_fs8_gercek_imu_darbesi_parkur3u_tamamlar(node) -> None:  # noqa: ANN001
+    """F-S.8: /girdap/parkur/impact hiç publish edilmiyordu — gerçek IMU
+    darbesi (_on_imu, MissionFSM'in kendi shock_detected_p3'ünü besleyen AYNI
+    sinyal) artık waypoint-index parkur katmanını da (confirm_impact) tetikler.
+    Bu test placeholder topic'e HİÇ dokunmadan, doğrudan gerçek IMU yolunu
+    kullanır.
+    """
+    from sensor_msgs.msg import Imu
+
+    _feed_reached(node, 1)
+    _feed_reached(node, 3)
+    assert node._parkur.state is ParkurState.PARKUR_3
+
+    msg = Imu()
+    msg.linear_acceleration.z = 60.0      # ~6.1g, varsayılan 5.0g eşiğinin üstü
+    node._on_imu(msg)
+
+    assert node._parkur.state is ParkurState.COMPLETED, (
+        "gerçek IMU darbesi parkur katmanını COMPLETED'e geçiremedi (F-S.8)"
+    )
+    assert node._obs.shock_detected_p3 is True   # üst-katman MissionFSM de etkilendi
+
+
 def test_parkur_state_published(node) -> None:           # noqa: ANN001
     """/girdap/parkur/state topic'i güncel parkur durumunu yayınlamalı."""
     helper = rclpy.create_node("test_parkur_sub")

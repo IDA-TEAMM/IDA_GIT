@@ -283,6 +283,17 @@ class FSMNode(Node):
             self._obs.dist_to_last_wp_p1 = math.hypot(dx, dy)
 
     def _on_imu(self, msg: Imu) -> None:
+        """F-S.8: gerçek IMU çarpma darbesi HEM üst-katman MissionFSM'i
+        (_obs.shock_detected_p3) HEM waypoint-index parkur katmanını
+        (ParkurTransitionLogic.confirm_impact) beslemeli.
+
+        Önceden yalnız ilki bağlıydı; ikincisi hiç publish edilmeyen
+        `/girdap/parkur/impact` placeholder'ına bağımlıydı (Sprint 5 notu) —
+        gerçek yarışmada `/girdap/parkur/state` PARKUR_3'te sonsuza dek
+        takılı kalırdı (MissionFSM doğru TAMAMLANDI'ya geçse bile).
+        confirm_impact() idempotent (yalnız PARKUR_3'te etkili) — burada
+        her darbede çağrılması güvenli.
+        """
         ax = msg.linear_acceleration.x
         ay = msg.linear_acceleration.y
         az = msg.linear_acceleration.z
@@ -290,6 +301,8 @@ class FSMNode(Node):
         threshold = float(self.get_parameter("shock_threshold_g").value)
         if a_mag > threshold:
             self._obs.shock_detected_p3 = True
+            self._parkur.confirm_impact()
+            self._emit_parkur_transition()
 
     def _on_gate_passed(self, msg: Bool) -> None:
         """Perception duba ikilisi geçiş tespiti → PARKUR2→PARKUR3 tetiği."""

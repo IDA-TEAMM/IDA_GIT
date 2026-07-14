@@ -14,7 +14,9 @@ Subscribed topics:
         Engel merkezleri; her poz position.{x,y} = merkez, orientation.z =
         yarıçap (PLACEHOLDER şema — perception ekibi topic'i teslim edince
         güncellenecek; OccupancyGrid gelirse costmap→circle çıkarımı eklenir).
-    /girdap/mission/waypoints        nav_msgs/Path          (görev hedefleri)
+    /girdap/mission/waypoints        nav_msgs/Path          (F-S.6: base_link-
+        göreli ENU, current_target ile aynı referans; burada son bilinen
+        odom xy'sine eklenip mutlak "map" konumuna çevrilir)
 
 Published topics:
     /mavros/setpoint_velocity/cmd_vel_unstamped  geometry_msgs/Twist
@@ -187,10 +189,18 @@ class PlanningNode(Node):
         self._pipe.set_obstacles(obstacles)
 
     def _on_waypoints(self, msg: Path) -> None:
+        """F-S.6: mission_manager_node current_target'la AYNI referansta
+        (base_link-göreli ENU) yayınlar — burada son bilinen odom xy'sine
+        eklenerek mutlak "map" konumuna çevrilir (_on_target ile aynı desen).
+        """
         if not self._use_rrt:                    # video bypass → RRT* girişi yok
             return
+        if self._last_xy is None:                 # henüz odom gelmedi
+            return
         waypoints = [
-            (ps.pose.position.x, ps.pose.position.y) for ps in msg.poses
+            (self._last_xy[0] + ps.pose.position.x,
+             self._last_xy[1] + ps.pose.position.y)
+            for ps in msg.poses
         ]
         if waypoints:
             self._pipe.set_waypoints(waypoints)

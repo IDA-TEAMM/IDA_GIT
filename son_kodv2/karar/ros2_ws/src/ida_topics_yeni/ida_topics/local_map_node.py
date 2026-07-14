@@ -11,8 +11,8 @@ Yayınlar:
   /local_map  → nav_msgs/OccupancyGrid (1Hz)
 
 Kaydeder:
-  /tmp/local_map/map_YYYYMMDD_HHMMSS.pgm (PGM görüntü formatı)
-  /tmp/local_map/map_YYYYMMDD_HHMMSS.yaml (metadata)
+  ~/girdap_logs/local_map/map_YYYYMMDD_HHMMSS.pgm (PGM görüntü formatı)
+  ~/girdap_logs/local_map/map_YYYYMMDD_HHMMSS.yaml (metadata)
 
 Yazar: IDA/Girdap Takım 989124 - Alt Alan B
 """
@@ -49,9 +49,17 @@ class LocalMapNode(Node):
         # ── Durum ─────────────────────────────────────────────────────────────
         self.latest_scan = None
         self.map_count   = 0
+        self.declare_parameter('scan_timeout_s', 3.0)
+        self.scan_timeout_s = self.get_parameter('scan_timeout_s').value
+        self.last_scan_time = None
 
         # ── Çıktı klasörü ─────────────────────────────────────────────────────
-        os.makedirs('/tmp/local_map', exist_ok=True)
+        # Sartname 4.2 Dosya-3 teslim dosyasi - /tmp KULLANMA: tmpfs'te
+        # reboot/guc kesintisinde kaybolur (dosya basi 5 ceza puani).
+        self.declare_parameter('output_dir', '')
+        self.output_dir = self.get_parameter('output_dir').value or \
+            os.path.expanduser('~/girdap_logs/local_map')
+        os.makedirs(self.output_dir, exist_ok=True)
         self.timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
         # ── Publisher ─────────────────────────────────────────────────────────
@@ -83,6 +91,13 @@ class LocalMapNode(Node):
 
     def _scan_cb(self, msg: LaserScan):
         self.latest_scan = msg
+        self.last_scan_time = self.get_clock().now()
+
+    def _scan_is_stale(self):
+        if self.last_scan_time is None:
+            return False  # henuz hic scan gelmedi; latest_scan zaten None
+        age = (self.get_clock().now() - self.last_scan_time).nanoseconds / 1e9
+        return age > self.scan_timeout_s
 
     # ── Harita oluştur ve yayınla ─────────────────────────────────────────────
 
@@ -102,8 +117,15 @@ class LocalMapNode(Node):
                     if 0 <= nx < self.width and 0 <= ny < self.height:
                         grid[ny][nx] = 0  # serbest
 
-        # LiDAR verisini haritaya işle
-        if self.latest_scan is not None:
+        # LiDAR verisini haritaya işle (bayat scan kullanilmaz - LiDAR olmadan
+        # eski engel konumlariyla "temiz" gorunen bir harita yayinlamaktansa
+        # bilinmiyor kalmasi tercih edilir).
+        if self._scan_is_stale():
+            self.get_logger().warn(
+                f'/lidar/scan {self.scan_timeout_s:.1f}s\'ten eski - harita '
+                f'yalnizca bilinmiyor/serbest merkez ile yayinlaniyor.',
+                throttle_duration_sec=5.0)
+        elif self.latest_scan is not None:
             scan = self.latest_scan
             angle = scan.angle_min
             for r_val in scan.ranges:
@@ -162,8 +184,8 @@ class LocalMapNode(Node):
     def _pgm_kaydet(self, grid: np.ndarray):
         """Haritayı PGM formatında kaydet."""
         zaman = datetime.now().strftime('%Y%m%d_%H%M%S')
-        pgm_path  = f'/tmp/local_map/map_{zaman}.pgm'
-        yaml_path = f'/tmp/local_map/map_{zaman}.yaml'
+        pgm_path  = os.path.join(self.output_dir, f'map_{zaman}.pgm')
+        yaml_path = os.path.join(self.output_dir, f'map_{zaman}.yaml')
 
         # OccupancyGrid → görüntü (0=beyaz/serbest, 100=siyah/engel, -1=gri/bilinmiyor)
         img = np.zeros((self.height, self.width), dtype=np.uint8)
@@ -171,20 +193,31 @@ class LocalMapNode(Node):
         img[grid == 100] = 0    # engel   → siyah
         img[grid == -1]  = 128  # bilinmiyor → gri
 
-        # PGM yaz
-        with open(pgm_path, 'wb') as f:
-            f.write(f'P5\n{self.width} {self.height}\n255\n'.encode())
-            f.write(img.tobytes())
+        try:
+            # PGM yaz
+            with open(pgm_path, 'wb') as f:
+                f.write(f'P5\n{self.width} {self.height}\n255\n'.encode())
+                f.write(img.tobytes())
+                f.flush()
+                os.fsync(f.fileno())
 
-        # YAML metadata
-        with open(yaml_path, 'w') as f:
-            f.write(f"""image: {pgm_path}
+            # YAML metadata
+            with open(yaml_path, 'w') as f:
+                f.write(f"""image: {pgm_path}
 resolution: {self.resolution}
 origin: [{self.origin_x}, {self.origin_y}, 0.0]
 negate: 0
 occupied_thresh: 0.65
 free_thresh: 0.196
 """)
+        except OSError as e:
+            # Disk dolu / yazma hatasi: bu kareyi atla, node'u OLDURME - Dosya-3
+            # zorunlu teslim dosyasi, tek kare kaybi tum kaydin durmasindan iyi.
+            self.get_logger().error(
+                f'Harita kaydetme hatasi (disk dolu olabilir): {e}',
+                throttle_duration_sec=5.0)
+            return
+
         self.get_logger().info(f'Harita kaydedildi: {pgm_path}')
 
 
@@ -193,6 +226,8 @@ def main(args=None):
     node = LocalMapNode()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass  # launch/systemd SIGINT'i normal kapanistir (traceback basma)
     finally:
         node.destroy_node()
         rclpy.shutdown()
