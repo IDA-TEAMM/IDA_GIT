@@ -1,0 +1,24 @@
+# Girdap İDA — MASA TESTİ görev dosyası (SENTETİK VERİ — sahada KULLANMA!).
+#
+# with_mavros:=false ile birlikte kullanılır: gerçek Pixhawk yokken karar
+# yığınını (fsm/mission_manager/planning/telemetry/bridge) uçtan uca test
+# etmek için mock_sensors.py'nin sabit Marmaris orijiniyle (36.85, 28.27)
+# hizalı, küçük (~10-20 m) bir waypoint zinciri. competition_mission.yaml
+# ile aynı şema (parkur etiketli); lat/lon mock_sensors._enu_to_latlon ile
+# aynı düz-dikdörtgensel projeksiyon kullanılarak elle hesaplandı.
+
+home_ref: {lat: 36.85, lon: 28.27}
+
+waypoints:
+  # --- Parkur-1: Nokta Takip ---
+  - {lat: 36.8500180, lon: 28.2700898, parkur: 1, name: "MASA_P1_WP1"}
+  - {lat: 36.8500898, lon: 28.2701122, parkur: 1, name: "MASA_P1_WP2"}
+  # --- Parkur-2: Engelli Takip ---
+  - {lat: 36.8501617, lon: 28.2700898, parkur: 2, name: "MASA_P2_WP1"}
+  - {lat: 36.8501976, lon: 28.2700449, parkur: 2, name: "MASA_P2_WP2"}
+  # --- Parkur-3: Kamikaze (hedef duba) ---
+  - {lat: 36.8501797, lon: 28.2700000, parkur: 3, name: "MASA_P3_target"}
+
+arrival_radius_m: 3.0
+dwell_time_s: 1.0
+cruise_velocity_mps: 1.0

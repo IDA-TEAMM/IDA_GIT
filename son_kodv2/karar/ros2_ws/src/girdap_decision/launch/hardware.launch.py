@@ -30,7 +30,7 @@ import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import AnyLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -324,6 +324,28 @@ def generate_launch_description() -> LaunchDescription:
             "with_drivers", default_value="false",
             description="Sensör sürücülerini başlat: Livox + OAK-D + kamera kaydı",
         ),
+        # with_mavros — masa testi (Pixhawk yok/bağlı değil). false: gerçek
+        # mavros yerine mevcut mock_sensors node'u (/mavros/imu/data,
+        # /mavros/global_position/global, /mavros/state) karar yığınını besler
+        # — fsm/mission_manager/planning/telemetry uçtan uca canlı test edilir.
+        DeclareLaunchArgument(
+            "with_mavros", default_value="true",
+            description="false: gerçek MAVROS yerine mock_sensors (masa testi)",
+        ),
+        # fsm.start_on_mode / fsm.start_on_arm_in_mode — hardware.yaml
+        # varsayılanını launch-arg'dan override edebilmek için (masa testinde
+        # mock_sensors sabit armed+GUIDED yayınlar, hardware.yaml'a dokunmadan
+        # start_on_arm_in_mode:=true ile görevi başlatabilmek için gerekli).
+        DeclareLaunchArgument(
+            "fsm.start_on_mode", default_value=str(hw["fsm"]["start_on_mode"]),
+            description="BEKLEMEDE'de bu moda geçiş görevi başlatır",
+        ),
+        DeclareLaunchArgument(
+            "fsm.start_on_arm_in_mode",
+            default_value=_bool_default(hw["fsm"]["start_on_arm_in_mode"]),
+            description="true: BEKLEMEDE'ye zaten start_on_mode'dayken ARM "
+                        "girildiğinde de (kenar yok) görev başlar (F-V.6)",
+        ),
     ]
 
     # --- MAVROS: ArduRover apm.launch (XML) include ---
@@ -333,6 +355,16 @@ def generate_launch_description() -> LaunchDescription:
     mavros = IncludeLaunchDescription(
         AnyLaunchDescriptionSource(mavros_apm),
         launch_arguments={"fcu_url": fcu_url, "gcs_url": gcs_url}.items(),
+        condition=IfCondition(LaunchConfiguration("with_mavros")),
+    )
+    # Masa testi (with_mavros:=false): gerçek Pixhawk/MAVROS yok, mevcut
+    # mock_sensors node'u aynı topic'leri (imu/gps/state) sentetik veriyle
+    # besler — karar yığını (fsm/mission_manager/planning/telemetry/bridge)
+    # donanımsız uçtan uca çalıştırılabilir.
+    mock_sensors_node = Node(
+        package=_PKG, executable="mock_sensors", name="mock_sensors",
+        condition=UnlessCondition(LaunchConfiguration("with_mavros")),
+        output="screen",
     )
 
     # --- Static TF (kalibre edilmemiş; mekanik ekip gerçek ölçümle günceller) ---
@@ -409,9 +441,13 @@ def generate_launch_description() -> LaunchDescription:
         {
             "use_sim_time": use_sim_time,
             "mission_file": mission_path,
-            "start_on_mode": str(hw["fsm"]["start_on_mode"]),
-            # F-V.6: AUTO'dayken arm edilirse de görev başlasın (video).
-            "start_on_arm_in_mode": bool(hw["fsm"]["start_on_arm_in_mode"]),
+            "start_on_mode": LaunchConfiguration("fsm.start_on_mode"),
+            # F-V.6: AUTO'dayken arm edilirse de görev başlasın (video);
+            # masa testinde (with_mavros:=false) mock_sensors sabit
+            # armed+GUIDED yayınladığından kenar oluşmaz — true gerekir.
+            "start_on_arm_in_mode": ParameterValue(
+                LaunchConfiguration("fsm.start_on_arm_in_mode"), value_type=bool
+            ),
         },
     ]
     # telemetry: B2 Ekran-2 kaynağı (video: fc = FC servo çıkışı, yarışma:
@@ -530,8 +566,11 @@ def generate_launch_description() -> LaunchDescription:
                 "[hardware] ArduRover — fcu_url=", fcu_url,
                 " | algorithm: isam2=", use_isam2, " rrt=", use_rrt,
                 " | onboard_camera=", LaunchConfiguration("use_onboard_camera"),
+                " | with_mavros=", LaunchConfiguration("with_mavros"),
+                " (false=masa testi, mock_sensors besler)",
             ]),
             mavros,
+            mock_sensors_node,
             *static_tfs,
             # =============================================================== #
             # SENSOR DRIVERS: added by hardware teammate
