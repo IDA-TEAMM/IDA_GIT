@@ -55,13 +55,43 @@ class WaypointInfo:
     is_last_of_parkur: bool
 
 
+def _validate_monotonic(parkur_labels: List[int]) -> None:
+    """F-P.9 (robustness taraması, 2026-07-15): parkur bloklarının GERÇEKTEN
+    contiguous (monoton) olduğunu doğrular.
+
+    Öncesinde bu varsayım hiç kontrol edilmiyordu — `last_index[parkur] = i`
+    her tekrarda SESSİZCE ezilir, ör. bir data-entry hatasıyla `[1,1,2,1,3]`
+    girilirse `last_index_of_parkur[1]` gerçek son parkur-1 waypoint'i (idx 0)
+    değil, YANLIŞLIKLA idx 2 olur — parkur geçişi erken/geç/hiç tetiklenmez,
+    hiçbir hata basılmadan. Görev dosyasındaki tek bir satır hatası sessizce
+    yanlış parkur davranışına yol açabilirdi.
+    """
+    seen_and_closed: set[int] = set()
+    prev: int | None = None
+    for i, parkur in enumerate(parkur_labels):
+        if parkur != prev:
+            if parkur in seen_and_closed:
+                raise ValueError(
+                    f"parkur etiketleri contiguous değil: parkur {parkur} "
+                    f"index {i}'de TEKRAR görünüyor (daha önce başka bir "
+                    "parkur bloğu araya girmiş) — görev dosyasında veri "
+                    "girişi hatası olabilir"
+                )
+            if prev is not None:
+                seen_and_closed.add(prev)
+            prev = parkur
+
+
 def build_waypoint_infos(parkur_labels: List[int]) -> List[WaypointInfo]:
     """Parkur etiketleri listesinden her waypoint için WaypointInfo üretir.
 
     `is_last_of_parkur`: o parkurun listede EN SON göründüğü index. Waypoint'ler
     parkur sırasına göre monoton dizilir (contiguous blok) varsayımı — Şartname
     sıralı geçiş; bu yüzden "son görülen index" = "o parkurun son waypoint'i".
+    F-P.9: bu varsayım artık `_validate_monotonic` ile DOĞRULANIR (ValueError
+    fırlatır) — sessizce yanlış hesaplama yerine.
     """
+    _validate_monotonic(parkur_labels)
     last_index: Dict[int, int] = {}
     for i, parkur in enumerate(parkur_labels):
         last_index[parkur] = i

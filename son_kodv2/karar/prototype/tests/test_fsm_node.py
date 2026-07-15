@@ -138,6 +138,17 @@ def test_waypoint_reached_no_spurious_p1_to_p2_when_no_parkur2(ros_context, tmp_
         node.destroy_node()
 
 
+def test_fp9_bozuk_parkur_dosyasi_node_coker_mi(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """F-P.9: contiguous-olmayan parkur etiketleri (veri girişi hatası)
+    ParkurTransitionLogic'te ValueError fırlatır — fsm_node bunu yakalayıp
+    tek parkur GÜVENLİ moduna düşmeli, ÇÖKMEMELİ."""
+    node = _make_node(ros_context, tmp_path, labels=[1, 1, 2, 1, 3])
+    try:
+        assert node._parkur.last_index_of_parkur == {}   # güvenli tek-parkur
+    finally:
+        node.destroy_node()
+
+
 def test_fp8_fc_coklu_parkur_uyarisi_coker_mi(ros_context, tmp_path) -> None:  # noqa: ANN001
     """F-P.8 (robustness taraması, 2026-07-15): mission_source=fc + çoklu
     parkur içeren mission_file kombinasyonu KRİTİK bir senkron riski (FC

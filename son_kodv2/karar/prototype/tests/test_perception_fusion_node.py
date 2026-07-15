@@ -172,6 +172,65 @@ def test_classified_obstacles_frame_id_is_base_link(node) -> None:  # noqa: ANN0
     assert result.header.frame_id == "base_link"
 
 
+def test_fp10_sifir_image_width_node_coker_mi(ros_context) -> None:  # noqa: ANN001
+    """F-P.10 (robustness taraması, 2026-07-15): camera_image_width_px=0
+    (config/launch-arg yazım hatası) _to_camera_detection'da ZeroDivisionError
+    fırlatırdı; _on_sync'te try/except yoktu → node KALICI ÖLÜRDÜ. Düzeltme:
+    bozuk senkron atlanır, node bir SONRAKİ (bu kez lidar-only, kamera tespiti
+    olmadan) senkrona doğru yanıt vermeye devam etmelidir."""
+    from rclpy.parameter import Parameter
+
+    node = girdap.PerceptionFusionNode(
+        parameter_overrides=[
+            Parameter("camera_image_width_px", Parameter.Type.INTEGER, 0),
+        ]
+    )
+    try:
+        rng = np.random.default_rng(42)
+        lidar, camera = scene_fusion_matched(rng)
+
+        received: list[Detection3DArray] = []
+        node.create_subscription(
+            Detection3DArray, "/perception/classified_obstacles",
+            received.append, 10,
+        )
+        pose_pub = node.create_publisher(PoseArray, "/perception/obstacle_map", 10)
+        det_pub = node.create_publisher(Detection2DArray, "/perception/buoys", 10)
+
+        deadline = time.monotonic() + 5.0
+        while (
+            pose_pub.get_subscription_count() < 1
+            or det_pub.get_subscription_count() < 1
+        ):
+            rclpy.spin_once(node, timeout_sec=0.1)
+            assert time.monotonic() < deadline, "DDS discovery zamanında tamamlanmadı"
+
+        # Kamera tespiti VARKEN (bölme tetiklenir) birkaç kez bas — node
+        # çökerse sonraki spin_once zaten patlar.
+        bad = _detection2d_array(camera)              # image_w=0 ile bölünür
+        for _ in range(5):
+            pose_pub.publish(_pose_array(lidar))
+            det_pub.publish(bad)
+            rclpy.spin_once(node, timeout_sec=0.1)
+
+        # Node hâlâ ayakta mı? Kamera tespiti OLMADAN (bölme hiç tetiklenmez)
+        # bir sync'e normal yanıt vermeli.
+        empty_det = Detection2DArray()
+        empty_det.header.frame_id = "oak_frame"
+        deadline = time.monotonic() + 5.0
+        while not received:
+            pose_pub.publish(_pose_array(lidar))
+            det_pub.publish(empty_det)
+            rclpy.spin_once(node, timeout_sec=0.1)
+            assert time.monotonic() < deadline, (
+                "bozuk senkrondan sonra node yanıt vermiyor — muhtemelen "
+                "çökmüş (F-P.10)"
+            )
+        assert len(received[0].detections) == len(lidar)
+    finally:
+        node.destroy_node()
+
+
 def test_classified_obstacles_stamp_matches_lidar_source(node) -> None:  # noqa: ANN001
     rng = np.random.default_rng(42)
     lidar, camera = scene_fusion_matched(rng)

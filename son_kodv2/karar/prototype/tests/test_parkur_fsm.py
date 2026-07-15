@@ -39,6 +39,21 @@ def test_build_waypoint_infos_uneven_distribution() -> None:
     assert last == {1: 2, 2: 3, 3: 5}
 
 
+def test_fp9_contiguous_olmayan_etiketler_reddedilir() -> None:
+    """F-P.9 (robustness taraması, 2026-07-15): [1,1,2,1,3] gibi bir veri
+    girişi hatası (parkur-1 parkur-2'den SONRA tekrar görünüyor) öncesinde
+    SESSİZCE yanlış last_index hesaplardı (last_index[1] gerçek son parkur-1
+    yerine 2. tekrarın index'i olurdu). Artık ValueError fırlatır."""
+    with pytest.raises(ValueError, match="contiguous değil"):
+        build_waypoint_infos([1, 1, 2, 1, 3])
+
+
+def test_fp9_contiguous_etiketler_kabul_edilir() -> None:
+    """Normal (monoton) diziler regresyon olmadan çalışmaya devam etmeli."""
+    build_waypoint_infos([1, 1, 2, 2, 3])          # exception atmamalı
+    build_waypoint_infos([1, 1, 1, 2, 3, 3])       # uneven de normal
+
+
 def test_last_index_of_parkur_property() -> None:
     logic = ParkurTransitionLogic(_COMP_LABELS)
     assert logic.last_index_of_parkur == {1: 1, 2: 3, 3: 4}

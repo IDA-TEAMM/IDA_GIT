@@ -247,7 +247,17 @@ class FSMNode(Node):
                 "tabanlı) YANLIŞ ZAMANDA tetiklenebilir ya da HİÇ tetiklenmez "
                 "— yarışma öncesi QGC görevini bu dosyayla EL İLE doğrula."
             )
-        return ParkurTransitionLogic(labels)
+        # F-P.9: ParkurTransitionLogic artık contiguous-olmayan (veri girişi
+        # hatası) etiketlerde ValueError fırlatır — burada da yakalanır,
+        # tek parkur güvenli moduna düşülür (node çökmesin).
+        try:
+            return ParkurTransitionLogic(labels)
+        except ValueError as exc:
+            self.get_logger().error(
+                f"parkur etiketleri geçersiz ({path}): {exc} — tek parkur "
+                "GÜVENLİ moduna düşüldü (görev dosyasını düzelt)"
+            )
+            return ParkurTransitionLogic([])
 
     # ----- subscriber callback'leri -----
 

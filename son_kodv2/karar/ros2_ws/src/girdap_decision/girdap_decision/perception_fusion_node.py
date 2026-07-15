@@ -62,8 +62,10 @@ from prototype.perception.fusion import (
 class PerceptionFusionNode(Node):
     """PoseArray + Detection2DArray (sync) → Detection3DArray (bearing fusion)."""
 
-    def __init__(self) -> None:
-        super().__init__("perception_fusion_node")
+    def __init__(self, **node_kwargs) -> None:
+        # node_kwargs → parameter_overrides passthrough (test enjeksiyonu,
+        # diğer node'larla tutarlı — F-P.10 testi bunu gerektirir).
+        super().__init__("perception_fusion_node", **node_kwargs)
 
         # --- Parametreler (config/hardware.yaml perception.fusion bloğu) ---
         self.declare_parameter("bearing_tolerance_rad", 0.15)
@@ -143,18 +145,30 @@ class PerceptionFusionNode(Node):
     # ------------------------------------------------------------- callback
 
     def _on_sync(self, poses: PoseArray, detections: Detection2DArray) -> None:
-        self._n_sync += 1
-        lidar_list = [
-            LidarDetection(x=pose.position.x, y=pose.position.y,
-                            radius=abs(pose.orientation.z))
-            for pose in poses.poses
-        ]
-        camera_list = [
-            cam
-            for det in detections.detections
-            if (cam := self._to_camera_detection(det)) is not None
-        ]
-        fused = associate(lidar_list, camera_list, self._cfg)
+        # F-P.10 (robustness taraması, 2026-07-15): try/except yoktu — ör.
+        # camera_image_width/height_px yanlışlıkla 0 verilirse (config/
+        # launch-arg yazım hatası) _to_camera_detection'daki bölme
+        # ZeroDivisionError fırlatır, callback'ten sızıp node'u KALICI
+        # öldürürdü — /perception/classified_obstacles sessizce durur.
+        try:
+            self._n_sync += 1
+            lidar_list = [
+                LidarDetection(x=pose.position.x, y=pose.position.y,
+                                radius=abs(pose.orientation.z))
+                for pose in poses.poses
+            ]
+            camera_list = [
+                cam
+                for det in detections.detections
+                if (cam := self._to_camera_detection(det)) is not None
+            ]
+            fused = associate(lidar_list, camera_list, self._cfg)
+        except Exception as exc:
+            self.get_logger().error(
+                f"füzyon başarısız, bu senkron atlandı: {exc!r}",
+                throttle_duration_sec=5.0,
+            )
+            return
 
         out = Detection3DArray()
         out.header.stamp = poses.header.stamp     # LiDAR referans stamp'i
