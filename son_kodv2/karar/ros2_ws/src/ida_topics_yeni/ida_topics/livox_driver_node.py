@@ -34,6 +34,7 @@ from std_msgs.msg import Header
 import socket
 import struct
 import threading
+import time
 import numpy as np
 import math
 
@@ -79,6 +80,14 @@ class LivoxDriverNode(Node):
         self.point_buffer = []
         self.buffer_lock  = threading.Lock()
 
+        # F-P.12 (robustness taraması, 2026-07-15): tam bağlantı kaybı
+        # (Livox kapalı/kablo çıkmış/yanlış IP) öncesinde yalnız `debug`
+        # seviyesinde loglanıyordu — varsayılan log seviyesinde (INFO/WARN)
+        # görünmez, operatör sensörün "boot ediyor" mu yoksa "tamamen ölü" mü
+        # olduğunu ayırt edemezdi. Uzun sessizlikte WARN'a yükseltilir.
+        self._last_packet_t = time.monotonic()
+        self._link_dead_warned = False
+
         # ── Thread'ler ────────────────────────────────────────────────────────
         self.recv_thread = threading.Thread(
             target=self._recv_loop, daemon=True)
@@ -108,13 +117,16 @@ class LivoxDriverNode(Node):
         """UDP paketlerini sürekli al."""
         while self.running:
             if self.sock is None:
-                import time
                 time.sleep(1.0)
                 self._init_socket()
                 continue
 
             try:
                 data, addr = self.sock.recvfrom(65535)
+                self._last_packet_t = time.monotonic()
+                if self._link_dead_warned:
+                    self._link_dead_warned = False
+                    self.get_logger().info('LiDAR UDP veri akışı geri geldi')
                 points = self._parse_packet(data)
                 if points:
                     with self.buffer_lock:
@@ -127,6 +139,18 @@ class LivoxDriverNode(Node):
                 self.get_logger().debug(
                     'LiDAR veri bekliyor...',
                     throttle_duration_sec=5.0)
+                # F-P.12: 10 s+ tam sessizlik → görünür WARN (bir kez, geri
+                # gelene dek tekrar basılmaz).
+                if (
+                    not self._link_dead_warned
+                    and time.monotonic() - self._last_packet_t > 10.0
+                ):
+                    self._link_dead_warned = True
+                    self.get_logger().warn(
+                        'LiDAR UDP bağlantısı 10s+ sessiz — Livox kapalı/'
+                        'kablo çıkmış/yanlış IP olabilir (host_ip/data_port '
+                        'kontrol et)'
+                    )
             except Exception as e:
                 self.get_logger().error(
                     f'Alım hatası: {e}',

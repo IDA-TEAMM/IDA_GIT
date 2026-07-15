@@ -68,6 +68,17 @@ class KameraKayitNode(Node):
             self.video_path, fourcc, self.fps,
             (self.width, self.height))
 
+        # F-P.11 (robustness taraması, 2026-07-15): VideoWriter'ın açılıp
+        # açılmadığı hiç kontrol edilmiyordu — codec (mp4v) kullanılamazsa ya
+        # da output_dir yazılamazsa write() sessizce hiçbir şey yapmaz,
+        # Dosya-1 (Şartname 4.2, zorunlu) görev bitene kadar fark edilmeyen
+        # BOŞ bir mp4 olurdu.
+        if not self.writer.isOpened():
+            self.get_logger().error(
+                f'VideoWriter AÇILAMADI ({self.video_path}, codec=mp4v) — '
+                'Dosya-1 kaydı BAŞLAMAYACAK, kodek/dizin izinlerini kontrol et'
+            )
+
         self.get_logger().info(f'Kamera kaydı başlatıldı: {self.video_path}')
 
         # ── QoS ───────────────────────────────────────────────────────────────
@@ -136,52 +147,62 @@ class KameraKayitNode(Node):
 
     def _yaz(self):
         """Frame'i bbox overlay ile video'ya yaz."""
-        if self.latest_frame is None:
-            # Kamera görüntüsü yoksa siyah frame yaz
-            frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-            cv2.putText(frame, 'Kamera Bekleniyor...', (20, 50),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
-        else:
-            frame = self.latest_frame.copy()
-            # Boyut uyumu
-            if frame.shape[:2] != (self.height, self.width):
-                frame = cv2.resize(frame, (self.width, self.height))
+        # F-P.11 (robustness taraması, 2026-07-15): bu timer callback'inde
+        # try/except YOKTU (_image_cb'de var) — bbox alanlarında NaN/inf
+        # (int(float('nan')) → ValueError) ya da bozuk bir frame boyutu
+        # (cv2.resize hatası) node'u KALICI öldürürdü, Şartname 4.2 zorunlu
+        # Dosya-1 kaydı mp4 tamamlanmadan sessizce dururdu.
+        try:
+            if self.latest_frame is None:
+                # Kamera görüntüsü yoksa siyah frame yaz
+                frame = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+                cv2.putText(frame, 'Kamera Bekleniyor...', (20, 50),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+            else:
+                frame = self.latest_frame.copy()
+                # Boyut uyumu
+                if frame.shape[:2] != (self.height, self.width):
+                    frame = cv2.resize(frame, (self.width, self.height))
 
-        # ── Turuncu duba bbox'ları ─────────────────────────────────────────
-        for det in self.orange_detections:
-            cx = int(det.bbox.center.position.x)
-            cy = int(det.bbox.center.position.y)
-            w  = int(det.bbox.size_x)
-            h  = int(det.bbox.size_y)
-            x1, y1 = cx - w//2, cy - h//2
-            x2, y2 = cx + w//2, cy + h//2
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 127, 255), 2)
-            cv2.putText(frame, 'TURUNCU DUBA', (x1, y1-5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 127, 255), 1)
+            # ── Turuncu duba bbox'ları ─────────────────────────────────────
+            for det in self.orange_detections:
+                cx = int(det.bbox.center.position.x)
+                cy = int(det.bbox.center.position.y)
+                w  = int(det.bbox.size_x)
+                h  = int(det.bbox.size_y)
+                x1, y1 = cx - w//2, cy - h//2
+                x2, y2 = cx + w//2, cy + h//2
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 127, 255), 2)
+                cv2.putText(frame, 'TURUNCU DUBA', (x1, y1-5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 127, 255), 1)
 
-        # ── Sarı duba bbox'ları ────────────────────────────────────────────
-        for det in self.yellow_detections:
-            cx = int(det.bbox.center.position.x)
-            cy = int(det.bbox.center.position.y)
-            w  = int(det.bbox.size_x)
-            h  = int(det.bbox.size_y)
-            x1, y1 = cx - w//2, cy - h//2
-            x2, y2 = cx + w//2, cy + h//2
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
-            cv2.putText(frame, 'SARI DUBA', (x1, y1-5),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+            # ── Sarı duba bbox'ları ────────────────────────────────────────
+            for det in self.yellow_detections:
+                cx = int(det.bbox.center.position.x)
+                cy = int(det.bbox.center.position.y)
+                w  = int(det.bbox.size_x)
+                h  = int(det.bbox.size_y)
+                x1, y1 = cx - w//2, cy - h//2
+                x2, y2 = cx + w//2, cy + h//2
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
+                cv2.putText(frame, 'SARI DUBA', (x1, y1-5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
-        # ── Zaman damgası overlay ─────────────────────────────────────────
-        zaman = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        cv2.putText(frame, f'IDA/Girdap USV | {zaman}', (10, self.height-10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            # ── Zaman damgası overlay ────────────────────────────────────────
+            zaman = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            cv2.putText(frame, f'IDA/Girdap USV | {zaman}', (10, self.height-10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
-        # ── Frame sayacı ──────────────────────────────────────────────────
-        self.frame_count += 1
-        cv2.putText(frame, f'Frame: {self.frame_count}', (10, 25),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+            # ── Frame sayacı ─────────────────────────────────────────────────
+            self.frame_count += 1
+            cv2.putText(frame, f'Frame: {self.frame_count}', (10, 25),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
 
-        self.writer.write(frame)
+            self.writer.write(frame)
+        except Exception as e:
+            self.get_logger().error(
+                f'Video yazma hatası, bu frame atlandı: {e}',
+                throttle_duration_sec=5.0)
 
     def destroy_node(self):
         """Node kapatılırken video'yu kaydet."""

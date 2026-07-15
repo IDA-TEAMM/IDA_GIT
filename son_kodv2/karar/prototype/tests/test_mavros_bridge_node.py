@@ -404,3 +404,39 @@ def test_fs4_manual_override_needs_mode_change_bastirir(ros_context) -> None:  #
         assert n._bridge.needs_mode_change() is True   # override kalkınca eski hâl
     finally:
         n.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# F-P.15 (robustness taraması, 2026-07-15) — sıkışmış set_mode isteği
+# --------------------------------------------------------------------------- #
+
+
+def test_fp15_sikismis_mode_istegi_zaman_asimiyla_kurtarir(ros_context) -> None:  # noqa: ANN001
+    """_mode_req_pending yalnız /mavros/set_mode'un done-callback'inde
+    temizlenirdi — future hiç sonuçlanmazsa (mavros restart/hang) bayrak
+    SONSUZA DEK True kalır, _maybe_auto_guided() bir daha GUIDED istemezdi.
+    Artık `mode_req_timeout_s` sonra sıkışmış sayılıp sıfırlanır."""
+    n = girdap.MavrosBridgeNode()
+    try:
+        t = {"now": 0.0}
+        n._now = lambda: t["now"]
+
+        # İstek "gönderildi" ama callback HİÇ gelmedi (future asılı kaldı).
+        n._mode_req_pending = True
+        n._mode_req_sent_t = 0.0
+
+        t["now"] = 2.0                            # timeout (5.0s) içinde
+        assert n._mode_req_stuck() is False, "erken zaman aşımı tetiklendi"
+
+        t["now"] = 6.0                            # 5.0s eşiği aşıldı
+        assert n._mode_req_stuck() is True, (
+            "sıkışmış set_mode isteği süresiz beklemede kalıyor (F-P.15)"
+        )
+
+        # _maybe_auto_guided çağrısı bayrağı temizlemeli (yeniden deneme açılsın).
+        n._maybe_auto_guided()
+        assert n._mode_req_pending is False, (
+            "sıkışmış istek _maybe_auto_guided sonrası hâlâ True (F-P.15)"
+        )
+    finally:
+        n.destroy_node()

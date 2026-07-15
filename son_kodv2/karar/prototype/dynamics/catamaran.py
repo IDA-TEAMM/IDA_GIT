@@ -78,6 +78,28 @@ class CatamaranParams:
     max_thrust: float            # N, tek thruster doygunluk sınırı
     wave: WaveDisturbance = field(default_factory=WaveDisturbance)
 
+    def __post_init__(self) -> None:
+        """F-P.18 (robustness taraması, 2026-07-15): mass/inertia_z=0 (ya da
+        negatif — configs/dynamics.yaml'da bir yazım hatası) `derivatives()`'ta
+        SESSİZCE ZeroDivisionError yerine numpy semantiğiyle inf/nan üretir
+        (hiç exception fırlatmadan!) — MPPI bunu softmax'ta yakalayıp uniform
+        ağırlığa düşer (mppi.py), ama bu gerçek bozukluğu MASKELER, operatöre
+        hiçbir uyarı vermez. thruster_spacing<=0 sessizce SIFIR yaw torku
+        (direksiyon yetkisi tamamen kaybolur) demek — aynı derecede tehlikeli.
+        Şimdi konfigürasyon yüklenirken ANINDA net bir hata verir.
+        """
+        if self.mass <= 0.0:
+            raise ValueError(f"CatamaranParams.mass pozitif olmalı, geldi: {self.mass}")
+        if self.inertia_z <= 0.0:
+            raise ValueError(
+                f"CatamaranParams.inertia_z pozitif olmalı, geldi: {self.inertia_z}"
+            )
+        if self.thruster_spacing <= 0.0:
+            raise ValueError(
+                "CatamaranParams.thruster_spacing pozitif olmalı (0 → yaw "
+                f"torku tamamen kaybolur), geldi: {self.thruster_spacing}"
+            )
+
     @classmethod
     def from_yaml(
         cls, path: Union[Path, str] = _DEFAULT_CONFIG_PATH

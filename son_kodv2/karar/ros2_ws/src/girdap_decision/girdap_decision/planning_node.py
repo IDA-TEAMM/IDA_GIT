@@ -66,7 +66,14 @@ class PlanningNode(Node):
         super().__init__("planning_node", **node_kwargs)
 
         # --- Parametreler ---
-        self.declare_parameter("control_rate_hz", 20.0)
+        # F-P.13 (robustness taraması, 2026-07-15): varsayılan buradaydı
+        # 20.0 iken params.yaml AÇIKÇA 10.0'a düşürüyordu ("20 Hz senkron
+        # step'i tutamaz, executor birikir, cmd_vel gecikir/titrer →
+        # istemsiz hareket" — md 3.3.1.1 tehlikesi). params.yaml
+        # uygulanmadan (elle `ros2 run`, yanlış params yolu) standalone
+        # koşulursa node SESSİZCE güvensiz 20 Hz'e düşerdi — kod
+        # varsayılanı da güvenli değerle hizalandı.
+        self.declare_parameter("control_rate_hz", 10.0)
         self.declare_parameter("bounds_x", [0.0, 200.0])
         self.declare_parameter("bounds_y", [0.0, 200.0])
         self.declare_parameter("replan_proximity", 2.0)     # m

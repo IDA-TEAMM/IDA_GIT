@@ -130,6 +130,15 @@ class MavrosBridgeNode(Node):
         self._killed = False
         self._was_armed = False
         self._mode_req_pending = False
+        # F-P.15 (robustness taraması, 2026-07-15): _mode_req_pending
+        # yalnız /mavros/set_mode'un done-callback'inde (_on_mode_result)
+        # temizleniyordu — future hiç sonuçlanmazsa (mavros restart/hang
+        # sırasında servis çağrısı askıda kalırsa, ki EKF failsafe→HOLD
+        # olayında tam bu yaşandı) bayrak SONSUZA DEK True kalır,
+        # _maybe_auto_guided() bir daha ASLA GUIDED istemez — araç kalıcı
+        # olarak otonomi dışında sıkışır. Zaman aşımıyla kendini kurtarır.
+        self._mode_req_sent_t: float | None = None
+        self._mode_req_timeout_s = 5.0
         self._arm_attempts = 0
         self._arm_retry_timer = None
 
@@ -295,8 +304,21 @@ class MavrosBridgeNode(Node):
                 f"set_stream_rate çağrısı başarısız: {exc} — yeniden denenecek"
             )
 
+    def _mode_req_stuck(self) -> bool:
+        """F-P.15: bekleyen bir set_mode isteği timeout'u aştıysa (future
+        hiç sonuçlanmadı) True — yeniden denemeye izin ver."""
+        if not self._mode_req_pending or self._mode_req_sent_t is None:
+            return False
+        return (self._now() - self._mode_req_sent_t) > self._mode_req_timeout_s
+
     def _maybe_auto_guided(self) -> None:
         """Görev aktif + bağlı + mod hedeften farklıysa GUIDED iste (F14.3)."""
+        if self._mode_req_stuck():
+            self.get_logger().warn(
+                f"/mavros/set_mode isteği {self._mode_req_timeout_s:.0f}s'dir "
+                "yanıtsız — sıkışmış sayılıp yeniden denenecek (F-P.15)"
+            )
+            self._mode_req_pending = False
         if (
             self._auto_guided
             and self._bridge.needs_mode_change()
@@ -352,6 +374,7 @@ class MavrosBridgeNode(Node):
         req.base_mode = 0
         req.custom_mode = self._bridge.config.target_mode
         self._mode_req_pending = True
+        self._mode_req_sent_t = self._now()          # F-P.15: zaman aşımı saati
         fut = self._cli_mode.call_async(req)
         fut.add_done_callback(self._on_mode_result)
 

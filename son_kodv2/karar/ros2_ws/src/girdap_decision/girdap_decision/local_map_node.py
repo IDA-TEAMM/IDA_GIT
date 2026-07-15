@@ -32,12 +32,25 @@ from prototype.mapping.local_map import LocalMapDumper
 class LocalMapNode(Node):
     """OccupancyGrid → grayscale PNG serisi (Şartname 4.2 Dosya-3)."""
 
-    def __init__(self) -> None:
-        super().__init__("local_map_node")
+    def __init__(self, **node_kwargs) -> None:
+        # node_kwargs → parameter_overrides passthrough (test enjeksiyonu,
+        # diğer node'larla tutarlı — F-P.17 testi bunu gerektirir).
+        super().__init__("local_map_node", **node_kwargs)
 
         # --- Parametreler ---
         self.declare_parameter("dump_rate_hz", 1.0)     # ≥1 Hz şartname garantisi
         self.declare_parameter("output_dir", "")        # boş → ~/girdap_logs/...
+        # F-P.17 (robustness taraması, 2026-07-15): /girdap/map/local kesilirse
+        # (planning_node çökerse) _on_tick yalnız `_last is None` kontrolü
+        # yapıyordu — HİÇ tazelik kontrolü yoktu. Aynı donmuş kareyi sonsuza
+        # dek yeni dosya adlarıyla yazmaya devam ederdi: Dosya-3 (Şartname 4.2,
+        # zorunlu, 5 ceza puanı) canlı gibi görünür ama gerçekte donmuş olurdu.
+        # Frame formatı DEĞİŞTİRİLMEZ (teslim sözleşmesi) — yalnız operatörü
+        # sesli uyarır.
+        self.declare_parameter("map_timeout_s", 3.0)
+        self._map_timeout = float(self.get_parameter("map_timeout_s").value)
+        self._last_map_t: Optional[float] = None
+        self._stale_warned = False
 
         out = str(self.get_parameter("output_dir").value) or None
         self._dumper = LocalMapDumper(base_dir=out)
@@ -60,10 +73,33 @@ class LocalMapNode(Node):
 
     def _on_map(self, msg: OccupancyGrid) -> None:
         self._last = msg
+        self._last_map_t = self._now()
+        if self._stale_warned:
+            self._stale_warned = False
+            self.get_logger().info("/girdap/map/local yayını geri geldi")
+
+    def _now(self) -> float:
+        return self.get_clock().now().nanoseconds * 1e-9
+
+    def _map_stale(self) -> bool:
+        """F-P.17: son harita `map_timeout_s`'ten eski mi? Hiç gelmediyse
+        False (boot gürültüsü, diğer F-P bekçileriyle aynı ilke)."""
+        if self._map_timeout <= 0.0 or self._last_map_t is None:
+            return False
+        return (self._now() - self._last_map_t) > self._map_timeout
 
     def _on_tick(self) -> None:
         if self._last is None:                          # henüz harita gelmedi
             return
+        if self._map_stale():
+            if not self._stale_warned:
+                self._stale_warned = True
+                age = self._now() - (self._last_map_t or self._now())
+                self.get_logger().error(
+                    f"/girdap/map/local {age:.1f}s'dir gelmiyor — Dosya-3 "
+                    "AYNI DONMUŞ kareyi yazmaya devam ediyor (F-P.17: "
+                    "planning_node'u kontrol et)"
+                )
         m = self._last
         try:
             path = self._dumper.write_frame(

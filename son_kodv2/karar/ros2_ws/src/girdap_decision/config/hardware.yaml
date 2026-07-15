@@ -64,6 +64,17 @@ bridge:
   # telemetri radyosu ayrı porttur (SR1/SR2) — QGC hattına yük BİNMEZ.
   # Boot provasında ÖLÇÜLECEK: topic hz + tegrastats CPU + stamp jitter.
   stream_rate_hz: 10
+  # F-P.14 (robustness taraması, 2026-07-15): RC kill/manuel-override
+  # kanal/eşikleri öncesinde YALNIZ mavros_bridge_node.py'de hardcoded
+  # varsayılandı — buraya (ve hardware.launch CLI'sine) hiç bağlanmamıştı.
+  # RC alıcısının kanal kablolaması yarışma günü değişirse kod
+  # değiştirip yeniden derlemek gerekirdi. Kod varsayılanlarıyla AYNI:
+  # kill=kanal 8 (0-indeksli 7), PWM<1500 → KILL; manuel=kanal 5
+  # (0-indeksli 4), PWM>1700 → manuel override.
+  rc_kill_channel: 7
+  rc_kill_threshold_pwm: 1500
+  rc_manual_channel: 4
+  rc_manual_threshold_pwm: 1700
 
 # --- B2: Ekran-2 kaynağı (md 3.3.1.1) ---
 # AUTO'da MPPI cmd_vel basmaz → grafikte MPPI thrust'ını göstermek YANILTICI.

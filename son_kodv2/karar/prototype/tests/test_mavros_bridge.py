@@ -234,6 +234,22 @@ def test_state_accessors() -> None:
     assert b.seconds_since_update(3.5) == pytest.approx(0.5)
 
 
+def test_fp16_saat_gerisi_kaymasi_bayat_sayilir() -> None:
+    """F-P.16 (robustness taraması, 2026-07-15): `now` son state'ten daha
+    ESKİ bir zaman damgası taşırsa (saat geriye kaydı — NTP resync vb.)
+    öncesinde `max(0.0, ...)` bunu SESSİZCE "taze" (0 s) sayardı,
+    heartbeat_alive() yanlış-pozitif True dönebilirdi. Artık bayat (+∞)."""
+    b = _active_bridge()
+    b.update_state(10.0, connected=True, armed=True, guided=True, mode="GUIDED")
+    # now (5.0) son state zamanından (10.0) ESKİ — anormal, saat kaymış.
+    assert math.isinf(b.seconds_since_update(5.0)), (
+        "saat geriye kayması hâlâ 'taze' (0 s) sayılıyor (F-P.16)"
+    )
+    assert b.heartbeat_alive(5.0) is False, (
+        "saat kaymasında heartbeat_alive yanlışlıkla True dönüyor (F-P.16)"
+    )
+
+
 def test_custom_target_mode() -> None:
     b = MavrosBridge(MavrosBridgeConfig(target_mode="OFFBOARD"))
     b.update_state(0.0, connected=True, armed=True, guided=True, mode="OFFBOARD")

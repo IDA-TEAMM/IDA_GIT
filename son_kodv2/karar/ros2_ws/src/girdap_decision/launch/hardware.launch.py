@@ -59,6 +59,12 @@ _FSM_DEFAULTS: dict[str, tuple[object, type]] = {
 _BRIDGE_DEFAULTS: dict[str, tuple[object, type]] = {
     "auto_guided": (True, bool),
     "stream_rate_hz": (10, int),        # F-M.6: bağlantıda istenen akış hızı
+    # F-P.14: RC kill/manuel-override kanal/eşikleri artık CLI-override
+    # edilebilir (öncesinde yalnız node kaynağında hardcoded'du).
+    "rc_kill_channel": (7, int),
+    "rc_kill_threshold_pwm": (1500, int),
+    "rc_manual_channel": (4, int),
+    "rc_manual_threshold_pwm": (1700, int),
 }
 _TELEMETRY_DEFAULTS: dict[str, tuple[object, type]] = {
     "setpoint_source": ("girdap", str),
@@ -358,6 +364,29 @@ def generate_launch_description() -> LaunchDescription:
             description="true: mod hedefte değilse köprü otomatik GUIDED "
                         "talep eder (yarışma ŞART; video: false, FC AUTO sürer)",
         ),
+        # F-P.14: RC kill/manuel-override — sahada RC alıcısı kanal
+        # kablolaması değişirse kod değiştirip yeniden derlemeden CLI'dan
+        # ayarlanabilsin diye (öncesinde yalnız node kaynağında hardcoded).
+        DeclareLaunchArgument(
+            "bridge.rc_kill_channel",
+            default_value=str(hw["bridge"]["rc_kill_channel"]),
+            description="RC KILL kanalı (0-indeksli; varsayılan 7 = kanal 8)",
+        ),
+        DeclareLaunchArgument(
+            "bridge.rc_kill_threshold_pwm",
+            default_value=str(hw["bridge"]["rc_kill_threshold_pwm"]),
+            description="Bu PWM'in ALTI → KILL",
+        ),
+        DeclareLaunchArgument(
+            "bridge.rc_manual_channel",
+            default_value=str(hw["bridge"]["rc_manual_channel"]),
+            description="RC manuel-override kanalı (0-indeksli; varsayılan 4 = kanal 5)",
+        ),
+        DeclareLaunchArgument(
+            "bridge.rc_manual_threshold_pwm",
+            default_value=str(hw["bridge"]["rc_manual_threshold_pwm"]),
+            description="Bu PWM'in ÜSTÜ → manuel override",
+        ),
     ]
 
     # --- MAVROS: ArduRover apm.launch (XML) include ---
@@ -405,6 +434,19 @@ def generate_launch_description() -> LaunchDescription:
             ),
             # F-M.6: bağlantı kenarında FC akış hızı isteği (1 Hz sorunu).
             "stream_rate_hz": int(hw["bridge"]["stream_rate_hz"]),
+            # F-P.14: RC kill/manuel-override artık CLI-override edilebilir.
+            "rc_kill_channel": ParameterValue(
+                LaunchConfiguration("bridge.rc_kill_channel"), value_type=int
+            ),
+            "rc_kill_threshold_pwm": ParameterValue(
+                LaunchConfiguration("bridge.rc_kill_threshold_pwm"), value_type=int
+            ),
+            "rc_manual_channel": ParameterValue(
+                LaunchConfiguration("bridge.rc_manual_channel"), value_type=int
+            ),
+            "rc_manual_threshold_pwm": ParameterValue(
+                LaunchConfiguration("bridge.rc_manual_threshold_pwm"), value_type=int
+            ),
         },
     ]
     # fusion: algorithm.use_isam2 (video → MAVROS EKF pass-through).

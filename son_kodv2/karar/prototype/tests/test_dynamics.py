@@ -33,6 +33,43 @@ def _make_params(wave: WaveDisturbance) -> CatamaranParams:
     )
 
 
+def test_fp18_sifir_mass_reddedilir() -> None:
+    """F-P.18 (robustness taraması, 2026-07-15): mass<=0 (configs/dynamics.yaml
+    yazım hatası) öncesinde derivatives()'ta SESSİZCE inf/nan üretirdi —
+    artık __post_init__ anında net ValueError verir."""
+    with pytest.raises(ValueError, match="mass"):
+        CatamaranParams(
+            mass=0.0, inertia_z=5.0, Xu=-8.0, Yv=-12.0, Nr=-3.0,
+            thruster_spacing=0.596, max_thrust=30.0,
+        )
+
+
+def test_fp18_sifir_inertia_reddedilir() -> None:
+    with pytest.raises(ValueError, match="inertia_z"):
+        CatamaranParams(
+            mass=30.0, inertia_z=0.0, Xu=-8.0, Yv=-12.0, Nr=-3.0,
+            thruster_spacing=0.596, max_thrust=30.0,
+        )
+
+
+def test_fp18_sifir_thruster_spacing_reddedilir() -> None:
+    """thruster_spacing=0 → yaw torku tamamen kaybolur (direksiyon yetkisi
+    yok) — bu da sessizce geçmemeli."""
+    with pytest.raises(ValueError, match="thruster_spacing"):
+        CatamaranParams(
+            mass=30.0, inertia_z=5.0, Xu=-8.0, Yv=-12.0, Nr=-3.0,
+            thruster_spacing=0.0, max_thrust=30.0,
+        )
+
+
+def test_fp18_normal_degerler_kabul_edilir() -> None:
+    """Regresyon: normal (pozitif) değerler hâlâ sorunsuz kurulmalı."""
+    CatamaranParams(
+        mass=30.0, inertia_z=5.0, Xu=-8.0, Yv=-12.0, Nr=-3.0,
+        thruster_spacing=0.596, max_thrust=30.0,
+    )
+
+
 def test_duragan_arac_hareketsiz(model: CatamaranDynamics) -> None:
     """Sıfır kontrol → sıfır türev (durağan araç yerinde kalır)."""
     state = np.zeros(6)

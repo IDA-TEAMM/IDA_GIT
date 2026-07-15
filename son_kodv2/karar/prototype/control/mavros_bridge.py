@@ -255,10 +255,22 @@ class MavrosBridge:
     # ----- heartbeat -----
 
     def seconds_since_update(self, now: float) -> float:
-        """Son state'ten bu yana geçen süre; hiç state yoksa +∞."""
+        """Son state'ten bu yana geçen süre; hiç state yoksa +∞.
+
+        F-P.16 (robustness taraması, 2026-07-15): `now < son state zamanı`
+        (saat GERİYE kaydı — ör. Jetson boot sonrası NTP resync, pil
+        yedekli RTC yok) öncesinde `max(0.0, ...)` ile SESSİZCE "taze" (0 s)
+        sayılırdı → heartbeat_alive() yanlışlıkla True dönebilir, gerçekte
+        bayat olan bir bağlantı güvenlik ağını (heartbeat KILL) atlatırdı.
+        Anormal negatif delta artık +∞ (bayat) sayılır — belirsizlikte
+        fail-safe yön (KILL tetiklensin) tercih edilir.
+        """
         if self._last is None:
             return float("inf")
-        return max(0.0, float(now) - self._last.t)
+        delta = float(now) - self._last.t
+        if delta < 0.0:
+            return float("inf")
+        return delta
 
     def heartbeat_alive(self, now: float) -> bool:
         """Heartbeat zaman aşımına uğramadı mı?"""

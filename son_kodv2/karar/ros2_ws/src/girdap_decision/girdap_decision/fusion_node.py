@@ -60,7 +60,11 @@ class FusionNode(Node):
 
         # --- Parametreler (config/params.yaml ile override edilebilir) ---
         self.declare_parameter("use_isam2", True)       # false → video bypass
-        self.declare_parameter("publish_rate_hz", 50.0)
+        # F-P.13 (robustness taraması, 2026-07-15): params.yaml bunu 10.0'a
+        # düşürüyordu ("odom yayını = smoother flush hızı") — kod varsayılanı
+        # 50.0 idi, params.yaml uygulanmadan standalone koşulursa sessizce
+        # yanlış (5x) hıza düşerdi. Config-drift önlemek için hizalandı.
+        self.declare_parameter("publish_rate_hz", 10.0)
         # F8.2: son sensör girdisinden bu kadar süre geçtiyse odom yayını
         # KESİLİR (bayat pozla 50 Hz yayın, downstream'i donmuş pozla plan
         # yapmaya iter). 0 → devre dışı.
