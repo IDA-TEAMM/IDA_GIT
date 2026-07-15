@@ -3,21 +3,26 @@
 # with_mavros:=false ile birlikte kullanılır: gerçek Pixhawk yokken karar
 # yığınını (fsm/mission_manager/planning/telemetry/bridge) uçtan uca test
 # etmek için mock_sensors.py'nin sabit Marmaris orijiniyle (36.85, 28.27)
-# hizalı, küçük (~10-20 m) bir waypoint zinciri. competition_mission.yaml
-# ile aynı şema (parkur etiketli); lat/lon mock_sensors._enu_to_latlon ile
-# aynı düz-dikdörtgensel projeksiyon kullanılarak elle hesaplandı.
+# hizalı bir waypoint zinciri. competition_mission.yaml ile aynı şema
+# (parkur etiketli); lat/lon mock_sensors._enu_to_latlon ile aynı düz-
+# dikdörtgensel projeksiyon kullanılarak elle hesaplandı.
+#
+# Waypoint'ler mock_sensors._SCENARIO'nun GERÇEK kinematik yörüngesine
+# (0,0)→(10,0) [10 s düz] →(~13.18,3.18) [90° sol dönüş] →(~13.18,18.18)
+# [15 s düz, sonra durağan] göre seçildi — arrival_radius_m içinde kalsın
+# diye rastgele değil, path'in üzerinden geçtiği noktalara yakın.
 
 home_ref: {lat: 36.85, lon: 28.27}
 
 waypoints:
-  # --- Parkur-1: Nokta Takip ---
-  - {lat: 36.8500180, lon: 28.2700898, parkur: 1, name: "MASA_P1_WP1"}
-  - {lat: 36.8500898, lon: 28.2701122, parkur: 1, name: "MASA_P1_WP2"}
-  # --- Parkur-2: Engelli Takip ---
-  - {lat: 36.8501617, lon: 28.2700898, parkur: 2, name: "MASA_P2_WP1"}
-  - {lat: 36.8501976, lon: 28.2700449, parkur: 2, name: "MASA_P2_WP2"}
-  # --- Parkur-3: Kamikaze (hedef duba) ---
-  - {lat: 36.8501797, lon: 28.2700000, parkur: 3, name: "MASA_P3_target"}
+  # --- Parkur-1: Nokta Takip (mock'un ilk düz bacağı, y≈0) ---
+  - {lat: 36.8500045, lon: 28.2700561, parkur: 1, name: "MASA_P1_WP1"}
+  - {lat: 36.8500090, lon: 28.2701122, parkur: 1, name: "MASA_P1_WP2"}
+  # --- Parkur-2: Engelli Takip (mock'un dikey bacağı, x≈13.18) ---
+  - {lat: 36.8500719, lon: 28.2701459, parkur: 2, name: "MASA_P2_WP1"}
+  - {lat: 36.8501258, lon: 28.2701459, parkur: 2, name: "MASA_P2_WP2"}
+  # --- Parkur-3: Kamikaze (mock'un durağan kaldığı son nokta) ---
+  - {lat: 36.8501617, lon: 28.2701459, parkur: 3, name: "MASA_P3_target"}
 
 arrival_radius_m: 3.0
 dwell_time_s: 1.0

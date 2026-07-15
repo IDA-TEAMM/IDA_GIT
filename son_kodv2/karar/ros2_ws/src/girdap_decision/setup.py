@@ -51,6 +51,7 @@ setup(
             "perception_camera_node = girdap_decision.perception_camera_node:main",
             "perception_fusion_node = girdap_decision.perception_fusion_node:main",
             "mock_sensors = girdap_decision.mock_sensors:main",
+            "yarisma_simulasyonu = girdap_decision.yarisma_simulasyonu:main",
         ],
     },
 )
