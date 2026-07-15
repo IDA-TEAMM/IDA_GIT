@@ -338,6 +338,35 @@ def generate_launch_description() -> LaunchDescription:
             "with_mavros", default_value="true",
             description="false: gerçek MAVROS yerine mock_sensors (masa testi)",
         ),
+        # F-P.19 — mock_sensors'ın dalgalı deniz/kesinti parametreleri artık
+        # TEK launch komutundan geçilebilir (öncesinde ayrı `ros2 run` ile
+        # ELLE başlatmak gerekiyordu — bu da launch'ın KENDİ mock_sensors
+        # kopyasıyla ÇAKIŞIP aynı topic'lere iki yayıncı basmasına, testin
+        # sonucunu maskelemesine yol açtı, 2026-07-15'te canlı bulundu).
+        DeclareLaunchArgument(
+            "mock.wave_roll_amp_deg", default_value="0.0",
+            description="Masa testi: dalga roll salınım genliği (derece), 0=kapalı",
+        ),
+        DeclareLaunchArgument(
+            "mock.wave_pitch_amp_deg", default_value="0.0",
+            description="Masa testi: dalga pitch salınım genliği (derece), 0=kapalı",
+        ),
+        DeclareLaunchArgument(
+            "mock.wave_period_s", default_value="4.0",
+            description="Masa testi: dalga salınım periyodu (s)",
+        ),
+        DeclareLaunchArgument(
+            "mock.wave_accel_noise_mss", default_value="0.0",
+            description="Masa testi: dalga jerk gürültüsü (m/s²), 0=kapalı",
+        ),
+        DeclareLaunchArgument(
+            "mock.dropout_period_s", default_value="0.0",
+            description="Masa testi: periyodik GPS/IMU kesinti periyodu (s), 0=kapalı",
+        ),
+        DeclareLaunchArgument(
+            "mock.dropout_duration_s", default_value="2.0",
+            description="Masa testi: her periyottaki kesinti süresi (s)",
+        ),
         # fsm.start_on_mode / fsm.start_on_arm_in_mode — hardware.yaml
         # varsayılanını launch-arg'dan override edebilmek için (masa testinde
         # mock_sensors sabit armed+GUIDED yayınlar, hardware.yaml'a dokunmadan
@@ -406,6 +435,26 @@ def generate_launch_description() -> LaunchDescription:
         package=_PKG, executable="mock_sensors", name="mock_sensors",
         condition=UnlessCondition(LaunchConfiguration("with_mavros")),
         output="screen",
+        parameters=[{
+            "wave_roll_amp_deg": ParameterValue(
+                LaunchConfiguration("mock.wave_roll_amp_deg"), value_type=float
+            ),
+            "wave_pitch_amp_deg": ParameterValue(
+                LaunchConfiguration("mock.wave_pitch_amp_deg"), value_type=float
+            ),
+            "wave_period_s": ParameterValue(
+                LaunchConfiguration("mock.wave_period_s"), value_type=float
+            ),
+            "wave_accel_noise_mss": ParameterValue(
+                LaunchConfiguration("mock.wave_accel_noise_mss"), value_type=float
+            ),
+            "dropout_period_s": ParameterValue(
+                LaunchConfiguration("mock.dropout_period_s"), value_type=float
+            ),
+            "dropout_duration_s": ParameterValue(
+                LaunchConfiguration("mock.dropout_duration_s"), value_type=float
+            ),
+        }],
     )
 
     # --- Static TF (kalibre edilmemiş; mekanik ekip gerçek ölçümle günceller) ---

@@ -204,6 +204,26 @@ class MockSensorsNode(Node):
             elapsed += ph.duration
         return None  # senaryo bitti — durağan kal
 
+    # ----- dalgalı deniz / kesinti yardımcıları -----
+
+    def _in_dropout(self) -> bool:
+        """F-P.19 (robustness taraması, 2026-07-15): periyodik GPS/IMU/hız
+        kesintisi — dropout_period_s<=0 → kapalı (varsayılan, geriye uyum).
+        Aksi halde her periyodun ilk `dropout_duration_s`'i "sinyal yok"."""
+        if self._dropout_period <= 0.0:
+            return False
+        return (self._t % self._dropout_period) < self._dropout_duration
+
+    def _wave_rpy(self) -> tuple[float, float]:
+        """Sinüzoidal dalga sallanması (roll, pitch) — 90° faz farkıyla
+        (gerçek deniz durumunda roll/pitch bağımsız salınır, aynı fazda
+        değil)."""
+        w = 2.0 * math.pi * self._t / self._wave_period
+        return (
+            self._wave_roll_amp * math.sin(w),
+            self._wave_pitch_amp * math.sin(w + math.pi / 2.0),
+        )
+
     # ----- IMU + velocity tick (50 Hz) -----
 
     def _on_imu_tick(self) -> None:
@@ -220,32 +240,54 @@ class MockSensorsNode(Node):
         self._t += self._dt_imu
 
         now = self.get_clock().now().to_msg()
+        roll, pitch = self._wave_rpy()
 
-        # IMU mesajı: yaw rate (gyro z) ana sinyal; orientation quaternion
-        # da yaz (saha node'u ihtiyaç duyabilir).
-        imu = Imu()
-        imu.header.stamp = now
-        imu.header.frame_id = "base_link"
-        imu.angular_velocity.z = float(
-            w + self._rng.normal(0.0, self._omega_sigma)
-        )
-        imu.orientation.z = math.sin(self._psi / 2.0)
-        imu.orientation.w = math.cos(self._psi / 2.0)
-        # Doğrusal ivme stub (fusion_node accel kullanmıyor)
-        self._pub_imu.publish(imu)
+        if not self._in_dropout():
+            # IMU mesajı: yaw rate (gyro z) ana sinyal; orientation artık
+            # GERÇEK roll+pitch+yaw taşır (F-P.19 öncesi yalnız yaw
+            # kodlanıyordu, roll/pitch her zaman 0'dı).
+            imu = Imu()
+            imu.header.stamp = now
+            imu.header.frame_id = "base_link"
+            imu.angular_velocity.z = float(
+                w + self._rng.normal(0.0, self._omega_sigma)
+            )
+            qx, qy, qz, qw = _rpy_to_quat(roll, pitch, self._psi)
+            imu.orientation.x = qx
+            imu.orientation.y = qy
+            imu.orientation.z = qz
+            imu.orientation.w = qw
+            # F-P.19: yerçekimi artık gövde eksenlerine roll/pitch üzerinden
+            # gerçekçi projekte edilir (öncesinde TAMAMEN sıfırdı — fsm_node
+            # darbe algılama eşiği [shock_threshold_g] hiç anlamlı bir taban
+            # değere karşı test edilememişti) + dalga jerk gürültüsü.
+            imu.linear_acceleration.x = float(
+                -_GRAVITY_MSS * math.sin(pitch)
+                + self._rng.normal(0.0, self._wave_accel_noise)
+            )
+            imu.linear_acceleration.y = float(
+                _GRAVITY_MSS * math.sin(roll) * math.cos(pitch)
+                + self._rng.normal(0.0, self._wave_accel_noise)
+            )
+            imu.linear_acceleration.z = float(
+                _GRAVITY_MSS * math.cos(roll) * math.cos(pitch)
+                + self._rng.normal(0.0, self._wave_accel_noise)
+            )
+            self._pub_imu.publish(imu)
 
-        # Body-frame hız (gürültülü)
-        vel = TwistStamped()
-        vel.header.stamp = now
-        vel.header.frame_id = "base_link"
-        vel.twist.linear.x = float(
-            u + self._rng.normal(0.0, self._vel_sigma)
-        )
-        vel.twist.linear.y = float(self._rng.normal(0.0, self._vel_sigma))
-        vel.twist.angular.z = float(w)
-        self._pub_vel.publish(vel)
+            # Body-frame hız (gürültülü)
+            vel = TwistStamped()
+            vel.header.stamp = now
+            vel.header.frame_id = "base_link"
+            vel.twist.linear.x = float(
+                u + self._rng.normal(0.0, self._vel_sigma)
+            )
+            vel.twist.linear.y = float(self._rng.normal(0.0, self._vel_sigma))
+            vel.twist.angular.z = float(w)
+            self._pub_vel.publish(vel)
 
-        # Ground truth poz (test/RViz overlay için)
+        # Ground truth poz (test/RViz overlay için) — dropout'ta da yayınlanır
+        # (bu debug kanalı, sensör kesintisi simülasyonunun parçası değil).
         gt = PoseStamped()
         gt.header.stamp = now
         gt.header.frame_id = "map"
@@ -258,6 +300,8 @@ class MockSensorsNode(Node):
     # ----- GPS tick (1 Hz) -----
 
     def _on_gps_tick(self) -> None:
+        if self._in_dropout():                      # F-P.19: sinyal yok
+            return
         # Gürültülü ENU → lat/lon
         x_noisy = self._x + self._rng.normal(0.0, self._gps_sigma)
         y_noisy = self._y + self._rng.normal(0.0, self._gps_sigma)
