@@ -110,6 +110,11 @@ class TelemetryNode(Node):
         # zorunlu eğrisinde çöp sıçrama (md 3.3.1.1 "görüntü net değilse
         # BAŞARISIZ"). Son geçerli açı korunur (sahte veri değil, son istek).
         self.declare_parameter("yaw_setpoint_min_dist_m", 0.5)
+        # BULGU 2 (Yahya, son_kod video koşul matrisi 2026-07-14): kaynak
+        # susunca (GPS/IMU/hız) cache'teki son değer DONUK tekrarlanıyordu —
+        # veri hâlâ canlıymış izlenimi. F-V.2'nin setpoint kapılama desenini
+        # sensör alanlarına da uygular. <=0 → bekçi kapalı (mock/masa testi).
+        self.declare_parameter("source_timeout_s", 3.0)
 
         out_dir = str(self.get_parameter("csv_output_dir").value)
         if not out_dir:
@@ -143,6 +148,15 @@ class TelemetryNode(Node):
         self._mission_state: str = ""
         self._thrust_sol: Optional[float] = None  # Ekran-2c: N (girdap) | % (fc)
         self._thrust_sag: Optional[float] = None
+
+        # --- BULGU 2: kaynak-tazelik zaman damgaları (None = hiç gelmedi) ---
+        self._latlon_t: Optional[float] = None
+        self._speed_t: Optional[float] = None
+        self._rp_t: Optional[float] = None        # roll/pitch, yalnız IMU
+        self._heading_t: Optional[float] = None
+        self._source_timeout = float(
+            self.get_parameter("source_timeout_s").value
+        )
 
         # --- B2: setpoint/thrust kaynağı ---
         src = str(self.get_parameter("setpoint_source").value).lower()
@@ -242,20 +256,24 @@ class TelemetryNode(Node):
         if msg.status.status >= 0:               # fix yoksa (-1) yazma
             self._lat = msg.latitude
             self._lon = msg.longitude
+            self._latlon_t = self._now()
 
     def _on_imu(self, msg: Imu) -> None:
         q = msg.orientation
         roll, pitch, yaw = quat_to_rpy(q.x, q.y, q.z, q.w)
         self._roll = roll
         self._pitch = pitch
+        self._rp_t = self._now()
         # mavros IMU yaw'ı ENU heading olarak verir → doğrudan kullan
         self._heading = yaw
         self._heading_from_imu = True
+        self._heading_t = self._now()
 
     def _on_vel_body(self, msg: TwistStamped) -> None:
         v = msg.twist.linear
         self._speed = math.sqrt(v.x * v.x + v.y * v.y)
         self._speed_from_body = True
+        self._speed_t = self._now()
 
     def _on_setpoint(self, msg: Twist) -> None:
         # angular.z yaw HIZI — yon_setpoint'e YAZILMAZ (F-V.1).
@@ -275,11 +293,13 @@ class TelemetryNode(Node):
         if not self._heading_from_imu:
             q = msg.pose.pose.orientation
             self._heading = 2.0 * math.atan2(q.z, q.w)
+            self._heading_t = self._now()
         # F15.4: velocity_body gelmiyorsa hızı odom twist'ten yedekle —
         # yoksa Ekran-2 hız grafiği boş kalır (Odometry twist child frame'de).
         if not self._speed_from_body:
             v = msg.twist.twist.linear
             self._speed = math.sqrt(v.x * v.x + v.y * v.y)
+            self._speed_t = self._now()
 
     def _on_mission_state(self, msg: String) -> None:
         self._mission_state = msg.data
@@ -320,6 +340,20 @@ class TelemetryNode(Node):
 
     # ----- yazma -----
 
+    def _now(self) -> float:
+        return self.get_clock().now().nanoseconds * 1e-9
+
+    def _fresh(self, value: Optional[float], t: Optional[float]) -> Optional[float]:
+        """BULGU 2: kaynak `source_timeout_s`'ten uzun süredir susmuşsa None
+        döner — donuk son değer yazmak yerine boş hücre (F-V.2 ile aynı
+        dürüstlük ilkesi, setpoint yerine sensör alanlarına uygulanır).
+        `source_timeout_s<=0` → bekçi kapalı (mock/masa testi)."""
+        if self._source_timeout <= 0.0:
+            return value
+        if t is None or (self._now() - t) > self._source_timeout:
+            return None
+        return value
+
     def _mission_active(self) -> bool:
         """F-V.2: setpoint sütunları yalnız görev aktifken yazılır."""
         return self._mission_state in _SETPOINT_ACTIVE_STATES
@@ -341,12 +375,12 @@ class TelemetryNode(Node):
     def _on_write(self) -> None:
         active = self._mission_active()
         sample = TelemetrySample(
-            lat=self._lat,
-            lon=self._lon,
-            hiz=self._speed,
-            roll=self._roll,
-            pitch=self._pitch,
-            heading=self._heading,
+            lat=self._fresh(self._lat, self._latlon_t),
+            lon=self._fresh(self._lon, self._latlon_t),
+            hiz=self._fresh(self._speed, self._speed_t),
+            roll=self._fresh(self._roll, self._rp_t),
+            pitch=self._fresh(self._pitch, self._rp_t),
+            heading=self._fresh(self._heading, self._heading_t),
             hiz_setpoint=self._hiz_setpoint(active),
             yon_setpoint=self._yaw_sp if active else None,
             mission_state=self._mission_state,
@@ -359,9 +393,9 @@ class TelemetryNode(Node):
     def _on_graph_write(self) -> None:
         active = self._mission_active()
         sample = GraphSample(
-            hiz=self._speed,
+            hiz=self._fresh(self._speed, self._speed_t),
             hiz_setpoint=self._hiz_setpoint(active),
-            heading=self._heading,
+            heading=self._fresh(self._heading, self._heading_t),
             yon_setpoint=self._yaw_sp if active else None,
             thrust_sol=self._thrust_sol,
             thrust_sag=self._thrust_sag,

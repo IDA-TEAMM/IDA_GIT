@@ -113,6 +113,29 @@ def test_waypoint_index_triggers_p1_to_p2(ros_context, tmp_path) -> None:  # noq
         node.destroy_node()
 
 
+def test_waypoint_reached_no_spurious_p1_to_p2_when_no_parkur2(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """BULGU 1 repro (Yahya, son_kod video koşul matrisi 2026-07-14): tek
+    parkurlu görevde (parkur-2 YOK) son waypoint'e varış hâlâ koşulsuz
+    dist_to_last_wp_p1=0 besliyordu → PARKUR1→PARKUR2 sahte geçişi;
+    mission_complete (dwell_time_s kadar gecikmeli) gelene dek birkaç saniye
+    yanlış PARKUR2 gösteriyordu (Dosya-2'de yanıltıcı satır). Düzeltme:
+    yalnız gerçekten bir parkur-2 varsa beslenir (ParkurTransitionLogic'in
+    kendi _has_parkur guard'ıyla tutarlı)."""
+    node = _make_node(ros_context, tmp_path, labels=[1, 1])   # parkur-2 YOK
+    try:
+        _drive_to_parkur1(node)
+        node._on_waypoint_reached(Int32(data=1))              # tek parkurun SON wp'si
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR1, (
+            "parkur-2 hiç yokken son waypoint'e varış sahte PARKUR2 tetikledi (BULGU 1)"
+        )
+        node._on_mission_complete(Bool(data=True))
+        node._on_tick()
+        assert node._fsm.state is MissionState.TAMAMLANDI
+    finally:
+        node.destroy_node()
+
+
 def test_explicit_param_distance_path_still_works(ros_context, tmp_path) -> None:  # noqa: ANN001
     """Operatör gerçek koordinat verirse odom-mesafe yolu çalışmaya devam
     etmeli (guard yalnız [0,0] varsayılanını devre dışı bırakır)."""

@@ -325,7 +325,14 @@ class FSMNode(Node):
         (CLAUDE.md FSM ilkesi); yeni topic/çerçeve dönüşümü gerektirmez.
         """
         idx = int(msg.data)
-        if idx == self._parkur.last_index_of_parkur.get(1):
+        # BULGU 1 (Yahya, son_kod video koşul matrisi 2026-07-14): parkur-2
+        # yoksa (tek parkurlu görev) bu sinyal beslenmemeli — aksi halde
+        # PARKUR1→PARKUR2 sahte geçişi, mission_complete (dwell_time_s
+        # gecikmeli) gelene dek birkaç saniye yanlış PARKUR2 gösterir.
+        if (
+            idx == self._parkur.last_index_of_parkur.get(1)
+            and 2 in self._parkur.last_index_of_parkur
+        ):
             self._obs.dist_to_last_wp_p1 = 0.0
         self._parkur.current_waypoint_reached(idx)
         self._emit_parkur_transition()

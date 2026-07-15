@@ -21,6 +21,7 @@ rclpy = pytest.importorskip("rclpy", reason="rclpy yok (.venv) — ROS ortamınd
 from rclpy.parameter import Parameter                    # noqa: E402
 from geometry_msgs.msg import PoseStamped, Twist, Vector3  # noqa: E402
 from nav_msgs.msg import Odometry                        # noqa: E402
+from sensor_msgs.msg import NavSatFix                     # noqa: E402
 from std_msgs.msg import Float32MultiArray, String       # noqa: E402
 
 girdap = pytest.importorskip(
@@ -211,6 +212,72 @@ def test_setpointler_gorev_aktif_degilken_bos(ros_context, tmp_path) -> None:
         assert data[2] == "", f"hiz_setpoint donuk yazılıyor: {data[2]}"
     finally:
         helper.destroy_node()
+        node.destroy_node()
+
+
+def test_bulgu2_kaynak_susunca_donuk_deger_yazilmiyor(ros_context, tmp_path) -> None:
+    """BULGU 2 repro (Yahya, son_kod video koşul matrisi 2026-07-14): GPS
+    kaynağı susunca Dosya-2 CSV'si son değeri DONUK tekrarlıyordu — sanki
+    veri hâlâ canlıymış gibi (ör. hız sabit yazılıyor). F-V.2'nin setpoint
+    kapılama desenini sensör alanlarına da uygular: source_timeout_s
+    aşılınca lat/lon BOŞ yazılır (donuk değer değil)."""
+    node = girdap.TelemetryNode(
+        parameter_overrides=[
+            Parameter("csv_output_dir", Parameter.Type.STRING,
+                      str(tmp_path / "telemetry")),
+            Parameter("graph_output_dir", Parameter.Type.STRING,
+                      str(tmp_path / "grafik")),
+            Parameter("source_timeout_s", Parameter.Type.DOUBLE, 1.0),
+        ]
+    )
+    try:
+        t = [100.0]
+        node._now = lambda: t[0]                      # sahte saat
+        gps = NavSatFix()
+        gps.status.status = 0
+        gps.latitude = 40.71
+        gps.longitude = 31.52
+        node._on_gps(gps)
+        node._on_write()
+        with open(node._csv.path, newline="", encoding="utf-8") as f:
+            rows = list(csv.reader(f))
+        assert rows[-1][1] != "", "taze GPS boş yazıldı"
+
+        t[0] = 102.0                                  # 2 s sessizlik > 1.0 s eşik
+        node._on_write()
+        with open(node._csv.path, newline="", encoding="utf-8") as f:
+            rows = list(csv.reader(f))
+        assert rows[-1][1] == "", f"bayat GPS hâlâ donuk yazılıyor: {rows[-1][1]}"
+        assert rows[-1][2] == "", "bayat lon hâlâ donuk yazılıyor"
+    finally:
+        node.destroy_node()
+
+
+def test_bulgu2_source_timeout_kapali_eski_davranis(ros_context, tmp_path) -> None:
+    """source_timeout_s<=0 → bekçi devre dışı (mock/masa testi geriye uyum)."""
+    node = girdap.TelemetryNode(
+        parameter_overrides=[
+            Parameter("csv_output_dir", Parameter.Type.STRING,
+                      str(tmp_path / "telemetry")),
+            Parameter("graph_output_dir", Parameter.Type.STRING,
+                      str(tmp_path / "grafik")),
+            Parameter("source_timeout_s", Parameter.Type.DOUBLE, 0.0),
+        ]
+    )
+    try:
+        t = [100.0]
+        node._now = lambda: t[0]
+        gps = NavSatFix()
+        gps.status.status = 0
+        gps.latitude = 40.71
+        gps.longitude = 31.52
+        node._on_gps(gps)
+        t[0] = 999999.0                               # çok uzun sessizlik
+        node._on_write()
+        with open(node._csv.path, newline="", encoding="utf-8") as f:
+            rows = list(csv.reader(f))
+        assert rows[-1][1] != "", "timeout kapalıyken GPS yine de boşaltıldı"
+    finally:
         node.destroy_node()
 
 
