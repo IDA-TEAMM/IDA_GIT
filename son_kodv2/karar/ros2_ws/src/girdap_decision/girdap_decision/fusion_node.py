@@ -65,6 +65,12 @@ class FusionNode(Node):
         # KESİLİR (bayat pozla 50 Hz yayın, downstream'i donmuş pozla plan
         # yapmaya iter). 0 → devre dışı.
         self.declare_parameter("pose_timeout_s", 1.0)
+        # F-P.7 (robustness taraması, 2026-07-15): pose_timeout_s YALNIZ
+        # poz kaynağını (IMU/EKF) kapsar — velocity_body AYRI bir topic,
+        # kendi kaynağı tek başına donarsa (IMU/GPS akışı sürerken) bu
+        # bekçi hiç tetiklenmez, od.twist SONSUZA DEK donuk son hızı
+        # yayınlamaya devam eder (planning_node MPPI'ye yanlış u,v,r besler).
+        self.declare_parameter("vel_timeout_s", 1.0)
         self.declare_parameter("odom_period_s", 0.1)
         self.declare_parameter("gps_sigma_xy", 0.30)
         self.declare_parameter("imu_sigma_xy", 0.05)
@@ -89,6 +95,11 @@ class FusionNode(Node):
         # F8.2: poz kaynağının son güncelleme zamanı (bayatlık bekçisi)
         self._pose_timeout_s = float(self.get_parameter("pose_timeout_s").value)
         self._last_input_t: float | None = None
+        # F-P.7: velocity_body'nin KENDİ bayatlık bekçisi (pose_timeout_s'ten
+        # bağımsız — bkz. declare_parameter yorumu).
+        self._vel_timeout_s = float(self.get_parameter("vel_timeout_s").value)
+        self._last_vel_t: float | None = None
+        self._vel_stale_warned = False
         self._stale_warned = False
 
         if self._use_isam2:
@@ -177,9 +188,18 @@ class FusionNode(Node):
         self._last_vx = msg.twist.linear.x
         self._last_vy = msg.twist.linear.y
         self._last_wz = msg.twist.angular.z
+        self._last_vel_t = self.get_clock().now().nanoseconds * 1e-9  # F-P.7
         if self._use_isam2:
             self._source.on_velocity(msg.twist.linear.x, msg.twist.linear.y)
         self._n_vel += 1
+
+    def _vel_stale(self) -> bool:
+        """F-P.7: son velocity_body `vel_timeout_s`'ten eski mi? Hiç
+        gelmediyse False (boot gürültüsü, F-P.1/F8.2 ile aynı ilke)."""
+        if self._vel_timeout_s <= 0.0 or self._last_vel_t is None:
+            return False
+        now = self.get_clock().now().nanoseconds * 1e-9
+        return (now - self._last_vel_t) > self._vel_timeout_s
 
     def _on_gps(self, msg: NavSatFix) -> None:
         """RTK GPS fix → ENU projeksiyon → smoother prior."""
@@ -241,9 +261,30 @@ class FusionNode(Node):
         # F8.1: twist = son velocity_body (body-frame → child_frame_id
         # semantiğiyle doğru). planning_node MPPI durumuna (u, v, r) okur;
         # telemetry_node hız yedeği de buradan beslenir.
-        od.twist.twist.linear.x = self._last_vx
-        od.twist.twist.linear.y = self._last_vy
-        od.twist.twist.angular.z = self._last_wz
+        # F-P.7: velocity_body TEK BAŞINA bayatlaşırsa (pose_timeout_s'i
+        # tetiklemeden, çünkü IMU/EKF akışı sürüyor olabilir) donuk hızı
+        # yayınlama — sıfırla + uyar.
+        if self._vel_stale():
+            if not self._vel_stale_warned:
+                self._vel_stale_warned = True
+                age = (
+                    self.get_clock().now().nanoseconds * 1e-9
+                    - (self._last_vel_t or 0.0)
+                )
+                self.get_logger().warn(
+                    f"velocity_body {age:.1f}s'dir sessiz — odom twist'i "
+                    "sıfırlandı (F-P.7: bayat hızla MPPI beslenmesin)"
+                )
+            od.twist.twist.linear.x = 0.0
+            od.twist.twist.linear.y = 0.0
+            od.twist.twist.angular.z = 0.0
+        else:
+            if self._vel_stale_warned:
+                self._vel_stale_warned = False
+                self.get_logger().info("velocity_body geri geldi")
+            od.twist.twist.linear.x = self._last_vx
+            od.twist.twist.linear.y = self._last_vy
+            od.twist.twist.angular.z = self._last_wz
         self._pub_odom.publish(od)
 
     def _log_diag(self) -> None:

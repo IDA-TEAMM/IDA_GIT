@@ -29,13 +29,26 @@ Published:
     /girdap/mission/waypoint_reached std_msgs/Int32   (Sprint 4)
         Bir waypoint'e VARILINCA tek atış index yayını (ACTIVE→DWELL geçişi).
         fsm_node parkur katmanı bu sinyalle ilerler (waypoint-index tabanlı).
-    /girdap/mission/waypoints        nav_msgs/Path (base_link, 5 Hz, F-S.6)
-        TÜM görev waypoint'leri — current_target'la AYNI mantık: her poz
-        GÜNCEL GPS pozisyonuna göre ENU ofseti (latlon_to_enu). planning_node
-        (use_rrt=true) bunu kendi son bilinen "map" xy'sine ekleyip mutlak
-        RRT* girdisi üretir (_on_target ile birebir aynı dönüşüm deseni).
-        F-S.6 ÖNCESİ: bu topic'i publish eden HİÇBİR node yoktu — RRT* modu
-        (use_rrt=true) global plan hiç oluşturamıyor, thrust sıfırda kalıyordu.
+    /girdap/mission/waypoints        nav_msgs/Path (base_link, 5 Hz, F-S.6/F-S.11)
+        YALNIZ o anki AKTİF waypoint (tek eleman) — current_target'la AYNI
+        mantık: GÜNCEL GPS pozisyonuna göre ENU ofseti (latlon_to_enu).
+        planning_node (use_rrt=true) bunu kendi son bilinen "map" xy'sine
+        ekleyip RRT* girdisi üretir (_on_target ile birebir aynı dönüşüm
+        deseni). F-S.6 ÖNCESİ: bu topic'i publish eden HİÇBİR node yoktu.
+        F-S.11 ÖNCESİ (F-S.6'nın kendisi): TÜM waypoint listesi tek seferde
+        yayınlanıyordu — ama `PlanningPipeline._global_replan()` RRT* hedefini
+        HER ZAMAN `waypoints[-1]` (listenin SON elemanı) alır (bilinçli;
+        `test_kamikaze_target_is_last_waypoint` bunu doğrular). Sonuç: RRT*
+        ara waypoint'leri (GN1-GN4 gibi slalom kapılarını) TAMAMEN atlayıp
+        doğrudan son hedefe (ör. Parkur-3 şamandırasına) gidiyordu — sıralı
+        `waypoint_reached` hiç tetiklenmiyor, ParkurTransitionLogic PARKUR_1'de
+        sonsuza dek takılı kalıyordu (gerçek parkur dosyasıyla SITL'de canlı
+        doğrulandı: araç 100+ m'lik tüm parkuru geçti ama tek bir waypoint
+        bile "varıldı" olarak işaretlenmedi, hedefte sürekli döngüye girdi).
+        Düzeltme: yalnız TEK (mevcut aktif) waypoint yayınlanır — RRT* hedefi
+        artık mission_manager'ın kendi sıralı ilerlemesiyle senkron; bir
+        sonraki waypoint yalnız öncekine VARILINCA (ACTIVE→DWELL→index++)
+        yayına girer.
 
 Not: Görev FSM'den başlar — /girdap/mission/state aktif parkura (PARKUR1)
 geçince MissionManager.start() çağrılır (ayrı servis yerine durum takibi;
@@ -92,6 +105,18 @@ class MissionManagerNode(Node):
         # F-M.1: hedef-mesafe makullük tavanı (m) — bir waypoint mevcut
         # konumdan bundan uzaksa görev başlatılmaz (masa OOM olayı).
         self.declare_parameter("max_target_distance_m", 10_000.0)
+
+        # F-P.4 (robustness taraması, 2026-07-15): GPS bayatlık bekçisi —
+        # diğer tüm kritik kaynaklarda (fusion pose_timeout_s, planning
+        # odom/obstacle_timeout_s, telemetry source_timeout_s) var ama
+        # burada YOKTU. /mavros/global_position/global kesilirse (RTK
+        # kopması, anten arızası) _lat/_lon SONSUZA DEK donuk kalır —
+        # current_target/waypoints artık gerçeği yansıtmayan bir konumdan
+        # hesaplanmaya devam eder. 0 → kapalı (mock/masa testi).
+        self.declare_parameter("gps_timeout_s", 3.0)
+        self._gps_timeout = float(self.get_parameter("gps_timeout_s").value)
+        self._last_gps_t: Optional[float] = None
+        self._gps_stale_warn_t = 0.0
 
         self._source = str(self.get_parameter("mission_source").value).lower()
         self._skip_home = bool(self.get_parameter("skip_home_seq0").value)
@@ -301,6 +326,17 @@ class MissionManagerNode(Node):
             return
         self._lat = msg.latitude
         self._lon = msg.longitude
+        self._last_gps_t = self._now()            # F-P.4: bayatlık saati
+
+    def _gps_stale(self) -> bool:
+        """F-P.4: son GPS `gps_timeout_s`'ten eski mi?
+
+        Hiç gelmediyse False — zaten `_lat is None` guard'ı ayrı ele alır
+        (bu yalnız ALINMIŞ ama SONRA kesilen kaynağı yakalar). 0 → kapalı.
+        """
+        if self._gps_timeout <= 0.0 or self._last_gps_t is None:
+            return False
+        return (self._now() - self._last_gps_t) > self._gps_timeout
 
     def _on_state(self, msg: String) -> None:
         # FSM aktif parkura geçince görevi başlat (tek seferlik).
@@ -378,29 +414,47 @@ class MissionManagerNode(Node):
         return self.get_clock().now().nanoseconds * 1e-9
 
     def _publish_waypoints_path(self) -> None:
-        """F-S.6: tüm görev waypoint'lerini base_link-göreli ENU Path yayınla.
+        """F-S.11 (F-S.6 düzeltmesi): YALNIZ o anki aktif waypoint'i
+        base_link-göreli ENU Path olarak yayınla.
 
         planning_node'un RRT* girdisi — current_target ile AYNI referans
         (güncel GPS pozisyonuna göre latlon_to_enu); planning_node kendi
         odom'undan bilinen son xy'ye ekleyip mutlak "map" konumuna çevirir.
+
+        ⚠ TÜM waypoint listesini birden yayınlamak İSTEMEYİN: RRT* hedefi
+        (`PlanningPipeline._global_replan`) her zaman verilen listenin SON
+        elemanını alır — çoklu waypoint verilirse ara noktalar (slalom
+        kapıları vb.) tamamen atlanır, sıralı `waypoint_reached` hiç
+        tetiklenmez (bkz. modül docstring'i, gerçek parkur SITL testinde
+        bulundu). `current_waypoint` None ise (IDLE/COMPLETE) yayın yapılmaz.
         """
-        if self._mgr.waypoint_count == 0:
+        wp = self._mgr.current_waypoint
+        if wp is None:
             return
         msg = Path()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "base_link"
-        for wp in self._mgr.waypoints:
-            east, north = latlon_to_enu(self._lat, self._lon, wp.lat, wp.lon)
-            ps = PoseStamped()
-            ps.header = msg.header
-            ps.pose.position.x = float(east)
-            ps.pose.position.y = float(north)
-            ps.pose.orientation.w = 1.0
-            msg.poses.append(ps)
+        east, north = latlon_to_enu(self._lat, self._lon, wp.lat, wp.lon)
+        ps = PoseStamped()
+        ps.header = msg.header
+        ps.pose.position.x = float(east)
+        ps.pose.position.y = float(north)
+        ps.pose.orientation.w = 1.0
+        msg.poses.append(ps)
         self._pub_waypoints.publish(msg)
 
     def _on_tick(self) -> None:
         if self._lat is None or self._lon is None:
+            return
+        if self._gps_stale():                     # F-P.4: bayat GPS'le hesaplama yok
+            now = self._now()
+            if now - self._gps_stale_warn_t >= 1.0:
+                self._gps_stale_warn_t = now
+                age = now - (self._last_gps_t or now)
+                self.get_logger().error(
+                    f"GPS {age:.1f}s'dir gelmiyor — hedef/waypoint yayını "
+                    "durduruldu (F-P.4: bayat konumla hesaplama yok)",
+                )
             return
         self._publish_waypoints_path()
         offset = self._mgr.update(self._lat, self._lon, self._now())

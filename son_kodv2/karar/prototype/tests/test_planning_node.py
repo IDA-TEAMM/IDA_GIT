@@ -97,6 +97,79 @@ def test_fp1_kapatilabilir(ros_context) -> None:  # noqa: ANN001
 
 
 # --------------------------------------------------------------------------- #
+# F-P.2 (robustness taraması, 2026-07-15): /perception/obstacle_map için
+# HİÇ tazelik bekçisi yoktu (F-P.1 yalnız odom'u kapsıyordu). perception_
+# lidar_node kaynağı (Livox sürücüsü/USB) donarsa PlanningPipeline son
+# bilinen engel listesini SONSUZA DEK kullanmaya devam eder — MPPI artık
+# var olmayan bir engelden kaçınmaya çalışabilir ya da (daha kötü) gerçek
+# bir engelin oradan gittiğini sanıp üstüne sürebilir. perception_lidar_node
+# her LiDAR taramasında (engel olsun olmasın) publish ettiği için topic'in
+# kendisi zaten bir heartbeat — tazelik kontrolü güvenle yapılabilir.
+# --------------------------------------------------------------------------- #
+
+
+def _obstacles_msg():                                    # noqa: ANN201
+    from geometry_msgs.msg import Pose, PoseArray
+    msg = PoseArray()
+    p = Pose()
+    p.position.x, p.position.y = 3.0, 0.0
+    p.orientation.z, p.orientation.w = 1.0, 1.0
+    msg.poses.append(p)
+    return msg
+
+
+def test_fp2_bayat_engel_haritasi_isaretlenir(ros_context) -> None:  # noqa: ANN001
+    """obstacle_timeout_s'i aşan engel verisiyle MPPI koşulmamalı (thrust sıfır)."""
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("obstacle_timeout_s", Parameter.Type.DOUBLE, 1.0)
+        ]
+    )
+    try:
+        t = [100.0]
+        node._now = lambda: t[0]
+        node._on_obstacles(_obstacles_msg())
+        assert node._obstacles_stale() is False           # taze
+
+        t[0] = 100.5
+        assert node._obstacles_stale() is False            # eşik içinde
+
+        t[0] = 101.5                                       # 1.5 s sessizlik
+        assert node._obstacles_stale() is True, (
+            "bayat engel haritasıyla MPPI koşmaya devam ediyor (F-P.2)"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_fp2_engel_hic_gelmediyse_bayat_degil(ros_context) -> None:  # noqa: ANN001
+    """Perception henüz hiç veri göndermediyse 'bayat' alarmı basılmaz
+    (boot gürültüsü — F-P.1'deki aynı prensip)."""
+    node = pn.PlanningNode()
+    try:
+        assert node._obstacles_stale() is False
+    finally:
+        node.destroy_node()
+
+
+def test_fp2_kapatilabilir(ros_context) -> None:  # noqa: ANN001
+    """obstacle_timeout_s=0 → bekçi devre dışı (mock/offline koşular)."""
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("obstacle_timeout_s", Parameter.Type.DOUBLE, 0.0)
+        ]
+    )
+    try:
+        t = [100.0]
+        node._now = lambda: t[0]
+        node._on_obstacles(_obstacles_msg())
+        t[0] = 999.0
+        assert node._obstacles_stale() is False
+    finally:
+        node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
 # F-S.6: /girdap/mission/waypoints hiç publish edilmiyordu — RRT* modu
 # (use_rrt=true) global plan hiç oluşturamıyordu, thrust sıfırda kalıyordu.
 # mission_manager_node artık current_target'la AYNI referansta (base_link

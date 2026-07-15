@@ -140,10 +140,20 @@ class PerceptionCameraNode(Node):
     # ------------------------------------------------------------- callback
 
     def _on_image(self, msg: Image) -> None:
-        frame = imgmsg_to_bgr(msg)                 # cv_bridge'siz (docstring)
-        detections = detect_buoys(
-            frame, self._cfg, self._yolo, self._localizer
-        )
+        # F-P.6 (robustness taraması, 2026-07-15): try/except yoktu — bozuk
+        # kare/desteklenmeyen encoding (sürücü format değişimi, USB hatası)
+        # node'u KALICI öldürürdü, buoy/gate tespiti sessizce sıfır kalırdı.
+        try:
+            frame = imgmsg_to_bgr(msg)             # cv_bridge'siz (docstring)
+            detections = detect_buoys(
+                frame, self._cfg, self._yolo, self._localizer
+            )
+        except Exception as exc:
+            self.get_logger().error(
+                f"bozuk kare, bu tarama atlandı: {exc!r}",
+                throttle_duration_sec=5.0,
+            )
+            return
         self._pub.publish(self._to_msg(detections, msg))
 
         self.get_logger().debug(f"{len(detections)} duba tespiti")

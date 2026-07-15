@@ -281,6 +281,47 @@ def test_bulgu2_source_timeout_kapali_eski_davranis(ros_context, tmp_path) -> No
         node.destroy_node()
 
 
+def test_fp5_bayat_thrust_ve_setpoint_yazilmiyor(ros_context, tmp_path) -> None:
+    """F-P.5 (robustness taraması, 2026-07-15): BULGU 2'nin bekçisi thrust/
+    setpoint sütunlarını KAPSAMIYORDU — planning_node görev ortasında
+    çökerse (F10.1'in yakalamadığı beklenmedik istisna) Ekran-2 son thrust/
+    setpoint değerini SONSUZA DEK donuk yazmaya devam ederdi."""
+    from std_msgs.msg import String
+
+    node = girdap.TelemetryNode(
+        parameter_overrides=[
+            Parameter("csv_output_dir", Parameter.Type.STRING,
+                      str(tmp_path / "telemetry")),
+            Parameter("graph_output_dir", Parameter.Type.STRING,
+                      str(tmp_path / "grafik")),
+            Parameter("source_timeout_s", Parameter.Type.DOUBLE, 1.0),
+        ]
+    )
+    try:
+        t = [100.0]
+        node._now = lambda: t[0]
+        node._on_mission_state(String(data="PARKUR1"))
+        node._on_thrust(Float32MultiArray(data=[12.0, -3.0]))
+        node._on_setpoint(Twist(linear=Vector3(x=0.8)))
+        target = PoseStamped()
+        target.pose.position.x, target.pose.position.y = 3.0, 4.0
+        node._on_target(target)
+        node._on_graph_write()
+        row = _last_graph_row(node)
+        assert row[_GRAPH_T_SOL] == "12.00"
+        assert row[_GRAPH_HIZ_SP] == "0.800"
+
+        t[0] = 102.0                                   # 2 s sessizlik > 1.0 s eşik
+        node._on_graph_write()
+        row = _last_graph_row(node)
+        assert row[_GRAPH_T_SOL] == "", f"bayat thrust hâlâ yazılıyor: {row[_GRAPH_T_SOL]}"
+        assert row[_GRAPH_T_SAG] == ""
+        assert row[_GRAPH_HIZ_SP] == "", f"bayat hiz_setpoint hâlâ yazılıyor: {row[_GRAPH_HIZ_SP]}"
+        assert row[4] == "", f"bayat yon_setpoint hâlâ yazılıyor: {row[4]}"
+    finally:
+        node.destroy_node()
+
+
 # ----- B2: setpoint_source="fc" (AUTO video, md 3.3.1.1 Ekran-2 dürüstlüğü) -----
 #
 # AUTO+FC videosunda görevi FC kendi uçurur; MPPI cmd_vel BASMAZ (planning

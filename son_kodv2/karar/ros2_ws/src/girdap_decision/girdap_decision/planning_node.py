@@ -79,6 +79,13 @@ class PlanningNode(Node):
         # 10 Hz sürmeye devam ediyordu → GPS/EKF kesilse bile araç KÖR sürer.
         # Eşik fusion'ın pose_timeout_s'iyle aynı mantıkta (1 s); 0 → kapalı.
         self.declare_parameter("odom_timeout_s", 1.0)
+        # F-P.2 (robustness taraması): obstacle_map için de F-P.1 ile aynı
+        # bekçi — perception_lidar_node kaynağı (Livox sürücüsü/USB) donarsa
+        # son bilinen engel listesi SONSUZA DEK kullanılmasın (var olmayan
+        # bir engelden kaçınmaya devam edebilir ya da gerçek bir engelin
+        # gittiğini sanıp üstüne sürebilir). Topic her taramada (engel olsun
+        # olmasın) publish edildiği için tazelik kontrolü güvenli. 0 → kapalı.
+        self.declare_parameter("obstacle_timeout_s", 2.0)
         self.declare_parameter("mode_name", "GUIDED")        # otonomi modu
         self.declare_parameter("map_rate_hz", 10.0)          # Dosya-3 yayım hızı
         self.declare_parameter("use_rrt", True)              # false → video bypass
@@ -130,6 +137,12 @@ class PlanningNode(Node):
         self._odom_timeout = float(self.get_parameter("odom_timeout_s").value)
         self._last_odom_t: float | None = None
         self._stale_warn_t = 0.0
+        # F-P.2: obstacle_map bayatlık takibi
+        self._obstacle_timeout = float(
+            self.get_parameter("obstacle_timeout_s").value
+        )
+        self._last_obstacle_t: float | None = None
+        self._obstacle_stale_warn_t = 0.0
 
         # --- Subscribers ---
         self._sub_odom = self.create_subscription(
@@ -196,11 +209,34 @@ class PlanningNode(Node):
 
     def _on_obstacles(self, msg: PoseArray) -> None:
         """PLACEHOLDER şema: position.{x,y} merkez, orientation.z yarıçap."""
+        self._last_obstacle_t = self._now()          # F-P.2: bayatlık saati
         obstacles = [
             CircleObstacle(pp.position.x, pp.position.y, abs(pp.orientation.z))
             for pp in msg.poses
         ]
         self._pipe.set_obstacles(obstacles)
+
+    def _obstacles_stale(self) -> bool:
+        """F-P.2: son obstacle_map `obstacle_timeout_s`'ten eski mi?
+
+        obstacle_map HİÇ gelmediyse False — perception henüz açılmamış
+        olabilir (boot), yanlış alarm basmanın anlamı yok. 0 → bekçi kapalı.
+        """
+        if self._obstacle_timeout <= 0.0 or self._last_obstacle_t is None:
+            return False
+        return (self._now() - self._last_obstacle_t) > self._obstacle_timeout
+
+    def _warn_stale_obstacles(self) -> None:
+        """Bayatlık uyarısını saniyede bir bas (10 Hz döngüde spam olmasın)."""
+        now = self._now()
+        if now - self._obstacle_stale_warn_t < 1.0:
+            return
+        self._obstacle_stale_warn_t = now
+        age = now - (self._last_obstacle_t or now)
+        self.get_logger().error(
+            f"engel haritası {age:.1f}s'dir gelmiyor → MPPI DURDURULDU, "
+            "thrust sıfır (F-P.2: bayat engel bilgisiyle kör sürme yok)"
+        )
 
     def _on_waypoints(self, msg: Path) -> None:
         """F-S.6: mission_manager_node current_target'la AYNI referansta
@@ -290,6 +326,9 @@ class PlanningNode(Node):
         if self._odom_stale():                       # F-P.1: poz bayat → kör sürme
             u = np.zeros(2)
             self._warn_stale_odom()
+        if self._obstacles_stale():                   # F-P.2: engel bayat → kör sürme
+            u = np.zeros(2)
+            self._warn_stale_obstacles()
 
         self._publish_thrust(u)
         if gate.allow_cmd_vel:                       # yalnız GUIDED + armed

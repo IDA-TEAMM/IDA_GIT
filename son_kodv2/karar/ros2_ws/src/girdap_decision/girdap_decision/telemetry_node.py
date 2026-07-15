@@ -154,6 +154,15 @@ class TelemetryNode(Node):
         self._speed_t: Optional[float] = None
         self._rp_t: Optional[float] = None        # roll/pitch, yalnız IMU
         self._heading_t: Optional[float] = None
+        # F-P.5 (robustness taraması, 2026-07-15): BULGU 2'nin bekçisi lat/
+        # lon/hiz/roll/pitch/heading'i kapsıyordu ama thrust/setpoint
+        # sütunlarını KAPSAMIYORDU — planning_node görev ortasında çökerse
+        # (ör. F10.1'in yakalamadığı beklenmedik bir istisna) Ekran-2/Dosya-2
+        # son thrust/setpoint değerini SONSUZA DEK donuk yazmaya devam eder,
+        # tam BULGU 2'nin önlemeye çalıştığı yanıltıcı-veri sınıfı.
+        self._speed_sp_t: Optional[float] = None
+        self._yaw_sp_t: Optional[float] = None
+        self._thrust_t: Optional[float] = None
         self._source_timeout = float(
             self.get_parameter("source_timeout_s").value
         )
@@ -278,10 +287,14 @@ class TelemetryNode(Node):
     def _on_setpoint(self, msg: Twist) -> None:
         # angular.z yaw HIZI — yon_setpoint'e YAZILMAZ (F-V.1).
         self._speed_sp = msg.linear.x
+        self._speed_sp_t = self._now()
 
     def _on_target(self, msg: PoseStamped) -> None:
         # Araç-göreli ENU ofsetten istenen rota açısı (heading ile aynı
         # konvansiyon). IDLE/COMPLETE'te yayın durur → son açı cache kalır.
+        # F-P.5: zaman damgası F-V.7 erken-dönüşünden ÖNCE — mesaj geldi
+        # (kaynak yaşıyor), açı güncellenmeyebilir ama tazelik öyle değil.
+        self._yaw_sp_t = self._now()
         p = msg.pose.position
         # F-V.7: waypoint'in üstündeyken ofset ~0 → atan2 anlamsız açı üretir.
         if math.hypot(p.x, p.y) < self._yaw_sp_min_dist:
@@ -308,6 +321,7 @@ class TelemetryNode(Node):
         if len(msg.data) >= 2:
             self._thrust_sol = float(msg.data[0])
             self._thrust_sag = float(msg.data[1])
+            self._thrust_t = self._now()
 
     # ----- B2: FC servo çıkışı (fc modu) -----
 
@@ -337,6 +351,7 @@ class TelemetryNode(Node):
             return
         self._thrust_sol = self._pwm_to_pct(ch[idx_sol])
         self._thrust_sag = self._pwm_to_pct(ch[idx_sag])
+        self._thrust_t = self._now()
 
     # ----- yazma -----
 
@@ -369,8 +384,10 @@ class TelemetryNode(Node):
         if not active:
             return None
         if self._setpoint_source == "fc":
-            return self._fc_cruise
-        return self._speed_sp
+            return self._fc_cruise    # sabit param, kaynak-tazelik uygulanmaz
+        # F-P.5: girdap modunda cmd_vel kaynağı (planning_node) susarsa
+        # donuk son isteği yazma.
+        return self._fresh(self._speed_sp, self._speed_sp_t)
 
     def _on_write(self) -> None:
         active = self._mission_active()
@@ -382,7 +399,7 @@ class TelemetryNode(Node):
             pitch=self._fresh(self._pitch, self._rp_t),
             heading=self._fresh(self._heading, self._heading_t),
             hiz_setpoint=self._hiz_setpoint(active),
-            yon_setpoint=self._yaw_sp if active else None,
+            yon_setpoint=self._fresh(self._yaw_sp, self._yaw_sp_t) if active else None,
             mission_state=self._mission_state,
         )
         if not self._csv.write_sample(utc_isoformat(), sample):
@@ -396,9 +413,9 @@ class TelemetryNode(Node):
             hiz=self._fresh(self._speed, self._speed_t),
             hiz_setpoint=self._hiz_setpoint(active),
             heading=self._fresh(self._heading, self._heading_t),
-            yon_setpoint=self._yaw_sp if active else None,
-            thrust_sol=self._thrust_sol,
-            thrust_sag=self._thrust_sag,
+            yon_setpoint=self._fresh(self._yaw_sp, self._yaw_sp_t) if active else None,
+            thrust_sol=self._fresh(self._thrust_sol, self._thrust_t),
+            thrust_sag=self._fresh(self._thrust_sag, self._thrust_t),
         )
         if not self._graph_csv.write_sample(utc_isoformat(), sample):
             self.get_logger().error(

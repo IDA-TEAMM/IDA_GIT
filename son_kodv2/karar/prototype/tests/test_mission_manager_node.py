@@ -198,6 +198,78 @@ def test_fc_source_starts_only_after_mission_loaded(ros_context) -> None:  # noq
 
 
 # --------------------------------------------------------------------------- #
+# F-P.4 (robustness taraması, 2026-07-15) — GPS bayatlık bekçisi. Diğer tüm
+# kritik kaynaklarda (fusion pose_timeout_s, planning odom/obstacle_
+# timeout_s, telemetry source_timeout_s) vardı, mission_manager'da YOKTU —
+# GPS kesilirse _lat/_lon SONSUZA DEK donuk kalır, current_target/waypoints
+# gerçeği yansıtmayan bir konumdan hesaplanmaya devam ederdi.
+# --------------------------------------------------------------------------- #
+
+
+def test_fp4_bayat_gps_yayin_durdurur(ros_context, mission_file) -> None:  # noqa: ANN001
+    """gps_timeout_s aşılınca _on_tick hedef/waypoint yayınını durdurmalı."""
+    n = girdap.MissionManagerNode(
+        parameter_overrides=[
+            Parameter("mission_file", Parameter.Type.STRING, mission_file),
+            Parameter("gps_timeout_s", Parameter.Type.DOUBLE, 1.0),
+        ]
+    )
+    try:
+        t = [100.0]
+        n._now = lambda: t[0]
+        fix = NavSatFix()
+        fix.status.status = 0
+        fix.latitude, fix.longitude = 41.001, 29.000
+        n._on_gps(fix)
+        assert n._gps_stale() is False              # taze
+
+        t[0] = 100.5
+        assert n._gps_stale() is False               # eşik içinde
+
+        t[0] = 101.5                                 # 1.5 s sessizlik
+        assert n._gps_stale() is True, (
+            "bayat GPS'le hesaplamaya devam ediyor (F-P.4)"
+        )
+    finally:
+        n.destroy_node()
+
+
+def test_fp4_gps_hic_gelmediyse_bayat_degil(ros_context, mission_file) -> None:  # noqa: ANN001
+    """GPS hiç gelmediyse 'bayat' alarmı basılmaz — zaten `_lat is None`
+    guard'ı ayrı ele alır (boot gürültüsü, F-P.1/F-P.2 ile aynı prensip)."""
+    n = girdap.MissionManagerNode(
+        parameter_overrides=[
+            Parameter("mission_file", Parameter.Type.STRING, mission_file),
+        ]
+    )
+    try:
+        assert n._gps_stale() is False
+    finally:
+        n.destroy_node()
+
+
+def test_fp4_kapatilabilir(ros_context, mission_file) -> None:  # noqa: ANN001
+    """gps_timeout_s=0 → bekçi devre dışı (mock/masa testi geriye uyum)."""
+    n = girdap.MissionManagerNode(
+        parameter_overrides=[
+            Parameter("mission_file", Parameter.Type.STRING, mission_file),
+            Parameter("gps_timeout_s", Parameter.Type.DOUBLE, 0.0),
+        ]
+    )
+    try:
+        t = [100.0]
+        n._now = lambda: t[0]
+        fix = NavSatFix()
+        fix.status.status = 0
+        fix.latitude, fix.longitude = 41.001, 29.000
+        n._on_gps(fix)
+        t[0] = 999.0
+        assert n._gps_stale() is False
+    finally:
+        n.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
 # F-M.1 — masa OOM olayının guard'ları (2026-07-12)
 # --------------------------------------------------------------------------- #
 
@@ -344,11 +416,16 @@ def test_fv8_baslamadan_gelen_reached_yok_sayilir(ros_context) -> None:  # noqa:
 
 
 # --------------------------------------------------------------------------- #
-# F-S.6: /girdap/mission/waypoints hiç publish edilmiyordu — planning_node'un
-# RRT* girdisi (use_rrt=true) hiçbir zaman gelmiyordu, global plan hiç
-# oluşmuyordu (thrust sıfırda kalırdı). mission_manager_node artık tüm
-# waypoint listesini current_target'la AYNI referansta (base_link göreli ENU)
-# yayınlıyor.
+# F-S.6/F-S.11: /girdap/mission/waypoints hiç publish edilmiyordu — planning_
+# node'un RRT* girdisi (use_rrt=true) hiçbir zaman gelmiyordu, global plan hiç
+# oluşmuyordu (thrust sıfırda kalırdı). F-S.6 TÜM waypoint listesini birden
+# yayınlayarak bunu "düzeltti" ama PlanningPipeline._global_replan() RRT*
+# hedefini HER ZAMAN listenin SON elemanı alır (test_kamikaze_target_is_
+# last_waypoint bunu doğrular) — yani ara waypoint'ler (slalom kapıları)
+# tamamen atlanıyordu, sıralı waypoint_reached hiç tetiklenmiyordu (gerçek
+# parkur dosyasıyla SITL'de canlı bulundu). F-S.11: yalnız O ANKİ AKTİF
+# waypoint yayınlanır — current_target ile aynı desen, sıralı ilerleme geri
+# kazanıldı.
 # --------------------------------------------------------------------------- #
 
 
@@ -372,7 +449,12 @@ def mission_file_distinct(tmp_path_factory) -> str:      # noqa: ANN001
 
 
 def test_fs6_waypoints_path_yayinlanir(ros_context, mission_file_distinct) -> None:  # noqa: ANN001
+    """F-S.11: yalnız O ANKİ AKTİF waypoint (tek eleman) yayınlanır —
+    tüm liste DEĞİL (bkz. yukarıdaki F-S.6/F-S.11 notu: RRT* hedefi her
+    zaman listenin SON elemanını alır, çoklu waypoint verilirse aradakiler
+    hiç ziyaret edilmez)."""
     from nav_msgs.msg import Path
+    from std_msgs.msg import String
 
     from prototype.mission.mission_manager import latlon_to_enu
 
@@ -389,29 +471,117 @@ def test_fs6_waypoints_path_yayinlanir(ros_context, mission_file_distinct) -> No
     gps_pub = helper.create_publisher(
         NavSatFix, "/mavros/global_position/global", 10
     )
+    state_pub = helper.create_publisher(String, "/girdap/mission/state", 10)
     try:
         fix = NavSatFix()
         fix.status.status = 0
         fix.latitude, fix.longitude = 40.999, 28.999   # araç, waypoint'lerden ayrı bir konumda
 
+        # current_waypoint yalnız görev AKTİFKEN (IDLE/COMPLETE değil) None
+        # dönmez — F-S.11 sonrası yayın için görevin başlamış olması gerekir.
         deadline = time.monotonic() + 5.0
         while not paths:
             gps_pub.publish(fix)
+            state_pub.publish(String(data="PARKUR1"))
             rclpy.spin_once(node, timeout_sec=0.05)
             rclpy.spin_once(helper, timeout_sec=0.05)
             assert time.monotonic() < deadline, "/girdap/mission/waypoints yayınlanmadı (F-S.6)"
 
         path_msg = paths[-1]
         assert path_msg.header.frame_id == "base_link"
-        assert len(path_msg.poses) == 2
+        assert len(path_msg.poses) == 1, (
+            "F-S.11: birden fazla waypoint yayınlanıyor — RRT* ara "
+            "noktaları atlayıp doğrudan sona gider (regresyon)"
+        )
 
         exp0 = latlon_to_enu(fix.latitude, fix.longitude, 41.001, 29.000)
-        exp1 = latlon_to_enu(fix.latitude, fix.longitude, 41.002, 29.001)
         got0 = (path_msg.poses[0].pose.position.x, path_msg.poses[0].pose.position.y)
-        got1 = (path_msg.poses[1].pose.position.x, path_msg.poses[1].pose.position.y)
         assert got0 == pytest.approx(exp0, abs=1e-6)
-        assert got1 == pytest.approx(exp1, abs=1e-6)
-        assert got0 != got1                            # 2 farklı waypoint, 2 farklı ofset
+    finally:
+        helper.destroy_node()
+        node.destroy_node()
+
+
+@pytest.fixture
+def mission_file_short_dwell(tmp_path_factory) -> str:      # noqa: ANN001
+    """mission_file_distinct ile aynı waypoint'ler, ama dwell_time_s KISA —
+    ACTIVE→DWELL→(idx++)→ACTIVE geçişini testte 30 s beklemeden gözlemlemek
+    için (mission_file_distinct'in 30 s'lik dwell'i kasıtlı, başka testler
+    ona bağımlı olabilir — dokunulmadı, ayrı fixture)."""
+    path = tmp_path_factory.mktemp("mm_wp_sd") / "m3.yaml"
+    path.write_text(
+        textwrap.dedent(
+            """
+            waypoints:
+              - {lat: 41.001, lon: 29.000, parkur: 1}
+              - {lat: 41.002, lon: 29.001, parkur: 1}
+            arrival_radius_m: 5.0
+            dwell_time_s: 0.05
+            """
+        ),
+        encoding="utf-8",
+    )
+    return str(path)
+
+
+def test_fs11_waypoints_path_ilerler_sirayla(ros_context, mission_file_short_dwell) -> None:  # noqa: ANN001
+    """F-S.11: ilk waypoint'e varılınca yayınlanan tek-elemanlı liste bir
+    SONRAKİ waypoint'e geçmeli — RRT* modunda sıralı ilerlemenin gerçekten
+    geri kazanıldığını doğrular (SITL'de bulunan gerçek regresyonun testi)."""
+    from nav_msgs.msg import Path
+    from std_msgs.msg import String
+
+    from prototype.mission.mission_manager import latlon_to_enu
+
+    node = girdap.MissionManagerNode(
+        parameter_overrides=[
+            Parameter("mission_file", Parameter.Type.STRING, mission_file_short_dwell),
+        ]
+    )
+    helper = rclpy.create_node("test_mm_wp_advance_helper")
+    paths: list = []
+    helper.create_subscription(
+        Path, "/girdap/mission/waypoints", lambda m: paths.append(m), 10
+    )
+    gps_pub = helper.create_publisher(
+        NavSatFix, "/mavros/global_position/global", 10
+    )
+    state_pub = helper.create_publisher(String, "/girdap/mission/state", 10)
+    try:
+        # Aracı doğrudan İLK waypoint'in (41.001, 29.000) ÜSTÜNE koy —
+        # arrival_radius_m=5.0 içinde, hemen "varıldı" tetiklenir.
+        fix = NavSatFix()
+        fix.status.status = 0
+        fix.latitude, fix.longitude = 41.001, 29.000
+
+        deadline = time.monotonic() + 5.0
+        while node._mgr.current_index == 0:
+            gps_pub.publish(fix)
+            state_pub.publish(String(data="PARKUR1"))
+            rclpy.spin_once(node, timeout_sec=0.05)
+            rclpy.spin_once(helper, timeout_sec=0.05)
+            assert time.monotonic() < deadline, (
+                "waypoint 0'a varılmasına rağmen index ilerlemedi (dwell "
+                "sonrası) — dwell_time_s=30 çok uzun, node parametresini "
+                "kısa tut ya da dwell'i bekleme mantığını kontrol et"
+            )
+        # index 1'e geçti — yayınlanan tek waypoint artık İKİNCİ olmalı.
+        deadline = time.monotonic() + 5.0
+        while not paths or paths[-1].poses[0].pose.position.x == pytest.approx(
+            latlon_to_enu(fix.latitude, fix.longitude, 41.001, 29.000)[0]
+        ):
+            gps_pub.publish(fix)
+            rclpy.spin_once(node, timeout_sec=0.05)
+            rclpy.spin_once(helper, timeout_sec=0.05)
+            if time.monotonic() > deadline:
+                break
+        assert len(paths[-1].poses) == 1
+        exp1 = latlon_to_enu(fix.latitude, fix.longitude, 41.002, 29.001)
+        got = (paths[-1].poses[0].pose.position.x, paths[-1].poses[0].pose.position.y)
+        assert got == pytest.approx(exp1, abs=1e-6), (
+            "waypoint 0 varıldıktan sonra yayınlanan hedef HÂLÂ waypoint 0 "
+            "— RRT* sıralı ilerlemiyor (asıl SITL regresyonu)"
+        )
     finally:
         helper.destroy_node()
         node.destroy_node()

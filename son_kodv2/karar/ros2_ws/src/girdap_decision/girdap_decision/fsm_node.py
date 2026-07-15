@@ -97,6 +97,10 @@ class FSMNode(Node):
         # Sprint 4: parkur katmanı görev dosyası (waypoint parkur etiketleri).
         # Boş → tek parkur (video) — parkur logic PARKUR_1'de kalır, bozulmaz.
         self.declare_parameter("mission_file", "")
+        # F-P.8 (robustness taraması, 2026-07-15): mission_manager_node'un
+        # KENDİ mission_source'uyla AYNI değer — burada yalnız TEŞHİS için
+        # okunur (bkz. _build_parkur_logic'teki fc+çoklu-parkur uyarısı).
+        self.declare_parameter("mission_source", "file")
         # md 3.3.1(3): YKİ'den başlatma — bu moda GEÇİŞ görülünce start.
         # "" → tetik kapalı (başlatma yalnız /girdap/mission/start servisi).
         self.declare_parameter("start_on_mode", "GUIDED")
@@ -220,6 +224,29 @@ class FSMNode(Node):
                 f"parkur etiketleri okunamadı ({path}): {exc} — tek parkur modu"
             )
             return ParkurTransitionLogic([])
+        # F-P.8 (robustness taraması, 2026-07-15) — CRITICAL: mission_source
+        # =fc'de gerçek waypoint sırası/sayısı QGC'nin FC'ye YÜKLEDİĞİ
+        # görevden gelir (mission_manager_node), ama parkur SINIRLARI HÂLÂ bu
+        # STATİK mission_file'dan okunuyor. fc'nin FC-kaynaklı waypoint'leri
+        # HER ZAMAN parkur=1 alır (prototype.mission.mission_manager.
+        # fc_items_to_waypoints_with_seqs — FC formatı parkur taşımaz), o
+        # yüzden bu dosya BİRDEN FAZLA parkur içeriyorsa (ör. yanlışlıkla
+        # competition_mission.yaml + mission_source=fc) waypoint_reached
+        # index'leri iki farklı kaynaktan gelir — parkur geçişi ya hiç
+        # tetiklenmez ya da yanlış index'te tetiklenir. Kod düzeyinde
+        # otomatik senkronize edilemez (QGC yüklemesi elle) — en azından
+        # operatörü GÜRÜLTÜLÜ uyar.
+        source = str(self.get_parameter("mission_source").value).lower()
+        if source == "fc" and len(set(labels)) > 1:
+            self.get_logger().error(
+                "mission_source=fc AMA mission_file ÇOKLU parkur içeriyor "
+                f"({path}, parkurlar={sorted(set(labels))}) — FC'den yüklenen "
+                "gerçek görev waypoint'leri HER ZAMAN parkur=1 sayılır "
+                "(mission_manager.fc_items_to_waypoints), bu dosyanın parkur "
+                "sınırlarıyla SENKRON DEĞİL. Parkur geçişleri (waypoint-index "
+                "tabanlı) YANLIŞ ZAMANDA tetiklenebilir ya da HİÇ tetiklenmez "
+                "— yarışma öncesi QGC görevini bu dosyayla EL İLE doğrula."
+            )
         return ParkurTransitionLogic(labels)
 
     # ----- subscriber callback'leri -----

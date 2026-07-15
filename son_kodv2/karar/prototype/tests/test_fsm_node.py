@@ -44,7 +44,7 @@ def ros_context():                                       # noqa: ANN201
     rclpy.shutdown()
 
 
-def _make_node(ros_context, tmp_path, labels=None, last_wp=None):  # noqa: ANN001
+def _make_node(ros_context, tmp_path, labels=None, last_wp=None, mission_source=None):  # noqa: ANN001
     """Parametre enjeksiyonlu FSMNode kur (timer'a spin edilmez)."""
     overrides = []
     if labels is not None:
@@ -56,6 +56,8 @@ def _make_node(ros_context, tmp_path, labels=None, last_wp=None):  # noqa: ANN00
         overrides.append(Parameter("mission_file", value=str(mission)))
     if last_wp is not None:
         overrides.append(Parameter("last_waypoint_xy", value=last_wp))
+    if mission_source is not None:
+        overrides.append(Parameter("mission_source", value=mission_source))
     return girdap.FSMNode(parameter_overrides=overrides)
 
 
@@ -132,6 +134,34 @@ def test_waypoint_reached_no_spurious_p1_to_p2_when_no_parkur2(ros_context, tmp_
         node._on_mission_complete(Bool(data=True))
         node._on_tick()
         assert node._fsm.state is MissionState.TAMAMLANDI
+    finally:
+        node.destroy_node()
+
+
+def test_fp8_fc_coklu_parkur_uyarisi_coker_mi(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """F-P.8 (robustness taraması, 2026-07-15): mission_source=fc + çoklu
+    parkur içeren mission_file kombinasyonu KRİTİK bir senkron riski (FC
+    waypoint'leri her zaman parkur=1 sayılır — bkz. kod yorumu). Bu test tam
+    düzeltmeyi (otomatik senkron, kod düzeyinde mümkün değil) DEĞİL, en
+    azından node'un çökmediğini ve parkur logic'inin normal kurulduğunu
+    doğrular (uyarı metni ROS logger'a gider, pytest'te doğrudan yakalanmaz)."""
+    node = _make_node(
+        ros_context, tmp_path, labels=[1, 1, 2, 2, 3], mission_source="fc",
+    )
+    try:
+        assert node._parkur.last_index_of_parkur == {1: 1, 2: 3, 3: 4}
+    finally:
+        node.destroy_node()
+
+
+def test_fp8_file_kaynagi_uyari_uretmez(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """mission_source=file (varsayılan) çoklu parkurla tamamen NORMAL —
+    F-P.8 uyarısı yalnız fc modunda anlamlı, burada tetiklenmemeli."""
+    node = _make_node(
+        ros_context, tmp_path, labels=[1, 1, 2, 2, 3], mission_source="file",
+    )
+    try:
+        assert node._parkur.last_index_of_parkur == {1: 1, 2: 3, 3: 4}
     finally:
         node.destroy_node()
 

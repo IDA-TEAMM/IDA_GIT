@@ -346,6 +346,18 @@ def generate_launch_description() -> LaunchDescription:
             description="true: BEKLEMEDE'ye zaten start_on_mode'dayken ARM "
                         "girildiğinde de (kenar yok) görev başlar (F-V.6)",
         ),
+        # bridge.auto_guided — hardware.yaml varsayılanı video modu (false,
+        # B1: FC AUTO'da köprü mod savaşı açmasın). YARIŞMA modu (use_rrt=
+        # true) testinde/gününde bunu CLI'dan true'ya çevirmeyi UNUTMAK —
+        # gerçek parkur SITL testinde bulunan bir gap — FCU geçici bir
+        # EKF failsafe'den HOLD'a düşünce köprü GUIDED'ı geri talep etmiyor,
+        # araç sonsuza dek hareketsiz kalıyordu.
+        DeclareLaunchArgument(
+            "bridge.auto_guided",
+            default_value=_bool_default(hw["bridge"]["auto_guided"]),
+            description="true: mod hedefte değilse köprü otomatik GUIDED "
+                        "talep eder (yarışma ŞART; video: false, FC AUTO sürer)",
+        ),
     ]
 
     # --- MAVROS: ArduRover apm.launch (XML) include ---
@@ -388,7 +400,9 @@ def generate_launch_description() -> LaunchDescription:
             "heartbeat_timeout_s": float(hw["heartbeat_timeout_s"]),
             "arming_retry_max": int(hw["arming_retry_max"]),
             # B1: AUTO videosunda köprü GUIDED'a zorlamaz (mod savaşı yok).
-            "auto_guided": bool(hw["bridge"]["auto_guided"]),
+            "auto_guided": ParameterValue(
+                LaunchConfiguration("bridge.auto_guided"), value_type=bool
+            ),
             # F-M.6: bağlantı kenarında FC akış hızı isteği (1 Hz sorunu).
             "stream_rate_hz": int(hw["bridge"]["stream_rate_hz"]),
         },
@@ -402,6 +416,11 @@ def generate_launch_description() -> LaunchDescription:
         },
     ]
     # planning: mode_name (tek kaynak) + algorithm.use_rrt (video → düz hedef).
+    # heartbeat_timeout_s: mavros_bridge_node ile AYNI kaynaktan (hw[]) —
+    # eskiden yalnız bridge_params'a geçiyordu, planning_node kendi
+    # hardcoded 5.0 varsayılanında kalıyordu (config-drift riski taraması,
+    # 2026-07-15: hardware.yaml'da tune edilirse iki güvenlik geçidi
+    # farklı anda tetiklenirdi).
     planning_params = [
         params_file,
         {
@@ -409,6 +428,7 @@ def generate_launch_description() -> LaunchDescription:
             "mode_name": str(hw["planning_mode"]),
             "use_rrt": ParameterValue(use_rrt, value_type=bool),
             "control_mode": LaunchConfiguration("control_mode"),
+            "heartbeat_timeout_s": float(hw["heartbeat_timeout_s"]),
         },
     ]
     # mission_file: config/ altında çözülen tam yol (video ↔ competition).
@@ -448,6 +468,10 @@ def generate_launch_description() -> LaunchDescription:
             "start_on_arm_in_mode": ParameterValue(
                 LaunchConfiguration("fsm.start_on_arm_in_mode"), value_type=bool
             ),
+            # F-P.8: mission_manager_node'un KENDİ mission_source'uyla AYNI
+            # kaynak — fc+çoklu-parkur uyumsuzluk uyarısı için (bkz. fsm_node
+            # ._build_parkur_logic).
+            "mission_source": LaunchConfiguration("mission_source"),
         },
     ]
     # telemetry: B2 Ekran-2 kaynağı (video: fc = FC servo çıkışı, yarışma:

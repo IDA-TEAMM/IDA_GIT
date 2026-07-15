@@ -130,3 +130,67 @@ def test_bypass_stale_pose_stops_publishing(ros_context) -> None:
     finally:
         helper.destroy_node()
         node.destroy_node()
+
+
+def test_fp7_bayat_velocity_body_twist_sifirlanir(ros_context) -> None:
+    """F-P.7 (robustness taraması, 2026-07-15): velocity_body TEK BAŞINA
+    kesilirse (pose akışı sürerken) pose_timeout_s bekçisi tetiklenmez —
+    ayrı bir bekçi olmadan odom.twist SONSUZA DEK donuk son hızı yayınlar.
+    Pose akışını KESMEDEN yalnız vel akışını durdurup twist'in sıfırlandığını
+    (pose'un ise güncellenmeye devam ettiğini) doğrular."""
+    node = girdap.FusionNode(
+        parameter_overrides=[
+            Parameter("use_isam2", Parameter.Type.BOOL, False),
+            Parameter("vel_timeout_s", Parameter.Type.DOUBLE, 0.3),
+        ]
+    )
+    helper = rclpy.create_node("test_fusion_vel_stale_helper")
+    pose_pub = helper.create_publisher(
+        PoseStamped, "/mavros/local_position/pose", 10
+    )
+    vel_pub = helper.create_publisher(
+        TwistStamped, "/mavros/local_position/velocity_body", 10
+    )
+    odoms: list[Odometry] = []
+    helper.create_subscription(
+        Odometry, "/girdap/fusion/odom", odoms.append, 10
+    )
+    try:
+        pose = PoseStamped()
+        pose.pose.position.x = 7.0
+        pose.pose.orientation.w = 1.0
+        vel = TwistStamped()
+        vel.twist.linear.x = 2.5
+
+        deadline = time.monotonic() + 5.0
+        good: Odometry | None = None
+        while time.monotonic() < deadline and good is None:
+            pose_pub.publish(pose)
+            vel_pub.publish(vel)
+            rclpy.spin_once(helper, timeout_sec=0.01)
+            for _ in range(6):
+                rclpy.spin_once(node, timeout_sec=0.01)
+            good = next(
+                (o for o in odoms if o.twist.twist.linear.x != 0.0), None
+            )
+        assert good is not None, "canlı akışta dolu twist gelmedi"
+
+        # Vel akışını KES, pose akışı SÜRSÜN — 0.3 s eşiği aşılana dek spin.
+        t_stop = time.monotonic()
+        last_odom: Odometry | None = None
+        while time.monotonic() - t_stop < 0.8:
+            pose_pub.publish(pose)                # pose canlı kalıyor
+            rclpy.spin_once(helper, timeout_sec=0.005)
+            rclpy.spin_once(node, timeout_sec=0.02)
+            if odoms:
+                last_odom = odoms[-1]
+        assert last_odom is not None, "pose canlıyken odom yayını durdu (beklenmedik)"
+        assert last_odom.twist.twist.linear.x == pytest.approx(0.0), (
+            "bayat velocity_body hâlâ donuk yazılıyor (F-P.7)"
+        )
+        assert last_odom.pose.pose.position.x == pytest.approx(7.0), (
+            "pose akışı canlıyken yayın durmuş olmamalıydı"
+        )
+    finally:
+        helper.destroy_node()
+        node.destroy_node()

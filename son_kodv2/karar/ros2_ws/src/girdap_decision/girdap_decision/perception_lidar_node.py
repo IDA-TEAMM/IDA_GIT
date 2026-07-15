@@ -101,13 +101,27 @@ class PerceptionLidarNode(Node):
         # alanların aynı tipte olmasını assert eder → ilk gerçek mesajda
         # AssertionError. Yapılandırılmış okuma + seçili alanları düz diziye
         # çevirme aynı işi güvenle yapar.
-        structured = point_cloud2.read_points(
-            msg, field_names=("x", "y", "z"), skip_nans=True
-        )
-        points = structured_to_unstructured(structured).reshape(-1, 3)
-        obstacles = detect_obstacles(
-            np.asarray(points, dtype=np.float64), self._cfg
-        )
+        #
+        # F-P.3 (robustness taraması, 2026-07-15): bu blok try/except'siz
+        # HİÇ değildi — sürücü yeniden bağlanması/USB hatası gibi tek bir
+        # beklenmedik alan şeması (ör. 'z' alanı eksik) node'u KALICI
+        # ÖLDÜRÜRDÜ; engel tespiti görevin geri kalanı için sessizce sıfır
+        # kalırdı (hiçbir restart supervisor'ı yok). Artık bozuk tarama
+        # atlanır, node yaşamaya devam eder.
+        try:
+            structured = point_cloud2.read_points(
+                msg, field_names=("x", "y", "z"), skip_nans=True
+            )
+            points = structured_to_unstructured(structured).reshape(-1, 3)
+            obstacles = detect_obstacles(
+                np.asarray(points, dtype=np.float64), self._cfg
+            )
+        except Exception as exc:
+            self.get_logger().error(
+                f"bozuk PointCloud2, bu tarama atlandı: {exc!r}",
+                throttle_duration_sec=5.0,
+            )
+            return
         self._pub.publish(self._to_pose_array(obstacles, msg))
 
         self.get_logger().debug(

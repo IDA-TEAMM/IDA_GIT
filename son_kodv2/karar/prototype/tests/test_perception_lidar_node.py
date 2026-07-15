@@ -157,3 +157,55 @@ def test_pose_array_stamp_matches_source(node) -> None:    # noqa: ANN001
     result = _exchange(node, cloud)
     assert result.header.stamp.sec == 1234        # kaynak damgası korunur
     assert result.header.stamp.nanosec == 123
+
+
+def _make_malformed_cloud(stamp_sec: int = 0) -> PointCloud2:
+    """'z' alanı OLMAYAN bozuk PointCloud2 — sürücü yeniden bağlanması/USB
+    hatası gibi beklenmedik bir alan şeması taklidi (F-P.3 repro)."""
+    header = Header()
+    header.frame_id = "livox_frame"
+    header.stamp.sec = stamp_sec
+    header.stamp.nanosec = 0
+    fields = [
+        PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
+        PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
+    ]
+    return point_cloud2.create_cloud(header, fields, [(1.0, 2.0), (3.0, 4.0)])
+
+
+def test_malformed_cloud_does_not_kill_node(node) -> None:  # noqa: ANN001
+    """F-P.3 (robustness taraması, 2026-07-15): read_points(field_names=
+    ('x','y','z')) 'z' alanı olmayan bir buluta KeyError fırlatırdı,
+    _on_cloud'da try/except yoktu → tek bozuk paket node'u kalıcı öldürür,
+    engel tespiti görevin geri kalanı için sessizce sıfır kalır. Düzeltme:
+    bozuk paket atlanır (o tarama kaybolur), node YAŞAMAYA devam eder ve
+    bir SONRAKİ geçerli buluta doğru yanıt vermelidir."""
+    helper = rclpy.create_node("test_malformed_helper")
+    received: list[PoseArray] = []
+    helper.create_subscription(
+        PoseArray, "/perception/obstacle_map", received.append, 10
+    )
+    pub = helper.create_publisher(PointCloud2, "/livox/lidar", 10)
+    try:
+        bad = _make_malformed_cloud()
+        # Bozuk paketi bas — node çökerse sonraki spin_once zaten patlar.
+        for _ in range(5):
+            pub.publish(bad)
+            rclpy.spin_once(node, timeout_sec=0.1)
+            rclpy.spin_once(helper, timeout_sec=0.1)
+
+        # Node hâlâ ayakta mı? Geçerli bir bulutla normal yanıt vermeli.
+        rng = np.random.default_rng(42)
+        good = _make_cloud(scene_minimum(rng))
+        deadline = helper.get_clock().now().nanoseconds * 1e-9 + 5.0
+        while not received:
+            pub.publish(good)
+            rclpy.spin_once(node, timeout_sec=0.1)
+            rclpy.spin_once(helper, timeout_sec=0.1)
+            assert helper.get_clock().now().nanoseconds * 1e-9 < deadline, (
+                "bozuk paketten sonra node geçerli buluta yanıt vermiyor "
+                "— muhtemelen çökmüş (F-P.3)"
+            )
+        assert len(received[0].poses) == 3
+    finally:
+        helper.destroy_node()

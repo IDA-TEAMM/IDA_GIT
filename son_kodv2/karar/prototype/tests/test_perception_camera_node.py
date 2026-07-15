@@ -121,3 +121,41 @@ def test_detection_stamp_matches_source(node) -> None:   # noqa: ANN001
     result = _exchange(node, image)
     assert result.header.stamp.sec == 987         # kaynak damgası korunur
     assert result.header.stamp.nanosec == 456
+
+
+def test_unsupported_encoding_does_not_kill_node(node) -> None:  # noqa: ANN001
+    """F-P.6 (robustness taraması, 2026-07-15): imgmsg_to_bgr desteklenmeyen
+    bir encoding'de (bgr8/rgb8 dışı) ValueError fırlatır; _on_image'da
+    try/except yoktu → tek bozuk kare (format değişimi, sürücü hatası) node'u
+    KALICI öldürürdü, buoy/gate tespiti görevin geri kalanı için sessizce
+    sıfır kalırdı. Düzeltme: bozuk kare atlanır, node bir SONRAKİ geçerli
+    kareye doğru yanıt vermeye devam etmelidir."""
+    rng = np.random.default_rng(42)
+    bad = _make_image(scene_camera_minimum(rng))
+    bad.encoding = "mono8"                        # imgmsg_to_bgr desteklemiyor
+
+    helper = rclpy.create_node("test_camera_malformed_helper")
+    received: list[Detection2DArray] = []
+    helper.create_subscription(
+        Detection2DArray, "/perception/buoys", received.append, 10
+    )
+    pub = helper.create_publisher(Image, "/oak/rgb/image_raw", 10)
+    try:
+        for _ in range(5):
+            pub.publish(bad)
+            rclpy.spin_once(node, timeout_sec=0.1)
+            rclpy.spin_once(helper, timeout_sec=0.1)
+
+        good = _make_image(scene_camera_minimum(rng))
+        deadline = helper.get_clock().now().nanoseconds * 1e-9 + 5.0
+        while not received:
+            pub.publish(good)
+            rclpy.spin_once(node, timeout_sec=0.1)
+            rclpy.spin_once(helper, timeout_sec=0.1)
+            assert helper.get_clock().now().nanoseconds * 1e-9 < deadline, (
+                "bozuk kareden sonra node geçerli kareye yanıt vermiyor "
+                "— muhtemelen çökmüş (F-P.6)"
+            )
+        assert len(received[0].detections) == 3
+    finally:
+        helper.destroy_node()

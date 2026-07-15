@@ -1,0 +1,39 @@
+# Girdap İDA — GERÇEK PARKUR test görevi (SENTETİK KOORDİNAT, GERÇEK GEOMETRİ).
+#
+# Kaynak: /home/sudenaz/Masaüstü/p_GUNCEL_20260625.world — takımın gerçek
+# TEKNOFEST yarışma parkuru Gazebo dünya dosyası. Bu dosyadaki şamandıra/
+# güzergah-noktası (GN) pozisyonları, dosyada AÇIKÇA İSİMLENDİRİLMİŞ gerçek
+# rota noktalarıdır (GN1-GN5), elle tahmin edilmedi:
+#   PARKUR-1 (Nokta Takip, x=6-34): GN1(2,0) GN2(12,5) GN3(20,-5) GN4(32,5)
+#     — turuncu şamandıra çiftleri (p1_l1-8 / p1_r1-8) arasında zigzag.
+#   PARKUR-2 (Engelli Takip, x=40-90): GN5(90,0) — koridor boyunca 9 sarı
+#     "engel" şamandırası (43,3.5)..(75,3.5) merkez hatta; RRT*/MPPI bunları
+#     canlı `/perception/obstacle_map`'ten (yarisma_simulasyonu.py
+#     use_real_course_obstacles:=true) görüp kaçınmalı — GN4→GN5 arası
+#     sabit ara-waypoint YOK, kaçınma tamamen algı+planlamaya bırakılıyor
+#     (gerçek yarışma davranışı).
+#   PARKUR-3 (Kamikaze, x=102): 3 hedef şamandıra (kırmızı y=8, yeşil y=0,
+#     kahverengi y=-8) — test için orta (yeşil) hedef seçildi.
+#
+# x,y (.world ENU metre) → lat/lon dönüşümü: home_ref = SITL home
+# (40.7160, 31.5249, bkz. F-S.6 SITL doğrulaması) referans alınarak elle
+# hesaplandı (latlon_to_enu'nun tersi, aynı equirectangular yaklaşım).
+# course_home_lat/lon parametresi yarisma_simulasyonu.py'ye AYNI home_ref
+# verilmeli — aksi halde gerçek engeller yanlış base_link konumunda görünür.
+
+home_ref: {lat: 40.7160, lon: 31.5249}
+
+waypoints:
+  # --- Parkur-1: Nokta Takip (GN1-GN4, gerçek .world güzergah noktaları) ---
+  - {lat: 40.7160000, lon: 31.5249237, parkur: 1, name: "GN1"}
+  - {lat: 40.7160449, lon: 31.5250422, parkur: 1, name: "GN2"}
+  - {lat: 40.7159551, lon: 31.5251370, parkur: 1, name: "GN3"}
+  - {lat: 40.7160449, lon: 31.5252793, parkur: 1, name: "GN4"}
+  # --- Parkur-2: Engelli Takip (GN5, koridor sonu — 9 sarı engel arada) ---
+  - {lat: 40.7160000, lon: 31.5259667, parkur: 2, name: "GN5"}
+  # --- Parkur-3: Kamikaze (hedef_yesil, x=102 y=0) ---
+  - {lat: 40.7160000, lon: 31.5261089, parkur: 3, name: "hedef_yesil"}
+
+arrival_radius_m: 3.0
+dwell_time_s: 1.0
+cruise_velocity_mps: 1.0

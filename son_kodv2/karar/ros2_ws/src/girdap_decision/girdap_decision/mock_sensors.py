@@ -20,10 +20,32 @@ Tasarım notu:
     (Marmaris yarışma alanı temsili). Senaryo bittiğinde aracı
     durdurur ve sürekli son pozda yayın yapar.
 
+Ekstrem/dalgalı deniz koşulu (varsayılan KAPALI, tüm yeni parametreler 0):
+    - `wave_roll_amp_deg`/`wave_pitch_amp_deg`/`wave_period_s`: sinüzoidal
+      dalga sallanması — IMU orientation artık gerçek roll+pitch+yaw taşır
+      (öncesinde yalnız yaw kodlanıyordu, roll/pitch her zaman 0'dı — bu bir
+      eksikti, düzeltildi). linear_acceleration da artık yerçekimini gerçekçi
+      şekilde gövde eksenlerine projekte eder (öncesinde tamamen sıfırdı —
+      fsm_node'un darbe algılama eşiği [shock_threshold_g] hiç anlamlı bir
+      taban değere karşı test edilememişti).
+    - `wave_accel_noise_mss`: dalga darbesi/jerk gürültüsü (ek ivme std-sapması)
+      — shock_threshold_g'nin normal dalgalı denizde YANLIŞ ALARM vermediğini
+      doğrulamak için kullanılır (aşırı yüksek verilirse kasıtlı false-positive
+      testi de yapılabilir).
+    - `dropout_period_s`/`dropout_duration_s`: periyodik GPS+IMU+hız kesintisi
+      (çoklu-yol/dalga gölgelemesi taklidi) — kaynak-tazelik bekçilerinin
+      (BULGU 2, planning_node F-P.1, control_node pose_timeout_s) gerçekten
+      çalıştığını canlı doğrulamak için.
+
 Çalıştır:
     ros2 run girdap_decision mock_sensors
 veya launch ile fusion_node'la birlikte:
     ros2 launch girdap_decision fusion_test.launch.py
+Dalgalı deniz testi:
+    ros2 run girdap_decision mock_sensors --ros-args \\
+        -p wave_roll_amp_deg:=8.0 -p wave_pitch_amp_deg:=5.0 \\
+        -p wave_period_s:=3.5 -p wave_accel_noise_mss:=1.5 \\
+        -p dropout_period_s:=15.0 -p dropout_duration_s:=3.0
 """
 
 from __future__ import annotations
@@ -72,6 +94,24 @@ def _enu_to_latlon(x: float, y: float) -> tuple[float, float]:
     return lat, lon
 
 
+def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> tuple[float, float, float, float]:
+    """(roll,pitch,yaw) ENU rad → quaternion (x,y,z,w), ZYX sıra.
+
+    `prototype.telemetry.csv_logger.quat_to_rpy`'nin TERSİ — aynı ZYX
+    konvansiyonu (round-trip testiyle doğrulanır)."""
+    cr, sr = math.cos(roll / 2.0), math.sin(roll / 2.0)
+    cp, sp = math.cos(pitch / 2.0), math.sin(pitch / 2.0)
+    cy, sy = math.cos(yaw / 2.0), math.sin(yaw / 2.0)
+    qw = cr * cp * cy + sr * sp * sy
+    qx = sr * cp * cy - cr * sp * sy
+    qy = cr * sp * cy + sr * cp * sy
+    qz = cr * cp * sy - sr * sp * cy
+    return qx, qy, qz, qw
+
+
+_GRAVITY_MSS = 9.81
+
+
 class MockSensorsNode(Node):
     """Sentetik IMU + velocity_body + GPS yayını."""
 
@@ -85,11 +125,34 @@ class MockSensorsNode(Node):
         self.declare_parameter("omega_sigma", 0.005)     # rad/s
         self.declare_parameter("gps_sigma_xy", 0.30)     # m
         self.declare_parameter("seed", 0)
+        # --- Dalgalı deniz / ekstrem koşul (varsayılan 0 = kapalı) ---
+        self.declare_parameter("wave_roll_amp_deg", 0.0)
+        self.declare_parameter("wave_pitch_amp_deg", 0.0)
+        self.declare_parameter("wave_period_s", 4.0)
+        self.declare_parameter("wave_accel_noise_mss", 0.0)
+        self.declare_parameter("dropout_period_s", 0.0)   # 0 → kesinti yok
+        self.declare_parameter("dropout_duration_s", 2.0)
 
         self._vel_sigma = float(self.get_parameter("vel_sigma").value)
         self._omega_sigma = float(self.get_parameter("omega_sigma").value)
         self._gps_sigma = float(self.get_parameter("gps_sigma_xy").value)
         self._rng = np.random.default_rng(int(self.get_parameter("seed").value))
+        self._wave_roll_amp = math.radians(
+            float(self.get_parameter("wave_roll_amp_deg").value)
+        )
+        self._wave_pitch_amp = math.radians(
+            float(self.get_parameter("wave_pitch_amp_deg").value)
+        )
+        self._wave_period = max(
+            0.1, float(self.get_parameter("wave_period_s").value)
+        )
+        self._wave_accel_noise = float(
+            self.get_parameter("wave_accel_noise_mss").value
+        )
+        self._dropout_period = float(self.get_parameter("dropout_period_s").value)
+        self._dropout_duration = float(
+            self.get_parameter("dropout_duration_s").value
+        )
 
         # --- Yörünge durumu ---
         self._t = 0.0
