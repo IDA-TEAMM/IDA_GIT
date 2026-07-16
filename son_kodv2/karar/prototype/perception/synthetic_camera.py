@@ -31,6 +31,11 @@ WATER_BGR = (110, 70, 20)       # koyu deniz mavisi
 ORANGE_BGR = (0, 140, 255)      # RAL 2003 yakını (OpenCV H≈16)
 YELLOW_BGR = (0, 220, 255)      # RAL 1026 yakını (OpenCV H≈26)
 WHITE_BGR = (245, 245, 245)     # sosis şamandıra — S≈0, HİÇBİR maskeye girmez
+RED_BGR = (0, 0, 220)           # OpenCV H≈0  (kırmızı sarmalanmanın ALT ucu)
+RED_MAGENTA_BGR = (30, 0, 200)  # OpenCV H≈176 (ÜST ucu — wraparound testi)
+GREEN_BGR = (0, 150, 0)         # OpenCV H≈60
+BROWN_BGR = (19, 49, 79)        # OpenCV H≈15 S≈194 V≈79 — turuncuyla aynı Hue,
+                                 # belirgin düşük V (turuncu V-alt eşiği 120)
 
 
 def _water_frame() -> np.ndarray:
@@ -50,6 +55,16 @@ def add_noise(
     """Gauss sensör gürültüsü — HSV aralıklarını bozmayacak ölçekte (σ=8)."""
     noisy = frame.astype(np.int16) + rng.normal(0.0, sigma, frame.shape)
     return np.clip(noisy, 0, 255).astype(np.uint8)
+
+
+def desaturate(frame: np.ndarray, factor: float) -> np.ndarray:
+    """Doygunluğu `factor` ile ölçekler (0=gri, 1=değişmez) — bulutlu/akşamüstü
+    gerçek ışıkta ölçülen düşük doygunluğu (S≈29-83) taklit eder (2026-07-16
+    gerçek donanım testi, sonkodv2_test1_log)."""
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.float32)
+    hsv[:, :, 1] *= factor
+    hsv = np.clip(hsv, 0, 255).astype(np.uint8)
+    return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
 
 
 def add_glare(frame: np.ndarray, strength: float = 0.35) -> np.ndarray:
@@ -130,6 +145,35 @@ def scene_camera_menzil_siniri(rng: np.random.Generator) -> np.ndarray:
     draw_buoy(frame, 200, 200, 8, ORANGE_BGR)    # eşik üstü → tespit
     draw_buoy(frame, 440, 200, 6, ORANGE_BGR)    # eşik altı → görünmez
     return frame
+
+
+def scene_camera_renkli(rng: np.random.Generator) -> np.ndarray:
+    """1 kırmızı + 1 kırmızı(wraparound uç) + 1 yeşil + 1 kahverengi duba.
+
+    Kırmızının OpenCV Hue'da İKİ ucu da (H≈0 ve H≈176) test edilir —
+    red_mask()'ın sarmalanmayı doğru OR'ladığını doğrular.
+    """
+    frame = _water_frame()
+    draw_buoy(frame, 120, 240, 28, RED_BGR)
+    draw_buoy(frame, 280, 240, 28, RED_MAGENTA_BGR)
+    draw_buoy(frame, 440, 240, 26, GREEN_BGR)
+    draw_buoy(frame, 560, 340, 24, BROWN_BGR)
+    return frame
+
+
+def scene_camera_dusuk_isik(rng: np.random.Generator) -> np.ndarray:
+    """Akşamüstü/bulutlu ışık taklidi: normal dubalar %30 doygunluğa düşürülür
+    (2026-07-16 gerçek donanım testinde ölçülen S≈29-83'e denk gelir).
+
+    Amaç: `equalize_saturation()` (F-P.21) OLMADAN bu dubalar sabit S≥120
+    eşiğinin altında kalıp HİÇ tespit edilmemeli; equalize_saturation
+    AÇIKKEN (varsayılan) tekrar tespit edilebilmeli.
+    """
+    frame = _water_frame()
+    draw_buoy(frame, 160, 240, 30, ORANGE_BGR)
+    draw_buoy(frame, 480, 240, 30, ORANGE_BGR)
+    draw_buoy(frame, 320, 320, 25, YELLOW_BGR)
+    return desaturate(frame, 0.3)
 
 
 def scene_camera_orta(rng: np.random.Generator) -> np.ndarray:

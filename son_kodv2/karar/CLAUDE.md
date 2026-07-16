@@ -315,7 +315,7 @@ fsm_node: ParkurTransitionLogic.current_waypoint_reached(index)
 
 ```
 /oak/rgb/image_raw (Image) → image_codec (cv_bridge YOK) → CLAHE (LAB-L)
-  → HSV segmentasyon: turuncu maskesi → class 0, sarı → class 1
+  → HSV segmentasyon: turuncu→0, sarı→1, kırmızı→3, yeşil→4, kahverengi→5
   → kontur → bbox (+ opsiyonel YOLO katmanı → class 2 hedef)
   → /perception/buoys (vision_msgs/Detection2DArray)
 ```
@@ -323,12 +323,36 @@ fsm_node: ParkurTransitionLogic.current_waypoint_reached(index)
 - **Çekirdek:** `prototype/perception/camera_buoys.py`; node:
   `perception_camera_node` (kaynak-bağımsız, yalnız topic adına bağlı).
 - **Sınıflar:** `class_id` (string): `"0"`=parkur_kenari (turuncu, RAL 2003),
-  `"1"`=engel (sarı, RAL 1026), `"2"`=hedef (Parkur-3, YOLO katmanı).
+  `"1"`=engel (sarı, RAL 1026), `"2"`=hedef (Parkur-3, YOLO katmanı),
+  `"3"`=kırmızı, `"4"`=yeşil, `"5"`=kahverengi (2026-07-17 eklendi — parkurda
+  bu renklerin de bulunduğu bulundu).
   (Şartname md 5.5.2.1 — eski "RAL 2008/1003" etiketi YANLIŞTI; F17.1.)
+  ⚠ Kırmızı/yeşil/kahverengi eşikleri turuncu/sarı gibi SAHADA henüz
+  doğrulanmadı — ilk tahmin, kör güvenilmemeli (bkz. camera_buoys.py
+  docstring).
+- **F-P.21 — ışık koşulu dayanıklılığı (2026-07-16/17 gerçek donanım
+  testi):** akşamüstü/bulutlu ışıkta gerçek bir turuncu/sarı dubanın ölçülen
+  doygunluğu (S≈29-83) sabit eşiklerin (S≥120) çok altında kalıp hiç tespit
+  edilmedi. `equalize_saturation()` (yüzdelik-dilim germe, yalnız sahne
+  GENELİNDE düşük doygunsa devreye girer — `saturation_clahe` param ile
+  açık/kapalı) bunu düzeltir; `perception.camera.*` HSV parametreleri hâlâ
+  sahada gerçek nesnelerle doğrulanmalı.
+- **F-P.22 — algı kaynağı sessizce yok olabilir:** `use_onboard_camera`
+  VARSAYILAN artık `true` (eskiden `false` — varsayım: `/perception/buoys`'u
+  algı ekibinin AYRI paketi, `girdap-ida-algi`, üretir; ama gerçek donanım
+  testinde o paket bu ortamda hiç yoktu, hiçbir şey `/perception/buoys`'u
+  üretmedi, sessizce fark edilmeden kaldı). ⚠ Algı ekibinin kendi OAK node'u
+  DA çalışacaksa `use_onboard_camera:=false` ver — ikisi aynı anda açılırsa
+  hem topic çakışır hem OAK-D USB cihazını iki süreç aynı anda açamaz.
+  `perception_fusion_node`'un sync bekçisi artık iki girdiden biri (LiDAR ya
+  da kamera) HİÇ akmıyorsa da WARN basar (öncesinde yalnız "ikisi de aktı
+  ama eşleşmedi" durumunu yakalıyordu).
 - **Mock YOLO:** gerçek `.pt` yok → `YoloInference` mock modda sabit test
   bbox'ı döner. Gerçek model gelince `perception.camera.yolo_model_path`
   parametresi verilir — kod yolu aynı; ultralytics **lazy import** (mock
   modda hiç yüklenmez). Replace = yalnız `_infer_real` doğrulaması.
+  `use_yolo`/`use_yolo_localizer` VARSAYILAN artık `true` (2026-07-17 —
+  gerçek yarışma kararı, model_path boş kaldığı sürece güvenli mock'a düşer).
 - **cv_bridge KULLANMA:** apt cv_bridge boost modülü numpy 1.x ABI'siyle
   derli → pip numpy 2.x'te `_ARRAY_API not found` + KeyError. Yerine
   `girdap_decision/image_codec.py` (bgr8/rgb8 ↔ numpy, ~15 satır).

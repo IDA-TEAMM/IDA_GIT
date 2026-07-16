@@ -18,7 +18,10 @@ import pytest
 from prototype.perception.camera_buoys import (
     CLASS_ENGEL,
     CLASS_HEDEF,
+    CLASS_KAHVERENGI,
+    CLASS_KIRMIZI,
     CLASS_PARKUR_KENARI,
+    CLASS_YESIL,
     BuoyLocalizer,
     CameraBuoyConfig,
     Detection,
@@ -28,20 +31,28 @@ from prototype.perception.camera_buoys import (
     classify_roi_color,
     color_mask,
     detect_buoys,
+    equalize_saturation,
     mask_to_detections,
+    red_mask,
 )
 from prototype.perception.synthetic_camera import (
+    BROWN_BGR,
     FRAME_H,
     FRAME_W,
+    GREEN_BGR,
     ORANGE_BGR,
+    RED_BGR,
+    RED_MAGENTA_BGR,
     WATER_BGR,
     YELLOW_BGR,
     draw_buoy,
     scene_camera_beyaz_sosis,
+    scene_camera_dusuk_isik,
     scene_camera_fov_kenari,
     scene_camera_menzil_siniri,
     scene_camera_minimum,
     scene_camera_orta,
+    scene_camera_renkli,
     scene_camera_turuncu_serit,
 )
 
@@ -164,6 +175,120 @@ def test_detect_buoys_scene_orta(
 
 def test_detect_buoys_empty_input(cfg: CameraBuoyConfig) -> None:
     assert detect_buoys(np.empty((0, 0, 3), dtype=np.uint8), cfg) == []
+
+
+# ------------------------------------------------- F-P.21: yeni renk sınıfları
+
+def test_red_mask_wraparound_alt_uc(cfg: CameraBuoyConfig) -> None:
+    """Kırmızı H≈0 (sarmalanmanın ALT ucu) red_mask() tarafından yakalanır."""
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    draw_buoy(frame, 50, 50, 20, RED_BGR)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    mask = red_mask(hsv, cfg)
+    assert mask[50, 50] == 255
+
+
+def test_red_mask_wraparound_ust_uc(cfg: CameraBuoyConfig) -> None:
+    """Kırmızı H≈176 (sarmalanmanın ÜST ucu) da red_mask() tarafından
+    yakalanır — tek aralıklı bir inRange bunu KAÇIRIRDI."""
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    draw_buoy(frame, 50, 50, 20, RED_MAGENTA_BGR)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    mask = red_mask(hsv, cfg)
+    assert mask[50, 50] == 255
+
+
+def test_color_mask_green_hits_green_buoy(cfg: CameraBuoyConfig) -> None:
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    draw_buoy(frame, 50, 50, 20, GREEN_BGR)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    mask = color_mask(hsv, cfg.hsv_green_lo, cfg.hsv_green_hi)
+    assert mask[50, 50] == 255
+
+
+def test_color_mask_brown_hits_brown_buoy_not_orange(cfg: CameraBuoyConfig) -> None:
+    """Kahverengi (düşük-V) hem kahverengi maskesine girer HEM turuncu
+    maskesine GİRMEZ (V eşiği turuncunun altında kalıyor)."""
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    draw_buoy(frame, 50, 50, 20, BROWN_BGR)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    brown = color_mask(hsv, cfg.hsv_brown_lo, cfg.hsv_brown_hi)
+    orange = color_mask(hsv, cfg.hsv_orange_lo, cfg.hsv_orange_hi)
+    assert brown[50, 50] == 255
+    assert orange[50, 50] == 0
+
+
+def test_detect_buoys_scene_renkli(
+    cfg: CameraBuoyConfig, rng: np.random.Generator
+) -> None:
+    """4 duba: kırmızı (H≈0) + kırmızı (H≈176, wraparound) + yeşil + kahve."""
+    dets = detect_buoys(scene_camera_renkli(rng), cfg)
+    by_class: dict[int, list[Detection]] = {}
+    for d in dets:
+        by_class.setdefault(d.class_id, []).append(d)
+    assert len(by_class.get(CLASS_KIRMIZI, [])) == 2      # iki kırmızı uç
+    assert len(by_class.get(CLASS_YESIL, [])) == 1
+    assert len(by_class.get(CLASS_KAHVERENGI, [])) == 1
+
+
+def test_classify_roi_color_kirmizi(cfg: CameraBuoyConfig) -> None:
+    roi = np.full((20, 20, 3), RED_BGR, dtype=np.uint8)
+    assert classify_roi_color(roi, cfg) == CLASS_KIRMIZI
+
+
+def test_classify_roi_color_yesil(cfg: CameraBuoyConfig) -> None:
+    roi = np.full((20, 20, 3), GREEN_BGR, dtype=np.uint8)
+    assert classify_roi_color(roi, cfg) == CLASS_YESIL
+
+
+def test_classify_roi_color_kahverengi(cfg: CameraBuoyConfig) -> None:
+    roi = np.full((20, 20, 3), BROWN_BGR, dtype=np.uint8)
+    assert classify_roi_color(roi, cfg) == CLASS_KAHVERENGI
+
+
+# --------------------------------------------- F-P.21: ışık koşulu dayanıklılığı
+
+def test_equalize_saturation_preserves_shape_and_dtype(
+    cfg: CameraBuoyConfig, rng: np.random.Generator
+) -> None:
+    frame = scene_camera_minimum(rng)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    out = equalize_saturation(hsv, cfg)
+    assert out.shape == hsv.shape
+    assert out.dtype == np.uint8
+
+
+def test_equalize_saturation_disabled_is_noop(cfg: CameraBuoyConfig) -> None:
+    cfg.saturation_clahe = False
+    frame = np.full((50, 50, 3), ORANGE_BGR, dtype=np.uint8)
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    out = equalize_saturation(hsv, cfg)
+    assert np.array_equal(out, hsv)
+
+
+def test_dusuk_isikta_saturation_clahe_olmadan_tespit_basarisiz(
+    cfg: CameraBuoyConfig, rng: np.random.Generator
+) -> None:
+    """F-P.21 REGRESYON KANITI: equalize_saturation KAPALIYKEN, akşamüstü/
+    bulutlu ışık taklidi altında (S≈%30'a düşürülmüş) dubalar sabit S≥120
+    eşiğinin altında kalır — 2026-07-16 gerçek donanım testinde tam olarak
+    bu yüzden hiç tespit olmadı."""
+    cfg.saturation_clahe = False
+    dets = detect_buoys(scene_camera_dusuk_isik(rng), cfg)
+    assert dets == []
+
+
+def test_dusuk_isikta_saturation_clahe_ile_tespit_calisir(
+    cfg: CameraBuoyConfig, rng: np.random.Generator
+) -> None:
+    """F-P.21 DÜZELTME KANITI: equalize_saturation AÇIKKEN (varsayılan),
+    aynı düşük-doygunluk sahnesinde dubalar yine tespit edilir."""
+    assert cfg.saturation_clahe is True   # varsayılan açık olmalı
+    dets = detect_buoys(scene_camera_dusuk_isik(rng), cfg)
+    orange = [d for d in dets if d.class_id == CLASS_PARKUR_KENARI]
+    yellow = [d for d in dets if d.class_id == CLASS_ENGEL]
+    assert len(orange) == 2
+    assert len(yellow) == 1
 
 
 # ------------------------------------------- F6.5: çeldirici/negatif sahneler

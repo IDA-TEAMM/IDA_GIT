@@ -132,8 +132,35 @@ class PerceptionFusionNode(Node):
         self._n_camera_in += 1
 
     def _on_sync_watchdog(self) -> None:
-        """Pencere içinde iki girdi de aktı ama sync hiç ateşlemediyse WARN."""
-        if self._n_lidar_in > 0 and self._n_camera_in > 0 and self._n_sync == 0:
+        """Pencere içinde iki girdi de aktı ama sync hiç ateşlemediyse WARN;
+        girdilerden biri HİÇ gelmediyse de (F-P.22) ayrı bir WARN bas.
+
+        F-P.22 (2026-07-16/17, gerçek donanım testi): /perception/buoys'u
+        hiçbir şey üretmiyordu (perception_camera_node use_onboard_camera=
+        false varsayılanıyla hiç açılmamıştı, algı ekibinin ayrı OAK node'u
+        da bu ortamda yoktu) — perception_fusion_node bunu SESSİZCE fark
+        etmeden bekliyordu, tek belirti /perception/classified_obstacles'ın
+        hiç yayınlanmamasıydı ve bu da başka hiçbir yerde loglanmıyordu.
+        İkisi de boot'ta 0 olması normaldir (henüz hiçbir sürücü ayağa
+        kalkmamış olabilir) — yalnız BİRİ akarken diğeri hiç akmıyorsa uyar.
+        """
+        if self._n_lidar_in == 0 and self._n_camera_in == 0:
+            pass                             # ikisi de henüz başlamamış — boot, normal
+        elif self._n_camera_in == 0:
+            self.get_logger().warn(
+                f"sync bekçisi: {self._n_lidar_in} lidar mesajı geldi ama "
+                "/perception/buoys'tan HİÇ mesaj gelmedi — perception_camera_"
+                "node çalışmıyor olabilir mi (use_onboard_camera:=false ise "
+                "ve algı ekibinin ayrı OAK node'u da çalışmıyorsa hiçbir şey "
+                "bu topic'i üretmez, F-P.22) kontrol et"
+            )
+        elif self._n_lidar_in == 0:
+            self.get_logger().warn(
+                f"sync bekçisi: {self._n_camera_in} kamera mesajı geldi ama "
+                "/perception/obstacle_map'ten HİÇ mesaj gelmedi — "
+                "perception_lidar_node/Livox sürücüsü çalışmıyor olabilir"
+            )
+        elif self._n_sync == 0:
             self.get_logger().warn(
                 f"sync bekçisi: {self._n_lidar_in} lidar + "
                 f"{self._n_camera_in} kamera mesajı geldi ama eşleşme SIFIR — "

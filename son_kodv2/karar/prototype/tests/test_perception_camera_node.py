@@ -41,7 +41,19 @@ def ros_context():                                       # noqa: ANN201
 
 @pytest.fixture
 def node(ros_context) -> "girdap.PerceptionCameraNode":  # noqa: ANN001
-    n = girdap.PerceptionCameraNode()
+    # F-P.21/gerçek yarış kararı: node varsayılanı artık use_yolo/
+    # use_yolo_localizer=True (bkz. perception_camera_node.py). Bu dosyadaki
+    # testler saf-HSV çekirdeğini doğrular (mock lokalizatör kutu üretmediği
+    # için YOLO-hibrit yol devrede kalırsa 0 turuncu/sarı döner) — bu yüzden
+    # ortak fixture açıkça saf-HSV'ye sabitlenir.
+    from rclpy.parameter import Parameter
+
+    n = girdap.PerceptionCameraNode(
+        parameter_overrides=[
+            Parameter("use_yolo", Parameter.Type.BOOL, False),
+            Parameter("use_yolo_localizer", Parameter.Type.BOOL, False),
+        ]
+    )
     yield n
     n.destroy_node()
 
@@ -159,3 +171,18 @@ def test_unsupported_encoding_does_not_kill_node(node) -> None:  # noqa: ANN001
         assert len(received[0].detections) == 3
     finally:
         helper.destroy_node()
+
+
+def test_yolo_katmanlari_varsayilan_acik(ros_context) -> None:  # noqa: ANN001
+    """F-P.21/gerçek yarış kararı (2026-07-17): gerçek eğitilmiş model ışık
+    değişimine HSV'den daha dayanıklı — override YOKKEN node'un kendi
+    varsayılanı use_yolo=True, use_yolo_localizer=True olmalı (model_path
+    boş kaldığı sürece güvenli mock'a düşer, davranış çökmez)."""
+    n = girdap.PerceptionCameraNode()
+    try:
+        assert n._cfg.use_yolo is True
+        assert n._cfg.use_yolo_localizer is True
+        assert n._yolo.is_mock is True          # yolo_model_path boş → mock
+        assert n._localizer.is_mock is True     # yolo_localizer_model_path boş → mock
+    finally:
+        n.destroy_node()

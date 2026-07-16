@@ -9,10 +9,23 @@ Sınıflar:
     0 = parkur_kenari (turuncu duba, RAL 2003 yakını)
     1 = engel         (sarı duba, RAL 1026 yakını)
     2 = hedef         (Parkur-3 kamikaze hedefi — YOLO katmanı)
+    3 = kirmizi       (kırmızı duba/işaret)
+    4 = yesil         (yeşil duba/işaret)
+    5 = kahverengi    (kahverengi duba/işaret — düşük-V turuncuya yakın)
 
-Tasarım: turuncu/sarı için renk segmentasyonu yeterli (YOLO'ya gerek yok);
-YOLO yalnız hedef sınıfı için — ultralytics lazy import, mock modda hiç
-yüklenmez (Jetson'a gereksiz bağımlılık taşınmaz).
+Tasarım: turuncu/sarı/kırmızı/yeşil/kahverengi için renk segmentasyonu
+yeterli (YOLO'ya gerek yok); YOLO yalnız hedef sınıfı için — ultralytics
+lazy import, mock modda hiç yüklenmez (Jetson'a gereksiz bağımlılık
+taşınmaz).
+
+⚠ Işık koşulu notu (2026-07-16 gerçek donanım testi, sonkodv2_test1_log):
+akşamüstü/bulutlu ışıkta gerçek bir turuncu/sarı dubanın ölçülen doygunluğu
+(S≈29-83) sabit eşiklerin (S≥120) çok altında kaldı, hiç tespit edilmedi.
+`equalize_saturation()` bunu düzeltmek için eklendi — doygunluk kanalını
+yüzdelik-dilim germesiyle yeniden ölçekler, sabit eşikler farklı ışık
+koşullarında da işe yarar hale gelir. Kırmızı/yeşil/kahverengi eşikleri de turuncu/sarı gibi SAHADA
+gerçek nesnelerle doğrulanmalı — burada verilen varsayılanlar ilk tahmin,
+kör güven duyulmamalı.
 """
 
 from __future__ import annotations
@@ -27,6 +40,9 @@ import numpy as np
 CLASS_PARKUR_KENARI = 0     # turuncu
 CLASS_ENGEL = 1             # sarı
 CLASS_HEDEF = 2             # Parkur-3 hedef (YOLO)
+CLASS_KIRMIZI = 3           # kırmızı
+CLASS_YESIL = 4             # yeşil
+CLASS_KAHVERENGI = 5        # kahverengi
 
 
 @dataclass
@@ -52,8 +68,40 @@ class CameraBuoyConfig:
     hsv_orange_hi: tuple[int, int, int] = (20, 255, 255)
     hsv_yellow_lo: tuple[int, int, int] = (21, 120, 120)    # RAL 1026 yakını
     hsv_yellow_hi: tuple[int, int, int] = (35, 255, 255)
+    # Kırmızı, OpenCV'nin H=0/179 sarmalanmasının İKİ ucuna da düşer — tek
+    # aralık yeterli değil, iki aralık OR'lanır (bkz. red_mask()).
+    hsv_red_lo1: tuple[int, int, int] = (0, 120, 70)
+    hsv_red_hi1: tuple[int, int, int] = (8, 255, 255)
+    hsv_red_lo2: tuple[int, int, int] = (170, 120, 70)
+    hsv_red_hi2: tuple[int, int, int] = (179, 255, 255)
+    hsv_green_lo: tuple[int, int, int] = (40, 80, 60)
+    hsv_green_hi: tuple[int, int, int] = (85, 255, 255)
+    # Kahverengi ≈ düşük-V turuncu (aynı Hue bandı, çok daha karanlık) —
+    # V üst sınırı turuncunun V alt sınırının (120) altında tutulur ki iki
+    # sınıf çakışmasın (ince bir orta bant hâlâ belirsiz kalabilir, bu
+    # kahverengi/turuncu ayrımının doğası gereği kaçınılmaz bir sınırlama).
+    hsv_brown_lo: tuple[int, int, int] = (5, 60, 40)
+    hsv_brown_hi: tuple[int, int, int] = (20, 255, 115)
     clahe_clip_limit: float = 2.0       # kontrast sınırı (su parlaması dengesi)
     clahe_tile: int = 8                 # CLAHE karo ızgarası (8×8)
+    # F-P.21 (2026-07-16, gerçek donanım testi): düşük ışıkta (akşamüstü/
+    # bulutlu) doygunluk sabit eşiklerin altında kalıp tespiti hiç
+    # tetiklememesini önlemek için doygunluk kanalı yüzdelik-dilim germesiyle
+    # (percentile stretch) yeniden ölçeklenir. NOT: önce CLAHE denendi ama
+    # sahne baştan sona düzgün soluksa (tüm kareye yayılmış düşük doygunluk —
+    # tam olarak akşamüstü/bulutlu ışığın verdiği durum) CLAHE'nin yerel
+    # kontrast artışı yetersiz kaldı (canlı ölçümde S=75→84, gereken 120+
+    # değil) — global germe bunu S=75→255'e çıkardı, gerçek düzeltme bu.
+    saturation_clahe: bool = True
+    saturation_stretch_lo_pct: float = 1.0
+    saturation_stretch_hi_pct: float = 99.0
+    # Sahnede zaten en az bir doygun renk varsa (ör. parlak kırmızı/yeşil
+    # duba, S≈255) germe UYGULANMAZ — aksi halde farklı renklerin DOĞAL
+    # doygunluk farkı (ör. kahverengi turuncudan doğal olarak daha az
+    # doygundur) germe tarafından bozulup yanlışlıkla sıfıra çökebilir.
+    # Germe yalnız sahne GENELİNDE düşük doygunluksa (üst yüzdelik dilim de
+    # düşükse — akşamüstü/bulutlu ışığın verdiği durum) devreye girer.
+    saturation_stretch_skip_above: float = 150.0
     min_area_px: int = 150              # bu altı kontur noise
     morph_kernel_px: int = 5            # açma/kapama gürültü temizliği
     use_yolo: bool = False              # hedef sınıfı YOLO katmanı
@@ -79,6 +127,38 @@ def apply_clahe(frame_bgr: np.ndarray, cfg: CameraBuoyConfig) -> np.ndarray:
     return cv2.cvtColor(merged, cv2.COLOR_LAB2BGR)
 
 
+def equalize_saturation(hsv: np.ndarray, cfg: CameraBuoyConfig) -> np.ndarray:
+    """Doygunluk kanalını yüzdelik-dilim germesiyle (percentile stretch)
+    yeniden ölçekler (F-P.21).
+
+    2026-07-16 gerçek donanım testinde bulundu: akşamüstü/bulutlu ışıkta
+    gerçek turuncu/sarı bir dubanın ölçülen doygunluğu (S≈29-83) sabit
+    `hsv_*_lo` eşiklerinin (S≥120) çok altında kaldı, hiç tespit edilmedi.
+    Bu, ışığın dağınık (diffuse) olduğu koşullarda rengin kameraya daha
+    "soluk" yansımasının doğrudan sonucu. Karedeki 1.-99. yüzdelik dilim
+    aralığı [0,255]'e yeniden ölçeklenir — sahne baştan sona düzgün soluksa
+    bile (tam olarak bu senaryo) o an mevcut en yüksek doygunluk 255'e
+    yakın bir değere çekilir, sabit eşikler hem parlak güneşte hem
+    bulutlu/akşamüstünde işe yarar hale gelir. `cfg.saturation_clahe=False`
+    ile eski (ham) davranışa dönülebilir.
+    """
+    if not cfg.saturation_clahe:
+        return hsv
+    h_ch, s_ch, v_ch = cv2.split(hsv)
+    hi = np.percentile(s_ch, cfg.saturation_stretch_hi_pct)
+    if hi >= cfg.saturation_stretch_skip_above:
+        # Sahnede zaten yeterince doygun bir şey var — germe uygulanmaz,
+        # farklı renklerin doğal doygunluk farkı korunur.
+        return hsv
+    lo = np.percentile(s_ch, cfg.saturation_stretch_lo_pct)
+    if hi - lo < 1.0:
+        return hsv          # düz/ayırt edilemez sahne (tüm kare tek renk) — dokunma
+    s_stretched = np.clip(
+        (s_ch.astype(np.float32) - lo) * (255.0 / (hi - lo)), 0, 255
+    ).astype(np.uint8)
+    return cv2.merge((h_ch, s_stretched, v_ch))
+
+
 def color_mask(
     hsv: np.ndarray,
     lo: Sequence[int],
@@ -87,6 +167,25 @@ def color_mask(
 ) -> np.ndarray:
     """HSV aralık maskesi + morfolojik açma/kapama (tuz-biber temizliği)."""
     mask = cv2.inRange(hsv, np.array(lo, np.uint8), np.array(hi, np.uint8))
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_px, kernel_px))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k)
+    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
+
+
+def red_mask(hsv: np.ndarray, cfg: CameraBuoyConfig, kernel_px: int = 5) -> np.ndarray:
+    """Kırmızı — OpenCV Hue'nun 0/179 sarmalanmasının İKİ ucunu da OR'lar.
+
+    Kırmızı hem H≈0 hem H≈179 civarında bulunur (döngüsel Hue ekseninin iki
+    ucu da aynı renk) — tek bir `cv2.inRange` aralığı bunu YAKALAYAMAZ, iki
+    aralık ayrı ayrı maskelenip birleştirilmeli.
+    """
+    m1 = cv2.inRange(
+        hsv, np.array(cfg.hsv_red_lo1, np.uint8), np.array(cfg.hsv_red_hi1, np.uint8)
+    )
+    m2 = cv2.inRange(
+        hsv, np.array(cfg.hsv_red_lo2, np.uint8), np.array(cfg.hsv_red_hi2, np.uint8)
+    )
+    mask = cv2.bitwise_or(m1, m2)
     k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_px, kernel_px))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k)
     return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k)
@@ -258,18 +357,31 @@ def classify_roi_color(roi_bgr: np.ndarray, cfg: CameraBuoyConfig) -> Optional[i
     total = hsv.shape[0] * hsv.shape[1]
     if total == 0:
         return None
+    hsv = equalize_saturation(hsv, cfg)
     orange_mask = cv2.inRange(
         hsv, np.array(cfg.hsv_orange_lo, np.uint8), np.array(cfg.hsv_orange_hi, np.uint8)
     )
     yellow_mask = cv2.inRange(
         hsv, np.array(cfg.hsv_yellow_lo, np.uint8), np.array(cfg.hsv_yellow_hi, np.uint8)
     )
-    orange_cov = float(np.count_nonzero(orange_mask)) / total
-    yellow_cov = float(np.count_nonzero(yellow_mask)) / total
-    min_cov = cfg.yolo_localizer_min_coverage
-    if orange_cov < min_cov and yellow_cov < min_cov:
+    red_m = red_mask(hsv, cfg, kernel_px=1)
+    green_mask = cv2.inRange(
+        hsv, np.array(cfg.hsv_green_lo, np.uint8), np.array(cfg.hsv_green_hi, np.uint8)
+    )
+    brown_mask = cv2.inRange(
+        hsv, np.array(cfg.hsv_brown_lo, np.uint8), np.array(cfg.hsv_brown_hi, np.uint8)
+    )
+    coverage = {
+        CLASS_PARKUR_KENARI: float(np.count_nonzero(orange_mask)) / total,
+        CLASS_ENGEL: float(np.count_nonzero(yellow_mask)) / total,
+        CLASS_KIRMIZI: float(np.count_nonzero(red_m)) / total,
+        CLASS_YESIL: float(np.count_nonzero(green_mask)) / total,
+        CLASS_KAHVERENGI: float(np.count_nonzero(brown_mask)) / total,
+    }
+    best_class = max(coverage, key=coverage.get)
+    if coverage[best_class] < cfg.yolo_localizer_min_coverage:
         return None
-    return CLASS_PARKUR_KENARI if orange_cov >= yellow_cov else CLASS_ENGEL
+    return best_class
 
 
 def _detect_buoys_yolo_localized(
@@ -316,14 +428,25 @@ def detect_buoys(
     else:
         balanced = apply_clahe(frame_bgr, cfg)
         hsv = cv2.cvtColor(balanced, cv2.COLOR_BGR2HSV)
+        hsv = equalize_saturation(hsv, cfg)
         orange = color_mask(
             hsv, cfg.hsv_orange_lo, cfg.hsv_orange_hi, cfg.morph_kernel_px
         )
         yellow = color_mask(
             hsv, cfg.hsv_yellow_lo, cfg.hsv_yellow_hi, cfg.morph_kernel_px
         )
+        red = red_mask(hsv, cfg, cfg.morph_kernel_px)
+        green = color_mask(
+            hsv, cfg.hsv_green_lo, cfg.hsv_green_hi, cfg.morph_kernel_px
+        )
+        brown = color_mask(
+            hsv, cfg.hsv_brown_lo, cfg.hsv_brown_hi, cfg.morph_kernel_px
+        )
         detections = mask_to_detections(orange, CLASS_PARKUR_KENARI, cfg)
         detections += mask_to_detections(yellow, CLASS_ENGEL, cfg)
+        detections += mask_to_detections(red, CLASS_KIRMIZI, cfg)
+        detections += mask_to_detections(green, CLASS_YESIL, cfg)
+        detections += mask_to_detections(brown, CLASS_KAHVERENGI, cfg)
 
     if cfg.use_yolo and yolo is not None:
         detections += yolo.infer(frame_bgr)       # hedef sınıfı (Parkur-3)

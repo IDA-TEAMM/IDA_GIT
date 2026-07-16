@@ -102,10 +102,13 @@ _CAMERA_DEFAULTS: dict[str, tuple[object, type]] = {
     "clahe_tile": (8, int),
     "min_area_px": (150, int),
     "morph_kernel_px": (5, int),
-    "use_yolo": (False, bool),
+    # F-P.21/gerçek yarış kararı (2026-07-17): VARSAYILAN AÇIK — model_path
+    # boş kaldığı sürece güvenli mock'a düşer, davranış değişmez.
+    "use_yolo": (True, bool),
     "yolo_model_path": ("", str),
-    # F-S.9: turuncu/sarı için alternatif yol (eğitilmiş lokalizatör + HSV).
-    "use_yolo_localizer": (False, bool),
+    # F-S.9: turuncu/sarı/kırmızı/yeşil/kahve için alternatif yol (eğitilmiş
+    # lokalizatör + HSV).
+    "use_yolo_localizer": (True, bool),
     "yolo_localizer_model_path": ("", str),
     "yolo_localizer_min_coverage": (0.15, float),
     "log_period_s": (5.0, float),
@@ -274,10 +277,17 @@ def generate_launch_description() -> LaunchDescription:
             description="planning_node yerel kontrolcüsü: mppi | pid (F-S.10)",
         ),
         DeclareLaunchArgument(
-            "use_onboard_camera", default_value="false",
-            description="F3.1: true → HSV yedek kamera node'u açılır. "
-                        "VARSAYILAN false: /perception/buoys'u algı ekibinin "
-                        "OAK node'u üretir (DepthAI doğrudan, VPU'da YOLO)",
+            "use_onboard_camera", default_value="true",
+            description="F3.1/F-P.22 (2026-07-17): VARSAYILAN true. Eskiden "
+                        "false idi (varsayım: /perception/buoys'u algı "
+                        "ekibinin AYRI paketi — girdap-ida-algi — üretir, "
+                        "DepthAI doğrudan VPU'da YOLO) — ama gerçek donanım "
+                        "testinde (2026-07-16) o paket bu ortamda hiç yok/"
+                        "çalışmıyordu, /perception/buoys hiç üretilmedi, "
+                        "hiç fark edilmeden sessizce kaldı. ⚠ algı ekibinin "
+                        "node'u AYRICA çalışacaksa bunu false yap — ikisi "
+                        "aynı anda açılırsa hem topic çakışır hem OAK-D USB "
+                        "cihazını iki süreç aynı anda açamaz.",
         ),
         DeclareLaunchArgument(
             "use_mppi", default_value=_bool_default(hw["use_mppi"]),

@@ -148,6 +148,68 @@ def test_node_subscribes_both_perception_topics(node) -> None:  # noqa: ANN001
     assert node._camera_sub.topic == "/perception/buoys"
 
 
+# --------------------------------------------------- F-P.22: sync bekçisi
+
+def test_fp22_kamera_hic_gelmezse_uyari_basar(node) -> None:  # noqa: ANN001
+    """F-P.22 (2026-07-16/17, gerçek donanım testi): /perception/buoys hiç
+    yayınlanmıyordu (perception_camera_node kapalıydı) ve bu SESSİZCE fark
+    edilmiyordu — tek belirti classified_obstacles'ın hiç üretilmemesiydi.
+    LiDAR akarken kamera HİÇ akmıyorsa artık açık bir WARN basılmalı."""
+    warnings: list[str] = []
+    node.get_logger().warn = lambda msg, **kw: warnings.append(msg)  # type: ignore[method-assign]
+
+    node._n_lidar_in = 5
+    node._n_camera_in = 0
+    node._n_sync = 0
+    node._on_sync_watchdog()
+
+    assert len(warnings) == 1
+    assert "/perception/buoys" in warnings[0]
+    assert "HİÇ mesaj gelmedi" in warnings[0]
+
+
+def test_fp22_lidar_hic_gelmezse_uyari_basar(node) -> None:  # noqa: ANN001
+    warnings: list[str] = []
+    node.get_logger().warn = lambda msg, **kw: warnings.append(msg)  # type: ignore[method-assign]
+
+    node._n_lidar_in = 0
+    node._n_camera_in = 5
+    node._n_sync = 0
+    node._on_sync_watchdog()
+
+    assert len(warnings) == 1
+    assert "/perception/obstacle_map" in warnings[0]
+
+
+def test_fp22_ikisi_de_sifirsa_boot_normal_uyari_yok(node) -> None:  # noqa: ANN001
+    """Boot anında ikisi de 0 olabilir (sürücüler henüz ayağa kalkmamış) —
+    bu YANLIŞ ALARM üretmemeli."""
+    warnings: list[str] = []
+    node.get_logger().warn = lambda msg, **kw: warnings.append(msg)  # type: ignore[method-assign]
+
+    node._n_lidar_in = 0
+    node._n_camera_in = 0
+    node._n_sync = 0
+    node._on_sync_watchdog()
+
+    assert warnings == []
+
+
+def test_fp22_ikisi_de_akip_sync_olmazsa_eski_uyari_calisir(node) -> None:  # noqa: ANN001
+    """Regresyon: F7.1'in orijinal davranışı (ikisi de aktı, sync sıfır)
+    yeni dallanmadan sonra da çalışmaya devam etmeli."""
+    warnings: list[str] = []
+    node.get_logger().warn = lambda msg, **kw: warnings.append(msg)  # type: ignore[method-assign]
+
+    node._n_lidar_in = 3
+    node._n_camera_in = 2
+    node._n_sync = 0
+    node._on_sync_watchdog()
+
+    assert len(warnings) == 1
+    assert "eşleşme SIFIR" in warnings[0]
+
+
 def test_node_publishes_classified_obstacles(node) -> None:  # noqa: ANN001
     assert node._pub.topic_name == "/perception/classified_obstacles"
     assert node._pub.msg_type is Detection3DArray

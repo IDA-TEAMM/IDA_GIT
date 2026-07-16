@@ -93,14 +93,41 @@ perception_camera_node:
     clahe_tile: 8            # CLAHE karo ızgarası (8×8)
     min_area_px: 150         # bu altı kontur noise
     morph_kernel_px: 5       # maske açma/kapama çekirdeği (px)
-    use_yolo: false          # hedef sınıfı YOLO katmanı (Parkur-3)
+    # F-P.21/gerçek yarış kararı (2026-07-17): YOLO katmanları VARSAYILAN
+    # AÇIK — gerçek eğitilmiş model ışık değişimine HSV'den daha dayanıklı.
+    # model_path boş kaldığı sürece güvenli mock'a düşer (kod yolu
+    # DEĞİŞMEDİ). Gerçek .pt yolu container'da varsayılan yok, elle
+    # docker cp ile kopyalanıp buraya yazılmalı (bkz. CLAUDE.md).
+    use_yolo: true           # hedef sınıfı YOLO katmanı (Parkur-3)
     yolo_model_path: ""      # gerçek .pt yolu; boş = mock inference
+    use_yolo_localizer: true # turuncu/sarı/kırmızı/yeşil/kahve için YOLO+HSV hibrit
+    yolo_localizer_model_path: ""   # gerçek .pt yolu; boş = mock (saf-HSV'ye düşer)
+    yolo_localizer_min_coverage: 0.15
     log_period_s: 5.0        # duba sayısı INFO log periyodu
-    # HSV aralıkları (OpenCV: H 0-179, S/V 0-255) — RAL kodlarına yakın
+    # HSV aralıkları (OpenCV: H 0-179, S/V 0-255) — RAL kodlarına yakın.
+    # ⚠ SAHADA DOĞRULANMALI — 2026-07-16 gerçek donanım testinde akşamüstü
+    # ışığında turuncu/sarı hiç tespit edilmedi (bkz. equalize_saturation).
     hsv_orange_lo: [5, 120, 120]     # turuncu (RAL 2003, şartname) alt sınır
     hsv_orange_hi: [20, 255, 255]
     hsv_yellow_lo: [21, 120, 120]    # sarı (RAL 1026, şartname) alt sınır
     hsv_yellow_hi: [35, 255, 255]
+    # Kırmızı: OpenCV Hue sarmalanması İKİ aralık gerektirir (bkz. red_mask).
+    hsv_red_lo1: [0, 120, 70]
+    hsv_red_hi1: [8, 255, 255]
+    hsv_red_lo2: [170, 120, 70]
+    hsv_red_hi2: [179, 255, 255]
+    hsv_green_lo: [40, 80, 60]
+    hsv_green_hi: [85, 255, 255]
+    # Kahverengi ≈ düşük-V turuncu — V üst sınırı turuncunun V alt sınırının
+    # (120) altında tutulur ki iki sınıf çakışmasın.
+    hsv_brown_lo: [5, 60, 40]
+    hsv_brown_hi: [20, 255, 115]
+    # F-P.21: ışık koşulu dayanıklılığı — doygunluk kanalı yüzdelik-dilim
+    # germesiyle yeniden ölçeklenir (yalnız sahne GENELİNDE düşük doygunsa).
+    saturation_clahe: true
+    saturation_stretch_lo_pct: 1.0
+    saturation_stretch_hi_pct: 99.0
+    saturation_stretch_skip_above: 150.0
 
 perception_fusion_node:
   ros__parameters:

@@ -59,20 +59,28 @@ from prototype.perception.camera_buoys import (
 class PerceptionCameraNode(Node):
     """Image → CLAHE/HSV segmentasyon (+mock YOLO) → Detection2DArray."""
 
-    def __init__(self) -> None:
-        super().__init__("perception_camera_node")
+    def __init__(self, **node_kwargs) -> None:
+        # node_kwargs → parameter_overrides passthrough (test enjeksiyonu,
+        # diğer node'larla tutarlı — bkz. perception_fusion_node).
+        super().__init__("perception_camera_node", **node_kwargs)
 
         # --- Parametreler (config perception.camera bloğu) ---
         self.declare_parameter("clahe_clip_limit", 2.0)
         self.declare_parameter("clahe_tile", 8)
         self.declare_parameter("min_area_px", 150)
         self.declare_parameter("morph_kernel_px", 5)
-        self.declare_parameter("use_yolo", False)
+        # F-P.21/gerçek yarış kararı (2026-07-17): YOLO katmanları artık
+        # VARSAYILAN AÇIK — gerçek eğitilmiş model ışık değişimine (bkz.
+        # equalize_saturation notu) HSV'den çok daha dayanıklı. model_path
+        # boş kaldığı sürece güvenli mock'a düşer (YoloInference/BuoyLocalizer
+        # `mock = mock or not model_path` — kod yolu DEĞİŞMEDİ, sadece
+        # varsayılan flag açıldı); gerçek .pt yolu hâlâ ayrıca verilmeli
+        # (container'da varsayılan olarak yok, bkz. CLAUDE.md).
+        self.declare_parameter("use_yolo", True)
         self.declare_parameter("yolo_model_path", "")   # boş = mock
         # F-S.9: turuncu/sarı için ALTERNATİF yol — eğitilmiş genel duba
         # lokalizatörü (ör. ida_topics/best.pt) + BU node'un HSV eşikleri.
-        # Varsayılan False → mevcut saf-HSV segmentasyonu değişmez.
-        self.declare_parameter("use_yolo_localizer", False)
+        self.declare_parameter("use_yolo_localizer", True)
         self.declare_parameter("yolo_localizer_model_path", "")  # boş = mock
         self.declare_parameter("yolo_localizer_min_coverage", 0.15)
         self.declare_parameter("log_period_s", 5.0)
@@ -81,6 +89,19 @@ class PerceptionCameraNode(Node):
         self.declare_parameter("hsv_orange_hi", [20, 255, 255])
         self.declare_parameter("hsv_yellow_lo", [21, 120, 120])
         self.declare_parameter("hsv_yellow_hi", [35, 255, 255])
+        self.declare_parameter("hsv_red_lo1", [0, 120, 70])
+        self.declare_parameter("hsv_red_hi1", [8, 255, 255])
+        self.declare_parameter("hsv_red_lo2", [170, 120, 70])
+        self.declare_parameter("hsv_red_hi2", [179, 255, 255])
+        self.declare_parameter("hsv_green_lo", [40, 80, 60])
+        self.declare_parameter("hsv_green_hi", [85, 255, 255])
+        self.declare_parameter("hsv_brown_lo", [5, 60, 40])
+        self.declare_parameter("hsv_brown_hi", [20, 255, 115])
+        # F-P.21: ışık koşulu dayanıklılığı (bkz. camera_buoys.py docstring)
+        self.declare_parameter("saturation_clahe", True)
+        self.declare_parameter("saturation_stretch_lo_pct", 1.0)
+        self.declare_parameter("saturation_stretch_hi_pct", 99.0)
+        self.declare_parameter("saturation_stretch_skip_above", 150.0)
 
         p = self.get_parameter
         self._cfg = CameraBuoyConfig(
@@ -88,6 +109,20 @@ class PerceptionCameraNode(Node):
             hsv_orange_hi=tuple(p("hsv_orange_hi").value),
             hsv_yellow_lo=tuple(p("hsv_yellow_lo").value),
             hsv_yellow_hi=tuple(p("hsv_yellow_hi").value),
+            hsv_red_lo1=tuple(p("hsv_red_lo1").value),
+            hsv_red_hi1=tuple(p("hsv_red_hi1").value),
+            hsv_red_lo2=tuple(p("hsv_red_lo2").value),
+            hsv_red_hi2=tuple(p("hsv_red_hi2").value),
+            hsv_green_lo=tuple(p("hsv_green_lo").value),
+            hsv_green_hi=tuple(p("hsv_green_hi").value),
+            hsv_brown_lo=tuple(p("hsv_brown_lo").value),
+            hsv_brown_hi=tuple(p("hsv_brown_hi").value),
+            saturation_clahe=bool(p("saturation_clahe").value),
+            saturation_stretch_lo_pct=float(p("saturation_stretch_lo_pct").value),
+            saturation_stretch_hi_pct=float(p("saturation_stretch_hi_pct").value),
+            saturation_stretch_skip_above=float(
+                p("saturation_stretch_skip_above").value
+            ),
             clahe_clip_limit=float(p("clahe_clip_limit").value),
             clahe_tile=int(p("clahe_tile").value),
             min_area_px=int(p("min_area_px").value),
