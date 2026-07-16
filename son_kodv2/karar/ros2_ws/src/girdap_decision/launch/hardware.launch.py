@@ -117,8 +117,10 @@ _CAMERA_DEFAULTS: dict[str, tuple[object, type]] = {
 _FUSION_DEFAULTS: dict[str, tuple[object, type]] = {
     "bearing_tolerance_rad": (0.15, float),
     "camera_hfov_rad": (1.2, float),
-    "camera_image_width_px": (640, int),
-    "camera_image_height_px": (480, int),
+    # 2026-07-17: oakd_driver_node 1280x720'e çıkarıldı (640x480'de sahada
+    # 2m'deki duba bile net görülemiyordu) — eşleşmezse bearing yanlış çıkar.
+    "camera_image_width_px": (1280, int),
+    "camera_image_height_px": (720, int),
     "sync_slop_s": (0.1, float),
     "log_period_s": (5.0, float),
 }

@@ -36,8 +36,12 @@ class KameraKayitNode(Node):
 
         # ── Parametreler ──────────────────────────────────────────────────────
         self.declare_parameter('fps', 10)
-        self.declare_parameter('width', 640)
-        self.declare_parameter('height', 480)
+        # 2026-07-17: oakd_driver_node'un çözünürlüğüyle EŞLEŞMELİ (1280x720,
+        # bkz. o dosyanın docstring'i — 640x480'de sahada 2m'deki duba bile
+        # net görülemiyordu). Uyuşmazsa VideoWriter gelen kareyi bozuk/hatalı
+        # yazar ya da hiç yazmaz.
+        self.declare_parameter('width', 1280)
+        self.declare_parameter('height', 720)
 
         self.fps    = self.get_parameter('fps').value
         self.width  = self.get_parameter('width').value

@@ -70,8 +70,10 @@ def _pose_array(dets: list[LidarDetection], stamp_sec: int = 0) -> PoseArray:
 
 def _detection2d_array(
     dets: list[CameraDetection],
-    image_w: int = 640,
-    image_h: int = 480,
+    image_w: int = 1280,   # 2026-07-17: gerçek oakd_driver_node çözünürlüğü
+    image_h: int = 720,    # (node'un kendi camera_image_width/height_px
+                           # varsayılanıyla EŞLEŞMELİ, yoksa bearing round-
+                           # trip'i sessizce yanlış test edilir)
     stamp_sec: int = 0,
 ) -> Detection2DArray:
     """Normalize [0,1] CameraDetection → piksel-uzayı Detection2DArray.

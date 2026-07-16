@@ -16,7 +16,10 @@ turuncu/sarı duba daireleri çizer. Senaryolar:
     - scene_camera_menzil_siniri: min_area_px eşiği iki yanında iki duba —
       F5.5 ≈15 m etkin menzil sınırını belgeler
 
-Frame: 640×480 BGR uint8 (OAK-D Lite preview çözünürlüğü).
+Frame: 640×480 BGR uint8 (test sabiti — GERÇEK OAK-D Lite önizlemesi 2026-
+07-17'de 1280x720'e çıkarıldı, bkz. oakd_driver_node.py docstring; bu
+sentetik sahneler basitlik için 640×480'de KALDI, gerçek çözünürlükle
+orantısal davranış aynı, testler yeniden ölçeklenmedi).
 """
 
 from __future__ import annotations

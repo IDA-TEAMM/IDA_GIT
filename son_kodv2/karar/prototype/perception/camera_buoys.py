@@ -102,6 +102,12 @@ class CameraBuoyConfig:
     # Germe yalnız sahne GENELİNDE düşük doygunluksa (üst yüzdelik dilim de
     # düşükse — akşamüstü/bulutlu ışığın verdiği durum) devreye girer.
     saturation_stretch_skip_above: float = 150.0
+    # 2026-07-17: BİLİNÇLİ OLARAK 150'de bırakıldı — oakd_driver_node 1280x720'e
+    # çıkınca (eskiden 640x480) aynı fiziksel mesafedeki bir duba artık ~4x
+    # daha fazla piksel kaplıyor, bu yüzden BU eşik SABİT kalırsa etkin menzil
+    # otomatik olarak ~2x artar (F5.5 belgeleme sahnesi menzil hesabı da buna
+    # göre güncellenmeli — bkz. synthetic_camera.scene_camera_menzil_siniri).
+    # Eşiği orantılı büyütmek bu menzil kazanımını İPTAL ederdi — YAPMA.
     min_area_px: int = 150              # bu altı kontur noise
     morph_kernel_px: int = 5            # açma/kapama gürültü temizliği
     use_yolo: bool = False              # hedef sınıfı YOLO katmanı

@@ -5,11 +5,19 @@ IDA/Girdap USV - OAK-D Lite Kamera Driver Node
 DepthAI SDK üzerinden OAK-D Lite kamera verisi
 
 Publish:
-  /camera/image_raw  → sensor_msgs/Image (bgr8, 640x480, 30fps)
+  /camera/image_raw  → sensor_msgs/Image (bgr8, 1280x720, 30fps)
 
 Gereksinim: pip3 install depthai
 
 Yazar: IDA/Girdap Takım 989124 - Alt Alan B
+
+Not (2026-07-17, gerçek donanım testi): 640x480 önizleme çözünürlüğü ile
+sahada 2m mesafedeki bir duba bile net görülemedi/tespit edilemedi — HSV
+sınıflandırma için piksel detayı yetersizdi. 1280x720'e çıkarıldı (~4x daha
+fazla piksel): hem görüntü netliği hem de aynı fiziksel mesafedeki dubanın
+kapladığı piksel alanı (dolayısıyla min_area_px eşiğini aşma mesafesi, yani
+etkin menzil) artar. `width`/`height` parametreleri hâlâ launch-arg'dan
+override edilebilir, sahada gerekirse ayarlanabilir.
 """
 
 import rclpy
@@ -27,8 +35,8 @@ class OakdDriverNode(Node):
         super().__init__('oakd_driver_node')
 
         # ── Parametreler ──────────────────────────────────────────────────────
-        self.declare_parameter('width', 640)
-        self.declare_parameter('height', 480)
+        self.declare_parameter('width', 1280)
+        self.declare_parameter('height', 720)
         self.declare_parameter('fps', 30)
 
         self.width  = self.get_parameter('width').value
@@ -61,6 +69,11 @@ class OakdDriverNode(Node):
 
             # RGB kamera node
             cam_rgb = pipeline.createColorCamera()
+            # 2026-07-17: sensör çözünürlüğü açıkça 1080p'ye sabitlendi —
+            # setPreviewSize TEK BAŞINA hangi taban sensör modundan
+            # ölçeklendiğini garanti etmez; 1280x720 önizleme bu tabandan
+            # (yukarı örneklemeden, DÜŞÜREREK) üretilsin diye.
+            cam_rgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
             cam_rgb.setPreviewSize(self.width, self.height)
             cam_rgb.setInterleaved(False)
             cam_rgb.setFps(self.fps)

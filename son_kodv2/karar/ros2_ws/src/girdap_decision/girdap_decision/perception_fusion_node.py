@@ -70,8 +70,12 @@ class PerceptionFusionNode(Node):
         # --- Parametreler (config/hardware.yaml perception.fusion bloğu) ---
         self.declare_parameter("bearing_tolerance_rad", 0.15)
         self.declare_parameter("camera_hfov_rad", 1.2)
-        self.declare_parameter("camera_image_width_px", 640)
-        self.declare_parameter("camera_image_height_px", 480)
+        # 2026-07-17: oakd_driver_node 1280x720'e çıkarıldı (config-drift
+        # riski — bu node'un kod varsayılanı params.yaml/hardware.yaml'daki
+        # gerçek değerle her zaman AYNI olmalı, yoksa params.yaml verilmeden
+        # elle çalıştırılırsa bearing hesaplaması sessizce yanlış çıkar).
+        self.declare_parameter("camera_image_width_px", 1280)
+        self.declare_parameter("camera_image_height_px", 720)
         self.declare_parameter("sync_slop_s", 0.1)
         self.declare_parameter("log_period_s", 5.0)
 
