@@ -418,14 +418,33 @@ def generate_launch_description() -> LaunchDescription:
         ),
     ]
 
-    # --- MAVROS: ArduRover apm.launch (XML) include ---
-    mavros_apm = os.path.join(
-        get_package_share_directory("mavros"), "launch", "apm.launch"
-    )
-    mavros = IncludeLaunchDescription(
-        AnyLaunchDescriptionSource(mavros_apm),
-        launch_arguments={"fcu_url": fcu_url, "gcs_url": gcs_url}.items(),
+    # --- MAVROS: ArduRover köprüsü ---
+    # F-P.20 (2026-07-16, gerçek donanım testi): FTDI/seri bağlantı bir
+    # anlığına EOF verdiğinde mavros_node yakalanmamış bir istisnayla
+    # ÇÖKÜYOR (SIGABRT) — hiçbir şey onu geri başlatmıyordu, tüm karar
+    # yığını kalıcı olarak kör kalıyordu (planning/mission_manager kendi
+    # stale-guard'larıyla GÜVENLİ davranıyor ama sistem kendini
+    # toparlamıyordu). apm.launch/node.launch'ın kendi `respawn_mavros`
+    # argümanı VAR ama node.launch'taki <node> etiketine hiç bağlanmamış
+    # (mavros paketinin kendi hatası, `respawn_mavros:=true` geçmek hiçbir
+    # şey yapmıyor — canlı testte ikinci çökmede doğrulandı). Bu yüzden
+    # apm.launch include'unu bypass edip mavros_node'u BURADA doğrudan
+    # Node() ile açıyoruz — respawn=True launch_ros'ta gerçekten çalışıyor.
+    _mavros_share = get_package_share_directory("mavros")
+    mavros = Node(
+        package="mavros", executable="mavros_node", namespace="mavros",
+        output="screen",
+        respawn=True, respawn_delay=2.0,
         condition=IfCondition(LaunchConfiguration("with_mavros")),
+        parameters=[
+            {
+                "fcu_url": fcu_url, "gcs_url": gcs_url,
+                "tgt_system": 1, "tgt_component": 1,
+                "fcu_protocol": "v2.0",
+            },
+            os.path.join(_mavros_share, "launch", "apm_pluginlists.yaml"),
+            os.path.join(_mavros_share, "launch", "apm_config.yaml"),
+        ],
     )
     # Masa testi (with_mavros:=false): gerçek Pixhawk/MAVROS yok, mevcut
     # mock_sensors node'u aynı topic'leri (imu/gps/state) sentetik veriyle
@@ -695,6 +714,7 @@ def generate_launch_description() -> LaunchDescription:
             #   ikinci bir süreç USB cihazını açamaz, kamera tamamen ölür.
             #   Bu launch KARAR yazılımıdır; sensör bring-up buraya EKLENMEZ.
             # =============================================================== #
+            *driver_nodes,
             *decision_nodes,
         ]
     )

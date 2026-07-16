@@ -128,6 +128,70 @@ def test_fv7_auto_videoda_dwell_sifir() -> None:
     assert cfg["mission_timing"]["arrival_radius_m"] > 0.0
 
 
+def test_with_drivers_node_lari_launch_descriptiona_eklenir() -> None:
+    """F-S.2 regresyonu: with_drivers=true olsa da driver_nodes listesi
+    (livox_driver_node/oakd_driver_node/kamera_kayit_node) generate_launch_
+    description()'ın döndürdüğü LaunchDescription'a hiç EKLENMEMİŞ bulundu
+    (gerçek donanım testinde node list'te hiç görünmediler, 2026-07-16).
+    Liste inşa ediliyordu ama `return LaunchDescription([...])` içinde
+    `*driver_nodes` unutulmuştu — with_drivers flag'i sessizce hiçbir şey
+    yapmıyordu.
+    """
+    mod = _load_module()
+    try:
+        mod.get_package_share_directory(mod._PKG)
+    except Exception:
+        pytest.skip("girdap_decision share dizini yok — install edilmemiş ortam")
+
+    ld = mod.generate_launch_description()
+    executables = {
+        getattr(entity, "_Node__node_executable", None)
+        for entity in ld.entities
+        if type(entity).__name__ == "Node"
+    }
+    for exe in ("livox_driver_node", "oakd_driver_node", "kamera_kayit_node"):
+        assert exe in executables, (
+            f"{exe} generate_launch_description() çıktısında yok — "
+            "driver_nodes listesi LaunchDescription'a eklenmemiş"
+        )
+
+
+def test_mavros_respawn_true() -> None:
+    """F-P.20 (2026-07-16, gerçek donanım testi): FTDI/seri bağlantı bir
+    anlığına EOF verdiğinde mavros_node yakalanmamış bir istisnayla çöküyordu
+    (SIGABRT) ve hiçbir şey onu geri başlatmıyordu — karar yığını (planning_
+    node/mission_manager_node kendi stale-guard'larıyla GÜVENLİ kalıyor ama
+    sistem asla toparlanmıyordu).
+
+    apm.launch/node.launch'ın kendi `respawn_mavros` argümanı VAR ama
+    node.launch'taki <node> etiketine hiç bağlanmamış (mavros paketinin
+    kendi hatası — canlı testte respawn_mavros:=true geçmesine rağmen
+    ikinci çökmede mavros_node bir daha hiç dönmedi, doğrulandı). Bu yüzden
+    apm.launch include'u bypass edilip mavros_node doğrudan Node() ile
+    respawn=True olarak açılıyor (launch_ros'ta bu gerçekten çalışıyor).
+    """
+    mod = _load_module()
+    try:
+        mod.get_package_share_directory(mod._PKG)
+    except Exception:
+        pytest.skip("girdap_decision share dizini yok — install edilmemiş ortam")
+
+    ld = mod.generate_launch_description()
+    mavros_nodes = [
+        e for e in ld.entities
+        if type(e).__name__ == "Node"
+        and getattr(e, "_Node__node_executable", None) == "mavros_node"
+    ]
+    assert mavros_nodes, (
+        "mavros_node Node() eylemi bulunamadı — apm.launch include'u hâlâ "
+        "kullanılıyor olabilir (respawn çalışmaz, F-P.20 rejeksiyonu)"
+    )
+    assert mavros_nodes[0]._ExecuteLocal__respawn is True, (
+        "mavros_node respawn=True ile açılmıyor — çökerse sistem kalıcı "
+        "olarak kör kalır (F-P.20)"
+    )
+
+
 def test_gorev_kaynagi_fc_varsayilani() -> None:
     """md 3.3.1(2): görev YKİ'de tanımlanıp İDA'ya YÜKLENİR → kaynak "fc".
 
