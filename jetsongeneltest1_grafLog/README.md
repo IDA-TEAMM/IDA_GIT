@@ -1,11 +1,37 @@
-# jetsongeneltest1_grafLog — F5.1 LiDAR çerçeve düzeltmesi grafikleri
+# jetsongeneltest1_grafLog — grafikler
 
-**PNG'ler aşağıda satır içi görünür** (GitHub'da direkt önizlenir). Etkileşimli
-sürüm: `index.html` — tarayıcıda aç (self-contained, bağımlılık yok). Grafikler
-**gerçek çekirdek çıktılarından** üretildi (uydurma veri yok):
-`prototype/perception/lidar_obstacles.detect_obstacles` + `fusion.associate`,
-sentetik sahneler `scene_orta` (5 duba + 200 su gürültüsü) ve
-`scene_fusion_matched`.
+## ⭐ Şartname md 3.3.1.1 — Ekran-2 (VİDEO TESLİM FORMATI)
+
+Şartnamenin videoda istediği grafik. **Üç panel, şartname sinyal sırasıyla**
+(2a gerçek hız + hız isteği, 2b heading AÇISI + yön isteği, 2c thruster kuvvet
+isteği). Üretim kod yoluyla üretildi: gerçekçi 4-bacak dikdörtgen görev profili →
+**gerçek `TelemetryCsvLogger`** → `grafik.csv` → **gerçek `ekran2.make_figure`**
+(video montaj aracının aynısı; elle çizim yok).
+
+![Ekran-2 şartname formatı](ekran2_sartname.png)
+
+- **Panel 2a** hız (mavi) + hız setpoint (turuncu kesik): 4 bacakta seyir 1 m/s,
+  köşelerde 0'a iner.
+- **Panel 2b** heading + yön setpoint: 0°→90°→180°→−90°; ±180 sarımı kırılıyor
+  (dikey artefakt yok — `break_wraps`).
+- **Panel 2c** thrust sol (yeşil) / sağ (kırmızı): düz seyirde ~eşit ileri,
+  dönüşte diferansiyel; görev sonunda 0.
+
+**Örnek veri dosyaları (şartname formatı):**
+- `ornek_telemetri_Dosya2.csv` — **Dosya-2** (md 4.2), 2 Hz, `CSV_HEADER` birebir
+  (`zaman,lat,lon,hiz,roll,pitch,heading,hiz_setpoint,yon_setpoint,mission_state`).
+- `ornek_grafik.csv` — Ekran-2 kaynağı, 10 Hz (`GRAPH_CSV_HEADER`).
+
+> Bunlar **format örneği** (gerçekçi sentetik görev profili); gerçek çekim
+> verisi suda üretilir. Boş hücreler = boot/görev-dışı (NaN, sahte 0 yok).
+
+---
+
+## Ek: F5.1 mühendislik teşhis grafikleri
+
+Aşağıdakiler şartname teslim formatı DEĞİL — F5.1 LiDAR çerçeve düzeltmesinin
+doğrulama görselleri (gerçek çekirdek çıktısı: `detect_obstacles` + `associate`,
+sahneler `scene_orta` + `scene_fusion_matched`). `index.html` = etkileşimli sürüm.
 
 | | |
 |---|---|
