@@ -65,6 +65,7 @@ from typing import Optional
 import rclpy
 from rclpy.node import Node
 
+from diagnostic_msgs.msg import DiagnosticArray
 from mavros_msgs.msg import RCIn
 from mavros_msgs.msg import State as MavState
 from mavros_msgs.srv import CommandBool, SetMode, StreamRate
@@ -101,6 +102,15 @@ class MavrosBridgeNode(Node):
         # (RC kanal 5, 0-indexed 4; PWM eşiği 1700).
         self.declare_parameter("rc_manual_channel", 4)
         self.declare_parameter("rc_manual_threshold_pwm", 1700)
+        # F-P.24 (2026-07-17): 2026-07-16 gerçek donanım testinde TELEM2/FTDI
+        # hattı, teknedeki telemetri radyosunun RF paraziti/girişimi
+        # (muhtemelen radyo antenlerinin birbirine çok yakın olmasından)
+        # ArduPilot'un dahili yönlendiricisi üzerinden bu temiz kablolu porta
+        # da bulaşınca çöktü — mavros_router diagnostics'i "Remotes count"un
+        # 174'e, sonra 323'e çıktığını gösteriyordu (sağlıklı hatta 1-3
+        # olmalı), ama bunu ELLE `ros2 topic echo /diagnostics` ile bulmak
+        # 30+ dakika sürdü. Artık bu anormallik otomatik izlenir.
+        self.declare_parameter("link_remotes_warn_threshold", 5)
 
         cfg = MavrosBridgeConfig(
             heartbeat_timeout_s=float(
@@ -124,6 +134,9 @@ class MavrosBridgeNode(Node):
         self._arm_retry_max = int(self.get_parameter("arming_retry_max").value)
         self._arm_retry_delay = float(
             self.get_parameter("arming_retry_delay_s").value
+        )
+        self._link_remotes_warn_threshold = int(
+            self.get_parameter("link_remotes_warn_threshold").value
         )
 
         # Latching durumlar
@@ -160,6 +173,12 @@ class MavrosBridgeNode(Node):
         self._sub_rc = self.create_subscription(
             RCIn, "/mavros/rc/in", self._on_rc_in, sensor_data_qos()
         )
+        # F-P.24: mavros_router'ın kendi /diagnostics'i — "Remotes count"
+        # anormalliğini (RF girişimi belirtisi) erken yakalar.
+        self._sub_diag = self.create_subscription(
+            DiagnosticArray, "/diagnostics", self._on_diagnostics, 10
+        )
+        self._link_warn_active = False
 
         # --- Servis istemcileri ---
         self._cli_mode = self.create_client(SetMode, "/mavros/set_mode")
@@ -255,6 +274,48 @@ class MavrosBridgeNode(Node):
                 f"(kanal {idx + 1}, PWM={channel_pwm}) (F-S.4)"
             )
         self._bridge.set_rc_manual_override(active)
+
+    def _on_diagnostics(self, msg: DiagnosticArray) -> None:
+        """F-P.24: mavros_router'ın "Remotes count" anormalliğini izle.
+
+        2026-07-16 gerçek donanım testinde teknedeki telemetri radyosunun RF
+        paraziti/girişimi (muhtemelen radyo antenlerinin birbirine çok yakın
+        olması), ArduPilot'un dahili MAVLink yönlendiricisi üzerinden temiz
+        TELEM2/FTDI hattına da bulaştı — sağlıklı bir hatta 1-3 olması
+        gereken "Remotes count" 174'e, sonra 323'e çıktı. Bu, `ros2 topic
+        echo /diagnostics` ile ELLE bulundu (30+ dakika debug). Artık her
+        `mavros_router: endpoint` diagnostic'inde otomatik kontrol edilir.
+        """
+        for status in msg.status:
+            if "mavros_router: endpoint" not in status.name:
+                continue
+            remotes = None
+            for kv in status.values:
+                if kv.key == "Remotes count":
+                    try:
+                        remotes = int(kv.value)
+                    except ValueError:
+                        pass
+                    break
+            if remotes is None:
+                continue
+            if remotes > self._link_remotes_warn_threshold:
+                if not self._link_warn_active:
+                    self._link_warn_active = True
+                    self.get_logger().error(
+                        f"LINK ANORMALLİĞİ: {status.name} 'Remotes count'="
+                        f"{remotes} (sağlıklı: 1-3) — muhtemelen telemetri "
+                        "radyosunun RF paraziti/girişimi bu porta da "
+                        "bulaşıyor (F-P.24). Radyo antenlerini birbirinden "
+                        "uzaklaştırmayı dene, ya da bu hattı bırakıp USB-C "
+                        "gibi ayrı bir bağlantıya geç"
+                    )
+            elif self._link_warn_active:
+                self._link_warn_active = False
+                self.get_logger().info(
+                    f"{status.name} 'Remotes count' normale döndü "
+                    f"({remotes}) — link anormalliği geçti (F-P.24)"
+                )
 
     # ----- FC akış hızı (SR0) — F-M.6 -----
 

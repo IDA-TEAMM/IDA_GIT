@@ -440,3 +440,67 @@ def test_fp15_sikismis_mode_istegi_zaman_asimiyla_kurtarir(ros_context) -> None:
         )
     finally:
         n.destroy_node()
+
+
+# --------------------------------------------------- F-P.24: link bekçisi
+
+def _diag(endpoint_name: str, remotes_count: int):  # noqa: ANN201
+    from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
+
+    msg = DiagnosticArray()
+    status = DiagnosticStatus()
+    status.name = f"mavros_router: {endpoint_name}"
+    status.values.append(KeyValue(key="Remotes count", value=str(remotes_count)))
+    msg.status.append(status)
+    return msg
+
+
+def test_fp24_yuksek_remotes_count_uyari_basar(ros_context) -> None:  # noqa: ANN001
+    """F-P.24 (2026-07-17): 2026-07-16 gerçek donanım testinde "Remotes
+    count" 174'e/323'e çıktığı ELLE (/diagnostics manuel echo) bulundu —
+    artık otomatik izlenip GÜRÜLTÜLÜ uyarı basılmalı."""
+    n = girdap.MavrosBridgeNode()
+    try:
+        errors: list[str] = []
+        n.get_logger().error = lambda msg, **kw: errors.append(msg)  # type: ignore[method-assign]
+
+        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/ttyUSB0:57600", 174))
+
+        assert len(errors) == 1
+        assert "Remotes count" in errors[0] and "174" in errors[0]
+        assert "LINK ANORMALLİĞİ" in errors[0]
+    finally:
+        n.destroy_node()
+
+
+def test_fp24_saglikli_remotes_count_uyari_basmaz(ros_context) -> None:  # noqa: ANN001
+    n = girdap.MavrosBridgeNode()
+    try:
+        errors: list[str] = []
+        n.get_logger().error = lambda msg, **kw: errors.append(msg)  # type: ignore[method-assign]
+
+        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/ttyUSB0:57600", 3))
+
+        assert errors == []
+    finally:
+        n.destroy_node()
+
+
+def test_fp24_normale_donunce_bir_kez_bilgi_loglar_tekrar_uyarmaz(ros_context) -> None:  # noqa: ANN001
+    """Uyarı tekrar tekrar (her /diagnostics mesajında) spam yapmamalı —
+    yalnız anormal→normal ve normal→anormal GEÇİŞLERİNDE loglanmalı."""
+    n = girdap.MavrosBridgeNode()
+    try:
+        errors: list[str] = []
+        n.get_logger().error = lambda msg, **kw: errors.append(msg)  # type: ignore[method-assign]
+
+        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/ttyUSB0:57600", 174))
+        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/ttyUSB0:57600", 200))
+        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/ttyUSB0:57600", 174))
+        assert len(errors) == 1, "aynı anormallik tekrar tekrar loglanmamalı (spam)"
+
+        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/ttyUSB0:57600", 2))
+        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/ttyUSB0:57600", 174))
+        assert len(errors) == 2, "normale dönüp tekrar bozulunca yeniden uyarmalı"
+    finally:
+        n.destroy_node()
