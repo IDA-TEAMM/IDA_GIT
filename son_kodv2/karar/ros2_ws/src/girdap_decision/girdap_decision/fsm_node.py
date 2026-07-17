@@ -135,6 +135,19 @@ class FSMNode(Node):
             self.get_parameter("start_on_arm_in_mode").value
         )
         self._last_mode: str = ""        # "" = henüz mod görülmedi (kenar yok)
+        # F-P.23 (2026-07-17): armed olup BEKLEMEDE'de takılı kalma bekçisi —
+        # 2026-07-16 gerçek donanım testinde start_on_mode ("AUTO" video-modu
+        # varsayılanı) ile araç gerçek modu (GUIDED) uyuşmadığı için FSM hiç
+        # BEKLEMEDE'den çıkmadı, mission_manager hiç tetiklenmedi, current_
+        # target/cmd_vel hiç yayınlanmadı — SESSİZCE, hiçbir hata/uyarı
+        # basılmadan (F-V.6'nın aynısı, gerçek donanımda fark edilmeden
+        # tekrarlandı). Artık armed+BEKLEMEDE X saniyeyi geçerse GÜRÜLTÜLÜ uyarı.
+        self._armed_since: Optional[float] = None
+        self.declare_parameter("armed_bekleme_watchdog_s", 15.0)
+        self._armed_watchdog_s = float(
+            self.get_parameter("armed_bekleme_watchdog_s").value
+        )
+        self._armed_watchdog_warned = False
 
         # --- Subscribers ---
         self._sub_mav = self.create_subscription(
@@ -262,7 +275,14 @@ class FSMNode(Node):
     # ----- subscriber callback'leri -----
 
     def _on_mav_state(self, msg: MavState) -> None:
+        was_armed = self._mav_armed
         self._mav_armed = msg.armed
+        if msg.armed and not was_armed:
+            self._armed_since = self.get_clock().now().nanoseconds * 1e-9
+            self._armed_watchdog_warned = False
+        elif not msg.armed:
+            self._armed_since = None
+            self._armed_watchdog_warned = False
         # BOOT → ARM: mavros bağlantısı kuruldu
         self._obs.boot_ok = msg.connected
         # md 3.3.1(3): BEKLEMEDE'de operatörün mod komutu görevi başlatır.
@@ -430,6 +450,26 @@ class FSMNode(Node):
     def _on_tick(self) -> None:
         # ARM → BEKLEMEDE: Pixhawk armed → kill switch fiziksel olarak OFF
         self._obs.kill_switch_off = self._mav_armed
+
+        # F-P.23: armed+BEKLEMEDE'de takılı kalma bekçisi (bkz. __init__ notu).
+        if (
+            self._mav_armed
+            and self._armed_since is not None
+            and not self._armed_watchdog_warned
+            and self._fsm.state is MissionState.BEKLEMEDE
+        ):
+            elapsed = self.get_clock().now().nanoseconds * 1e-9 - self._armed_since
+            if elapsed > self._armed_watchdog_s:
+                self._armed_watchdog_warned = True
+                self.get_logger().error(
+                    f"Araç {elapsed:.0f}s'dir ARMED ama görev hâlâ BEKLEMEDE'de "
+                    f"— mevcut mod='{self._last_mode}', beklenen "
+                    f"start_on_mode='{self._start_mode}'. Mod eşleşmiyorsa "
+                    "görev HİÇ başlamaz, current_target/cmd_vel hiç "
+                    "yayınlanmaz (F-P.23 — 2026-07-16 gerçek donanım testinde "
+                    "sessizce yaşanan sorunun aynısı: launch'a doğru "
+                    "fsm.start_on_mode:=<gerçek mod> verildiğinden emin ol)"
+                )
 
         new_state = self._fsm.tick(self._obs)
 

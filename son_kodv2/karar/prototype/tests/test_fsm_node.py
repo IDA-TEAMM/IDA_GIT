@@ -99,6 +99,81 @@ def test_default_param_no_spurious_p1_to_p2(ros_context, tmp_path) -> None:  # n
         node.destroy_node()
 
 
+# ------------------------------------------------------ F-P.23: armed watchdog
+
+
+def test_fp23_armed_bekleme_uzarsa_uyari_basar(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """F-P.23 (2026-07-17): 2026-07-16 gerçek donanım testinde start_on_mode
+    ("AUTO") ile aracın GERÇEK modu (GUIDED) uyuşmadığı için FSM hiç
+    BEKLEMEDE'den çıkmadı, hiçbir hata/uyarı basılmadan sessizce kaldı.
+    Artık armed+BEKLEMEDE eşiği aşınca GÜRÜLTÜLÜ uyarı basılmalı."""
+    node = girdap.FSMNode(
+        parameter_overrides=[
+            Parameter("start_on_mode", value="GUIDED"),
+            Parameter("armed_bekleme_watchdog_s", value=0.05),
+        ]
+    )
+    try:
+        errors: list[str] = []
+        node.get_logger().error = lambda msg, **kw: errors.append(msg)  # type: ignore[method-assign]
+
+        mav = MavState()
+        mav.connected = True
+        mav.armed = True
+        mav.mode = "AUTO"                 # start_on_mode (GUIDED) ile UYUŞMUYOR
+        node._on_mav_state(mav)
+        node._on_tick()                   # BOOT→ARM
+        node._on_tick()                   # ARM→BEKLEMEDE (mod uyuşmuyor, hiç başlamaz)
+
+        import time
+        time.sleep(0.1)                   # eşiği (0.05s) rahatça geç
+
+        node._on_tick()
+        assert node._fsm.state is MissionState.BEKLEMEDE, (
+            "mod uyuşmuyorken görev başlamamalıydı"
+        )
+        assert len(errors) == 1
+        assert "ARMED" in errors[0] and "BEKLEMEDE" in errors[0]
+        assert "GUIDED" in errors[0] and "AUTO" in errors[0]
+    finally:
+        node.destroy_node()
+
+
+def test_fp23_mod_uyusursa_uyari_hic_basmaz(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Mod start_on_mode ile eşleşiyorsa görev normal başlar, watchdog hiç
+    tetiklenmemeli (yanlış alarm yok).
+
+    NOT: request_start() bir bayrak set eder, gerçek BEKLEMEDE→PARKUR1
+    geçişi BİR SONRAKİ tick'te olur (normal FSM davranışı) — bu yüzden
+    eşik, birkaç tick'in normal yürütme süresinden (milisaniyeler) belirgin
+    büyük tutulmalı (0.01s gibi aşırı küçük bir eşik bunu bile "sorun"
+    sayıp yanlış alarm verirdi — canlı olarak bulundu, testte de düzeltildi)."""
+    node = girdap.FSMNode(
+        parameter_overrides=[
+            Parameter("start_on_mode", value="GUIDED"),
+            Parameter("start_on_arm_in_mode", value=True),
+            Parameter("armed_bekleme_watchdog_s", value=5.0),
+        ]
+    )
+    try:
+        errors: list[str] = []
+        node.get_logger().error = lambda msg, **kw: errors.append(msg)  # type: ignore[method-assign]
+
+        mav = MavState()
+        mav.connected = True
+        mav.armed = True
+        mav.mode = "GUIDED"                # start_on_mode ile UYUŞUYOR
+        node._on_mav_state(mav)
+        node._on_tick()                    # BOOT→ARM
+        node._on_tick()                    # ARM→BEKLEMEDE (+ F-V.6 request_start bayrağı)
+        node._on_tick()                    # BEKLEMEDE→PARKUR1 (bayrak bir tick sonra işlenir)
+
+        assert node._fsm.state is MissionState.PARKUR1
+        assert errors == []
+    finally:
+        node.destroy_node()
+
+
 def test_waypoint_index_triggers_p1_to_p2(ros_context, tmp_path) -> None:  # noqa: ANN001
     """Gerçek tetik: parkur-1'in SON waypoint'ine (index 1) varış → PARKUR2.
     Ara waypoint (index 0) geçiş tetiklememeli."""
