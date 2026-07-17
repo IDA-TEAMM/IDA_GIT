@@ -1,0 +1,32 @@
+# GİRDAP İDA — karar yığını systemd servisi (Jetson açılışında otomatik başlar)
+# Video/yarışma günü: güç ver → Jetson boot → yığın kendiliğinden ayakta;
+# operatör yalnız QGC kullanır (Upload → ARM → GUIDED = görev başlar).
+#
+# Kurulum (tek sefer, sudo ister):
+#   sudo cp ~/ros2_ws/src/girdap-decision/scripts/girdap-karar.service /etc/systemd/system/
+#   sudo sed -i "s|__USER__|$USER|g; s|__WS__|$HOME/ros2_ws|g" /etc/systemd/system/girdap-karar.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now girdap-karar
+# Log izle:  journalctl -fu girdap-karar
+# Durdur (masa testinde elle koşmak için):  sudo systemctl stop girdap-karar
+# Tamamen kapat (bir daha açılışta başlamasın): sudo systemctl disable girdap-karar
+
+[Unit]
+Description=GIRDAP IDA karar yigini (mavros + FSM + planning + telemetri, mission_source=fc)
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+# F2.3: prototype/* importlari icin PYTHONPATH sart (systemd .bashrc okumaz).
+Environment=PYTHONPATH=__WS__/src/girdap-decision
+# Interaktif terminallerle ayni DDS domain'i (bashrc ROS_DOMAIN_ID=42) —
+# yoksa operator `ros2 topic echo` ile servisi GOREMEZ (2026-07-13 bulgusu).
+Environment=ROS_DOMAIN_ID=42
+# F4.1/F15.1 dersi: cwd=/ olmasin — goreli yol kazalarina karsi HOME'dan kos.
+WorkingDirectory=/home/__USER__
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source __WS__/install/setup.bash && exec ros2 launch girdap_decision hardware.launch.py mission_source:=fc'
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
