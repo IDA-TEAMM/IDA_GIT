@@ -169,13 +169,6 @@
   **Güncel kayıt + kanıt zinciri + aksiyonlar için F-M.9'a bak**; bu kayıt tarihsel
   başlangıç olarak duruyor. TELEM2 FTDI yedek hattı 14.07'de canlıya alındı (8.1 Hz).
 
-### [—] F5.1 — LiDAR z-filtresi yanlış çerçevede, `lidar_height_m` yok (🔴, bloke)
-- **Belirti:** üretim config'de gerçek dubalar elenir → `obstacle_map` boş → MPPI dubaların içinden geçer.
-- **Debug verisi:** `docs/kod_denetimi.md` F5.1/F6.2; atölye testi: üretim config 0 engel (beklenen).
-- **Kök neden:** noktalar sensör çerçevesinde, filtre su-hattı varsayıyor; `h` bilinmiyor.
-- **Etki:** Parkur-2 (T1). Videoyu bloke ETMEZ.
-- **Durum:** BLOKE — mekanik `h` ölçüsü bekliyor (`olcum_formu.md`). Geldiğinde: üreteç+testlerle AYNI commit + min_range değerlendirmesi.
-
 ### [—] MODEL — duba NN Archive yok + sınıf sırası ters riski (🔴, video sonrası)
 - **Belirti:** `~/models/yolo11n_duba_rvc2.tar.xz` Jetson'da yok (`jetson_kontrol.sh` tek HATA satırı); `Gazebonew.pt` names: 0=Engel, 1=Kenar — kod sabitlerinin TERSİ.
 - **Debug verisi:** girdap-ida-algi `docs/bekleyen_girdiler.md` §B; PC'de `Gazebonew.pt` data.pkl dökümü.
@@ -231,12 +224,34 @@
 | F-T.3 | thrust/setpoint sütunları tazelik bekçisi dışında (öz-denetim bulgusu) | damga + `_fresh()` CSV+grafik (TDD, 2026-07-15) |
 | F-M.10 | NTP saat sıçraması sahte heartbeat-KILL + MPPI durdurma (16.07 kuru testi blokladı) | tüm yaş/tazelik hesapları `time.monotonic()`'e (5 node, TDD 6 test, 2026-07-17; Eyüp onayı "zamanlama hatalarını düzelt") |
 | F-L.2 | kamera-LiDAR sync: Livox stamp ~0.2 s geride, slop 0.1 dar (kayma büyürse eşleşme durur) | `sync_slop_s` 0.1→0.3 4 config kaynağında (TDD 4 test, 2026-07-17); kayma telafisi (restamp/PTP) T1'de, suda canlı teyit bekler |
+| F5.1 | LiDAR z-filtresi sensör çerçevesinde uygulanıyordu (z_min/z_max base_link'e göre) → su hizası dubaları yanlış eleniyordu (canlı: 5 duba → 0) | `to_base_link()` filtre öncesi çerçeve dönüşümü (`lidar_height_m` + opsiyonel `lidar_pitch_rad`); ölçüm **0.31 m** (kuru montaj); +5 TDD, tam suite 335→340 (2026-07-17) |
 | F16.5 | fusion_node F8.2 "bayat poz → yayın durur" testi izole-dışı 9/10 flaky (alıcı-sayımı DDS teslim gecikmesine yarışlı; node kusuru YOK) | ölçüm node `publish()` sayacına çevrildi (timer'la eşzamanlı → gecikmesiz); 25/25 izole yeşil (2026-07-17) |
 | F16.6 | perception_fusion `test_synced` yalnız GRUP koşusunda ~3/4 flaky: kamera-node buoys (stamp 0,456) fusion pose'una (0,123) slop içinde yanlış eşleşiyordu → `['1','99','99']` (cross-test kontaminasyon; node kusuru YOK) | her `_exchange`'e süreç-benzersiz büyük stamp (`_EXCHANGE_STAMP_SEQ`, 0/555'ten uzak); grup 20/20 yeşil (2026-07-17) |
 
 Tam liste ve kanıtlar: `docs/kod_denetimi.md`.
 
 ### Kapanan kayıtların ayrıntıları (debug verisi + ölçümler korunur)
+
+### [2026-07-17] F5.1 — LiDAR z-filtresi yanlış çerçevede (🔴 → düzeltildi + ölçüldü, TDD)
+- **Belirti:** üretim config'de gerçek dubalar eleniyor → `obstacle_map` boş → MPPI
+  dubaların içinden geçer. Atölye/sentetik: LiDAR 0.6 m yüksekte, sensör-çerçeve
+  `scene_orta` düzeltmesiz **5 duba → 0 engel**.
+- **Kök neden:** ham Livox noktaları SENSÖR (livox_frame) çerçevesinde (z=0 = sensör);
+  `z_min/z_max` ise base_link (su datumu) çerçevesinde tanımlı. Dönüşüm yapılmadığından
+  su hizası dubaları sensör-z≈−h'de kalıp `z_min` ile yanlış eleniyordu.
+- **Düzeltme (`0d55533`/main `bcdae62`, TDD):** yeni `to_base_link()` — noktaları
+  filtreleme ÖNCESİ base_link'e taşır (`lidar_height_m` yükseklik ofseti + opsiyonel
+  `lidar_pitch_rad` y-ekseni rotasyonu). h=0,θ=0 → birim dönüşüm (eski davranış;
+  sentetik testler base_link'te üretildiği için değişmez). Param çekirdek→node→
+  launch→hardware.yaml boyunca akıyor.
+- **Ölçüm (2026-07-17):** `lidar_height_m = 0.31 m` — kuru montaj, optik merkez →
+  tekne tabanı dik mesafe. Suda draft kadar azalır; z bandı `[0.1, 3.0]` geniş →
+  ±birkaç cm sapma dubaları etkilemez (tarama grafiği: h≥0.02'de 5/5 stabil plato).
+- **TDD:** `test_lidar_obstacles.py` +5 test (birim dönüşüm + pitch + bug-kanıtı/
+  fix-kanıtı regresyon). Tam suite **335→340 passed / 2 skipped.** Canlı before/after
+  + 4 grafik (PNG): IDA_GIT `jetsongeneltest1_grafLog/`.
+- **⚠ Kalan operasyonel:** `lidar_pitch_rad` düz montajda 0; eğik monte edilirse
+  ölçülüp girilir. `min_range` (tekne gövdesi görünürse) ihtiyacı suda değerlendirilir.
 
 ### [2026-07-17] F16.5 + F16.6 — tam-suite debug turunda 2 flaky ROS node testi (🟠 CI güvenilirliği → düzeltildi, stres-doğrulamalı)
 - **Bağlam:** "tüm kodu debug + test et" turunda 337 test tek tek + grup koşuldu.
