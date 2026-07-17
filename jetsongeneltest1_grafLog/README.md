@@ -1,10 +1,16 @@
 # jetsongeneltest1_grafLog — F5.1 LiDAR çerçeve düzeltmesi grafikleri
 
-`index.html` — tarayıcıda aç (self-contained, bağımlılık yok). Grafikler
+**PNG'ler aşağıda satır içi görünür** (GitHub'da direkt önizlenir). Etkileşimli
+sürüm: `index.html` — tarayıcıda aç (self-contained, bağımlılık yok). Grafikler
 **gerçek çekirdek çıktılarından** üretildi (uydurma veri yok):
 `prototype/perception/lidar_obstacles.detect_obstacles` + `fusion.associate`,
 sentetik sahneler `scene_orta` (5 duba + 200 su gürültüsü) ve
 `scene_fusion_matched`.
+
+| | |
+|---|---|
+| ![Yükseklik taraması](graf1_yukseklik_taramasi.png) | ![z dağılımı](graf2_z_dagilimi.png) |
+| ![Engel haritası](graf3_engel_haritasi.png) | ![Bearing füzyonu](graf4_bearing_fuzyon.png) |
 
 ## 4 grafik
 1. **Yükseklik taraması** — `lidar_height_m` 0→0.6 taranınca tespit edilen engel
