@@ -152,6 +152,19 @@ class MavrosBridgeNode(Node):
         # olarak otonomi dışında sıkışır. Zaman aşımıyla kendini kurtarır.
         self._mode_req_sent_t: float | None = None
         self._mode_req_timeout_s = 5.0
+        # F-P.25 (2026-07-17): 2026-07-16 gerçek donanım testinde `/mavros/
+        # set_mode` `mode_sent=True` DÖNDÜ (FC isteği kabul etti) ama gerçek
+        # mod hiçbir zaman hedefe geçmedi (HOLD'da kaldı) — muhtemelen EKF/
+        # GPS sağlığı veya link kalitesi (F-P.24) sebebiyle FC'nin kendi
+        # GUIDED-giriş ön kontrolü reddediyordu. Bu, F-P.15'in yakaladığı
+        # "hiç yanıt gelmedi" durumundan FARKLI — burada yanıt geldi ama
+        # ETKİSİ hiç olmadı, hiçbir yerde loglanmıyordu.
+        self._mode_ack_t: float | None = None
+        self.declare_parameter("mode_ack_timeout_s", 3.0)
+        self._mode_ack_timeout_s = float(
+            self.get_parameter("mode_ack_timeout_s").value
+        )
+        self._mode_ack_warned = False
         self._arm_attempts = 0
         self._arm_retry_timer = None
 
@@ -216,6 +229,7 @@ class MavrosBridgeNode(Node):
         self._bridge.update_state(
             self._now(), msg.connected, msg.armed, msg.guided, msg.mode
         )
+        self._check_mode_ack_effect(msg.mode)         # F-P.25
         self._maybe_request_stream_rate()
         self._maybe_auto_guided()
 
@@ -436,6 +450,10 @@ class MavrosBridgeNode(Node):
         req.custom_mode = self._bridge.config.target_mode
         self._mode_req_pending = True
         self._mode_req_sent_t = self._now()          # F-P.15: zaman aşımı saati
+        # F-P.25: yeni istek — önceki denemenin ack takibini sıfırla, bu
+        # denemeye taze bir şans ver.
+        self._mode_ack_t = None
+        self._mode_ack_warned = False
         fut = self._cli_mode.call_async(req)
         fut.add_done_callback(self._on_mode_result)
 
@@ -450,8 +468,30 @@ class MavrosBridgeNode(Node):
             self.get_logger().info(
                 f"{self._bridge.config.target_mode} mod isteği gönderildi"
             )
+            self._mode_ack_t = self._now()            # F-P.25: etkiyi izle
         else:
             self.get_logger().warn("set_mode reddedildi (mode_sent=False)")
+
+    def _check_mode_ack_effect(self, current_mode: str) -> None:
+        """F-P.25: mode_sent=True olsa da gerçek mod hiç değişmeyebilir —
+        FC'nin kendi GUIDED-giriş ön kontrolü (EKF/GPS sağlığı) sessizce
+        reddedebilir. Bunu ELLE fark etmek 2026-07-16'da uzun sürdü."""
+        if self._mode_ack_t is None or self._mode_ack_warned:
+            return
+        target = self._bridge.config.target_mode
+        if current_mode == target:
+            self._mode_ack_t = None                  # başarılı, izlemeyi bırak
+            return
+        if self._now() - self._mode_ack_t > self._mode_ack_timeout_s:
+            self._mode_ack_warned = True
+            self.get_logger().error(
+                f"set_mode 'kabul edildi' (mode_sent=True) ama "
+                f"{self._mode_ack_timeout_s:.0f}s'dir gerçek mod hâlâ "
+                f"'{current_mode}' (hedef: '{target}') — FC'nin kendi "
+                "GUIDED-giriş ön kontrolü (EKF/GPS sağlığı) reddediyor "
+                "olabilir; link kalitesi de sebep olabilir (F-P.24 uyarısına "
+                "bak) (F-P.25)"
+            )
 
     # --- ARM (pre-arm reddinde retry) ---
 

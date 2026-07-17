@@ -504,3 +504,69 @@ def test_fp24_normale_donunce_bir_kez_bilgi_loglar_tekrar_uyarmaz(ros_context) -
         assert len(errors) == 2, "normale dönüp tekrar bozulunca yeniden uyarmalı"
     finally:
         n.destroy_node()
+
+
+# ------------------------------------------------- F-P.25: mode ack etkisi
+
+def test_fp25_ack_geldi_ama_mod_degismezse_uyari_basar(ros_context) -> None:  # noqa: ANN001
+    """F-P.25 (2026-07-17): 2026-07-16 gerçek donanım testinde `set_mode`
+    mode_sent=True döndü ama gerçek mod hiç değişmedi (HOLD'da kaldı) —
+    bu F-P.15'in yakaladığı 'hiç yanıt yok' durumundan FARKLI, hiçbir yerde
+    loglanmıyordu."""
+    from rclpy.parameter import Parameter
+
+    n = girdap.MavrosBridgeNode(
+        parameter_overrides=[
+            Parameter("mode_ack_timeout_s", Parameter.Type.DOUBLE, 0.05),
+        ]
+    )
+    try:
+        t = {"now": 0.0}
+        n._now = lambda: t["now"]
+        errors: list[str] = []
+        n.get_logger().error = lambda msg, **kw: errors.append(msg)  # type: ignore[method-assign]
+
+        n._mode_ack_t = 0.0                     # mode_sent=True az önce geldi
+        t["now"] = 0.02
+        n._check_mode_ack_effect("HOLD")        # eşik (0.05) henüz aşılmadı
+        assert errors == []
+
+        t["now"] = 0.1                          # eşiği geç
+        n._check_mode_ack_effect("HOLD")
+        assert len(errors) == 1
+        assert "GUIDED" in errors[0] and "HOLD" in errors[0]
+
+        # Tekrar tekrar SPAM yapmamalı.
+        t["now"] = 0.2
+        n._check_mode_ack_effect("HOLD")
+        assert len(errors) == 1
+    finally:
+        n.destroy_node()
+
+
+def test_fp25_mod_gercekten_degisirse_uyari_basmaz(ros_context) -> None:  # noqa: ANN001
+    from rclpy.parameter import Parameter
+
+    n = girdap.MavrosBridgeNode(
+        parameter_overrides=[
+            Parameter("mode_ack_timeout_s", Parameter.Type.DOUBLE, 0.05),
+        ]
+    )
+    try:
+        t = {"now": 0.0}
+        n._now = lambda: t["now"]
+        errors: list[str] = []
+        n.get_logger().error = lambda msg, **kw: errors.append(msg)  # type: ignore[method-assign]
+
+        n._mode_ack_t = 0.0
+        t["now"] = 0.1
+        n._check_mode_ack_effect("GUIDED")      # gerçekten hedefe ulaştı
+        assert errors == []
+        assert n._mode_ack_t is None             # izleme bırakılmış olmalı
+
+        # İzleme bırakıldığı için sonraki çağrılar da hiç uyarmaz.
+        t["now"] = 5.0
+        n._check_mode_ack_effect("HOLD")
+        assert errors == []
+    finally:
+        n.destroy_node()
