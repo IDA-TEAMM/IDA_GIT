@@ -59,6 +59,42 @@ class LidarObstacleConfig:
     voxel_size: float = 0.0         # m; >0 → clustering öncesi downsample
                                     # (F5.3). 0 = kapalı. Duba r=0.15 için
                                     # 0.1 m güvenli (merkez hatası ≤ voxel).
+    # F5.1: LiDAR montaj geometrisi. Ham Livox noktaları SENSÖR (livox_frame)
+    # çerçevesinde gelir (z=0 = sensörün kendisi). z_min/z_max ve engel
+    # merkezleri base_link (su datumu) çerçevesinde tanımlı → noktalar önce
+    # to_base_link ile taşınır. Değerler SAHADA ölçülür (0 = sensör≈base_link).
+    lidar_height_m: float = 0.0     # optik merkezin base_link üstü yüksekliği (m)
+    lidar_pitch_rad: float = 0.0    # y-ekseni eğimi (rad; 0 = düz montaj)
+
+
+def to_base_link(points: np.ndarray, cfg: LidarObstacleConfig) -> np.ndarray:
+    """Nx3 sensör-çerçevesi (livox_frame) noktalarını base_link'e taşı (F5.1).
+
+    LiDAR base_link üstünde ``lidar_height_m`` yükseklikte ve y-ekseni etrafında
+    ``lidar_pitch_rad`` ile eğik monteli. Ham Livox noktalarında z=0 SENSÖRÜ
+    gösterir, su yüzeyini DEĞİL; dönüşüm yapılmazsa su hizasındaki duba
+    sensör-z≈-h'de kalır ve z_min ile YANLIŞLIKLA elenir (gerçek veride engel
+    KAYBI). θ=0, h=0 → birim dönüşüm (sensör≈base_link; eski davranış — sentetik
+    sahneler base_link'te üretildiği için mevcut testler değişmez).
+
+    Pitch, base_link y-ekseni etrafında R_y(θ):
+        x' =  cosθ·x + sinθ·z
+        z' = -sinθ·x + cosθ·z + h
+    ⚠ İşaret sahada doğrulanmalı (montaj/optik-çerçeve varsayımı): burun-aşağı
+    eğim +θ kabul edilir; canlı testte ters çıkarsa config'de işaret çevrilir.
+    """
+    if points.size == 0:
+        return points.reshape(0, 3)
+    theta = cfg.lidar_pitch_rad
+    if theta == 0.0:                                 # düz montaj: saf yükseklik ofseti
+        out = points.astype(np.float64, copy=True)
+        out[:, 2] += cfg.lidar_height_m
+        return out
+    c, s = np.cos(theta), np.sin(theta)
+    x, y, z = points[:, 0], points[:, 1], points[:, 2]
+    return np.column_stack(
+        (c * x + s * z, y, -s * x + c * z + cfg.lidar_height_m)
+    )
 
 
 def filter_water_surface(
@@ -182,6 +218,9 @@ def detect_obstacles(
     """
     if points is None or points.size == 0:
         return []
-    filtered = filter_water_surface(np.asarray(points, dtype=np.float64), cfg)
+    # F5.1: ham noktalar sensör çerçevesinde → önce base_link'e taşı, SONRA
+    # z-filtre uygula (aksi halde su hizası dubaları z_min ile yanlış elenir).
+    base = to_base_link(np.asarray(points, dtype=np.float64), cfg)
+    filtered = filter_water_surface(base, cfg)
     filtered = voxel_downsample(filtered, cfg.voxel_size)
     return [cluster_to_obstacle(c) for c in cluster_points(filtered, cfg)]

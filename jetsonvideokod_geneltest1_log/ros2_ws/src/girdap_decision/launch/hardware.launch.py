@@ -90,6 +90,8 @@ _LIDAR_DEFAULTS: dict[str, tuple[float | int, type]] = {
     "split_cell_m": (1.0, float),       # F5.4: büyük küme bölme ızgarası
     "max_range": (25.0, float),
     "voxel_size": (0.1, float),         # F5.3: clustering öncesi downsample
+    "lidar_height_m": (0.0, float),     # F5.1: sensör→base_link yükseklik (sahada ölç)
+    "lidar_pitch_rad": (0.0, float),    # F5.1: y-ekseni eğimi (0 = düz montaj)
     "log_period_s": (5.0, float),
 }
 # perception.camera skaler varsayılanları (HSV dizileri yalnız params.yaml'da).

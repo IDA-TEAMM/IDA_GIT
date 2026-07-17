@@ -132,6 +132,14 @@ perception:
     split_cell_m: 1.0       # büyük küme bölme ızgarası XY hücre kenarı (m)
     max_range: 25.0         # yatay menzil filtresi (m)
     voxel_size: 0.1         # m, clustering öncesi downsample (F5.3; 0=kapalı)
+    # F5.1: ham nokta SENSÖR (livox_frame) çerçevesinde gelir; z_min/z_max
+    # base_link'e göre olduğundan noktalar önce base_link'e taşınır. Dönüşüm
+    # olmadan su hizası dubaları z_min ile yanlış elenir (gerçek veride engel
+    # kaybı). ⚠ SAHADA ÖLÇ: optik merkezin su datumuna (base_link) yüksekliği.
+    lidar_height_m: 0.31    # m — ÖLÇÜLDÜ (2026-07-17, kuru montaj: optik merkez →
+                            # tekne tabanı). Suda draft kadar azalır; z bandı
+                            # [0.1,3.0] geniş → birkaç cm sapma dubaları etkilemez.
+    lidar_pitch_rad: 0.0    # y-ekseni eğimi (rad; 0 = düz montaj — eğikse ölç)
     log_period_s: 5.0       # "K engel" INFO log periyodu
   # Kamera duba tespiti (Sprint 2) — HSV aralıkları dizi olduğundan yalnız
   # params.yaml'da; buradakiler launch-arg olarak açılır (skaler ayarlar).

@@ -22,6 +22,7 @@ try:
         cluster_to_obstacle,
         detect_obstacles,
         filter_water_surface,
+        to_base_link,
         voxel_downsample,
     )
 except Exception as exc:  # ImportError VEYA ABI ValueError
@@ -79,6 +80,51 @@ def test_filter_water_surface_removes_out_of_range(
     out = filter_water_surface(points, cfg)
     assert out.shape == (1, 3)
     assert out[0, 0] == pytest.approx(10.0)
+
+
+# ------------------------------------------------ F5.1: sensör → base_link
+
+def test_to_base_link_identity_default() -> None:
+    """h=0, θ=0 → dönüşüm birim (sensör≈base_link; eski davranış korunur)."""
+    pts = np.array([[5.0, 1.0, 0.3], [10.0, -2.0, 0.5]])
+    np.testing.assert_allclose(to_base_link(pts, LidarObstacleConfig()), pts)
+
+
+def test_to_base_link_height_offset() -> None:
+    """h>0 → sensör z'ye yükseklik eklenir; x,y değişmez (düz montaj)."""
+    cfg = LidarObstacleConfig(lidar_height_m=0.6)
+    pts = np.array([[5.0, 0.0, -0.6], [5.0, 0.0, -0.1]])   # sensör: su & duba tepesi
+    out = to_base_link(pts, cfg)
+    np.testing.assert_allclose(out[:, 2], [0.0, 0.5])       # base_link z (su datumu)
+    np.testing.assert_allclose(out[:, :2], pts[:, :2])       # x,y korunur
+
+
+def test_to_base_link_pitch_rotation() -> None:
+    """θ=90° → y-ekseni rotasyonu: (x=1,z=0) → base_link'te (0, ., -1)."""
+    cfg = LidarObstacleConfig(lidar_pitch_rad=np.pi / 2.0)
+    out = to_base_link(np.array([[1.0, 0.0, 0.0]]), cfg)
+    np.testing.assert_allclose(out[0], [0.0, 0.0, -1.0], atol=1e-9)
+
+
+def test_f51_sensor_frame_buoys_lost_without_height(
+    rng: np.random.Generator,
+) -> None:
+    """F5.1 BUG kanıtı: LiDAR 0.6 m yüksekte → dubalar sensör-z<0; düzeltme
+    (lidar_height_m) verilmezse HEPSİ z_min ile elenir → 0 engel."""
+    sensor_scene = scene_minimum(rng).copy()   # base_link (z∈[0,0.5])
+    sensor_scene[:, 2] -= 0.6                   # base_link → sensör (su z=-0.6)
+    lost = detect_obstacles(sensor_scene, LidarObstacleConfig(lidar_height_m=0.0))
+    assert lost == []                          # bug: su hizası dubaları kaybolur
+
+
+def test_f51_sensor_frame_buoys_recovered_with_height(
+    rng: np.random.Generator,
+) -> None:
+    """F5.1 FIX: aynı sensör-çerçeve sahne + doğru lidar_height_m → 3 duba geri."""
+    sensor_scene = scene_minimum(rng).copy()
+    sensor_scene[:, 2] -= 0.6
+    found = detect_obstacles(sensor_scene, LidarObstacleConfig(lidar_height_m=0.6))
+    assert len(found) == 3                      # su datumuna taşındı → dubalar korunur
 
 
 # ---------------------------------------------------------------- clustering

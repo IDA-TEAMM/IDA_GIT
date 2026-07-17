@@ -56,6 +56,9 @@ class PerceptionLidarNode(Node):
         self.declare_parameter("split_cell_m", 1.0)  # F5.4: büyük küme bölme
         self.declare_parameter("max_range", 25.0)
         self.declare_parameter("voxel_size", 0.1)   # F5.3; 0 = kapalı
+        # F5.1: sensör (livox_frame) → base_link montaj geometrisi (sahada ölç)
+        self.declare_parameter("lidar_height_m", 0.0)
+        self.declare_parameter("lidar_pitch_rad", 0.0)
         self.declare_parameter("log_period_s", 5.0)
 
         p = self.get_parameter
@@ -68,6 +71,8 @@ class PerceptionLidarNode(Node):
             split_cell_m=float(p("split_cell_m").value),
             max_range=float(p("max_range").value),
             voxel_size=float(p("voxel_size").value),
+            lidar_height_m=float(p("lidar_height_m").value),   # F5.1
+            lidar_pitch_rad=float(p("lidar_pitch_rad").value),
         )
         self._log_period_s = float(p("log_period_s").value)
         self._last_log_t: Optional[float] = None
