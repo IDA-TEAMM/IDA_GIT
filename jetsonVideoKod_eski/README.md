@@ -1,3 +1,38 @@
+# 📦 jetsonVideoKod_eski — ARŞİV
+
+> Bu klasör, **GİRDAP** ekibinin TEKNOFEST 2026 İnsansız Deniz Aracı yarışması
+> **otonomi kabiliyet videosunda** (21.07.2026 eleme kapısı) Jetson üzerinde koşan
+> **karar/otonomi yazılımının dondurulmuş bir kopyasıdır**. Gömülü ekip (IDA-TEAMM)
+> deposunda **referans/arşiv** olarak durur — adındaki "eski", bu kodun canlı
+> geliştirme dalı değil, o ana ait **dondurulmuş sürüm** olduğunu belirtir.
+
+| | |
+|---|---|
+| **Kaynak repo** | `github.com/EyupEker1/girdap-video` @ `14a0be5` |
+| **İçerik** | Kaynak reponun izlenen **149 dosyasının tamamı** (`git archive` ile birebir kopya; `__pycache__`/derleme çıktısı yok) |
+| **Arşivlenme** | 2026-07-18, EyupEker1 (GİRDAP) |
+| **Durum** | Dondurulmuş — güncel geliştirme başka repolarda sürebilir; buradaki kod **değişmez arşivdir** |
+
+### Klasör haritası
+- **`karar/`** — asıl karar (decision) yazılımı — ROS2 otonomi yığını:
+  - `prototype/` — saf Python algoritma modülleri: **perception** (kamera+LiDAR engel/duba algısı), **fusion** (sensör füzyonu/durum kestirimi), **planning** (MPPI yol planlayıcı), **mission** (waypoint/görev akışı), **fsm** (ARM→görev→dönüş durum makinesi), **control** (hız/thrust setpoint), **mapping/dynamics/telemetry/viz/configs**
+  - `ros2_ws/src/girdap_decision` — bunu saran ROS2 paketi (node'lar, launch)
+  - `scripts/` — `run_ekran2.py` (Ekran-2 grafik üretici), `fc_param_turu.sh`, `girdap-karar.service`, udev kuralları
+  - `docs/` — video günü runbook'u, `hata_defteri.md`, FC parametre önerileri
+- **`testler/`** — bileşen bileşen kanıt (`video_testleri.sh`)
+- **Video günü materyalleri** — `kontrol-listesi.md`, `test-plani.md`, `pc-render-yonergesi.md`, `qgc-video-ayarlari.*`, `video-gunu-ekranlari/`
+
+### Videodaki senaryo (özet)
+Tekne **ARM** → mod **AUTO/GUIDED** → görev başlar → 4 noktayı **otonom** takip eder
+(algı engelden kaçar, MPPI planlar, setpoint'ler Pixhawk uçuş kontrolcüsüne MAVROS
+üzerinden gider) → sıfır thrust → manuel dönüş → güç kesme. Ekran-2 üç sinyali
+gösterir: hız↔hız-setpoint, heading↔yaw-setpoint, thrust isteği.
+
+> ℹ️ Aşağıdaki bölüm, kaynak `girdap-video` reposunun **orijinal README'sidir** (olduğu
+> gibi korunmuştur). Metindeki "bu repo" ifadeleri o kaynak repoyu kasteder.
+
+---
+
 # GİRDAP — Otonomi Kabiliyeti Videosu Reposu
 
 **Son teslim: 21.07.2026 saat 17:00 (KYS'ye YouTube linki) — ELEME KAPISI.**
