@@ -1,0 +1,29 @@
+# GİRDAP İDA — Pixhawk bağlantı udev kuralları (F-M.8 + F-M.9 kalıcı isim)
+#
+# NE YAPAR:
+#   1) TELEM2 FTDI kablosu (FT231X, seri DU0EFEA7) → /dev/pixhawk sabit ismi.
+#      ttyUSB0/1 numarası reboot'ta takas olabilir (Jetson'da 2. FTDI görüldü);
+#      fcu_url bu symlink'e bağlanınca isim kırılganlığı biter.
+#   2) ID_MM_DEVICE_IGNORE=1 → ModemManager bu portları problamaz (F-M.8:
+#      boot'ta ACM'leri yoklayıp ~30 sn mavros gecikmesine yol açıyordu).
+#
+# KURULUM (sudo gerekir — Eyüp):
+#   sudo cp scripts/udev/99-girdap-fc.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   ls -l /dev/pixhawk        # → ttyUSBx'e işaret etmeli (FTDI takılıyken)
+#
+# KURULUMDAN SONRA (sıra önemli — bkz. memory/saha listesi P2):
+#   1) hardware.yaml: fcu_url "serial:///dev/pixhawk:57600" yap
+#   2) sudo systemctl restart girdap-karar → connected + IMU ~8 Hz doğrula
+#   3) ANCAK O ZAMAN fcu_url değişikliğini girdap-video'ya commit'le
+#      (geçici ttyUSB0 ismi repoya girmesin)
+#
+# Doğrulama komutu (FTDI takılıyken seri numarayı teyit et):
+#   udevadm info -a -n /dev/ttyUSB0 | grep '{serial}'   # DU0EFEA7 görülmeli
+
+# 1) TELEM2 FTDI FT231X (DU0EFEA7) → /dev/pixhawk + MM dokunmasın
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6015", ATTRS{serial}=="DU0EFEA7", SYMLINK+="pixhawk", ENV{ID_MM_DEVICE_IGNORE}="1"
+
+# 2) Pixhawk 6C'nin kendi USB-C'si (ttyACM*, Holybro idVendor 3162) —
+#    ModemManager problamasın (F-M.8; USB-C onarılırsa da geçerli kalır)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="3162", ENV{ID_MM_DEVICE_IGNORE}="1"

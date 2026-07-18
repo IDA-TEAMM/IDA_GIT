@@ -1,0 +1,218 @@
+<html>
+<head>
+<meta charset="utf-8">
+<title>QGC Video Görevi Ayarları — Şartname İrdelemesi</title>
+<style>
+@page { size: A4; margin: 14mm 13mm; }
+body { font-family: "DejaVu Sans", sans-serif; font-size: 10pt; margin: 0; color: #1a1a1a; line-height: 1.35; }
+table { border-collapse: collapse; }
+h2 { page-break-after: avoid; }
+tr, td, th { page-break-inside: avoid; }
+h1 { font-size: 17pt; color: #0b3060; border-bottom: 2px solid #0b3060; padding-bottom: 4px; }
+h2 { font-size: 13pt; color: #0b3060; margin-top: 18px; }
+h3 { font-size: 11pt; color: #333333; }
+td, th { font-size: 9.5pt; }
+</style>
+</head>
+<body>
+
+<h1>QGC — Otonomi Kabiliyeti Videosu Ayar Rehberi</h1>
+<p><i>Her ayar, 2026 İnsansız Deniz Aracı Şartnamesi'nin ilgili maddesine bağlanmıştır:
+"şu maddeden dolayı şu ayarda olmak zorunda". Kaynak: 2026_İnsansız_Deniz_Aracı_Şartnamesi_TR_18_05.pdf
+(birinci kaynak) + girdap-video/kontrol-listesi.md + karar/docs/video_gunu_runbook.md §0-A.<br>
+Hazırlanma: 2026-07-16 · Video son teslim: <b>21.07.2026 Salı 17:00 = ELEME KAPISI</b> (md 3.3.1.1 + takvim)</i></p>
+
+<h2>0. Tek bakışta sonuç</h2>
+<table border="1" cellpadding="6" cellspacing="0" width="100%"><colgroup><col width="140"><col width="380"><col width="160"></colgroup>
+<tr bgcolor="#0b3060"><th width="20%"><font color="#ffffff">Konu</font></th><th width="55%"><font color="#ffffff">Olması gereken</font></th><th width="25%"><font color="#ffffff">Şartname dayanağı</font></th></tr>
+<tr><td><b>Başlatma modu</b></td><td><b>AUTO</b> (QGC'den mod→AUTO ya da "Start Mission"; ARM/AUTO sırası fark etmez)</td><td>md 3.3.1 (3)</td></tr>
+<tr><td><b>YKİ bağlantısı</b></td><td>MicoAir LR868 @ 868 MHz — QGC Comm Link: Serial, 57600</td><td>md 3.3.1 (1) + md 4.1</td></tr>
+<tr><td><b>QGC Video ayarı</b></td><td>Video Source = <b>Disabled</b> (görüntü aktarımı YASAK)</td><td>md 4.1</td></tr>
+<tr><td><b>Görev planı</b></td><td>TAM 4 waypoint, dikdörtgen, <b>RTL/dönüş noktası YOK</b>, QGC Plan'dan çizilip Upload</td><td>md 3.3.1 (2)+(3)</td></tr>
+<tr><td><b>Kilit parametreler</b></td><td>WP_SPEED=2.0 (↔ fc_cruise), WP_RADIUS=2.0 (↔ arrival_radius)</td><td>md 3.3.1.1 Ekran-2</td></tr>
+<tr><td><b>Harita</b></td><td>Offline Maps ile çekim alanı ÖNCEDEN önbelleğe alınmış</td><td>md 4.2 Telemetri + md 4.1</td></tr>
+<tr><td><b>RF hijyeni</b></td><td>Laptop+Jetson WiFi/BT kapalı, tethering yok; 2.4 GHz RC yalnız VİDEODA (yarışma sahasına götürülmez)</td><td>md 4.1 + md 3.3.1.1</td></tr>
+<tr><td><b>Güç kesme</b></td><td>Fiziksel anahtar ile; QGC/yazılım kesintisi TEK BAŞINA YETMEZ</td><td>md 4.2 + md 3.3.1 (4)</td></tr>
+</table>
+
+<h2>1. Neden AUTO modu? (GUIDED değil)</h2>
+<table width="100%" cellpadding="8" cellspacing="0" bgcolor="#eef2fa" border="0"><tr><td>
+<b>md 3.3.1 (3):</b> <i>"YKİ ya da bir RC kumanda üzerinden verilen bir komutla görev başlayacak ve
+YKİ üzerinden tanımlanıp gönderilen 4 noktalı görevin son noktasına ulaşıldığında otonom görev
+tamamlanmış olacaktır. Bu aşamadan sonra İDA başlangıç noktasına manuel olarak döndürülebilecektir."</i>
+</td></tr></table>
+<p><b>Bu maddeden dolayı:</b></p>
+<ul>
+<li>Şartname "YKİ üzerinden tanımlanıp <b>gönderilen</b> görev"i İDA'nın koşmasını istiyor. Görev QGC'den
+Pixhawk'a (FC) yüklendiği için görevi <b>FC'nin kendisi AUTO modunda uçurur</b> — tek komut = mod'un
+AUTO'ya alınması (ya da QGC "Start Mission" kaydırıcısı, ikisi de aynı kapıya çıkar).</li>
+<li><b>GUIDED eski plandır</b> (runbook §1, 2026-07-11 kararı) — 2026-07-14 AUTO dönüşüyle (runbook §0-A)
+terk edildi. GUIDED yolunda görevi Jetson yazılımı sürecekti; AUTO yolunda Jetson yalnız izler/kaydeder
+(cmd_vel basılmaz), motoru FC sürer. Videoda hareketin tek sahibi FC olduğundan md 3.3.1.1'in
+"istemsiz dönüş/sürüş" riski yazılım katmanından arındırılmış olur.</li>
+<li><b>ARM ↔ AUTO sırası fark etmez</b> (F-V.6 düzeltmesi, <i>start_on_arm_in_mode: true</i>):
+önce AUTO'ya alıp sonra ARM etmek de görevi başlatır. Eski "boot'ta GUIDED'daysa HOLD'a al, geri dön"
+cambazlığı gereksizdir.</li>
+<li>Görev <b>4. (son) noktada kendiliğinden tamamlanır</b> ve thrust sıfırlanır; sonrası şartnamenin
+istediği gibi <b>RC ile manuel dönüş</b>tür. Bu yüzden görevin sonuna RTL/SmartRTL veya 5. nokta
+KONMAZ (bkz. §4).</li>
+<li>RC anahtarında <b>MODE4 ve MODE5 konumlarının İKİSİ de AUTO</b>'dur (FC param turu gözlemi,
+2026-07-15) — RC'den başlatma da şartnameye uygundur ("YKİ <u>ya da</u> RC"), ama bitişik iki konumun
+AUTO olması yanlışlıkla başlatma riskidir; başlatmayı QGC'den yapmak daha kontrollüdür.</li>
+</ul>
+<p><b>Operatör sırası:</b> boot → journal'da "FC akış hızı isteniyor: 10 Hz" → <b>GPS fix BEKLE</b>
+(F8.4: ilk fix hareketteyken gelirse origin kayar → haritada kayık iz = "istemsiz sürüş" görüntüsü riski,
+md 3.3.1.1) → QGC Plan Upload → ARM → mod AUTO → görev.</p>
+
+<h2>2. YKİ bağlantısı: neden 868 MHz seri link?</h2>
+<table width="100%" cellpadding="8" cellspacing="0" bgcolor="#eef2fa" border="0"><tr><td>
+<b>md 3.3.1 (1):</b> <i>"İDA ve Yer Kontrol İstasyonu (YKİ) arasında kablosuz bağlantı sağlanmış
+olacaktır. Bu kapsamda, İDA bilgileri YKİ üzerinde gösterilecektir."</i><br><br>
+<b>md 4.1 Haberleşme:</b> <i>"İDA, İDA-YKİ ... RC kumandalar ve telemetri modülleri dahilinde
+2.4-2.8 GHz, 5.15-5.85 GHz aralıklarında çalışan herhangi bir bileşen ya da modül kullanılmayacaktır.
+Sistemlere dahil olan gömülü bilgisayar, laptop vs. dahil olmak üzere bütün bilgisayarların dahili
+wi-fi özellikleri kapatılmış olacaktır."</i> ... <i>"Hücresel bağlantı (4G&amp;LTE vb.) sağlayan modemler
+kullanılamayacaktır."</i> ... <i>"Haberleşme modüllerinin frekans kanalı seçilebilir olacaktır."</i>
+</td></tr></table>
+<p><b>Bu maddelerden dolayı:</b></p>
+<ul>
+<li>QGC ↔ İDA bağlantısı <b>kablosuz olmak ZORUNDA</b> (USB kabloyla iskeleden bağlanmak md 3.3.1 (1)'i
+karşılamaz) ve <b>2.4/5 GHz kullanamaz</b> → tek meşru hat: <b>MicoAir LR868 telemetri çifti @ 868 MHz</b>
+(kanal seçilebilir ✓). WiFi/UDP tabanlı QGC bağlantısı hem yasak hem kapalı olacak.</li>
+<li><b>QGC ayarı:</b> Application Settings → Comm Links → Add: Type <b>Serial</b>, port = LR868 yer
+modülünün USB portu, baud <b>57600</b>. AutoConnect'te yalnız gerekli olanlar açık kalsın
+(UDP autoconnect kapatılabilir — yanlışlıkla ağ tabanlı bağlantı denemesin).</li>
+<li><b>YKİ laptopunun dahili WiFi'si ve Bluetooth'u KAPALI</b> (md 4.1 açık hüküm; Jetson'da da
+<i>rfkill block bluetooth</i>). Telefon tethering'i (hücresel) çekim düzeneğinden tamamen çıkar.</li>
+<li>İnternet olmayacağı için <b>Offline Maps ŞART</b>: Application Settings → Offline Maps →
+çekim alanını uygun zoom'da önceden indir. Haritasız QGC ekranı, md 4.2'nin "görev noktaları haritada
+görülecek" isterini karşılayamaz (bkz. §6) ve Ekran-1 kaydı boş kalır.</li>
+</ul>
+
+<h2>3. QGC Video ayarı: Disabled olmak zorunda</h2>
+<table width="100%" cellpadding="8" cellspacing="0" bgcolor="#eef2fa" border="0"><tr><td>
+<b>md 4.1:</b> <i>"İHA'dan ve İDA'dan YKİ'lere ... herhangi bir şekilde görüntü aktarımı
+yapılmayacaktır. Sadece YKİ'ler değil yer tarafına herhangi bir şekilde görüntü transferi olmayacaktır."</i>
+... <i>"İDA, YKİ'ler ve İHA arasında sadece telekomut ve telemetri sağlayabilecek alıcı-verici
+modülleri kullanabilecektir."</i>
+</td></tr></table>
+<p><b>Bu maddeden dolayı:</b> QGC'de Application Settings → Video → <b>Video Source = Disabled</b>.
+Ekran-1 (YKİ ekran kaydı) videosunda bir kamera akışı penceresi görünürse bu, md 4.1 ihlalinin
+hakem önündeki delili olur. Kamera görüntüsü YALNIZ araç ÜZERİNDE kaydedilir (Dosya-1 mp4, md 4.2) —
+yere hiçbir biçimde aktarılmaz. LR868 hattı zaten yalnız telemetri/telekomut taşır; QGC tarafında da
+görüntüyle ilgili her şey kapalı tutulur.</p>
+
+<h2>4. Görev planı (Plan View): TAM 4 nokta, dikdörtgen, RTL YOK</h2>
+<table width="100%" cellpadding="8" cellspacing="0" bgcolor="#eef2fa" border="0"><tr><td>
+<b>md 3.3.1 (2):</b> <i>"YKİ üzerinden 4 noktalı görev tanımlanacaktır. Bu görev noktaları, bir
+dikdörtgen oluşturacak şekilde konumlandırılacak ve bu görev İDA'ya gönderilecektir."</i>
+</td></tr></table>
+<p><b>Bu maddeden dolayı QGC Plan ekranında:</b></p>
+<ul>
+<li><b>Görev = TAM 4 Waypoint</b>, dikdörtgen köşeleri. Koordinatlar çekim günü <b>yerinde ölçülür</b>
+(≥7 ondalık) ve Plan'a girilir; hazır dosyadan yükleme DEĞİL — videoda görevin "YKİ üzerinden
+tanımlandığı" (Plan'da çizilip <b>Upload</b>'a basıldığı) anlar görünmeli.</li>
+<li><b>Başlangıca-dönüş / RTL / 5. nokta EKLENMEZ</b> (F-V.4): md 3.3.1 (3) dönüşü <b>manuel</b>
+istiyor. RTL eklersen (a) "4 noktalı görev" tanımı bozulur — md 3.3.1 (2)'ye aykırı, (b) dönüş
+otonomlaşır — md 3.3.1 (3)'e aykırı, (c) 4. noktadaki "otonom tamamlanma + sıfır thrust" sahnesi
+(videonun kalbi) hiç oluşmaz.</li>
+<li>Plan ekranındaki <b>Mission End → Return To Launch işaretli OLMAYACAK</b>; görev son WP'de biter.</li>
+<li>Upload sonrası doğrulama: yüklenen görev QGC haritasında 4 nokta olarak görünür; Jetson logunda
+görev <i>/mavros/mission/waypoints</i>'ten okunur (mission_source=fc).</li>
+<li><b>OPS-1 (kalıcı kural):</b> görev yüklenen HER oturumun sonunda FC hafızası silinir
+(Plan → Remove All → Upload). 2026-07-12 FC OLAY'ının kökünde FC'de unutulmuş görev + RC'nin
+AUTO konumu vardı — sahada istem dışı sürüşün (md 3.3.1.1 eleme kriteri) bilinen en gerçek kaynağı.</li>
+</ul>
+
+<h2>5. Parametre kontrolü (QGC Parameters / fc_param_turu.sh)</h2>
+<table width="100%" cellpadding="8" cellspacing="0" bgcolor="#eef2fa" border="0"><tr><td>
+<b>md 3.3.1.1 — 2. Ekran (Temel grafikler):</b> <i>"Gerçek hız, hız isteği (setpoint) · Gerçek
+heading/yaw açısı, heading/yaw açısı isteği (setpoint) · Thrusterlardan kuvvet isteği"</i> — ve İDA'nın
+hareketleriyle <b>senkron</b> olacak.
+</td></tr></table>
+<p><b>Bu maddeden dolayı:</b> Ekran-2'deki "hız isteği" çizgisi telemetride <i>fc_cruise_setpoint_mps</i>
+değerinden çizilir; FC gerçekte <i>WP_SPEED</i> ile seyreder. <b>İkisi eşit değilse Ekran-2 hakem
+önünde yalan söyler</b> (grafikteki istek ile aracın gerçek davranışı senkron olmaz) → md 3.3.1.1 riski.
+Çekim sabahı FC bağlıyken tek komut: <i>bash scripts/fc_param_turu.sh</i> (SALT OKUR, FC'ye yazmaz).</p>
+<table border="1" cellpadding="6" cellspacing="0" width="100%">
+<colgroup><col width="160"><col width="160"><col width="360"></colgroup><tr bgcolor="#0b3060"><th width="24%"><font color="#ffffff">Parametre</font></th><th width="24%"><font color="#ffffff">Değer (15.07 turu)</font></th><th width="52%"><font color="#ffffff">Neden bu değerde olmak zorunda</font></th></tr>
+<tr><td>WP_SPEED</td><td><b>2.0 m/s</b> (fc_cruise'a aynalandı ✓)</td><td>Ekran-2 "hız isteği" çizgisi = bu değer; eşit değilse grafik-gerçek senkronu bozulur (md 3.3.1.1)</td></tr>
+<tr><td>WP_RADIUS</td><td><b>2.0 m</b> (= arrival_radius ✓)</td><td>Varış eşiği kod ile FC'de aynı olmalı; farklıysa FSM ile FC farklı anda "vardı" der, setpoint çizgileri kayar</td></tr>
+<tr><td>CRUISE_SPEED / CRUISE_THROTTLE</td><td>2.0 / %50</td><td>Hız↔throttle kalibrasyonu; yanlışsa FC hedef hızı tutturmak için throttle'ı savurur → thrust eğrisi çirkin/dalgalı (Ekran-2)</td></tr>
+<tr><td>MOT_THR_MAX / MOT_SLEWRATE</td><td>100 / 100 (tavan YOK)</td><td>Şartname engel değil; tavan istenirse FC ekibi düşürür. Karar yeri SUDA prova (yüklü tekne 2 m/s tutturamıyorsa fazla kısılmıştır)</td></tr>
+<tr><td>FS_THR_ENABLE / FS_ACTION / FS_TIMEOUT</td><td>1 / 2 (Hold) / 1.5 s</td><td>RC sinyali koparsa araç HOLD'a düşer → başıboş sürüş olmaz. md 3.3.1.1 "istemsiz sürüş = başarısız" + md 4.2 emniyet</td></tr>
+<tr><td>FS_GCS_ENABLE</td><td>0 (telemetri kaybı failsafe DEĞİL)</td><td>LR868 kesilse bile görev sürer — video lehine (kesinti görevi bozmaz). Bilinçli tercih mi → FC ekibine soruldu, cevabı bekleniyor</td></tr>
+</table>
+<p><b>⚠ OLAY paramları uyarısı (FC ekibi kararıyla duruyor):</b> ARMING_RUDDER=2 (RC CH2 boştayken
+~max kalırsa kendiliğinden ARM!), MODE4 <u>ve</u> MODE5 = AUTO (bitişik 2 anahtar konumu),
+ARMING_CHECK=0, BRD_SAFETY_DEFLT=0. Bu bileşim 12.07 FC OLAY'ını doğurdu. Prosedürel önlem:
+batarya bağlanmadan önce görev hafızası BOŞ (OPS-1) + RC güvenli konumda + pervaneler yalnız suda takılı.</p>
+
+<h2>6. YKİ ekranı = videonun 1. Ekranı</h2>
+<table width="100%" cellpadding="8" cellspacing="0" bgcolor="#eef2fa" border="0"><tr><td>
+<b>md 4.2 Telemetri Verileri ve İDA YKİ:</b> <i>"Görev noktaları İDA YKİ üzerindeki haritada
+görülecektir. · Aracın anlık konum bilgileri görev noktaları ile birlikte harita üzerinde
+görülecektir. · Aracın anlık durum ve mod bilgileri İDA YKİ ekranında görülecektir."</i><br><br>
+<b>md 3.3.1.1:</b> <i>"1. Ekran: YKİ ekran görüntüsü"</i> ... <i>"İDA'nın görev yaptığı aşamada YKİ
+ekranı ile İDA'nın hareketleri senkron bir şekilde görülmelidir."</i>
+</td></tr></table>
+<p><b>Bu maddelerden dolayı QGC Fly View şöyle kaydedilir:</b></p>
+<ul>
+<li>Haritada <b>4 görev noktası + araç ikonu + gidilen iz</b> aynı karede görünür (offline harita §2).</li>
+<li>Üst araç çubuğunda <b>mod (AUTO) ve Armed durumu</b> okunur — md 4.2 "anlık durum ve mod" isteri.
+Telemetry Values paneline <b>Ground Speed + Heading</b> eklenir (Ekran-2 grafikleriyle çapraz kanıt).</li>
+<li>Ekran kaydı (OBS vb.) çekim boyunca <b>kesintisiz</b> alınır — md 3.3.1.1 (1) "tek gösterim,
+kesintisiz". Kayıt provası çekimden önce yapılır.</li>
+<li>QGC'nin kendi telemetri logu da açık kalsın (Application Settings → Telemetry: save) — uyuşmazlık
+durumunda yedek kanıt.</li>
+</ul>
+
+<h2>7. Güç kesme gösterimi: QGC yetmez, fiziksel anahtar şart</h2>
+<table width="100%" cellpadding="8" cellspacing="0" bgcolor="#eef2fa" border="0"><tr><td>
+<b>md 3.3.1 (4):</b> <i>"Dönüşün akabinde İDA'nın motorları ya da gücü güvenlik butonu/anahtarı ile
+kapatılacak ve RC kumandadan manuel komut verildiği halde motorların hareket etmediği
+gösterilecektir."</i><br><br>
+<b>md 4.2 Güç Kesme:</b> <i>"...üzerine basıldığı ya çevrildiği zaman araçtaki motor ve
+aktüatörlerden gücün kesilmesini sağlayacak kırmızı bir anahtar bulunacaktır."</i> ...
+<i>"Güç kesme önlemlerinde motorlara gönderilen sinyallerin akışını kesmek yeterli değildir,
+motorların gücünün kesilmesi şarttır."</i>
+</td></tr></table>
+<p><b>Bu maddelerden dolayı:</b> videodaki güç kesme sahnesi <b>fiziksel kırmızı anahtarla</b> yapılır;
+QGC'deki Emergency Stop / disarm ya da yazılım KILL'i <b>tek başına geçerli değildir</b> (şartname
+açıkça "sinyal kesmek yeterli değildir" diyor). Sahne akışı: manuel dönüş biter → güvenlik anahtarı
+kapatılır → <b>RC'den gaz verilir → motorlar DÖNMÜYOR</b> (kameraya net, yakın çekim). QGC ekranında
+bu sırada aracın disarm/bağlantı durumu görünüyorsa Ekran-1 için artı kanıttır.</p>
+
+<h2>8. RF / frekans uygunluk listesi (çekim düzeneği)</h2>
+<table border="1" cellpadding="6" cellspacing="0" width="100%">
+<colgroup><col width="140"><col width="360"><col width="180"></colgroup><tr bgcolor="#0b3060"><th width="20%"><font color="#ffffff">Bileşen</font></th><th width="52%"><font color="#ffffff">Durum / yapılacak</font></th><th width="28%"><font color="#ffffff">Dayanak</font></th></tr>
+<tr><td>Telemetri (QGC hattı)</td><td>MicoAir LR868 @ 868 MHz ✓ yasal</td><td>md 4.1 (2.4-2.8 / 5.15-5.85 GHz yasak)</td></tr>
+<tr><td>RC kumanda</td><td><b>Video: eldeki 2.4 GHz kumandayla çekilir (ekip kararı 16.07)</b> — video değerlendirme kriterlerinde (md 3.3.1.1) frekans YOK; md 4.1'in yaptırımı yarışma sahasında (teknik kontrol md 5.2 + 55 ceza md 5.5.4.3.2). Önlem: kumandanın marka/band etiketi okunacak YAKIN ÇEKİM YAPMA, raporlara 2.4 GHz YAZMA. <b>Yarışma alanına 2.4 GHz RC ASLA götürülmez</b>; yarışma RC'siz planlandığı için uzaktan güç kesme YKİ'den tetiklenen DONANIMSAL kesici olmalı (md 4.2 "sinyal kesmek yeterli değildir")</td><td>md 3.3.1.1 + md 4.1 + md 5.5.4.3.2 + md 4.2</td></tr>
+<tr><td>YKİ laptop</td><td>Dahili WiFi kapalı, BT kapalı</td><td>md 4.1 ("bütün bilgisayarların dahili wi-fi özellikleri kapatılmış olacaktır")</td></tr>
+<tr><td>Jetson</td><td>WiFi kapalı ✓; <b>rfkill block bluetooth</b> çekimden önce</td><td>md 4.1</td></tr>
+<tr><td>Telefon / tethering</td><td>Düzenekten ÇIKAR (hücresel modem yasak)</td><td>md 4.1</td></tr>
+<tr><td>Görüntü aktarımı</td><td>YOK — QGC Video Disabled (§3)</td><td>md 4.1</td></tr>
+</table>
+
+<h2>9. Operatör akışı — çekim günü özeti</h2>
+<ol>
+<li>Kara: FC görev hafızası BOŞ (OPS-1), RC güvenli konum, pervane sökük; laptop/Jetson RF hijyeni (§8);
+QGC offline harita + Comm Link hazır; OBS kayıt testi.</li>
+<li>Tekne suya, güç ver → Jetson boot → journal'da "FC akış hızı isteniyor: 10 Hz", FAILSAFE 0 satır.</li>
+<li>QGC ↔ LR868 bağlantısı geldi: harita + mod görünüyor (Ekran-1 kaydı BAŞLADI, dış kamera KAYITTA).</li>
+<li><b>GPS fix bekle</b> (F8.4) — sonra pervaneleri tak (sudan önce değil).</li>
+<li>4 köşe koordinatını yerinde ölç → QGC <b>Plan</b>'da 4 WP dikdörtgen çiz → <b>Upload</b> (kamerada).</li>
+<li><b>ARM</b> (QGC kaydırıcı) → mod <b>AUTO</b> (sıra fark etmez, F-V.6) → görev başlar (FSM PARKUR1).</li>
+<li>Gözle: istemsiz dönüş/sürüş YOK, 4 nokta sırayla, köşeler makul (md 3.3.1.1 — bozulursa çekim tekrarı).</li>
+<li>4. noktada otonom tamamlanma + <b>sıfır thrust</b> → RC ile <b>manuel dönüş</b> (mod Manual/Hold).</li>
+<li>Fiziksel güç kesme + RC'ye rağmen motor dönmüyor (§7) → kapaklar açılır, su almadığı gösterilir.</li>
+<li>Oturum sonu: FC görev hafızasını SİL (OPS-1), CSV/log yedeği al, Ekran-2 panelini gerçek CSV'den üret
+(<i>run_ekran2.py --thrust-birim %</i>) ve kontrol-listesi.md §0b kıyasını yap.</li>
+</ol>
+
+<p><i>— Bu doküman girdap-video reposunda tutulur. Ayrıntılı adımlar: karar/docs/video_gunu_runbook.md
+(§0-A AUTO dönüşü) · birebir kutu listesi: kontrol-listesi.md · parametre turu: scripts/fc_param_turu.sh.
+Şartname sayfaları: md 3.3 (s.11), md 4.1 (s.12-13), md 4.2 (s.13-15).</i></p>
+
+</body>
+</html>

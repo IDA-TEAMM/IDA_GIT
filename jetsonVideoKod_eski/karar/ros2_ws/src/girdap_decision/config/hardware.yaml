@@ -1,0 +1,165 @@
+# Girdap İDA — Gerçek donanım konfigürasyonu (ArduRover + Pixhawk 6C).
+#
+# hardware.launch.py bu dosyayı Python ile okur:
+#   - fcu_url / gcs_url          → mavros apm.launch include argümanları
+#   - mode_name / heartbeat_timeout_s / arming_retry_max
+#                                → mavros_bridge_node parametre override'ları
+#   - topics                     → sensör/perception referans isimleri
+#
+# NOT: Bu düz (flat) bir launch-config'idir, ROS node-scoped params dosyası
+# DEĞİLDİR. Algoritma parametreleri (MPPI K/T, fusion hızları vb.) config/
+# params.yaml'da kalır; hardware.launch ikisini birleştirir.
+
+# --- MAVLink bağlantısı (Pixhawk 6C UART) ---
+# F-M.9 (2026-07-14): USB-C soketi öldü (tamir tutmadı, 15.07'de çift-enum
+# TEKRARLADI) → kalıcı hat TELEM2 FTDI (FT231X seri DU0EFEA7, 57600).
+# /dev/pixhawk = udev symlink (99-girdap-fc.rules, 2026-07-15 kuruldu + canlı
+# doğrulandı) — ttyUSB numarası reboot'ta kayabilir, symlink kaymaz.
+# Masa/geliştirme istisnası (USB-C onarılırsa): "serial:///dev/ttyACM0:57600".
+fcu_url: "serial:///dev/pixhawk:57600"
+gcs_url: ""                       # YKİ köprüsü yok (Şartname 4.1: tek yönlü)
+
+# --- mavros_bridge_node güvenlik/mod ayarları ---
+mode_name: "GUIDED"               # ArduRover otonomi modu (kök = tek kaynak)
+heartbeat_timeout_s: 5.0          # /mavros/state sessizliği → KILL (~5 heartbeat)
+arming_retry_max: 3               # ArduRover pre-arm reddinde yeniden deneme
+
+# --- Algoritma seçimi (video modu ↔ yarışma modu) ---
+# Video senaryosu: MAVROS EKF pass-through + düz waypoint + MPPI.
+# Yarışma günü: use_isam2=true, use_rrt=true → tam stack aktif.
+algorithm:
+  use_isam2: false   # false: /mavros/local_position/pose pass-through (iSAM2 yok)
+  use_rrt:   false   # false: current_target doğrudan MPPI referansı (RRT* atla)
+  use_mppi:  true    # MPPI her iki modda da lokal kontrolcü
+
+# --- B1: AUTO video modu (2026-07-14) ---
+# Video senaryosunda görevi FC kendi uçurur (QGC'den AUTO). Gerekçe: md 3.3.1
+# MPPI'yi ZORUNLU tutmuyor (4 noktayı otonom tamamlamak yeter) ve AUTO
+# kanıtlanmış bir yol — MPPI suda hiç sürmedi, md 3.3.1.1 "istemsiz hareket =
+# BAŞARISIZ" riskini almaya değmez. YARIŞMA günü geri alınır (P2 kaçınması
+# MPPI'siz olmaz): start_on_mode: "GUIDED" + auto_guided: true + telemetry
+# setpoint_source: "girdap".
+fsm:
+  start_on_mode: "AUTO"      # BEKLEMEDE'de QGC'den AUTO'ya geçiş = görev başlar
+  # F-V.6 (VİDEO İÇİN ŞART): operatör önce AUTO'ya alıp SONRA arm ederse
+  # (QGC "Start Mission" akışı) mod kenarı hiç oluşmaz → FSM BEKLEMEDE'de kalır
+  # → Ekran-2'nin ZORUNLU setpoint eğrileri BOŞ çıkar (md 3.3.1.1). Bu bayrak
+  # o durumda da görevi başlatır (FC zaten koşuyor; FSM izler, motor sürmez).
+  # ⚠ YARIŞMA'da false: GUIDED'dayken arm → MPPI kendiliğinden motor sürerdi.
+  start_on_arm_in_mode: true
+
+bridge:
+  # AUTO'dayken köprü GUIDED'a ZORLAMAMALI — yoksa FC'yi görevden atar
+  # (mod savaşı). mode_name GUIDED kalır: planning geçidi de GUIDED beklediği
+  # için AUTO'da cmd_vel YAYINLANMAZ → MPPI ile FC birbiriyle kavga etmez.
+  auto_guided: false
+  # F-M.6: bağlantı kurulunca FC'den istenen MAVLink akış hızı (Hz).
+  # 10 Hz = yığının GERÇEK ihtiyacı: MPPI control_rate 10 Hz + Ekran-2 grafik
+  # CSV'si 10 Hz. Dünkü elle istek 50 Hz'di (ölçülen 39 Hz) — gereksiz yüktü.
+  # ⚠ ALT SINIR: fusion_node pose_timeout_s=1.0 → 1-2 Hz'de odom yayını KESİLİR
+  # (F-M.6 defter kaydı). 5 Hz'in altına İNME.
+  # Not: bu istek yalnız MAVROS'un kanalını (USB/SERIAL0) etkiler; 868 MHz
+  # telemetri radyosu ayrı porttur (SR1/SR2) — QGC hattına yük BİNMEZ.
+  # Boot provasında ÖLÇÜLECEK: topic hz + tegrastats CPU + stamp jitter.
+  stream_rate_hz: 10
+  # F-M.4: FCU mod isteğini reddederse (GPS fix'siz GUIDED) retry'lar arası
+  # asgari bekleme — fix'siz masa senaryosunda 10 Hz istek yağmurunu keser.
+  # Sahada fix ARM'dan önce gelir → tek istekte biter, davranış değişmez. 0 = kapalı.
+  mode_retry_interval_s: 2.0
+
+# --- B2: Ekran-2 kaynağı (md 3.3.1.1) ---
+# AUTO'da MPPI cmd_vel basmaz → grafikte MPPI thrust'ını göstermek YANILTICI.
+# Gerçek kuvvet isteği FC'nin servo çıkışıdır (/mavros/rc/out PWM → ±%100).
+telemetry:
+  setpoint_source: "fc"          # yarışma: "girdap"
+  # ⚠ FC'nin WP_SPEED parametresiyle SENKRON OLMALI — çekimden önce
+  # `bash scripts/fc_param_turu.sh` ile teyit et. 2026-07-15 CANLI OKUMA:
+  # WP_SPEED=2.0 (CRUISE_SPEED=2.0 ile tutarlı) → değer FC'den aynalandı.
+  # FC ekibi WP_SPEED'i değiştirirse burası da değişmeli (yön hep FC→biz).
+  fc_cruise_setpoint_mps: 2.0
+  fc_thrust_left_ch: 1           # SERVO1 = sol motor (masa teyidi)
+  fc_thrust_right_ch: 3          # SERVO3 = sağ motor
+  # BULGU 2: kaynak bu süreden uzun susarsa Dosya-2/Ekran-2'de o sütun BOŞ
+  # yazılır (donuk son değer = hakeme sahte canlı veri). 8 Hz TELEM2 hattında
+  # 3 s = ~24 kayıp mesaj; gerçek kesintiyi yakalar, jitter'da tetiklenmez.
+  # <=0 → kapalı (mock/masa yayıncısı yavaşsa).
+  source_timeout_s: 3.0
+
+# --- planning_node mod geçidi ---
+# planning cmd_vel'i yalnız bu modda yayınlar; kök mode_name ile AYNI olmalı.
+# Değer verilmezse hardware.launch kök mode_name'i miras aktarır (drift önlenir).
+planning:
+  mode_name: "GUIDED"
+
+# --- Görev dosyası seçimi (Sprint 4 parkur katmanı) ---
+# hardware.launch bu dosya adını config/ altında çözer ve HEM mission_manager
+# HEM fsm_node'a geçer (aynı waypoint dizisi → parkur index'leri hizalı).
+#   video_mission.yaml       → 4-nokta dikdörtgen, tek parkur (Otonomi videosu)
+#   competition_mission.yaml → Parkur-1/2/3 etiketli waypoint dizisi (yarışma)
+mission:
+  mission_file: "video_mission.yaml"
+  # Görev KAYNAĞI (T0-f):
+  #   "file" → araç üstü mission_file YAML (offline/geliştirme).
+  #   "fc"   → YKİ→Pixhawk→MAVROS /mavros/mission/waypoints. Şartname
+  #            md 3.3.1(2) + md 5.5.2.2: görev YKİ'de tanımlanıp İDA'ya
+  #            YÜKLENİR → VİDEO ve YARIŞMA günü ZORUNLU mod.
+  # Sahada: QGC'den görevi Pixhawk'a yükle. VİDEO ve YARIŞMA = "fc" (md 3.3.1(2)
+  # görev YKİ'de tanımlanıp İDA'ya YÜKLENİR). girdap-karar.service zaten
+  # mission_source:=fc geçiyor; varsayılanı da "fc" tutuyoruz ki ELLE launch
+  # edildiğinde sessizce araç-üstü YAML'a düşülmesin (video şartını ihlal eder).
+  # Offline/geliştirme için: mission_source:=file ver.
+  mission_source: "fc"
+  skip_home_seq0: true    # fc: ArduPilot görev index 0 = home konumu, atla
+  # F-V.7 (AUTO video): FC waypoint'te DURMAZ — bizim dwell'imiz yalnız kendi
+  # hedef index'imizi geciktirir → yon_setpoint 2 sn boyunca ARKADA kalan
+  # waypoint'i gösterir (Ekran-2b yalan söyler). AUTO'da dwell = 0.
+  # ⚠ YARIŞMA (GUIDED+MPPI, tekneyi BİZ sürüyoruz): 2.0 — gerçek bekleme.
+  dwell_time_s: 0.0
+  # FC'nin WP_RADIUS'u ile AYNI olmalı (ArduRover varsayılanı 2 m).
+  # ⚠ FC ekibinden TEYİT AL — farklıysa hedef index'imiz FC'den ayrışır.
+  arrival_radius_m: 2.0
+
+# --- Perception: LiDAR engel tespiti (Sprint 1) ---
+# perception_lidar_node parametreleri; hardware.launch launch-arg olarak açar
+# (CLI override: perception.lidar.z_min:=0.2 vb.). Saha kalibrasyonunda tune.
+perception:
+  lidar:
+    z_min: 0.1              # base_link'e göre su üstü kesim (m)
+    z_max: 3.0              # yüksek yansımaları at (m)
+    cluster_tolerance: 0.5  # aynı cluster'da olma mesafesi (m)
+    min_cluster_size: 5     # bu altı noise
+    max_cluster_size: 500   # bu üstü tek engel değil büyük yapı → bölünür (F5.4)
+    split_cell_m: 1.0       # büyük küme bölme ızgarası XY hücre kenarı (m)
+    max_range: 25.0         # yatay menzil filtresi (m)
+    voxel_size: 0.1         # m, clustering öncesi downsample (F5.3; 0=kapalı)
+    log_period_s: 5.0       # "K engel" INFO log periyodu
+  # Kamera duba tespiti (Sprint 2) — HSV aralıkları dizi olduğundan yalnız
+  # params.yaml'da; buradakiler launch-arg olarak açılır (skaler ayarlar).
+  camera:
+    clahe_clip_limit: 2.0   # su parlaması kontrast dengesi
+    clahe_tile: 8           # CLAHE karo ızgarası
+    min_area_px: 150        # bu altı kontur noise
+    morph_kernel_px: 5      # maske açma/kapama çekirdeği
+    use_yolo: false         # hedef sınıfı YOLO katmanı (Parkur-3)
+    yolo_model_path: ""     # gerçek .pt yolu (boş = mock inference)
+    log_period_s: 5.0
+  # Kamera-LiDAR bearing füzyonu (Sprint 3) — kalibrasyon YOK, bkz.
+  # prototype/perception/fusion.py docstring (İŞARET KURALI uyarısı).
+  fusion:
+    bearing_tolerance_rad: 0.15    # ~8.6° eşleşme kabul eşiği
+    camera_hfov_rad: 1.2           # OAK-D Lite yatay FOV yaklaşık değeri
+    camera_image_width_px: 640     # /perception/buoys bbox normalizasyonu
+    camera_image_height_px: 480
+    sync_slop_s: 0.3                # F-L.2: Livox stamp ~0.2 s geride + pay (bearing_tolerance kapılar)
+    log_period_s: 5.0
+
+# --- Sensör / perception topic isimleri ---
+# gps + imu doğrudan mavros'tan gelir (karar yığını bunlara abone).
+# livox + oak_* sensör sürücüleri BAŞKA arkadaşta; burada referans/remapping
+# amaçlı listelenir (perception cost map + Dosya 1a/1b üretimi).
+topics:
+  livox:     /livox/lidar
+  oak_rgb:   /oak/rgb/image_raw
+  oak_depth: /oak/stereo/depth
+  gps:       /mavros/global_position/global
+  imu:       /mavros/imu/data

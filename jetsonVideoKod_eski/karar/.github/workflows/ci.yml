@@ -1,0 +1,36 @@
+# F16.4: ROS'suz çekirdek CI — CLAUDE.md Test Stratejisi hedefi.
+# Node testleri rclpy/mavros_msgs/vision_msgs yokluğunda gerekçeli skip'e
+# düşer (F16.2 kapılaması); toplama hatası veya 0 test = job KIRMIZI
+# (pytest exit 5 — F16.1 yanlış-yeşil dersi). ROS'lu tam koşu geliştirme
+# makinesi/Jetson işi (README test bölümü).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  cekirdek-testler:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 3.10 = Jetson (JetPack 6 / Ubuntu 22.04) ve geliştirme makinesi paritesi
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      # ubuntu-latest imajında ffmpeg yok → Ekran-2 MP4 testi (md 3.3.1.1
+      # video montaj aracı) skip'e düşüyordu; T0-kritik, gerçekten koşsun.
+      - name: ffmpeg (Ekran-2 MP4 testi)
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Bağımlılıklar
+        run: python -m pip install -r requirements.txt
+
+      - name: Çekirdek test paketi (ROS'suz)
+        env:
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/ros2_ws/src/girdap_decision
+        run: python -m pytest prototype/tests/ -q
