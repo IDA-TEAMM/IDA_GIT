@@ -1,4 +1,4 @@
-# 📦 jetsonVideoKod_eski — ARŞİV
+# 📦 jetsonVideoKod — ARŞİV
 
 > Bu klasör, **GİRDAP** ekibinin TEKNOFEST 2026 İnsansız Deniz Aracı yarışması
 > **otonomi kabiliyet videosunda** (21.07.2026 eleme kapısı) Jetson üzerinde koşan
