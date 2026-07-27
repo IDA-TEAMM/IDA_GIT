@@ -30,6 +30,13 @@ setup(
             os.path.join("share", PACKAGE_NAME, "config"),
             glob("config/*.yaml"),
         ),
+        # Eğitilmiş YOLO duba lokalizatörü (best.pt) — share'e kurulur ki
+        # launch get_package_share_directory ile makineden bağımsız bulsun
+        # (host ~/ros2_ws ↔ container /root/ros2_ws mutlak-yol farkını yener).
+        (
+            os.path.join("share", PACKAGE_NAME, "models"),
+            glob("models/*.pt"),
+        ),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

@@ -39,6 +39,23 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 _PKG = "girdap_decision"
 
+
+def _default_localizer_model() -> str:
+    """Pakete gömülü YOLO duba lokalizatörünün (models/best.pt) kurulu yolu.
+
+    setup.py `models/*.pt`'yi `share/girdap_decision/models/` altına kurar;
+    get_package_share_directory makineler-arası mutlak-yol farkını (host
+    ~/ros2_ws ↔ container /root/ros2_ws) yener. Model kurulu değilse (colcon
+    build yapılmamış / dosya yok) "" döner → BuoyLocalizer güvenli mock'a düşer
+    (`mock = mock or not model_path`), davranış bozulmaz.
+    """
+    try:
+        p = os.path.join(get_package_share_directory(_PKG), "models", "best.pt")
+        return p if os.path.exists(p) else ""
+    except Exception:       # paket bulunamazsa (kurulmamış) mock'a düş
+        return ""
+
+
 # hardware.yaml okunamazsa kullanılacak güvenli varsayılanlar (yarışma modu).
 _HW_DEFAULTS = {
     "fcu_url": "serial:///dev/ttyACM0:57600",
@@ -107,9 +124,11 @@ _CAMERA_DEFAULTS: dict[str, tuple[object, type]] = {
     "use_yolo": (True, bool),
     "yolo_model_path": ("", str),
     # F-S.9: turuncu/sarı/kırmızı/yeşil/kahve için alternatif yol (eğitilmiş
-    # lokalizatör + HSV).
+    # lokalizatör + HSV). Model artık pakete gömülü (models/best.pt) → varsayılan
+    # kurulu .pt yolu; yoksa "" (mock). CLI ile override: perception.camera.
+    # yolo_localizer_model_path:=/baska/yol.pt
     "use_yolo_localizer": (True, bool),
-    "yolo_localizer_model_path": ("", str),
+    "yolo_localizer_model_path": (_default_localizer_model(), str),
     "yolo_localizer_min_coverage": (0.15, float),
     "log_period_s": (5.0, float),
 }
