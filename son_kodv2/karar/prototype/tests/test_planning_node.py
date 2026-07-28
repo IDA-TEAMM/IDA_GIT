@@ -284,6 +284,29 @@ def test_mppi_lambda_nobetcisi_profili_birakir(ros_context) -> None:  # noqa: AN
         node.destroy_node()
 
 
+# --------------------------------------------------------------------------- #
+# F-P.26 (2026-07-27 yarışma-simülasyonu denetimi): planning_node'un 7 callback'i
+# + 2 timer'ı try/except'SİZ'di — perception node'larına uygulanan F-P.3 çökme-
+# güvenliği en KRİTİK node'da (thrust hesaplayan) eksikti. Tek bozuk mesaj ya da
+# MPPI sayısal çökmesi node'u öldürüp tekneyi SON cmd_vel'le komutsuz
+# bırakabilirdi (hiçbir restart supervisor'ı yok). Girdi callback'lerine _guard
+# decorator, kontrol timer'ına fail-safe (_safe_stop → sıfır thrust) eklendi.
+# --------------------------------------------------------------------------- #
+
+
+def test_fp26_bozuk_callback_node_oldurmez(ros_context) -> None:  # noqa: ANN001
+    """Bir callback'in içi beklenmedik hata fırlatırsa _guard yakalar; exception
+    SIZMAZ (spin ölmez, node yaşamaya devam eder)."""
+    node = pn.PlanningNode()
+    try:
+        def _patlat(_state):  # noqa: ANN001, ANN202
+            raise ValueError("sahte pipe hatası")
+        node._pipe.set_state = _patlat            # callback içi hata simülasyonu
+        node._on_odom(_odom())                    # _guard yoksa burada patlardı
+    finally:
+        node.destroy_node()
+
+
 def test_mppi_tuning_varsayilanlari_kod_ile_ayni(ros_context) -> None:  # noqa: ANN001
     """Parametre verilmezse davranış MPPIConfig varsayılanıyla BİREBİR
     (node kendi kopya varsayılanını dayatmasın — config-drift kapısı)."""
@@ -524,5 +547,27 @@ def test_classified_aktiginda_obstacle_map_susar(ros_context) -> None:  # noqa: 
             msg.poses.append(p)
         node._on_obstacles(msg)
         assert len(node._pipe._obstacles) == 1         # yok sayıldı
+    finally:
+        node.destroy_node()
+
+
+def test_fp26_kontrol_adimi_hatasi_motorlari_durdurur(ros_context) -> None:  # noqa: ANN001
+    """_on_control_step içi hata fırlatırsa: exception sızmaz VE motorlar aktif
+    DURDURULUR (_safe_stop çağrılır) — son komut kalıcı olmaz."""
+    node = pn.PlanningNode()
+    try:
+        def _patlat():  # noqa: ANN202
+            raise RuntimeError("sahte MPPI sayısal çökme")
+        node._pipe.compute_control = _patlat
+        durduruldu = [False]
+        orijinal = node._safe_stop
+        def _spy():  # noqa: ANN202
+            durduruldu[0] = True
+            orijinal()
+        node._safe_stop = _spy
+        node._on_control_step()                   # exception sızmamalı
+        assert durduruldu[0] is True, (
+            "kontrol adımı hatasında motorlar durdurulmadı (F-P.26 fail-safe)"
+        )
     finally:
         node.destroy_node()

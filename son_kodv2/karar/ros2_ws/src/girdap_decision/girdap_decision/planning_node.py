@@ -59,8 +59,9 @@ Notlar:
 
 from __future__ import annotations
 
+import functools
 import math
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import rclpy
@@ -78,6 +79,32 @@ from prototype.mission.gate_follower import GateFollower, GateFollowerConfig
 from prototype.planning.mppi import MPPIConfig
 from prototype.planning.pipeline import PlanningPipeline, PlanningPipelineConfig
 from prototype.planning.rrt_star import Bounds, CircleObstacle
+
+
+def _guard(fn: Callable[..., None]) -> Callable[..., None]:
+    """Subscriber/timer callback'ini çökme-güvenli sarar.
+
+    F-P.3 deseni (perception node'larına uygulanmıştı) kontrol node'una da
+    taşınır: TEK bir bozuk mesaj ya da beklenmedik hata, en güvenlik-kritik
+    node'u KALICI ÖLDÜRMESİN (hiçbir restart supervisor'ı yok — ölen
+    planning_node tekneyi son cmd_vel'le kör/komutsuz bırakır). Hata
+    throttle'lı loglanır, o çağrı atlanır. Girdi susarsa F-P.1/F-P.2
+    watchdog'ları thrust'ı zaten sıfırlar (fail-safe korunur).
+    NOT: `_on_control_step` bu decorator'ı KULLANMAZ — orada atlamak değil,
+    aktif olarak motorları durdurmak gerekir (bkz. `_safe_stop`).
+    """
+
+    @functools.wraps(fn)
+    def _wrapped(self: "PlanningNode", *args: object, **kwargs: object) -> None:
+        try:
+            fn(self, *args, **kwargs)
+        except Exception as exc:                    # kasıtlı geniş yakalama
+            self.get_logger().error(
+                f"{fn.__name__} beklenmedik hata, atlandı: {exc!r}",
+                throttle_duration_sec=5.0,
+            )
+
+    return _wrapped
 
 
 class PlanningNode(Node):
@@ -355,6 +382,7 @@ class PlanningNode(Node):
 
     # ----- subscriber callback'leri -----
 
+    @_guard
     def _on_odom(self, msg: Odometry) -> None:
         """ENU pose + velocity → durum vektörü [x, y, ψ, u, v, r]."""
         self._last_odom_t = self._now()          # F-P.1: bayatlık saati
@@ -395,6 +423,7 @@ class PlanningNode(Node):
             self._last_xy[1] + bx * s + by * c,
         )
 
+    @_guard
     def _on_obstacles(self, msg: PoseArray) -> None:
         """PLACEHOLDER şema: position.{x,y} merkez, orientation.z yarıçap.
 
@@ -554,6 +583,7 @@ class PlanningNode(Node):
             "biri görünmüyor ya da renk sınıfı kaçıyor olabilir."
         )
 
+    @_guard
     def _on_waypoints(self, msg: Path) -> None:
         """F-S.6/F-S.11: mission_manager_node current_target'la AYNI referansta
         (base_link-göreli ENU ÖTELEMESİ) TEK aktif waypoint yayınlar — burada
@@ -577,6 +607,7 @@ class PlanningNode(Node):
             if path is not None:
                 self._publish_path(path)
 
+    @_guard
     def _on_target(self, msg: PoseStamped) -> None:
         """Video bypass: mission_manager hedefi → düz çizgi MPPI referansı.
 
@@ -594,6 +625,7 @@ class PlanningNode(Node):
         if path is not None:
             self._publish_path(path)
 
+    @_guard
     def _on_mission_state(self, msg: String) -> None:
         # Parkur değişince kilitli kapıyı BIRAK: Parkur-1'in son kapısına
         # kilitliyken Parkur-2'ye geçilirse eski kapı hedefi taşınmamalı
@@ -603,6 +635,7 @@ class PlanningNode(Node):
             self._last_gate_used_fallback = True
         self._pipe.set_mission_state(msg.data)
 
+    @_guard
     def _on_mav_state(self, msg: MavState) -> None:
         """MAVROS mod/arm geçidi için FCU durumunu güncelle."""
         self._bridge.update_state(
@@ -642,24 +675,37 @@ class PlanningNode(Node):
         Geçit kuralları (prototype.control.mavros_bridge):
             - armed=False / heartbeat kaybı → thrust sıfır
             - mode != GUIDED → cmd_vel yayınlanmaz (mavros zaten yok sayar)
+
+        Fail-safe: bu 20 Hz timer callback'i beklenmedik bir hata (MPPI sayısal
+        çökme/NaN, yayım hatası) fırlatırsa korumasız bir timer callback'i tüm
+        executor'ı durdurabilir → node ölür → tekne SON cmd_vel'le komutsuz
+        sürer (md 3.3.1.1 istemsiz hareket). Bu yüzden gövde try ile sarılır ve
+        HATADA motorlar aktif DURDURULUR (`_safe_stop`), yalnızca atlanmaz.
         """
-        gate = self._bridge.control_gate(self._now())
+        try:
+            gate = self._bridge.control_gate(self._now())
 
-        u = self._pipe.compute_control()
-        if u is None:                                # FSM parkur dışı → motor stop
-            u = np.zeros(2)
-        if gate.zero_thrust:                         # disarm / KILL → motor stop
-            u = np.zeros(2)
-        if self._odom_stale():                       # F-P.1: poz bayat → kör sürme
-            u = np.zeros(2)
-            self._warn_stale_odom()
-        if self._obstacles_stale():                   # F-P.2: engel bayat → kör sürme
-            u = np.zeros(2)
-            self._warn_stale_obstacles()
+            u = self._pipe.compute_control()
+            if u is None:                            # FSM parkur dışı → motor stop
+                u = np.zeros(2)
+            if gate.zero_thrust:                     # disarm / KILL → motor stop
+                u = np.zeros(2)
+            if self._odom_stale():                   # F-P.1: poz bayat → kör sürme
+                u = np.zeros(2)
+                self._warn_stale_odom()
+            if self._obstacles_stale():               # F-P.2: engel bayat → kör sürme
+                u = np.zeros(2)
+                self._warn_stale_obstacles()
 
-        self._publish_thrust(u)
-        if gate.allow_cmd_vel:                       # yalnız GUIDED + armed
-            self._publish_cmd_vel(u)
+            self._publish_thrust(u)
+            if gate.allow_cmd_vel:                   # yalnız GUIDED + armed
+                self._publish_cmd_vel(u)
+        except Exception as exc:                     # kontrol adımı ASLA çökmemeli
+            self.get_logger().error(
+                f"kontrol adımı hatası → motorlar DURDURULDU: {exc!r}",
+                throttle_duration_sec=2.0,
+            )
+            self._safe_stop()
 
     # ----- yayım yardımcıları -----
 
@@ -700,6 +746,17 @@ class PlanningNode(Node):
         twist.angular.z = float((u[1] - u[0]) / max(1e-6, p.inertia_z))
         self._pub_cmd_vel.publish(twist)
 
+    def _safe_stop(self) -> None:
+        """Fail-safe motor durdurma: kontrol adımı çökerse sıfır thrust + sıfır
+        cmd_vel yayınla (son komut kalıcı olmasın). Yayım da çökerse yapacak
+        bir şey kalmaz — MAVROS kendi setpoint-timeout failsafe'ine düşer."""
+        try:
+            self._publish_thrust(np.zeros(2))
+            self._publish_cmd_vel(np.zeros(2))
+        except Exception:                            # yayım da çöktü — son çare
+            pass
+
+    @_guard
     def _publish_local_map(self) -> None:
         """Dosya-3: araç merkezli yerel maliyet haritası (OccupancyGrid).
 
