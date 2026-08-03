@@ -519,7 +519,43 @@ class PlanningNode(Node):
                 )
         if result.gate is not None:
             self._publish_gate(result.target)
+        else:
+            self._warn_sessiz_ret()
         return result.target
+
+    def _warn_sessiz_ret(self) -> None:
+        """Turuncu duba GÖRÜNÜYOR ama kapı oluşmuyorsa ÖLÇÜLEN mesafeleri bas.
+
+        Kapı genişliği önceden bilinemez — şartname: *"kenar dubaları
+        arasındaki mesafeler yarışma alanına göre değişkenlik gösterecektir"*
+        ve *"deniz şartlarından dolayı yer değiştirebilir"*. Dolayısıyla
+        `gate_width_min/max` bandı sahada YANLIŞ ÇIKABİLİR ve bunun arızası
+        SESSİZDİR: dubalar görülür, hiçbir kapı seçilmez, araç ham görev
+        noktasına gider, hiçbir hata basılmaz, puan kaybedilir.
+
+        Bu uyarı ölçülen gerçek mesafeleri yazar → operatör
+        `planning.gate_width_max:=14` gibi bir launch-arg ile anında düzeltir.
+        5 saniyede bir (10 Hz döngüde spam yok).
+        """
+        d = self._gate.last_diagnostics
+        if d.n_edge_buoys < 2 or not d.reddedilen_genislik:
+            return                     # duba yok / bant sebebiyle elenen yok
+        now = self._now()
+        if now - self._gate_log_t < 5.0:
+            return
+        self._gate_log_t = now
+        olculen = ", ".join(f"{s:.1f}" for s in sorted(d.reddedilen_genislik)[:6])
+        lo = self.get_parameter("gate_width_min").value
+        hi = self.get_parameter("gate_width_max").value
+        self.get_logger().warn(
+            f"KAPI SEÇİLEMEDİ: {d.n_edge_buoys} turuncu duba görülüyor "
+            f"({d.n_in_range} menzilde), {d.n_pairs_checked} çift denendi ama "
+            f"hiçbiri [{lo}, {hi}] m genişlik bandına girmedi. "
+            f"ÖLÇÜLEN mesafeler: {olculen} m. "
+            f"Bant yanlışsa: planning.gate_width_min/max launch-arg ile düzelt "
+            f"(yeniden derleme gerekmez) — kapı genişliği yarışma alanına göre "
+            f"değişir, önceden bilinemez."
+        )
 
     def _on_waypoints(self, msg: Path) -> None:
         """F-S.6/F-S.11: mission_manager_node current_target'la AYNI referansta

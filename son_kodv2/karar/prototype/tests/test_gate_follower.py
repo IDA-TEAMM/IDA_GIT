@@ -13,8 +13,11 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from prototype.mission.gate_follower import (
     Gate,
+    GateDiagnostics,
     GateFollower,
     GateFollowerConfig,
     select_gate,
@@ -67,14 +70,47 @@ def test_gn_kapinin_yaninda_yine_orta_noktadan_gecer() -> None:
 # ------------------------------------------------------------ select_gate: elemeler
 
 def test_cok_genis_cift_elenir() -> None:
-    # Ayrım 20 m > gate_width_max(8) → kapı sayılmaz.
+    # Ayrım 30 m > gate_width_max(20) → kapı sayılmaz.
+    # ⚠ 2026-08-03: bant 1.5-8 → 1.0-20 m'ye GENİŞLETİLDİ. Gerekçe: şartname
+    # kapı genişliğinin yarışma alanına göre değişeceğini ve dubaların deniz
+    # şartlarıyla yer değiştirebileceğini söylüyor → genişlik önceden
+    # bilinemez. Dar bant gerçek kapıyı SESSİZCE reddederdi (bkz.
+    # GateFollowerConfig docstring'i). Bu test artık yeni üst sınırı bekliyor.
     assert select_gate(
-        (0.0, 0.0), (0.0, 20.0), [(-10.0, 10.0), (10.0, 10.0)], _CFG
+        (0.0, 0.0), (0.0, 40.0), [(-15.0, 10.0), (15.0, 10.0)], _CFG
     ) is None
 
 
+def test_genislik_reddi_olculen_mesafeyi_raporlar() -> None:
+    """Sessiz ret kapanı: banda girmeyen çiftin ÖLÇÜLEN mesafesi teşhise yazılır.
+
+    Genişlik önceden bilinemediği için sahada bandın yanlış olması olasıdır;
+    operatörün bunu düzeltebilmesi ancak gerçek mesafeyi görmesiyle mümkün.
+    """
+    diag = GateDiagnostics()
+    assert select_gate(
+        (0.0, 0.0), (0.0, 40.0), [(-15.0, 10.0), (15.0, 10.0)], _CFG, diag
+    ) is None
+    assert diag.n_edge_buoys == 2
+    assert diag.n_pairs_checked == 1
+    assert len(diag.reddedilen_genislik) == 1
+    assert diag.reddedilen_genislik[0] == pytest.approx(30.0, abs=1e-6)
+    assert diag.secilen_genislik is None
+
+
+def test_secilen_kapinin_genisligi_raporlanir() -> None:
+    """Kapı bulunduğunda ölçülen genişlik teşhise yazılır (saha teyidi)."""
+    diag = GateDiagnostics()
+    gate = select_gate(
+        (0.0, 0.0), (0.0, 20.0), [(-2.0, 10.0), (2.0, 10.0)], _CFG, diag
+    )
+    assert gate is not None
+    assert diag.secilen_genislik == pytest.approx(4.0, abs=1e-6)
+    assert diag.reddedilen_genislik == []
+
+
 def test_cok_dar_cift_elenir() -> None:
-    # Ayrım 0.5 m < gate_width_min(1.5) → tek dubanın gürültüsü, kapı değil.
+    # Ayrım 0.5 m < gate_width_min(1.0) → tek dubanın gürültüsü, kapı değil.
     assert select_gate(
         (0.0, 0.0), (0.0, 20.0), [(-0.25, 10.0), (0.25, 10.0)], _CFG
     ) is None

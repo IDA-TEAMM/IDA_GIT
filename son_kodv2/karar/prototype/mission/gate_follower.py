@@ -36,17 +36,43 @@ Point = Tuple[float, float]
 
 @dataclass(frozen=True)
 class GateFollowerConfig:
-    """Kapı seçimi ve takip histerezis parametreleri (saha testinde kalibre).
+    """Kapı seçimi ve takip histerezis parametreleri.
 
-    Değerler temsili başlangıç tahminleridir; gerçek duba aralıkları yarışma
-    anına göre değişir (md 5.5.2.2) — sahada ölçülüp güncellenmeli.
+    🔴 **KAPI GENİŞLİĞİ ÖNCEDEN BİLİNEMEZ — şartname bunu üç yerde söylüyor:**
+      · *"Parkurların uzunlukları, parkurlarda kullanılan duba sayıları ve
+        KENAR DUBALARI ARASINDAKİ MESAFELER yarışma alanına göre değişkenlik
+        gösterecektir."* (Şekil 3 üstü)
+      · *"Dubalar arasındaki mesafeler, duba sayıları, parkur uzunluğu yarışma
+        alanına göre BELİRLENECEKTİR. Duba sayılarına göre bir akış
+        tasarlanmaması tavsiye edilmektedir."* (md 5.5.4 notları)
+      · *"kenar dubaları ve engeller de DENİZ ŞARTLARINDAN DOLAYI YER
+        DEĞİŞTİREBİLİR."* → genişlik koşu SIRASINDA bile sabit değil.
+    Parkur alanı önceden görülemez, ölçülemez (önceden haritalama da yasak).
+
+    **Bu yüzden genişlik bandı bir KALİBRASYON değil, EMNİYET SÜZGECİdir.**
+    Dar tutulursa gerçek kapı sessizce reddedilir ve özellik hiç çalışmaz
+    (en kötü arıza biçimi: açık görünür, hiçbir şey yapmaz). Bant bilerek
+    GENİŞ; asıl ayırt etme işini geometri yapar:
+      · yalnız TURUNCU kenar dubaları aday (sarı engel sınıfça zaten dışarıda)
+      · ikisi de önde ve menzil içinde olmalı
+      · ikisi "yan yana" olmalı (`pair_depth_tol`)
+      · seçilen çiftin orta noktası kurs çizgisine en yakın + en önde olmalı
+    Reddedilen adayların ÖLÇÜLEN genişliği `GateDiagnostics`'e yazılır; node
+    bunu loglar → sahada bant yanlışsa operatör 10 saniyede launch-arg ile
+    düzeltir (yeniden derleme yok).
+
+    Şartnamedeki TEK kesin sayı: duba çapı 30 cm, yükseklik 50 cm.
     """
 
-    # Geçerli bir kapının kenar dubaları arası mesafe aralığı (m). Bu aralık
-    # dışındaki çiftler kapı sayılmaz (çok yakın = tek dubanın gürültüsü;
-    # çok uzak = ayrı kapıların dubaları).
-    gate_width_min: float = 1.5
-    gate_width_max: float = 8.0
+    # Kenar dubaları arası mesafe süzgeci (m) — yukarıdaki nota bak, bu bir
+    # tahmin DEĞİL, kabul edilebilir aralığın uçları.
+    # Alt sınır: teknenin gövde genişliği 0.78 m; bundan dar bir "kapı"dan
+    # zaten geçilemez, o kadar yakın iki tespit tek dubanın ikiye bölünmesidir.
+    # Üst sınır: algı menzili (~25 m) zaten üst kapak; 20 m'den geniş bir çift
+    # neredeyse kesin AYRI kapılara ait. Şüphede kal → geniş bırak: yanlış
+    # eşleşmeyi geometri eler, reddedilen kapı ise TELAFİSİ OLMAYAN puan kaybı.
+    gate_width_min: float = 1.0
+    gate_width_max: float = 20.0
     # Yalnız araçtan en fazla bu kadar ÖNDEKİ dubalar dikkate alınır (m).
     max_lookahead: float = 25.0
     # Duba en az bu kadar önde olmalı (m) — aracın hizasındaki/geçilmiş
@@ -76,6 +102,30 @@ class Gate:
     def width(self) -> float:
         """Kenar dubaları arası mesafe (m)."""
         return math.hypot(self.left[0] - self.right[0], self.left[1] - self.right[1])
+
+
+@dataclass
+class GateDiagnostics:
+    """Neden kapı bulunamadı? — sahada bandı düzeltebilmek için.
+
+    Kapı genişliği önceden bilinemediği için (bkz. GateFollowerConfig) en
+    tehlikeli arıza SESSİZ RET'tir: turuncu dubalar pekâlâ görülüyordur ama
+    genişlikleri banda girmediği için hiç kapı oluşmaz ve araç ham görev
+    noktasına gider — hiçbir hata basılmadan, puan kaybederek.
+    Bu sayaçlar node tarafından loglanır; operatör ÖLÇÜLEN genişlikleri görüp
+    `planning.gate_width_max:=14` gibi bir launch-arg ile anında düzeltebilir.
+    """
+
+    n_edge_buoys: int = 0            # gelen turuncu duba sayısı
+    n_in_range: int = 0              # önde + menzil içinde kalanlar
+    n_pairs_checked: int = 0         # değerlendirilen çift sayısı
+    reddedilen_genislik: List[float] = None   # banda girmeyen ÖLÇÜLEN mesafeler
+    reddedilen_derinlik: int = 0     # "yan yana değil" diye elenen çift sayısı
+    secilen_genislik: Optional[float] = None
+
+    def __post_init__(self) -> None:
+        if self.reddedilen_genislik is None:
+            self.reddedilen_genislik = []
 
 
 @dataclass(frozen=True)
@@ -111,6 +161,7 @@ def select_gate(
     coarse_target: Point,
     edge_buoys: Sequence[Point],
     cfg: GateFollowerConfig,
+    diag: Optional[GateDiagnostics] = None,
 ) -> Optional[Gate]:
     """Öndeki en yakın geçerli kapıyı seç (durumsuz, saf fonksiyon).
 
@@ -126,6 +177,8 @@ def select_gate(
     Dönüş: Gate ya da geçerli kapı yoksa None. Kenar dubaları frame'i = girdi
     frame'i (dünya ENU); left/right kursa göre etiketlenir (+lateral = sol).
     """
+    if diag is not None:
+        diag.n_edge_buoys = len(edge_buoys)
     if len(edge_buoys) < 2:
         return None
     axes = _forward_left_axes(vehicle, coarse_target)
@@ -144,6 +197,8 @@ def select_gate(
         lat = rx * lx + ry * ly
         projected.append(((bx, by), fwd, lat))
 
+    if diag is not None:
+        diag.n_in_range = len(projected)
     if len(projected) < 2:
         return None
 
@@ -153,10 +208,18 @@ def select_gate(
         pi, fi, li = projected[i]
         for j in range(i + 1, n):
             pj, fj, lj = projected[j]
+            if diag is not None:
+                diag.n_pairs_checked += 1
             sep = math.hypot(pi[0] - pj[0], pi[1] - pj[1])
             if sep < cfg.gate_width_min or sep > cfg.gate_width_max:
+                # ÖLÇÜLEN mesafeyi kaydet — sahada bandın yanlış olduğu ancak
+                # bu sayıyla anlaşılır (genişlik önceden bilinemiyor).
+                if diag is not None:
+                    diag.reddedilen_genislik.append(sep)
                 continue
             if abs(fi - fj) > cfg.pair_depth_tol:      # yan yana değil → kapı değil
+                if diag is not None:
+                    diag.reddedilen_derinlik += 1
                 continue
             mid_fwd = 0.5 * (fi + fj)
             mid_lat = 0.5 * (li + lj)
@@ -168,6 +231,8 @@ def select_gate(
             if best is None or key < (best[0], best[1]):
                 best = (mid_fwd, abs(mid_lat), gate)
 
+    if best is not None and diag is not None:
+        diag.secilen_genislik = best[2].width
     return best[2] if best is not None else None
 
 
@@ -187,6 +252,8 @@ class GateFollower:
     def __init__(self, cfg: Optional[GateFollowerConfig] = None) -> None:
         self._cfg = cfg or GateFollowerConfig()
         self._committed: Optional[Gate] = None
+        # Son update()'in teşhis sayaçları — node bunu loglar (sessiz ret kapanı).
+        self.last_diagnostics = GateDiagnostics()
 
     def reset(self) -> None:
         """Kilitli kapıyı temizle (parkur geçişi / yeniden başlama)."""
@@ -203,7 +270,10 @@ class GateFollower:
         edge_buoys: Sequence[Point],
     ) -> GateResult:
         """Bir kontrol tick'i: rafine hedefi (kapı ortası ya da ham GN) üret."""
-        fresh = select_gate(vehicle, coarse_target, edge_buoys, self._cfg)
+        self.last_diagnostics = GateDiagnostics()
+        fresh = select_gate(
+            vehicle, coarse_target, edge_buoys, self._cfg, self.last_diagnostics
+        )
 
         if self._committed is not None:
             axes = _forward_left_axes(vehicle, coarse_target)

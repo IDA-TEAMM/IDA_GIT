@@ -521,7 +521,31 @@ current_target / waypoints (ham GN) ──► _refine_target() ──► GateFol
   kontrol yolu DEĞİL, RViz'de "kapı görüyor muyuz" göstergesi).
 - Saha yüzeyi: `planning.gate_*` launch-arg'ları (params.yaml ↔ hardware.yaml ↔
   `_GATE_DEFAULTS`, drift'i `test_planning_config_drift.py` bağlar).
-  ⚠ Genişlik/menzil değerleri TEMSİLİ — gerçek duba aralığı sahada ölçülmeli.
+
+**🔴 KAPI GENİŞLİĞİ ÖNCEDEN BİLİNEMEZ — bant bir KALİBRASYON değil SÜZGEÇ.**
+Şartname üç yerde söylüyor: *"kenar dubaları arasındaki mesafeler yarışma alanına
+göre değişkenlik gösterecektir"* · *"Dubalar arasındaki mesafeler … yarışma alanına
+göre belirlenecektir"* · *"kenar dubaları ve engeller de deniz şartlarından dolayı
+yer değiştirebilir"* (→ koşu **sırasında** bile sabit değil). Parkur önceden
+görülemez, önceden haritalama zaten yasak.
+- Bu yüzden bant bilerek geniş: **1.0 – 20.0 m**. Dar bant, gerçek kapıyı
+  **sessizce reddeder** — en kötü arıza biçimi (özellik açık görünür, hiçbir şey
+  yapmaz, puan kaybedilir). Ayırt etmeyi geometri yapar: yalnız turuncu adaydır,
+  ikisi de önde/menzilde, "yan yana" (`pair_depth_tol`), orta nokta kurs
+  çizgisine en yakın.
+- **Sessiz ret kapanı:** turuncu duba görülüyor ama hiçbir çift banda girmiyorsa
+  `planning_node` 5 s'de bir **ölçülen gerçek mesafeleri** WARN'lar →
+  `planning.gate_width_max:=14` ile sahada anında düzeltilir.
+- Şartnamedeki tek kesin sayı: **duba çapı 30 cm, yükseklik 50 cm**; Şekil 3
+  açıkça *"temsili"*.
+
+**⚠ `obstacle_margin` üst sınırının dayanağı ZAYIF.** Yukarıdaki "Emniyet Payları"
+tablosundaki *"Parkur-2 geçidi net açıklık ~1.35 m"* sayısı `kod_denetimi.md`
+F10.1'de **kaynaksız** geçiyor — şartnamede karşılığı YOK ve şartname mesafelerin
+alana göre değişeceğini söylüyor. Ölçümler (1.0 geçer, 1.5 geçmez) o varsayılan
+geçit için geçerli; gerçek geçit daha genişse 1.0 fazlasıyla güvenli, **daha
+darsa 1.0 da geçidi kapatabilir**. Sahada ilk kapı görüldüğünde
+`/girdap/planning/gate` ile teyit et.
 
 ### 🔴 Aynı turda bulunan CANLI HATA — engel frame'i dönüştürülmüyordu
 

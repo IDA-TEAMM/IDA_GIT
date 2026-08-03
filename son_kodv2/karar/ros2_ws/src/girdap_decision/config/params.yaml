@@ -59,8 +59,15 @@ planning_node:
     mppi_obstacle_margin: 1.0  # m, engel emniyet payı (SOFT ceza yarıçapı).
                              # Tekne yarı genişliği 0.375 m; 0.5 m'de gövde
                              # payı −0.29 m (çarpma), 1.0 m'de +0.17 m.
-                             # ⚠ ÜST SINIR: Parkur-2 geçidi (net açıklık
-                             # ~1.35 m) — 1.5 m'de araç geçide HİÇ girmiyor.
+                             # ⚠ ÜST SINIR: 1.5 m'de araç geçide HİÇ girmiyor.
+                             # 🔴 Bu sınır "geçit net açıklığı ~1.35 m"
+                             # varsayımıyla ölçüldü — o sayının ŞARTNAMEDE
+                             # KARŞILIĞI YOK (kod_denetimi F10.1'de kaynaksız
+                             # geçiyor; şartname mesafelerin yarışma alanına
+                             # göre değişeceğini söylüyor). Geçit gerçekte
+                             # daha genişse 1.0 m fazlasıyla güvenli; DARSA
+                             # 1.0 m de geçidi kapatabilir → sahada ilk kapı
+                             # görüldüğünde /girdap/planning/gate ile teyit et.
     mppi_terminal_mode: "lookahead"   # "lookahead" | "global" (eski davranış).
                              # ⚠ "global"e dönersen parkur profillerindeki
                              # w_terminal=50 fazla gelir (köşe keser).
@@ -76,8 +83,8 @@ planning_node:
     # karşılıklı KENAR dubası ikilisinin ARASINDAN geçmekten gelir; hakemin
     # verdiği nokta tam kapı ortasında olmayabilir. Çekirdek
     # prototype/mission/gate_follower.py; bu blok onun saha yüzeyi.
-    # ⚠ Değerler TEMSİLİ başlangıç tahminleri — gerçek duba aralıkları
-    # yarışma anına göre değişir, sahada ölçülüp güncellenmeli.
+    # ⚠ Parkur ÖNCEDEN GÖRÜLEMEZ (önceden haritalama da yasak) → bu değerler
+    # "ölçülüp girilecek kalibrasyon" DEĞİLDİR. Aşağıdaki genişlik notuna bak.
     gate_following_enabled: true   # false → ham görev noktasına gidilir (eski
                              # davranış). Kapı görünmüyorken zaten fallback
                              # çalışır, yani açık bırakmak risksiz.
@@ -88,9 +95,23 @@ planning_node:
     use_classified_obstacles: true  # /perception/classified_obstacles aktığında
                              # sınıfsız /perception/obstacle_map'in yerine geçer.
                              # false → eski davranış (kapı dubaları engel kalır).
-    gate_width_min: 1.5      # m, geçerli kapı genişliği alt sınırı (altı = tek
-                             # dubanın gürültüsü)
-    gate_width_max: 8.0      # m, üst sınır (üstü = ayrı kapıların dubaları)
+    # 🔴 GENİŞLİK BANDI = KALİBRASYON DEĞİL, EMNİYET SÜZGECİ.
+    # Şartname kapı genişliğinin önceden bilinemeyeceğini üç yerde söylüyor:
+    #   · "kenar dubaları arasındaki mesafeler yarışma alanına göre
+    #      değişkenlik gösterecektir"
+    #   · "Dubalar arasındaki mesafeler ... yarışma alanına göre belirlenecektir"
+    #   · "kenar dubaları ve engeller de deniz şartlarından dolayı yer
+    #      değiştirebilir" → koşu SIRASINDA bile sabit değil
+    # Parkur önceden görülemez/ölçülemez. Bant bu yüzden bilerek GENİŞ:
+    # dar bant gerçek kapıyı SESSİZCE reddeder (en kötü arıza — özellik açık
+    # görünür, hiçbir şey yapmaz, puan kaybedilir). Ayırt etmeyi geometri
+    # yapar (yan yana olma + önde olma + kurs çizgisine yakınlık + sınıf).
+    # Kapı seçilemezse node ÖLÇÜLEN mesafeleri WARN'lar → sahada bu iki
+    # değeri launch-arg ile anında düzeltebilirsin.
+    gate_width_min: 1.0      # m, altı: tekne (0.78 m) zaten sığmaz / tek duba
+                             # ikiye bölünmüştür
+    gate_width_max: 20.0     # m, üstü: neredeyse kesin AYRI kapılar (algı
+                             # menzili ~25 m zaten üst kapak)
     gate_max_lookahead: 25.0 # m, bu mesafeden uzaktaki dubalar dikkate alınmaz
                              # (OAK-D 69° HFOV'da Ø30 duba ~20-25 m'de güvenilir)
     gate_min_forward: 0.5    # m, duba en az bu kadar ÖNDE olmalı (hizadaki/
