@@ -95,33 +95,27 @@ planning_node:
     use_classified_obstacles: true  # /perception/classified_obstacles aktığında
                              # sınıfsız /perception/obstacle_map'in yerine geçer.
                              # false → eski davranış (kapı dubaları engel kalır).
-    # 🔴 GENİŞLİK BANDI = KALİBRASYON DEĞİL, EMNİYET SÜZGECİ.
-    # Şartname kapı genişliğinin önceden bilinemeyeceğini üç yerde söylüyor:
-    #   · "kenar dubaları arasındaki mesafeler yarışma alanına göre
-    #      değişkenlik gösterecektir"
-    #   · "Dubalar arasındaki mesafeler ... yarışma alanına göre belirlenecektir"
-    #   · "kenar dubaları ve engeller de deniz şartlarından dolayı yer
-    #      değiştirebilir" → koşu SIRASINDA bile sabit değil
-    # Parkur önceden görülemez/ölçülemez. Bant bu yüzden bilerek GENİŞ:
-    # dar bant gerçek kapıyı SESSİZCE reddeder (en kötü arıza — özellik açık
-    # görünür, hiçbir şey yapmaz, puan kaybedilir). Ayırt etmeyi geometri
-    # yapar (yan yana olma + önde olma + kurs çizgisine yakınlık + sınıf).
-    # Kapı seçilemezse node ÖLÇÜLEN mesafeleri WARN'lar → sahada bu iki
-    # değeri launch-arg ile anında düzeltebilirsin.
-    gate_width_min: 1.0      # m, altı: tekne (0.78 m) zaten sığmaz / tek duba
-                             # ikiye bölünmüştür
-    gate_width_max: 20.0     # m, üstü: neredeyse kesin AYRI kapılar (algı
-                             # menzili ~25 m zaten üst kapak)
-    gate_max_lookahead: 25.0 # m, bu mesafeden uzaktaki dubalar dikkate alınmaz
-                             # (OAK-D 69° HFOV'da Ø30 duba ~20-25 m'de güvenilir)
-    gate_min_forward: 0.5    # m, duba en az bu kadar ÖNDE olmalı (hizadaki/
-                             # geçilmiş dubaları eler)
-    gate_pair_depth_tol: 3.0 # m, çiftin ileri-mesafe farkı bunu aşarsa "yan yana"
-                             # değildir → kapı sayılmaz
-    gate_release_distance: 0.8  # m, kilitli kapının ortasına bu kadar yaklaşınca
-                             # "geçildi" sayılır ve sonraki kapıya geçilir
-    gate_match_radius: 2.5   # m, taze algı kilitli kapıya bu yarıçapta ise
-                             # "aynı kapı" kabul edilir (drift güncellemesi)
+    # 🔑 AYARLANABİLİR EŞİK YOK — kapı geometrisi önceden bilinemez.
+    # Şartname üç yerde söylüyor: "kenar dubaları arasındaki mesafeler yarışma
+    # alanına göre değişkenlik gösterecektir" · "Dubalar arasındaki mesafeler
+    # ... yarışma alanına göre belirlenecektir" · "kenar dubaları ve engeller
+    # de deniz şartlarından dolayı yer değiştirebilir" (→ koşu SIRASINDA bile
+    # sabit değil). Parkur önceden görülemez; önceden haritalama zaten yasak.
+    # Dolayısıyla "sahada ölçüp gir" diye bir eşik OLAMAZ.
+    #
+    # Aşağıdaki iki değer ÖLÇÜLMÜŞ TEKNE BOYUTUDUR (GIRDAP_DURUM §1:
+    # 0,78 × 1,04 × 0,52 m). Tekne değişirse güncellenir, sahada deneyerek
+    # AYARLANMAZ.
+    #
+    # Kod içinde bunlardan ve saf geometriden türetilenler (hiçbiri ayar değil):
+    #   geçilebilirlik  = gövde genişliği   (dar açıklıktan tekne geçemez)
+    #   burun hattı     = gövde boyu / 2    (duba bunun önünde olmalı)
+    #   kapı ayrımı     = |Δileri| < |Δyanal|  (45° = iki hâl arasındaki
+    #                     geometrik sınır; ölçek-bağımsız, genişlik bilmez)
+    #   kapı geçildi    = ileri mesafe ≤ 0  (kapı düzlemi arkada kaldı)
+    #   aynı kapı mı    = kapının kendi genişliğinin yarısı (öz-ölçekli)
+    hull_width_m: 0.78       # m, ÖLÇÜLMÜŞ gövde genişliği
+    hull_length_m: 1.04      # m, ÖLÇÜLMÜŞ gövde boyu
     mode_name: "GUIDED"      # mod geçidi — mavros_bridge ile aynı olmalı
     map_rate_hz: 10.0        # Dosya-3 yerel harita yayım hızı
     use_rrt: true            # yarışma: RRT*. Video: hardware.yaml false override

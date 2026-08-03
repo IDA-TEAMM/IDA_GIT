@@ -104,21 +104,20 @@ planning:
   mppi_ref_window_size: 100        # nokta, kayan referans penceresi
   mppi_ref_window_enabled: true    # false → tam tarama (16× yavaş, A/B için)
   # --- Kapı takibi (2026-08-03) — md 5.5.2.2, puan kapıdan geçmekten gelir.
-  # 🔴 Kapı genişliği ÖNCEDEN BİLİNEMEZ (şartname: mesafeler yarışma alanına
-  # göre değişir + dubalar deniz şartlarıyla yer değiştirir). Genişlik bandı
-  # bir kalibrasyon değil EMNİYET SÜZGECİdir — dar bant gerçek kapıyı sessizce
-  # reddeder. Kapı seçilemezse planning_node ÖLÇÜLEN mesafeleri WARN'lar;
-  # sahada `planning.gate_width_max:=14` gibi anında düzeltilir.
+  # 🔑 AYARLANABİLİR EŞİK YOK. Kapı geometrisi önceden bilinemez (şartname:
+  # mesafeler yarışma alanına göre değişir + dubalar deniz şartlarıyla yer
+  # değiştirir), dolayısıyla "sahada ölçüp gir" diye bir sayı OLAMAZ.
+  # Geriye kalan iki değer ÖLÇÜLMÜŞ TEKNE BOYUTUDUR — tekne değişirse
+  # güncellenir, sahada deneyerek ayarlanmaz.
+  # Türetilenler (kod içinde, ayar değil): geçilebilirlik = gövde genişliği ·
+  # burun hattı = gövde boyu/2 · kapı ayrımı = |Δileri|<|Δyanal| (45° geometrik
+  # sınır) · kapı geçildi = ileri mesafe ≤ 0 · aynı kapı = kapı genişliği/2.
   gate_following_enabled: true     # false → ham görev noktasına git (eski davranış)
   edge_buoy_class_id: 0            # turuncu KENAR dubası → engel DEĞİL, kapı
   use_classified_obstacles: true   # sınıflı topic aktığında obstacle_map'i ezer
-  gate_width_min: 1.0              # m ⚠ süzgeç, kalibrasyon değil (genişlik önceden bilinemez)
-  gate_width_max: 20.0             # dar bant = gerçek kapının SESSİZCE reddi
-  gate_max_lookahead: 25.0         # m (OAK-D 69° HFOV'da duba ~20-25 m'de güvenilir)
-  gate_min_forward: 0.5            # m
-  gate_pair_depth_tol: 3.0         # m, "yan yana" toleransı
-  gate_release_distance: 0.8       # m, kapı geçildi eşiği
-  gate_match_radius: 2.5           # m, "aynı kapı" eşleşme yarıçapı
+  hull_width_m: 0.78               # ÖLÇÜLMÜŞ (GIRDAP_DURUM §1) — bundan dar
+                                   # açıklıktan tekne geçemez → kapı sayılmaz
+  hull_length_m: 1.04              # ÖLÇÜLMÜŞ — yarısı burun hattı
 
 # --- Görev dosyası seçimi (Sprint 4 parkur katmanı) ---
 # hardware.launch bu dosya adını config/ altında çözer ve HEM mission_manager

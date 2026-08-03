@@ -36,58 +36,57 @@ Point = Tuple[float, float]
 
 @dataclass(frozen=True)
 class GateFollowerConfig:
-    """Kapı seçimi ve takip histerezis parametreleri.
+    r"""Kapı seçimi — **TAHMİNE DAYALI TEK BİR SAYI YOK.**
 
-    🔴 **KAPI GENİŞLİĞİ ÖNCEDEN BİLİNEMEZ — şartname bunu üç yerde söylüyor:**
+    🔴 **Neden:** kapı geometrisi önceden bilinemez. Şartname üç yerde söylüyor:
       · *"Parkurların uzunlukları, parkurlarda kullanılan duba sayıları ve
         KENAR DUBALARI ARASINDAKİ MESAFELER yarışma alanına göre değişkenlik
-        gösterecektir."* (Şekil 3 üstü)
+        gösterecektir."*
       · *"Dubalar arasındaki mesafeler, duba sayıları, parkur uzunluğu yarışma
         alanına göre BELİRLENECEKTİR. Duba sayılarına göre bir akış
-        tasarlanmaması tavsiye edilmektedir."* (md 5.5.4 notları)
+        tasarlanmaması tavsiye edilmektedir."*
       · *"kenar dubaları ve engeller de DENİZ ŞARTLARINDAN DOLAYI YER
-        DEĞİŞTİREBİLİR."* → genişlik koşu SIRASINDA bile sabit değil.
-    Parkur alanı önceden görülemez, ölçülemez (önceden haritalama da yasak).
+        DEĞİŞTİREBİLİR."* → koşu SIRASINDA bile sabit değil.
+    Parkur önceden görülemez, önceden haritalama zaten yasak. Dolayısıyla
+    "sahada ölçüp gir" diye bir eşik OLAMAZ — ölçülecek bir şey yok.
 
-    **Bu yüzden genişlik bandı bir KALİBRASYON değil, EMNİYET SÜZGECİdir.**
-    Dar tutulursa gerçek kapı sessizce reddedilir ve özellik hiç çalışmaz
-    (en kötü arıza biçimi: açık görünür, hiçbir şey yapmaz). Bant bilerek
-    GENİŞ; asıl ayırt etme işini geometri yapar:
-      · yalnız TURUNCU kenar dubaları aday (sarı engel sınıfça zaten dışarıda)
-      · ikisi de önde ve menzil içinde olmalı
-      · ikisi "yan yana" olmalı (`pair_depth_tol`)
-      · seçilen çiftin orta noktası kurs çizgisine en yakın + en önde olmalı
-    Reddedilen adayların ÖLÇÜLEN genişliği `GateDiagnostics`'e yazılır; node
-    bunu loglar → sahada bant yanlışsa operatör 10 saniyede launch-arg ile
-    düzeltir (yeniden derleme yok).
+    **Tasarım kuralı (2026-08-03): her sayı ya ÖLÇÜLMÜŞ bir tekne boyutudur ya
+    da saf geometridir. Serbest/ayarlanabilir eşik bırakılmadı.**
 
-    Şartnamedeki TEK kesin sayı: duba çapı 30 cm, yükseklik 50 cm.
+    | eski (tahmin) | yerine geçen |
+    |---|---|
+    | `gate_width_max` = 20 m | **YOK** — genişlik hiç kısıt değil |
+    | `gate_width_min` = 1.0 m | **gövde genişliği** (fizik: dar kapıdan geçilemez) |
+    | `max_lookahead` = 25 m | **YOK** — menzili algı katmanı belirler |
+    | `pair_depth_tol` = 3.0 m | **\|Δileri\| < \|Δyanal\|** (45° geometrik ayrım) |
+    | `min_forward` = 0.5 m | **gövde yarı boyu** (burnun önü) |
+    | `release_distance` = 0.8 m | **ileri mesafe ≤ 0** (kapı düzlemi geçildi) |
+    | `match_radius` = 2.5 m | **kapının kendi genişliğinin yarısı** (öz-ölçekli) |
+
+    🔑 **"Yan yana mı" testi neden `|Δileri| < |Δyanal|`:** bir kapı, kursa
+    DİK duran bir duba çiftidir; ardışık iki kapının dubaları ise kurs boyunca
+    dizilir. Bu eşitsizlik "aradaki doğru paralel olmaktan çok dike yakın mı"
+    demektir — kesişim noktası tam 45°, yani **ayarlanan bir eşik değil, iki
+    hâl arasındaki geometrik ayrım noktası**. Ölçek-bağımsız: kapı 2 m de olsa
+    40 m de olsa aynı çalışır. Aynı zamanda tek dubası görünmeyen bir kapının
+    yanlışlıkla komşu kapıyla eşleşmesini de eler (onlar ileri yönde ayrıktır).
+
+    Tekne boyutları `~/Desktop/GIRDAP_DURUM.md` §1'den (ölçülmüş):
+    0,78 × 1,04 × 0,52 m.
     """
 
-    # Kenar dubaları arası mesafe süzgeci (m) — yukarıdaki nota bak, bu bir
-    # tahmin DEĞİL, kabul edilebilir aralığın uçları.
-    # Alt sınır: teknenin gövde genişliği 0.78 m; bundan dar bir "kapı"dan
-    # zaten geçilemez, o kadar yakın iki tespit tek dubanın ikiye bölünmesidir.
-    # Üst sınır: algı menzili (~25 m) zaten üst kapak; 20 m'den geniş bir çift
-    # neredeyse kesin AYRI kapılara ait. Şüphede kal → geniş bırak: yanlış
-    # eşleşmeyi geometri eler, reddedilen kapı ise TELAFİSİ OLMAYAN puan kaybı.
-    gate_width_min: float = 1.0
-    gate_width_max: float = 20.0
-    # Yalnız araçtan en fazla bu kadar ÖNDEKİ dubalar dikkate alınır (m).
-    max_lookahead: float = 25.0
-    # Duba en az bu kadar önde olmalı (m) — aracın hizasındaki/geçilmiş
-    # dubaları eler (0 çok küçük; negatif = arkada, zaten elenir).
-    min_forward: float = 0.5
-    # Bir kapının iki dubası "yan yana" olmalı: ileri-mesafe farkı bu eşiği
-    # aşarsa (biri yakın biri uzak) çift kapı sayılmaz (m).
-    pair_depth_tol: float = 3.0
-    # --- histerezis (GateFollower sınıfı) ---
-    # Kilitlenmiş kapının orta noktasına ileri-mesafe bunun altına inince
-    # kapı "geçildi" sayılır ve serbest bırakılır (m).
-    release_distance: float = 0.8
-    # Yeniden algılanan kapı, kilitli kapının orta noktasına bu yarıçap
-    # içindeyse "aynı kapı" kabul edilir ve taze algıyla güncellenir (m).
-    match_radius: float = 2.5
+    # ÖLÇÜLMÜŞ tekne boyutları — tek girdi bunlar, tahmin değil.
+    # Genişlik: bundan dar bir açıklıktan tekne fiziksel olarak GEÇEMEZ, o
+    # yüzden öyle bir çift kapı değildir (büyük olasılıkla tek dubanın iki
+    # tespite bölünmesidir). Bu bir eşik ayarı değil, geçilebilirlik testi.
+    hull_width_m: float = 0.78
+    # Boy: dubanın "önümüzde" sayılması için burnun ötesinde olması gerekir.
+    hull_length_m: float = 1.04
+
+    @property
+    def min_forward(self) -> float:
+        """Duba en az bu kadar önde olmalı = gövde yarı boyu (burun hattı)."""
+        return self.hull_length_m / 2.0
 
 
 @dataclass(frozen=True)
@@ -117,10 +116,13 @@ class GateDiagnostics:
     """
 
     n_edge_buoys: int = 0            # gelen turuncu duba sayısı
-    n_in_range: int = 0              # önde + menzil içinde kalanlar
+    n_in_range: int = 0              # burun hattının önünde kalanlar
     n_pairs_checked: int = 0         # değerlendirilen çift sayısı
-    reddedilen_genislik: List[float] = None   # banda girmeyen ÖLÇÜLEN mesafeler
-    reddedilen_derinlik: int = 0     # "yan yana değil" diye elenen çift sayısı
+    # Gövdenin sığmadığı (geçilemez) çiftlerin ÖLÇÜLEN açıklığı.
+    reddedilen_genislik: List[float] = None
+    # "Yan yana değil" (kursa dik değil) diye elenen çift sayısı — bunlar
+    # neredeyse hep ardışık kapıların dubalarıdır, normal ve beklenen.
+    reddedilen_derinlik: int = 0
     secilen_genislik: Optional[float] = None
 
     def __post_init__(self) -> None:
@@ -192,7 +194,10 @@ def select_gate(
     for bx, by in edge_buoys:
         rx, ry = bx - vx, by - vy
         fwd = rx * fx + ry * fy
-        if fwd < cfg.min_forward or fwd > cfg.max_lookahead:
+        # Yalnız burun hattının ÖNÜNDEKİLER. Üst menzil kapağı YOK: menzili
+        # algı katmanı belirler (LiDAR/kamera zaten ne görüyorsa onu verir);
+        # buraya ikinci bir sayı koymak tahmin olurdu.
+        if fwd < cfg.min_forward:
             continue
         lat = rx * lx + ry * ly
         projected.append(((bx, by), fwd, lat))
@@ -211,13 +216,18 @@ def select_gate(
             if diag is not None:
                 diag.n_pairs_checked += 1
             sep = math.hypot(pi[0] - pj[0], pi[1] - pj[1])
-            if sep < cfg.gate_width_min or sep > cfg.gate_width_max:
-                # ÖLÇÜLEN mesafeyi kaydet — sahada bandın yanlış olduğu ancak
-                # bu sayıyla anlaşılır (genişlik önceden bilinemiyor).
+            # (a) GEÇİLEBİLİRLİK — gövde sığmıyorsa bu bir kapı değildir.
+            # Üst sınır YOK: kapı ne kadar geniş olursa olsun geçilebilir.
+            if sep < cfg.hull_width_m:
                 if diag is not None:
                     diag.reddedilen_genislik.append(sep)
                 continue
-            if abs(fi - fj) > cfg.pair_depth_tol:      # yan yana değil → kapı değil
+            # (b) KURSA DİK Mİ — bir kapı kursa dik duran çifttir; ardışık
+            # kapıların dubaları ise kurs boyunca dizilir. |Δileri| < |Δyanal|
+            # tam olarak "paralel olmaktan çok dike yakın" demek (ayrım noktası
+            # 45°: ayarlanan eşik değil, iki hâl arasındaki geometrik sınır).
+            # Ölçek-bağımsız → kapı genişliğini bilmeyi GEREKTİRMEZ.
+            if abs(fi - fj) >= abs(li - lj):
                 if diag is not None:
                     diag.reddedilen_derinlik += 1
                 continue
@@ -283,14 +293,21 @@ class GateFollower:
                 fx, fy, _, _ = axes
                 mx, my = self._committed.midpoint
                 fwd = (mx - vehicle[0]) * fx + (my - vehicle[1]) * fy
-                passed = fwd <= self._cfg.release_distance
+                # "Geçildi" = kapı düzlemi ARKADA kaldı. Tam geometrik tanım;
+                # eski `release_distance` (0.8 m) bir tahmindi ve kapıyı erken
+                # bırakıyordu.
+                passed = fwd <= 0.0
             if not passed:
                 # Kapıya hâlâ gidiyoruz. Taze algı aynı kapıyı görüyorsa
-                # (orta nokta match_radius içinde) drift'i güncelle; görmüyorsa
-                # (oklüzyon) kilitli kapıyı KORU — hedef zıplamaz.
+                # drift'i güncelle; görmüyorsa (oklüzyon) kilitli kapıyı KORU.
+                # "Aynı kapı mı" ölçütü kapının KENDİ genişliğinin yarısı:
+                # öz-ölçekli, dolayısıyla kapı 2 m de olsa 40 m de olsa
+                # çalışır ve dışarıdan bir sayı gerektirmez (eski
+                # `match_radius`=2.5 m bir tahmindi ve geniş kapılarda drift
+                # güncellemesini kaçırırdı).
                 if fresh is not None and _dist(
                     fresh.midpoint, self._committed.midpoint
-                ) <= self._cfg.match_radius:
+                ) <= self._committed.width / 2.0:
                     self._committed = fresh
                 return GateResult(
                     target=self._committed.midpoint,

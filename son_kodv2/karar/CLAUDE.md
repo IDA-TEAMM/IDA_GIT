@@ -522,20 +522,38 @@ current_target / waypoints (ham GN) ──► _refine_target() ──► GateFol
 - Saha yüzeyi: `planning.gate_*` launch-arg'ları (params.yaml ↔ hardware.yaml ↔
   `_GATE_DEFAULTS`, drift'i `test_planning_config_drift.py` bağlar).
 
-**🔴 KAPI GENİŞLİĞİ ÖNCEDEN BİLİNEMEZ — bant bir KALİBRASYON değil SÜZGEÇ.**
+**🔑 KAPI SEÇİMİNDE AYARLANABİLİR TEK BİR EŞİK YOK (2026-08-03 kuralı).**
 Şartname üç yerde söylüyor: *"kenar dubaları arasındaki mesafeler yarışma alanına
 göre değişkenlik gösterecektir"* · *"Dubalar arasındaki mesafeler … yarışma alanına
 göre belirlenecektir"* · *"kenar dubaları ve engeller de deniz şartlarından dolayı
 yer değiştirebilir"* (→ koşu **sırasında** bile sabit değil). Parkur önceden
-görülemez, önceden haritalama zaten yasak.
-- Bu yüzden bant bilerek geniş: **1.0 – 20.0 m**. Dar bant, gerçek kapıyı
-  **sessizce reddeder** — en kötü arıza biçimi (özellik açık görünür, hiçbir şey
-  yapmaz, puan kaybedilir). Ayırt etmeyi geometri yapar: yalnız turuncu adaydır,
-  ikisi de önde/menzilde, "yan yana" (`pair_depth_tol`), orta nokta kurs
-  çizgisine en yakın.
-- **Sessiz ret kapanı:** turuncu duba görülüyor ama hiçbir çift banda girmiyorsa
-  `planning_node` 5 s'de bir **ölçülen gerçek mesafeleri** WARN'lar →
-  `planning.gate_width_max:=14` ile sahada anında düzeltilir.
+görülemez, önceden haritalama zaten yasak → **"sahada ölçüp gir" diye bir eşik
+OLAMAZ, ölçülecek bir şey yok.**
+
+Bu yüzden her sayı ya **ölçülmüş bir tekne boyutudur** ya da **saf geometridir**:
+
+| eski (tahmin) | yerine geçen |
+|---|---|
+| `gate_width_max` = 20 m | **YOK** — genişlik hiç kısıt değil, geniş kapı da geçilir |
+| `gate_width_min` = 1.0 m | **gövde genişliği 0.78 m** (fizik: dar açıklıktan geçilemez) |
+| `max_lookahead` = 25 m | **YOK** — menzili algı katmanı belirler |
+| `pair_depth_tol` = 3.0 m | **\|Δileri\| < \|Δyanal\|** (45° geometrik ayrım) |
+| `min_forward` = 0.5 m | **gövde boyu / 2** (burun hattı) |
+| `release_distance` = 0.8 m | **ileri mesafe ≤ 0** (kapı düzlemi geçildi) |
+| `match_radius` = 2.5 m | **kapının kendi genişliğinin yarısı** (öz-ölçekli) |
+
+🔑 **`|Δileri| < |Δyanal|` neden doğru test:** kapı = kursa **dik** duran çift;
+ardışık kapıların dubaları ise kurs **boyunca** dizilir. Bu eşitsizlik "aradaki
+doğru paralel olmaktan çok dike yakın mı" demek — kesişim tam 45°, yani ayarlanan
+bir eşik değil **iki hâl arasındaki geometrik sınır**. Ölçek-bağımsız: kapı 2 m de
+olsa 40 m de olsa aynı çalışır. Ayrıca **tek dubası görünmeyen kapının komşusuyla
+yanlış eşleşmesini** de eler (A-sol + B-sol kurs boyunca ayrıktır → reddedilir;
+yoksa orta nokta yana kayar ve tekne A-sol dubasına sürerdi).
+
+- `test_kapi_seciminde_ayarlanabilir_esik_KALMADI` bu kuralı **donduruyor** —
+  eşiklerden biri geri eklenirse CI kırmızı.
+- `planning_node` kapı oluşmuyorsa artık "ayarı düzelt" demiyor, **algı teşhisi**
+  basıyor (kaç duba görüldü, kaç çift gövdeden dar, kaç çift kursa dik değil).
 - Şartnamedeki tek kesin sayı: **duba çapı 30 cm, yükseklik 50 cm**; Şekil 3
   açıkça *"temsili"*.
 

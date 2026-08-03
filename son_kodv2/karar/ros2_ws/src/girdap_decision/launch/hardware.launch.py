@@ -186,13 +186,8 @@ _GATE_DEFAULTS: dict[str, tuple[object, type]] = {
     "gate_following_enabled": (True, bool),
     "edge_buoy_class_id": (0, int),
     "use_classified_obstacles": (True, bool),
-    "gate_width_min": (1.0, float),
-    "gate_width_max": (20.0, float),
-    "gate_max_lookahead": (25.0, float),
-    "gate_min_forward": (0.5, float),
-    "gate_pair_depth_tol": (3.0, float),
-    "gate_release_distance": (0.8, float),
-    "gate_match_radius": (2.5, float),
+    "hull_width_m": (0.78, float),
+    "hull_length_m": (1.04, float),
 }
 _GATE_ARG_DESC = {
     "gate_following_enabled": "Kapı (kenar dubası ikilisi) orta noktası takibi. "
@@ -202,13 +197,10 @@ _GATE_ARG_DESC = {
                           "torbasından çıkarılıp kapı adayı sayılır",
     "use_classified_obstacles": "/perception/classified_obstacles aktığında "
                                 "sınıfsız obstacle_map'in yerine geçsin mi",
-    "gate_width_min": "Geçerli kapı genişliği alt sınırı (m)",
-    "gate_width_max": "Geçerli kapı genişliği üst sınırı (m)",
-    "gate_max_lookahead": "Kapı arama menzili (m); ötesindeki dubalar elenir",
-    "gate_min_forward": "Duba en az bu kadar önde olmalı (m)",
-    "gate_pair_depth_tol": "Çiftin ileri-mesafe farkı toleransı (m, yan yana mı)",
-    "gate_release_distance": "Kapı 'geçildi' eşiği (m)",
-    "gate_match_radius": "'Aynı kapı' eşleşme yarıçapı (m)",
+    "hull_width_m": "Gövde genişliği (m, ÖLÇÜLMÜŞ). Kapı bundan darsa tekne "
+                    "sığmaz → kapı sayılmaz. Ayar değil, tekne boyutu.",
+    "hull_length_m": "Gövde boyu (m, ÖLÇÜLMÜŞ). Yarısı = burun hattı; duba "
+                     "bunun önünde olmalı. Ayar değil, tekne boyutu.",
 }
 # perception.fusion varsayılanları — kamera-LiDAR bearing füzyonu (Sprint 3).
 _FUSION_DEFAULTS: dict[str, tuple[object, type]] = {

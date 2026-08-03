@@ -165,13 +165,8 @@ def test_terminal_mode_yaml_degeri_gecerli() -> None:
 # launch anahtarı → GateFollowerConfig alanı. Üç anahtar (enabled / class_id /
 # use_classified) node'a özgüdür, çekirdek config'te karşılığı YOKTUR.
 _GATE_ESLEME = {
-    "gate_width_min": "gate_width_min",
-    "gate_width_max": "gate_width_max",
-    "gate_max_lookahead": "max_lookahead",
-    "gate_min_forward": "min_forward",
-    "gate_pair_depth_tol": "pair_depth_tol",
-    "gate_release_distance": "release_distance",
-    "gate_match_radius": "match_radius",
+    "hull_width_m": "hull_width_m",
+    "hull_length_m": "hull_length_m",
 }
 _GATE_NODE_ONLY = {
     "gate_following_enabled",
@@ -218,7 +213,8 @@ def test_gate_yaml_anahtarlari_launch_ile_ayni(dosya: str) -> None:
     else:
         blok = _yaml(_HARDWARE_FILE)["planning"]
     anahtarlar = {
-        k for k in blok if k.startswith("gate_") or k in _GATE_NODE_ONLY
+        k for k in blok if k.startswith("gate_") or k.startswith("hull_")
+        or k in _GATE_NODE_ONLY
     }
     assert anahtarlar == set(_sabit("_GATE_DEFAULTS"))
 
@@ -238,3 +234,34 @@ def test_gate_yaml_degerleri_kod_varsayilaniyla_ayni(dosya: str) -> None:
             f"{dosya}.yaml {yaml_key}={blok[yaml_key]!r} ≠ "
             f"GateFollowerConfig.{cfg_key}={getattr(kod, cfg_key)!r}"
         )
+
+
+def test_kapi_seciminde_ayarlanabilir_esik_KALMADI() -> None:
+    """🔑 Tasarım kuralı (2026-08-03): kapı seçiminde tahmine dayalı sayı yok.
+
+    Kapı geometrisi önceden bilinemez (şartname: mesafeler yarışma alanına göre
+    değişir + dubalar deniz şartlarıyla yer değiştirir), dolayısıyla "sahada
+    ölçüp gir" diye bir eşik OLAMAZ. Geriye yalnız ÖLÇÜLMÜŞ tekne boyutları
+    kalmalı; genişlik bandı / menzil / derinlik toleransı / bırakma mesafesi /
+    eşleşme yarıçapı hepsi geometriden türetilir.
+
+    Bu test o kuralı DONDURUR: biri geri eklenirse CI kırmızı olur.
+    """
+    from prototype.mission.gate_follower import GateFollowerConfig
+
+    yasak = {
+        "gate_width_min", "gate_width_max", "max_lookahead",
+        "pair_depth_tol", "release_distance", "match_radius",
+    }
+    alanlar = set(GateFollowerConfig.__dataclass_fields__)
+    sizan = yasak & alanlar
+    assert not sizan, (
+        f"GateFollowerConfig'e tahmine dayalı eşik geri gelmiş: {sorted(sizan)}. "
+        "Kapı geometrisi önceden bilinemez — türetilmiş geometri kullan."
+    )
+    assert alanlar == {"hull_width_m", "hull_length_m"}, (
+        f"Beklenen alanlar yalnız ölçülmüş tekne boyutları; bulunan: {sorted(alanlar)}"
+    )
+    # Launch/yaml tarafında da hiçbir eşik kalmamalı.
+    launch = set(_sabit("_GATE_DEFAULTS"))
+    assert not (yasak & {k.replace("gate_", "") for k in launch})

@@ -69,33 +69,54 @@ def test_gn_kapinin_yaninda_yine_orta_noktadan_gecer() -> None:
 
 # ------------------------------------------------------------ select_gate: elemeler
 
-def test_cok_genis_cift_elenir() -> None:
-    # Ayrım 30 m > gate_width_max(20) → kapı sayılmaz.
-    # ⚠ 2026-08-03: bant 1.5-8 → 1.0-20 m'ye GENİŞLETİLDİ. Gerekçe: şartname
-    # kapı genişliğinin yarışma alanına göre değişeceğini ve dubaların deniz
-    # şartlarıyla yer değiştirebileceğini söylüyor → genişlik önceden
-    # bilinemez. Dar bant gerçek kapıyı SESSİZCE reddederdi (bkz.
-    # GateFollowerConfig docstring'i). Bu test artık yeni üst sınırı bekliyor.
-    assert select_gate(
+def test_genis_kapi_ARTIK_ELENMEZ() -> None:
+    """🔑 2026-08-03: genişlik ÜST SINIRI kaldırıldı — tahmine dayalıydı.
+
+    Kapı ne kadar geniş olursa olsun geçilebilir; şartname genişliğin yarışma
+    alanına göre değişeceğini söylüyor, dolayısıyla bir üst sınır uydurmak
+    gerçek kapıyı SESSİZCE reddetme riski demekti. 30 m'lik bir kapı artık
+    geçerli (yan yana oldukları sürece)."""
+    gate = select_gate(
         (0.0, 0.0), (0.0, 40.0), [(-15.0, 10.0), (15.0, 10.0)], _CFG
-    ) is None
+    )
+    assert gate is not None
+    assert gate.width == pytest.approx(30.0, abs=1e-6)
 
 
-def test_genislik_reddi_olculen_mesafeyi_raporlar() -> None:
-    """Sessiz ret kapanı: banda girmeyen çiftin ÖLÇÜLEN mesafesi teşhise yazılır.
+def test_govdeden_dar_acilik_elenir() -> None:
+    """Tek kalan genişlik testi FİZİK: tekne sığmıyorsa kapı değildir.
 
-    Genişlik önceden bilinemediği için sahada bandın yanlış olması olasıdır;
-    operatörün bunu düzeltebilmesi ancak gerçek mesafeyi görmesiyle mümkün.
-    """
+    Bu bir eşik AYARI değil — gövde genişliği ölçülmüş bir tekne boyutudur.
+    (Bu kadar yakın iki tespit pratikte tek dubanın ikiye bölünmesidir.)"""
     diag = GateDiagnostics()
     assert select_gate(
-        (0.0, 0.0), (0.0, 40.0), [(-15.0, 10.0), (15.0, 10.0)], _CFG, diag
+        (0.0, 0.0), (0.0, 20.0), [(-0.2, 10.0), (0.2, 10.0)], _CFG, diag
     ) is None
-    assert diag.n_edge_buoys == 2
-    assert diag.n_pairs_checked == 1
-    assert len(diag.reddedilen_genislik) == 1
-    assert diag.reddedilen_genislik[0] == pytest.approx(30.0, abs=1e-6)
-    assert diag.secilen_genislik is None
+    assert diag.reddedilen_genislik[0] == pytest.approx(0.4, abs=1e-6)
+    assert 0.4 < _CFG.hull_width_m          # gerçekten gövdeden dar
+
+
+def test_kursa_dik_olmayan_cift_elenir() -> None:
+    """Ardışık kapıların dubaları eşleşmemeli — |Δileri| < |Δyanal| testi.
+
+    Ölçek-bağımsız: kapı genişliğini bilmeyi GEREKTİRMEZ, dolayısıyla
+    tahmine dayalı bir tolerans içermez."""
+    # Biri 5 m'de biri 15 m'de (Δileri=10), yanal ayrım 4 → 10 >= 4 → elenir.
+    assert select_gate(
+        (0.0, 0.0), (0.0, 30.0), [(-2.0, 5.0), (2.0, 15.0)], _CFG
+    ) is None
+
+
+def test_tek_dubasi_gorunmeyen_kapi_komsusuyla_eslesmez() -> None:
+    """Asıl koruma senaryosu: A kapısının sağ dubası görünmüyor.
+
+    En yakın iki duba A-sol + B-sol olur (ikisi de AYNI tarafta). Bunlar
+    kurs boyunca dizili olduğu için |Δileri| >= |Δyanal| → elenir; yoksa
+    orta nokta yana kayar ve tekne A-sol dubasının üstüne sürerdi."""
+    # A-sol (-2, 10), B-sol (-2, 20) — A-sağ görünmüyor.
+    assert select_gate(
+        (0.0, 0.0), (0.0, 40.0), [(-2.0, 10.0), (-2.0, 20.0)], _CFG
+    ) is None
 
 
 def test_secilen_kapinin_genisligi_raporlanir() -> None:
@@ -107,27 +128,6 @@ def test_secilen_kapinin_genisligi_raporlanir() -> None:
     assert gate is not None
     assert diag.secilen_genislik == pytest.approx(4.0, abs=1e-6)
     assert diag.reddedilen_genislik == []
-
-
-def test_cok_dar_cift_elenir() -> None:
-    # Ayrım 0.5 m < gate_width_min(1.0) → tek dubanın gürültüsü, kapı değil.
-    assert select_gate(
-        (0.0, 0.0), (0.0, 20.0), [(-0.25, 10.0), (0.25, 10.0)], _CFG
-    ) is None
-
-
-def test_farkli_derinlik_cift_elenir() -> None:
-    # Biri 5 m'de biri 15 m'de (fark 10 > pair_depth_tol=3) → yan yana değil.
-    assert select_gate(
-        (0.0, 0.0), (0.0, 30.0), [(-2.0, 5.0), (2.0, 15.0)], _CFG
-    ) is None
-
-
-def test_menzil_disi_duba_elenir() -> None:
-    # İkisi de max_lookahead(25) ötesinde → dikkate alınmaz.
-    assert select_gate(
-        (0.0, 0.0), (0.0, 40.0), [(-2.0, 30.0), (2.0, 30.0)], _CFG
-    ) is None
 
 
 def test_arkadaki_dubalar_elenir() -> None:

@@ -159,13 +159,14 @@ class PlanningNode(Node):
         # classified_obstacles aktığında obstacle_map'in yerine geçsin mi?
         # false → eski davranış (sınıfsız harita), kapı dubaları da engel kalır.
         self.declare_parameter("use_classified_obstacles", True)
-        self.declare_parameter("gate_width_min", _gate.gate_width_min)
-        self.declare_parameter("gate_width_max", _gate.gate_width_max)
-        self.declare_parameter("gate_max_lookahead", _gate.max_lookahead)
-        self.declare_parameter("gate_min_forward", _gate.min_forward)
-        self.declare_parameter("gate_pair_depth_tol", _gate.pair_depth_tol)
-        self.declare_parameter("gate_release_distance", _gate.release_distance)
-        self.declare_parameter("gate_match_radius", _gate.match_radius)
+        # 🔑 Kapı seçiminde AYARLANABİLİR EŞİK YOK (2026-08-03 kararı: "tahmine
+        # dayalı hiçbir şey olmasın"). Geriye yalnız ÖLÇÜLMÜŞ tekne boyutları
+        # kalıyor; genişlik bandı / menzil / derinlik toleransı / bırakma
+        # mesafesi / eşleşme yarıçapı hepsi geometriden türetildi (bkz.
+        # GateFollowerConfig). Bu ikisi tekne değişirse güncellenir, sahada
+        # "deneyerek" ayarlanmaz.
+        self.declare_parameter("hull_width_m", _gate.hull_width_m)
+        self.declare_parameter("hull_length_m", _gate.hull_length_m)
 
         bx = self.get_parameter("bounds_x").value
         by = self.get_parameter("bounds_y").value
@@ -231,17 +232,8 @@ class PlanningNode(Node):
         )
         self._gate = GateFollower(
             GateFollowerConfig(
-                gate_width_min=float(self.get_parameter("gate_width_min").value),
-                gate_width_max=float(self.get_parameter("gate_width_max").value),
-                max_lookahead=float(self.get_parameter("gate_max_lookahead").value),
-                min_forward=float(self.get_parameter("gate_min_forward").value),
-                pair_depth_tol=float(
-                    self.get_parameter("gate_pair_depth_tol").value
-                ),
-                release_distance=float(
-                    self.get_parameter("gate_release_distance").value
-                ),
-                match_radius=float(self.get_parameter("gate_match_radius").value),
+                hull_width_m=float(self.get_parameter("hull_width_m").value),
+                hull_length_m=float(self.get_parameter("hull_length_m").value),
             )
         )
         # Kenar dubaları DÜNYA ENU'da (classified_obstacles'tan her taramada
@@ -348,12 +340,12 @@ class PlanningNode(Node):
         )
         if self._gate_enabled:
             self.get_logger().info(
-                "kapı takibi AÇIK: kenar dubası sınıfı="
-                f"{self._edge_class_id}, genişlik "
-                f"[{self.get_parameter('gate_width_min').value}, "
-                f"{self.get_parameter('gate_width_max').value}] m, "
-                f"menzil {self.get_parameter('gate_max_lookahead').value} m "
-                "— turuncu dubalar engel torbasından ÇIKARILIR"
+                f"kapı takibi AÇIK: kenar dubası sınıfı={self._edge_class_id}, "
+                f"gövde {self._gate._cfg.hull_width_m}×"
+                f"{self._gate._cfg.hull_length_m} m "
+                "— turuncu dubalar engel torbasından ÇIKARILIR. "
+                "Ayarlanabilir eşik yok: geçilebilirlik gövde genişliğinden, "
+                "kapı ayrımı |Δileri|<|Δyanal| geometrisinden gelir."
             )
         else:
             self.get_logger().warn(
@@ -524,37 +516,42 @@ class PlanningNode(Node):
         return result.target
 
     def _warn_sessiz_ret(self) -> None:
-        """Turuncu duba GÖRÜNÜYOR ama kapı oluşmuyorsa ÖLÇÜLEN mesafeleri bas.
+        """Turuncu duba GÖRÜNÜYOR ama kapı oluşmuyorsa ne olduğunu yaz.
 
-        Kapı genişliği önceden bilinemez — şartname: *"kenar dubaları
-        arasındaki mesafeler yarışma alanına göre değişkenlik gösterecektir"*
-        ve *"deniz şartlarından dolayı yer değiştirebilir"*. Dolayısıyla
-        `gate_width_min/max` bandı sahada YANLIŞ ÇIKABİLİR ve bunun arızası
-        SESSİZDİR: dubalar görülür, hiçbir kapı seçilmez, araç ham görev
-        noktasına gider, hiçbir hata basılmaz, puan kaybedilir.
+        Kapı seçiminde ayarlanabilir eşik kalmadı (hepsi ölçülmüş tekne
+        boyutu ya da geometri) — dolayısıyla bu artık "ayarı düzelt" uyarısı
+        değil, **algı teşhisi**: kapı oluşmuyorsa sebep neredeyse kesin olarak
+        tespit tarafındadır (dubanın biri görünmüyor, renk sınıfı kaçmış,
+        LiDAR kümesi bölünmüş). Sahada bakılacak yer orası.
 
-        Bu uyarı ölçülen gerçek mesafeleri yazar → operatör
-        `planning.gate_width_max:=14` gibi bir launch-arg ile anında düzeltir.
-        5 saniyede bir (10 Hz döngüde spam yok).
+        5 saniyede bir basılır (10 Hz döngüde spam yok).
         """
         d = self._gate.last_diagnostics
-        if d.n_edge_buoys < 2 or not d.reddedilen_genislik:
-            return                     # duba yok / bant sebebiyle elenen yok
+        if d.n_edge_buoys < 2:
+            return                     # tek duba: kapı beklemek zaten anlamsız
         now = self._now()
         if now - self._gate_log_t < 5.0:
             return
         self._gate_log_t = now
-        olculen = ", ".join(f"{s:.1f}" for s in sorted(d.reddedilen_genislik)[:6])
-        lo = self.get_parameter("gate_width_min").value
-        hi = self.get_parameter("gate_width_max").value
+        sebep = []
+        if d.reddedilen_genislik:
+            dar = ", ".join(f"{s:.2f}" for s in sorted(d.reddedilen_genislik)[:4])
+            sebep.append(
+                f"{len(d.reddedilen_genislik)} çift gövdeden DAR ({dar} m < "
+                f"{self._gate._cfg.hull_width_m} m — tekne sığmaz, muhtemelen "
+                "tek duba iki tespite bölünmüş)"
+            )
+        if d.reddedilen_derinlik:
+            sebep.append(
+                f"{d.reddedilen_derinlik} çift kursa DİK DEĞİL (ardışık "
+                "kapıların dubaları — normal)"
+            )
         self.get_logger().warn(
             f"KAPI SEÇİLEMEDİ: {d.n_edge_buoys} turuncu duba görülüyor "
-            f"({d.n_in_range} menzilde), {d.n_pairs_checked} çift denendi ama "
-            f"hiçbiri [{lo}, {hi}] m genişlik bandına girmedi. "
-            f"ÖLÇÜLEN mesafeler: {olculen} m. "
-            f"Bant yanlışsa: planning.gate_width_min/max launch-arg ile düzelt "
-            f"(yeniden derleme gerekmez) — kapı genişliği yarışma alanına göre "
-            f"değişir, önceden bilinemez."
+            f"({d.n_in_range} burun hattının önünde), {d.n_pairs_checked} çift "
+            f"denendi. Sebep: {'; '.join(sebep) if sebep else 'karşılıklı çift yok'}. "
+            "Kapı seçiminde ayarlanabilir eşik YOK → sorun algıda: dubanın "
+            "biri görünmüyor ya da renk sınıfı kaçıyor olabilir."
         )
 
     def _on_waypoints(self, msg: Path) -> None:
