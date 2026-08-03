@@ -53,6 +53,7 @@ from std_msgs.msg import Float32MultiArray, String
 
 from girdap_decision.qos_profiles import sensor_data_qos
 from prototype.control.mavros_bridge import MavrosBridge, MavrosBridgeConfig
+from prototype.planning.mppi import MPPIConfig
 from prototype.planning.pipeline import PlanningPipeline, PlanningPipelineConfig
 from prototype.planning.rrt_star import Bounds, CircleObstacle
 
@@ -102,6 +103,22 @@ class PlanningNode(Node):
         # kadar düşme-güvenli yedek — bkz. PlanningPipelineConfig.control_mode).
         self.declare_parameter("control_mode", "mppi")
 
+        # --- MPPI saha tuning parametreleri (2026-08-02) ---
+        # Varsayılanlar MPPIConfig'ten OKUNUR (kopyalanmaz) → kod ile ROS
+        # varsayılanı arasında drift imkânsız. Verilmezse davranış birebir aynı.
+        # mppi_lambda İSTİSNA: 0.0 = "parkur profili kazansın" nöbetçi değeri
+        # (λ fizik olarak > 0; profiller PARKUR1/2=10, PARKUR3=50).
+        _mppi = MPPIConfig()
+        self.declare_parameter("mppi_lambda", 0.0)
+        self.declare_parameter("mppi_sigma_u", _mppi.sigma_u)
+        self.declare_parameter("mppi_obstacle_margin", _mppi.obstacle_margin)
+        self.declare_parameter("mppi_terminal_mode", _mppi.terminal_mode)
+        self.declare_parameter(
+            "mppi_terminal_lookahead_m", _mppi.terminal_lookahead_m
+        )
+        self.declare_parameter("mppi_ref_window_size", _mppi.ref_window_size)
+        self.declare_parameter("mppi_ref_window_enabled", _mppi.ref_window_enabled)
+
         bx = self.get_parameter("bounds_x").value
         by = self.get_parameter("bounds_y").value
         bounds = Bounds(bx[0], bx[1], by[0], by[1])
@@ -114,11 +131,40 @@ class PlanningNode(Node):
             )
             control_mode = "mppi"
 
+        terminal_mode = str(self.get_parameter("mppi_terminal_mode").value)
+        if terminal_mode not in ("lookahead", "global"):
+            # F10.1 dersi: planlama yolunda istisna node'u öldürür → WARN + düş.
+            self.get_logger().warn(
+                f"mppi_terminal_mode='{terminal_mode}' geçersiz → "
+                f"'{_mppi.terminal_mode}' varsayılanına düşüldü "
+                "(geçerli: lookahead, global)"
+            )
+            terminal_mode = _mppi.terminal_mode
+
+        # λ: 0 (ya da negatif) = nöbetçi → parkur profili kazansın (None geç).
+        lam = float(self.get_parameter("mppi_lambda").value)
+        mppi_lambda = lam if lam > 0.0 else None
+
         cfg = PlanningPipelineConfig(
             replan_proximity=float(self.get_parameter("replan_proximity").value),
             mppi_K=int(self.get_parameter("mppi_K").value),
             mppi_T=int(self.get_parameter("mppi_T").value),
             control_mode=control_mode,
+            mppi_lambda=mppi_lambda,
+            mppi_sigma_u=float(self.get_parameter("mppi_sigma_u").value),
+            mppi_obstacle_margin=float(
+                self.get_parameter("mppi_obstacle_margin").value
+            ),
+            mppi_terminal_mode=terminal_mode,
+            mppi_terminal_lookahead_m=float(
+                self.get_parameter("mppi_terminal_lookahead_m").value
+            ),
+            mppi_ref_window_size=int(
+                self.get_parameter("mppi_ref_window_size").value
+            ),
+            mppi_ref_window_enabled=bool(
+                self.get_parameter("mppi_ref_window_enabled").value
+            ),
         )
         self._pipe = PlanningPipeline(bounds, cfg)
 
@@ -199,6 +245,15 @@ class PlanningNode(Node):
         self.get_logger().info(
             f"planning_node aktif [{planner}] (MPPI K={cfg.mppi_K}, "
             f"T={cfg.mppi_T}, control={rate} Hz, map={map_rate} Hz)"
+        )
+        # Saha tuning değerleri log'a — hangi ayarla uçtuğumuz kayıt altında.
+        self.get_logger().info(
+            f"MPPI tuning: λ={'profil' if mppi_lambda is None else mppi_lambda}, "
+            f"σ_u={cfg.mppi_sigma_u}, engel_payı={cfg.mppi_obstacle_margin} m, "
+            f"terminal={cfg.mppi_terminal_mode}"
+            f"({cfg.mppi_terminal_lookahead_m} m), "
+            f"ref_pencere={cfg.mppi_ref_window_size}"
+            f"{'' if cfg.mppi_ref_window_enabled else ' (KAPALI)'}"
         )
 
     # ----- subscriber callback'leri -----

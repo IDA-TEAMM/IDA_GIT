@@ -86,11 +86,23 @@ telemetry:
   fc_thrust_left_ch: 1           # SERVO1 = sol motor (masa teyidi)
   fc_thrust_right_ch: 3          # SERVO3 = sağ motor
 
-# --- planning_node mod geçidi ---
+# --- planning_node mod geçidi + MPPI saha tuning ---
 # planning cmd_vel'i yalnız bu modda yayınlar; kök mode_name ile AYNI olmalı.
 # Değer verilmezse hardware.launch kök mode_name'i miras aktarır (drift önlenir).
 planning:
   mode_name: "GUIDED"
+  # MPPI tuning — göl/saha gününde YENİDEN DERLEMEDEN değiştirilebilir.
+  # hardware.launch bunları launch-arg olarak da açar:
+  #   ros2 launch girdap_decision hardware.launch.py planning.mppi_lambda:=50.0
+  # Buradan silinen anahtarda kod varsayılanı (λ'da parkur profili) kazanır.
+  # Ölçüm tabloları ve üst sınırlar: CLAUDE.md MPPI bölümleri.
+  mppi_lambda: 0.0                 # 0 = parkur profili kazansın (P1/P2=10, P3=50)
+  mppi_sigma_u: 5.0                # N, kontrol gürültüsü σ
+  mppi_obstacle_margin: 1.0        # m, SOFT emniyet payı (⚠ 1.5 geçidi kapatır)
+  mppi_terminal_mode: "lookahead"  # lookahead | global (eski davranış)
+  mppi_terminal_lookahead_m: 15.0  # m, terminal hedef yay uzaklığı
+  mppi_ref_window_size: 100        # nokta, kayan referans penceresi
+  mppi_ref_window_enabled: true    # false → tam tarama (16× yavaş, A/B için)
 
 # --- Görev dosyası seçimi (Sprint 4 parkur katmanı) ---
 # hardware.launch bu dosya adını config/ altında çözer ve HEM mission_manager
@@ -119,6 +131,31 @@ mission:
   # FC'nin WP_RADIUS'u ile AYNI olmalı (ArduRover varsayılanı 2 m).
   # ⚠ FC ekibinden TEYİT AL — farklıysa hedef index'imiz FC'den ayrışır.
   arrival_radius_m: 2.0
+
+# --- iSAM2 sensör füzyonu (fusion_node) ---
+# ⚠ Bu blok `perception.fusion` (kamera-LiDAR bearing eşleştirmesi) ile
+# KARIŞTIRILMAMALI — burası GPS/IMU factor-graph smoother'ıdır.
+# hardware.launch launch-arg olarak açar: fusion.keyframe_rate_hz:=10.0 vb.
+fusion:
+  # Key üretim tavanı. ÖLÇÜM (2026-08-01, IMU 50 Hz + GPS 1 Hz, 20 dk):
+  #   throttle kapalı (eski) : 11 416 key,  17.8 s toplam füzyon CPU
+  #   throttle 5 Hz          :  6 000 key,   4.0 s  (4.5x daha ucuz)
+  # Graf ve her calculateEstimate() key sayısıyla doğru orantılı büyür
+  # (CLAUDE.md "iSAM2 graf büyümesi" tuzağı). Ara IMU adımları tek
+  # BetweenFactor'da biriktiği için BİLGİ KAYBI YOK — aynı senaryoda iki
+  # ayarın ürettiği poz 1 cm'den az farkeder. 0 → throttle kapalı.
+  keyframe_rate_hz: 5.0
+  # GPS outlier reddi — Huber M-estimator. Tek kötü fix (multipath, RTK
+  # kaybı) saf Gauss modelinde TÜM çözümü kendine çeker.
+  gps_robust_enabled: true
+  gps_huber_k: 1.345              # σ katı (literatür standardı)
+  # Fix kalitesine göre ölçüm sigma'sı [m] — NavSatFix.status.status.
+  # ⚠ SAHADA DOĞRULANMADI: RTK base kurulumu ve gerçek çoklu-yol ortamında
+  # ölçülecek ilk tahminler. STATUS_NO_FIX (-1) → ölçüm HİÇ kullanılmaz.
+  gps_sigma_by_status:
+    gbas_fix: 0.05                # RTK fixed (Holybro H-RTK F9P)
+    sbas_fix: 0.50                # SBAS düzeltmeli
+    fix: 2.50                     # tek nokta (autonomous)
 
 # --- Perception: LiDAR engel tespiti (Sprint 1) ---
 # perception_lidar_node parametreleri; hardware.launch launch-arg olarak açar

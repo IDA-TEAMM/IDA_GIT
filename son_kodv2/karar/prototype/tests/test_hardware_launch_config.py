@@ -192,6 +192,94 @@ def test_mavros_respawn_true() -> None:
     )
 
 
+# ----- iSAM2: kök `fusion:` bloğu (keyframe throttle + robust GPS) -----
+
+
+def test_isam2_blogu_yamldan_okunur() -> None:
+    """hardware.yaml kök `fusion:` bloğu fusion_node parametrelerine düşmeli.
+
+    ⚠ `perception.fusion` (kamera-LiDAR bearing) ile AYNI ada sahip iki ayrı
+    blok var; yükleyici bunları karıştırırsa iSAM2 ayarları sessizce
+    varsayılanda kalır (throttle/robust hiç devreye girmez).
+    """
+    mod = _load_module()
+    try:
+        mod.get_package_share_directory(mod._PKG)
+    except Exception:
+        pytest.skip("girdap_decision share dizini yok — install edilmemiş ortam")
+    cfg = mod._load_hardware_config()
+
+    assert cfg["isam2"]["keyframe_rate_hz"] > 0.0
+    assert cfg["isam2"]["gps_robust_enabled"] is True
+    assert cfg["isam2"]["gps_huber_k"] == pytest.approx(1.345)
+
+    # gps_sigma_by_status alt sözlüğü düzleştirilmiş param adlarına açılmalı
+    assert cfg["isam2"]["gps_sigma_gbas_fix"] == pytest.approx(0.05)
+    assert cfg["isam2"]["gps_sigma_sbas_fix"] == pytest.approx(0.50)
+    assert cfg["isam2"]["gps_sigma_fix"] == pytest.approx(2.50)
+
+    # RTK ile tek-nokta arasında ciddi ağırlık farkı olmalı (yoksa status
+    # okumanın anlamı kalmaz)
+    assert (
+        cfg["isam2"]["gps_sigma_fix"] / cfg["isam2"]["gps_sigma_gbas_fix"]
+    ) >= 10.0
+
+    # perception.fusion BOZULMAMALI (ayrı blok, ayrı anahtar)
+    assert cfg["fusion"]["camera_image_width_px"] == 1280
+
+
+def test_isam2_blogu_yoksa_guvenli_varsayilana_duser() -> None:
+    """yaml okunamazsa robust GPS AÇIK + throttle AÇIK kalmalı (güvenli taraf)."""
+    mod = _load_module()
+
+    def _patlat(_pkg):
+        raise FileNotFoundError("paket share dizini yok (test)")
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(mod, "get_package_share_directory", _patlat)
+    try:
+        cfg = mod._load_hardware_config()
+    finally:
+        monkeypatch.undo()
+
+    assert cfg["isam2"]["gps_robust_enabled"] is True
+    assert cfg["isam2"]["keyframe_rate_hz"] == pytest.approx(5.0)
+
+
+def test_isam2_launch_argumanlari_fusion_nodea_gecer() -> None:
+    """fusion.* launch-arg'ları DECLARE edilip fusion_node'a bağlanmalı.
+
+    F-S.2 sınıfı regresyon: blok okunur ama Node(parameters=...) listesine
+    hiç eklenmezse ayar sessizce params.yaml'da kalır.
+    """
+    mod = _load_module()
+    try:
+        mod.get_package_share_directory(mod._PKG)
+    except Exception:
+        pytest.skip("girdap_decision share dizini yok — install edilmemiş ortam")
+
+    ld = mod.generate_launch_description()
+    declared = {
+        e.name for e in ld.entities
+        if type(e).__name__ == "DeclareLaunchArgument"
+    }
+    for key in mod._ISAM2_DEFAULTS:
+        assert f"fusion.{key}" in declared, f"fusion.{key} declare edilmemiş"
+
+    fusion_nodes = [
+        e for e in ld.entities
+        if type(e).__name__ == "Node"
+        and getattr(e, "_Node__node_executable", None) == "fusion_node"
+    ]
+    assert fusion_nodes, "fusion_node launch açıklamasında yok"
+    param_keys: set[str] = set()
+    for block in fusion_nodes[0]._Node__parameters or []:
+        if isinstance(block, dict):
+            param_keys |= {str(k) for k in block}
+    for key in mod._ISAM2_DEFAULTS:
+        assert key in param_keys, f"{key} fusion_node parametrelerine geçmiyor"
+
+
 def test_gorev_kaynagi_fc_varsayilani() -> None:
     """md 3.3.1(2): görev YKİ'de tanımlanıp İDA'ya YÜKLENİR → kaynak "fc".
 

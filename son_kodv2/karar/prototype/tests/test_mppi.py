@@ -6,6 +6,8 @@ Stratejisi: maliyet fonksiyonunu doğrudan (white-box) çağırarak determinist
 testler yap; örnekleme kaynaklı stokastik kırılganlığı atla.
 """
 
+import logging
+
 import numpy as np
 import pytest
 
@@ -456,3 +458,302 @@ def test_referans_tavan_alti_davranis_degismez(
     ctrl = MPPIController(dyn, bounds, [], cfg)
     ctrl.set_reference([(0.0, 0.0), (100.0, 0.0)], spacing=0.5)
     assert ctrl._ref_xy.shape[0] == 201         # 100 m / 0.5 m + 1 — kırpılmadı
+
+
+# --------------------------------------------------------------------------- #
+# F-M.2 — kayan referans penceresi (maliyet tensörü (K,T+1,n_ref) küçültme)
+# --------------------------------------------------------------------------- #
+
+_UZUN_REF = [(0.0, 0.0), (200.0, 0.0)]   # spacing=0.5 → 401 nokta (pencere aktif)
+
+
+def _kapali_dongu(
+    dyn: CatamaranDynamics,
+    bounds: Bounds,
+    cfg: MPPIConfig,
+    n_steps: int,
+    ref=_UZUN_REF,
+):
+    """n_steps kapalı döngü koştur → (ctrl, u dizisi, çapa dizisi, son durum)."""
+    ctrl = MPPIController(dyn, bounds, [], cfg)
+    ctrl.set_reference(ref, spacing=0.5)
+    state = np.zeros(6)
+    us = []
+    anchors = []
+    for _ in range(n_steps):
+        u = ctrl.step(state)
+        us.append(u)
+        anchors.append(ctrl._ref_anchor_idx)
+        state = dyn.step_rk4(state, u, cfg.dt)
+    return ctrl, np.array(us), anchors, state
+
+
+def _cfg(pencere: bool, **kw) -> MPPIConfig:
+    base = dict(
+        K=128, T=20, seed=4, backend="numpy",
+        ref_window_enabled=pencere, ref_window_size=100,
+    )
+    base.update(kw)
+    return MPPIConfig(**base)
+
+
+def test_pencere_tam_tarama_ile_ayni_kontrolu_uretir(
+    dyn: CatamaranDynamics, bounds: Bounds
+) -> None:
+    """Pencereli ↔ tam tarama: aynı senaryoda seçilen u0 tolerans içinde.
+
+    Gerçek argmin pencere içinde kaldığı sürece maliyet BİREBİR aynıdır →
+    kapalı döngü de ayrışmaz. Tolerans (1e-6) yalnız kayan nokta payı.
+    """
+    _, u_pencere, _, son_p = _kapali_dongu(dyn, bounds, _cfg(True), n_steps=25)
+    _, u_tam, _, son_t = _kapali_dongu(dyn, bounds, _cfg(False), n_steps=25)
+    assert np.max(np.abs(u_pencere - u_tam)) < 1e-6
+    np.testing.assert_allclose(son_p, son_t, atol=1e-6)
+
+
+def test_capa_kapali_donguda_monoton_ilerler(
+    dyn: CatamaranDynamics, bounds: Bounds
+) -> None:
+    """Çapa kapalı döngü boyunca monoton artmalı (tekne referansta ilerliyor)
+    ve hiçbir adımda kenar-fallback'e düşmemeli (pencere yeterli)."""
+    ctrl, _, anchors, _ = _kapali_dongu(dyn, bounds, _cfg(True), n_steps=60)
+    assert all(b >= a for a, b in zip(anchors, anchors[1:])), (
+        f"çapa geri gitti: {anchors}"
+    )
+    assert anchors[-1] > anchors[0], "çapa hiç ilerlemedi — pencere kaymıyor"
+    assert ctrl._ref_window_fallbacks == 0, "normal seyirde tam taramaya düşmemeli"
+
+
+def test_kenar_durumu_tam_taramaya_duser_ve_capayi_bulur(
+    dyn: CatamaranDynamics, bounds: Bounds, caplog
+) -> None:
+    """Çapa kilitlenirse (referans yeniden planlandı / poz sıçradı) en yakın
+    nokta pencere kenarına yapışır → o adım tam taramaya düşülür, çapa
+    yeniden bulunur, WARN loglanır."""
+    cfg = _cfg(True)
+    ctrl = MPPIController(dyn, bounds, [], cfg)
+    ctrl.set_reference(_UZUN_REF, spacing=0.5)
+    ctrl._ref_anchor_idx = 300           # tekne 0'da, çapa 150 m ileride (kilitli)
+
+    with caplog.at_level(logging.WARNING, logger="prototype.planning.mppi"):
+        ctrl.step(np.zeros(6))
+
+    assert ctrl._ref_window_fallbacks == 1
+    assert "pencere" in caplog.text.lower()
+    # Fallback tam tarama yaptığı için çapa gerçek konuma (indeks ~0) döndü
+    assert ctrl._ref_anchor_idx <= 2, f"çapa düzeltilmedi: {ctrl._ref_anchor_idx}"
+
+
+def test_kenar_fallback_maliyeti_tam_tarama_ile_ayni(
+    dyn: CatamaranDynamics, bounds: Bounds
+) -> None:
+    """Fallback yalnız hız kaybettirir, maliyeti DEĞİŞTİRMEZ: bozuk çapayla
+    hesaplanan maliyet, tam tarama maliyetiyle bit-birebir olmalı."""
+    traj = np.zeros((3, 5, 6))
+    traj[:, :, 0] = np.linspace(0.0, 2.0, 5)[None, :]     # x ilerliyor, y=0
+    U = np.zeros((3, 4, 2))
+
+    ctrls = {}
+    for ad, pencere in (("pencere", True), ("tam", False)):
+        c = MPPIController(dyn, bounds, [], _cfg(pencere, K=3, T=4))
+        c.set_reference(_UZUN_REF, spacing=0.5)
+        c._ref_anchor_idx = 300                            # kasten kilitli çapa
+        ctrls[ad] = c
+    cost_p = ctrls["pencere"]._trajectory_cost(traj, U)
+    cost_t = ctrls["tam"]._trajectory_cost(traj, U)
+
+    assert ctrls["pencere"]._ref_window_fallbacks == 1
+    assert ctrls["tam"]._ref_window_fallbacks == 0          # kapalıyken hiç bakılmaz
+    np.testing.assert_array_equal(cost_p, cost_t)
+
+
+def test_terminal_maliyet_pencereden_bagimsiz(
+    dyn: CatamaranDynamics, bounds: Bounds
+) -> None:
+    """terminal_mode="global": terminal daima GLOBAL referans ucunu hedefler —
+    pencere dilimi ne olursa olsun (dilim ucu hedef sanılırsa araç pencerede
+    takılır). Aynı zamanda F-M.3 öncesi davranışın regresyon kilidi."""
+    cfg = _cfg(True, K=1, T=4, w_track=0.0, w_heading=0.0, w_terminal=5.0,
+               terminal_mode="global")
+    ctrl = MPPIController(dyn, bounds, [], cfg)
+    ctrl.set_reference(_UZUN_REF, spacing=0.5)             # goal = (200, 0)
+    ctrl._ref_anchor_idx = 200               # pencere [175, 300) → x ∈ [87.5, 150)
+    traj = _make_traj(1, 4, x_const=100.0, y_const=1.0)    # pencere içi, kenarda değil
+    cost = ctrl._trajectory_cost(traj, np.zeros((1, 4, 2)))
+
+    beklenen = 5.0 * ((100.0 - 200.0) ** 2 + 1.0 ** 2)     # global goal'e uzaklık
+    assert ctrl._ref_window_fallbacks == 0                 # kenara değmedi
+    np.testing.assert_allclose(cost[0], beklenen, rtol=1e-9)
+
+
+def test_yeni_referans_capayi_sifirlar(
+    dyn: CatamaranDynamics, bounds: Bounds
+) -> None:
+    """set_reference YENİ bir yol verirse çapa sıfırlanır; AYNI yol tekrar
+    yüklenirse korunur (boru hattı her engel tazelemesinde çağırıyor —
+    koşulsuz sıfırlama pencereyi her adımda rotanın başına atardı)."""
+    ctrl, _, anchors, _ = _kapali_dongu(dyn, bounds, _cfg(True), n_steps=60)
+    assert ctrl._ref_anchor_idx > 0                    # çapa ilerlemiş durumda
+    ilerlemis = ctrl._ref_anchor_idx
+
+    ctrl.set_reference(_UZUN_REF, spacing=0.5)         # AYNI referans → korunur
+    assert ctrl._ref_anchor_idx == ilerlemis
+
+    ctrl.set_reference([(0.0, 0.0), (150.0, 30.0)], spacing=0.5)   # YENİ → sıfır
+    assert ctrl._ref_anchor_idx == 0
+    assert ctrl._ref_anchor_pending == 0
+
+
+# --------------------------------------------------------------------------- #
+# F-M.3 — lookahead terminal maliyet
+# --------------------------------------------------------------------------- #
+
+
+def test_lookahead_yay_uzunlugu_boyunca_dogru_noktayi_secer(
+    dyn: CatamaranDynamics, bounds: Bounds
+) -> None:
+    """Terminal hedefi = çapadan terminal_lookahead_m ileride, YAY uzunluğu
+    boyunca. 0.5 m aralıkta 15 m → 30 indeks ileri."""
+    ctrl = MPPIController(
+        dyn, bounds, [],
+        _cfg(True, K=1, T=4, terminal_mode="lookahead", terminal_lookahead_m=15.0),
+    )
+    ctrl.set_reference(_UZUN_REF, spacing=0.5)          # 401 nokta, aralık 0.5 m
+    assert ctrl._ref_spacing == pytest.approx(0.5)
+    for capa, beklenen_x in ((0, 15.0), (100, 65.0), (200, 115.0)):
+        hedef = np.asarray(ctrl._terminal_goal(capa))
+        np.testing.assert_allclose(hedef, [beklenen_x, 0.0], atol=1e-9)
+
+
+def test_lookahead_kaba_araliktan_etkilenmez(
+    dyn: CatamaranDynamics, bounds: Bounds
+) -> None:
+    """F-M.1 tavanı devreye girip aralık kabalaşırsa lookahead metre cinsinden
+    AYNI kalmalı (indeks çevrimi fiili aralıkla yapılır, istenen spacing'le
+    değil)."""
+    ctrl = MPPIController(
+        dyn, bounds, [],
+        _cfg(True, K=1, T=4, terminal_mode="lookahead", terminal_lookahead_m=15.0),
+    )
+    ctrl.set_reference([(0.0, 0.0), (10_000.0, 0.0)], spacing=0.5)   # tavan → ~4.9 m
+    assert ctrl._ref_spacing > 4.0                       # aralık kabalaştı
+    aralik = ctrl._ref_spacing
+    hedef = np.asarray(ctrl._terminal_goal(100))
+    beklenen = (100 + round(15.0 / aralik)) * aralik
+    np.testing.assert_allclose(hedef[0], beklenen, rtol=1e-9)
+    assert abs(hedef[0] - 100 * ctrl._ref_spacing - 15.0) <= ctrl._ref_spacing
+
+
+def test_lookahead_referans_sonunda_son_noktaya_duser(
+    dyn: CatamaranDynamics, bounds: Bounds
+) -> None:
+    """Çapa rotanın sonuna yaklaşınca terminal hedefi ref[-1]'e kırpılır —
+    varış davranışı (goal'e yanaşma) korunur."""
+    ctrl = MPPIController(
+        dyn, bounds, [], _cfg(True, K=1, T=4, terminal_mode="lookahead"),
+    )
+    ctrl.set_reference(_UZUN_REF, spacing=0.5)          # son nokta (200, 0)
+    son = np.asarray(ctrl._ref_xy[-1])
+    for capa in (380, 400):            # 30 indekslik lookahead'ten daha yakın
+        np.testing.assert_array_equal(np.asarray(ctrl._terminal_goal(capa)), son)
+
+
+def test_terminal_mode_global_eski_davranis_birebir(
+    dyn: CatamaranDynamics, bounds: Bounds
+) -> None:
+    """terminal_mode="global" → hedef daima ref[-1], çapa nerede olursa olsun
+    (F-M.3 öncesi davranışın birebir regresyonu)."""
+    ctrl = MPPIController(
+        dyn, bounds, [], _cfg(True, K=1, T=4, terminal_mode="global"),
+    )
+    ctrl.set_reference(_UZUN_REF, spacing=0.5)
+    son = np.asarray(ctrl._ref_xy[-1])
+    for capa in (0, 50, 200, 400):
+        np.testing.assert_array_equal(np.asarray(ctrl._terminal_goal(capa)), son)
+
+
+def test_terminal_mode_varsayilan_lookahead() -> None:
+    """Varsayılan "lookahead" (2026-08-02 benimseme). ⚠ Bu varsayılan
+    `_PARKUR_PROFILES`'daki w_terminal=50 TELAFİSİYLE BİRLİKTE geçerli —
+    w=5 ile araç 5.64 → 1.07 m/s'e düşüp hedefe hiç varamıyordu (102 m hata).
+    İkisi ayrı ayrı değiştirilmesin diye ikisi de teste bağlandı."""
+    from prototype.planning.pipeline import _PARKUR_PROFILES
+
+    assert MPPIConfig().terminal_mode == "lookahead"
+    assert all(p.w_terminal == 50.0 for p in _PARKUR_PROFILES.values()), \
+        "lookahead varsayılanı w_terminal telafisi olmadan aracı yavaşlatır"
+
+
+def test_lookahead_ileri_surus_gradyanini_kucultur(
+    dyn: CatamaranDynamics, bounds: Bounds
+) -> None:
+    """Mekanizma kilidi: terminal gradyanı 2·w·d — hedef uzaklığıyla orantılı.
+
+    Bir step içinde tüm rolloutlar AYNI x0'dan başlar (dolayısıyla lookahead
+    hedefi de ortaktır); ayrıştıkları yer UÇ noktalarıdır. Aynı başlangıç,
+    1 m farklı uç: global hedefte maliyet kazancı ~14×; lookahead'de küçük
+    kazanç w_control'ü yenemez → seyir hızı çöker (telafi bu yüzden gerekli).
+    """
+    def _yoruge(x_son: float) -> np.ndarray:
+        traj = np.zeros((1, 5, 6))
+        traj[0, :, 0] = np.linspace(100.0, x_son, 5)   # t=0 sabit, uç değişken
+        return traj
+
+    U = np.zeros((1, 4, 2))
+    kazanc = {}
+    for mod in ("global", "lookahead"):
+        c = MPPIController(
+            dyn, bounds, [],
+            _cfg(True, K=1, T=4, w_track=0.0, w_heading=0.0, w_terminal=5.0,
+                 terminal_mode=mod),
+        )
+        c.set_reference(_UZUN_REF, spacing=0.5)        # rota sonu x=200
+        c._ref_anchor_idx = 200                        # x=100 → lookahead hedefi x=115
+        m = [float(c._trajectory_cost(_yoruge(x), U)[0]) for x in (108.0, 109.0)]
+        kazanc[mod] = m[0] - m[1]
+    # global: hedef 200 → 5·(92² − 91²) = 915 | lookahead: hedef 115 → 5·(7² − 6²) = 65
+    assert kazanc["global"] == pytest.approx(915.0)
+    assert kazanc["lookahead"] == pytest.approx(65.0)
+    assert kazanc["global"] > 14.0 * kazanc["lookahead"]
+
+
+def test_terminal_mode_gecersiz_deger_kurulumda_patlar() -> None:
+    """Yazım hatası saha ortasında değil, config kurulumunda yakalanmalı."""
+    with pytest.raises(ValueError, match="terminal_mode"):
+        MPPIConfig(terminal_mode="lookahed")
+
+
+def test_lookahead_terminal_maliyeti_dusurur(
+    dyn: CatamaranDynamics, bounds: Bounds
+) -> None:
+    """Uzun rotada lookahead terminal katkısı global'e göre ölçek küçültür —
+    float32 kuantalama gerekçesi (aynı yörünge, aynı ağırlık)."""
+    traj = _make_traj(1, 4, x_const=100.0, y_const=0.0)
+    U = np.zeros((1, 4, 2))
+    maliyet = {}
+    for mod in ("global", "lookahead"):
+        c = MPPIController(
+            dyn, bounds, [],
+            _cfg(True, K=1, T=4, w_track=0.0, w_heading=0.0, w_terminal=5.0,
+                 terminal_mode=mod),
+        )
+        c.set_reference(_UZUN_REF, spacing=0.5)
+        c._ref_anchor_idx = 200                          # x=100 — rota ortası
+        maliyet[mod] = float(c._trajectory_cost(traj, U)[0])
+    assert maliyet["global"] == pytest.approx(5.0 * 100.0 ** 2)      # 50 000
+    assert maliyet["lookahead"] == pytest.approx(5.0 * 15.0 ** 2)    # 1 125
+    assert maliyet["lookahead"] < maliyet["global"] / 40
+
+
+def test_pencere_kisa_referansta_etkisiz(
+    dyn: CatamaranDynamics, bounds: Bounds
+) -> None:
+    """n_ref ≤ pencere açıklığı → dilim tüm referans; davranış tam taramayla
+    bit-birebir (yarışma öncesi kısa video rotaları bu kolda)."""
+    kisa = [(0.0, 0.0), (10.0, 0.0)]                   # 21 nokta < 125 açıklık
+    outs = []
+    for pencere in (True, False):
+        c = MPPIController(dyn, bounds, [], _cfg(pencere, K=64, T=10, seed=3))
+        c.set_reference(kisa, spacing=0.5)
+        outs.append(c.step(np.zeros(6)))
+    np.testing.assert_array_equal(outs[0], outs[1])

@@ -57,17 +57,39 @@ class ParkurProfile:
     w_terminal: float
     kamikaze_mode: bool = False
     w_kamikaze: float = 50.0
+    # Softmax sıcaklığı — parkur başına ayarlanır (ölçümler CLAUDE.md "λ").
+    # λ küçük → tek rollout kararı belirler (ESS≈1, sert/gürültülü);
+    # λ büyük → ağırlıklı ortalama yumuşar ama engel tepkisi zayıflar.
+    lambda_: float = 10.0
 
 
 # CLAUDE.md ve algoritma_tasarimlari.md §4.5 tablosuyla birebir uyumlu.
 # Parkur-3 kamikaze: hedef son waypoint'e Gaussian çekici; w_track minimal
 # (referans takip zayıflar, hedefe kilitlenir).
+# w_terminal 5.0 → 50.0 (2026-08-02, F-M.3 lookahead benimsemesi): terminal
+# hedefi artık rotanın sonu değil çapadan 15 m ileride; gradyan 2·w·d hedef
+# uzaklığıyla orantılı olduğundan w telafi edilmezse ileri sürüş çöker
+# (ölçüm: 5.64 → 1.07 m/s, hedefe varamıyor). ÜÇÜ BİRDEN değişir.
+#
+# λ 1.0 → 10.0 (2026-08-02): λ=1 softmax'ı dejenere ediyordu — ESS 2.6/1000
+# (p5=1.0), yani adımların en az %5'inde MPPI ağırlıklı ortalama YAPMIYOR,
+# tek rastgele örneği seçiyordu. λ=10: ESS 176 (p5 9.2), adımlar arası
+# |Δu₀| RMS 9.95 → 3.44 N (2.9× yumuşak); iz sapması/açıklık/goal/hız
+# değişmiyor. λ≥500'de araç hedefe hiç varamıyor (ortalama maliyet farklarını
+# siler) — üst sınır orası.
+# PARKUR3 λ=50 (ayrı ölçüldü): kamikaze çekicisi maliyet yayılımını büyüttüğü
+# için λ=10'da ESS p5 hâlâ 1.9 (dejenere). λ=50 → p5 112, |Δu₀| 4.52 → 2.87 N
+# ve en önemlisi **temas hızı 1.18 → 1.81 m/s (+%53)**: parkur-3'ün bitişi IMU
+# şok eşiğiyle (shock_threshold_g=5.0) algılandığı için çarpma enerjisi görev
+# tamamlama güvenilirliğidir. Bedel: yaklaşma %13 daha uzun (230 → 260 adım).
 _PARKUR_PROFILES: Dict[str, ParkurProfile] = {
-    "PARKUR1": ParkurProfile(w_track=5.0, w_obstacle=50.0, w_terminal=5.0),
-    "PARKUR2": ParkurProfile(w_track=3.0, w_obstacle=200.0, w_terminal=5.0),
+    "PARKUR1": ParkurProfile(w_track=5.0, w_obstacle=50.0, w_terminal=50.0,
+                             lambda_=10.0),
+    "PARKUR2": ParkurProfile(w_track=3.0, w_obstacle=200.0, w_terminal=50.0,
+                             lambda_=10.0),
     "PARKUR3": ParkurProfile(
-        w_track=1.0, w_obstacle=50.0, w_terminal=5.0,
-        kamikaze_mode=True, w_kamikaze=50.0,
+        w_track=1.0, w_obstacle=50.0, w_terminal=50.0,
+        kamikaze_mode=True, w_kamikaze=50.0, lambda_=50.0,
     ),
 }
 
@@ -99,9 +121,38 @@ class PlanningPipelineConfig:
     control_mode: str = "mppi"
     pid_cfg: PidControllerConfig = None  # type: ignore[assignment]
 
+    # --- Saha tuning override'ları (ROS: planning_node mppi_* parametreleri) ---
+    # HEPSİ None = "dokunma": MPPIConfig varsayılanı, λ'da ise PARKUR PROFİLİ
+    # kazanır. Böylece varsayılanların TEK kaynağı kod olarak kalır (yaml'da
+    # olmayan anahtar sessizce bir kopya varsayılanı dayatmaz — config-drift
+    # taramasının dersi). Değer verilirse profili/varsayılanı EZER.
+    mppi_lambda: Optional[float] = None
+    mppi_sigma_u: Optional[float] = None
+    mppi_obstacle_margin: Optional[float] = None
+    mppi_terminal_mode: Optional[str] = None
+    mppi_terminal_lookahead_m: Optional[float] = None
+    mppi_ref_window_size: Optional[int] = None
+    mppi_ref_window_enabled: Optional[bool] = None
+
     def __post_init__(self) -> None:
         if self.pid_cfg is None:
             self.pid_cfg = PidControllerConfig()
+
+    def mppi_overrides(self) -> Dict[str, object]:
+        """Verilen (None olmayan) MPPIConfig alan override'ları.
+
+        λ BİLEREK dışarıda: parkur profilinden gelir, `_active_mppi_cfg`
+        override'ı orada uygular (profil ↔ yaml önceliği tek yerde kalsın).
+        """
+        adlar = {
+            "sigma_u": self.mppi_sigma_u,
+            "obstacle_margin": self.mppi_obstacle_margin,
+            "terminal_mode": self.mppi_terminal_mode,
+            "terminal_lookahead_m": self.mppi_terminal_lookahead_m,
+            "ref_window_size": self.mppi_ref_window_size,
+            "ref_window_enabled": self.mppi_ref_window_enabled,
+        }
+        return {k: v for k, v in adlar.items() if v is not None}
 
 
 @dataclass(frozen=True)
@@ -133,10 +184,18 @@ class PlanningPipeline:
         self._dyn = dynamics or CatamaranDynamics()
         self._rrt_cfg = rrt_cfg or RRTStarConfig(use_informed=True)
 
-        # Temel MPPI konfigürasyonu — parkur profili bunun üzerine biner
-        self._base_mppi_cfg = MPPIConfig(
-            K=self.cfg.mppi_K, T=self.cfg.mppi_T, dt=self.cfg.mppi_dt,
+        # Temel MPPI konfigürasyonu — parkur profili bunun üzerine biner.
+        # Saha override'ları (verilmişse) burada uygulanır; λ profilden gelir.
+        self._base_mppi_cfg = replace(
+            MPPIConfig(
+                K=self.cfg.mppi_K, T=self.cfg.mppi_T, dt=self.cfg.mppi_dt,
+            ),
+            **self.cfg.mppi_overrides(),        # type: ignore[arg-type]
         )
+        if self.cfg.mppi_lambda is not None:    # parkur dışı kol için de geçerli
+            self._base_mppi_cfg = replace(
+                self._base_mppi_cfg, lambda_=self.cfg.mppi_lambda
+            )
 
         self._state = np.zeros(6)                    # [x, y, ψ, u, v, r]
         self._obstacles: List[CircleObstacle] = []
@@ -279,6 +338,12 @@ class PlanningPipeline:
             kamikaze_mode=profile.kamikaze_mode,
             kamikaze_target=kamikaze_target,
             w_kamikaze=profile.w_kamikaze,
+            # λ: yaml/CLI override verilmişse o, yoksa PARKUR PROFİLİ kazanır.
+            lambda_=(
+                self.cfg.mppi_lambda
+                if self.cfg.mppi_lambda is not None
+                else profile.lambda_
+            ),
         )
 
     def _rebuild_mppi(self) -> None:
@@ -288,9 +353,11 @@ class PlanningPipeline:
         U_nominal'i sıfırlar → soğuk başlangıç → zikzak (node 5-10 Hz çağırır).
         Bu yüzden:
           - Config (parkur ağırlık profili) AYNI ise → mevcut kontrolcüyü koru,
-            yalnız engel + referansı güncelle (U_nominal yaşar).
-          - Config DEĞİŞTİYSE (parkur geçişi) → yeni kontrolcü kur ama önceki
-            U_nominal'i taşı (geçişte de soğuk başlangıç olmasın).
+            yalnız engel + referansı güncelle (U_nominal + çapa yaşar).
+          - Config DEĞİŞTİYSE (parkur geçişi) → yeni kontrolcü kur ama eskisinin
+            sıcak durumunu (U_nominal + kayan pencere çapası) devret
+            (`carry_state_from`) — geçişte ne soğuk başlangıç ne de çapa
+            sıfırlanmasından doğan tek adımlık tam tarama olsun.
         """
         if self._ref_path is None:
             return
@@ -299,13 +366,13 @@ class PlanningPipeline:
             self._mppi.set_obstacles(self._obstacles)
             self._mppi.set_reference(self._ref_path, spacing=self.cfg.ref_spacing)
             return
-        prev_U = self._mppi.U_nominal.copy() if self._mppi is not None else None
+        onceki = self._mppi
         self._mppi = MPPIController(
             self._dyn, self._bounds, self._obstacles, new_cfg
         )
         self._mppi.set_reference(self._ref_path, spacing=self.cfg.ref_spacing)
-        if prev_U is not None and prev_U.shape == self._mppi.U_nominal.shape:
-            self._mppi.U_nominal[:] = prev_U
+        if onceki is not None:
+            self._mppi.carry_state_from(onceki)      # sıralama: referanstan SONRA
 
     # ----- kontrol -----
 

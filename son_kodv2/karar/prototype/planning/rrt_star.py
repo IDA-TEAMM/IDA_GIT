@@ -72,7 +72,18 @@ class RRTStarConfig:
     step_size: float = 1.5            # m, steering uzunluk üst sınırı
     goal_tolerance: float = 1.0       # m, goal'e bu kadar yakın → çözüm
     goal_bias: float = 0.15           # %15 goal-yönelimli örnekleme
-    safety_margin: float = 0.3        # m, engel yarıçapına eklenen tampon
+    # m, engel yarıçapına eklenen tampon — HARD kısıt (bu payın içinden yol
+    # geçmez; start/goal içindeyse ValueError, F10.1).
+    # 0.3 → 0.5 (2026-08-02): 0.3 m tekne YARI GENİŞLİĞİNİN (0.375 m) altındaydı
+    # — global yol gövdenin sığmayacağı kadar yakın planlanabiliyordu.
+    # ÜST SINIR Parkur-2 geçidi: net açıklık ~1.35 m → merkez hattından duba
+    # yüzeyine 0.675 m. Ölçüm (10 seed, 1.35 m geçit): margin ≤0.5 → 10/10 yol
+    # geçidin TAM içinden (60.00 m, düz); 0.675 → yol sapmaya başlıyor
+    # (60.08 m); 1.0 → 10/10 "başarılı" ama yol geçidin ETRAFINDAN dolanıyor
+    # (60.14 m) — Parkur-2'de görev ihlali, sessizce olur. Bu yüzden RRT* payı
+    # MPPI obstacle_margin'i (1.0, SOFT ceza) ile EŞİT DEĞİL; sıralı:
+    # RRT*(hard) ≤ MPPI(soft) ≤ geçit yarı açıklığı sınırı.
+    safety_margin: float = 0.5
     rewire_gamma: float = 50.0        # rewire yarıçap katsayısı (Karaman 2011)
     collision_step: float = 0.2       # m, segment çarpışma örnekleme adımı
     seed: int = 0

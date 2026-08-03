@@ -63,12 +63,32 @@ from mavros_msgs.msg import State
 from sensor_msgs.msg import Imu, NavSatFix
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from prototype.fusion.gps_quality import (
+    DEFAULT_SIGMA_BY_STATUS,
+    STATUS_FIX,
+    STATUS_GBAS_FIX,
+    STATUS_SBAS_FIX,
+)
 
 
 # Test'le aynı origin koordinatları (Marmaris ofset)
 _LAT0 = 36.85
 _LON0 = 28.27
 _EARTH_R = 6378137.0
+
+
+def _status_for_sigma(sigma: float) -> int:
+    """Enjekte edilen gürültüye KARŞILIK GELEN NavSatFix fix kalitesi.
+
+    fusion_node artık status.status'tan ölçüm sigma'sını seçiyor. Sabit
+    "status=2 (RTK)" yayınlamak, mock 0.30 m gürültü basarken smoother'a
+    σ=0.05 dedirtir → 36 kat fazla güven, füzyon gürültülü GPS'i olduğu
+    gibi takip eder. Mock'un beyanı enjeksiyonuyla tutarlı kalsın.
+    """
+    for status in (STATUS_GBAS_FIX, STATUS_SBAS_FIX):
+        if sigma <= DEFAULT_SIGMA_BY_STATUS[status]:
+            return status
+    return STATUS_FIX
 
 
 @dataclass
@@ -136,6 +156,7 @@ class MockSensorsNode(Node):
         self._vel_sigma = float(self.get_parameter("vel_sigma").value)
         self._omega_sigma = float(self.get_parameter("omega_sigma").value)
         self._gps_sigma = float(self.get_parameter("gps_sigma_xy").value)
+        self._gps_status = _status_for_sigma(self._gps_sigma)
         self._rng = np.random.default_rng(int(self.get_parameter("seed").value))
         self._wave_roll_amp = math.radians(
             float(self.get_parameter("wave_roll_amp_deg").value)
@@ -310,7 +331,9 @@ class MockSensorsNode(Node):
         msg = NavSatFix()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "gps"
-        msg.status.status = 2          # GBAS_FIX (RTK temsili)
+        # Fix kalitesi enjekte edilen gürültüden türetilir (bkz.
+        # _status_for_sigma): gps_sigma_xy=0.05 → GBAS/RTK, 0.30 → SBAS.
+        msg.status.status = self._gps_status
         msg.status.service = 1         # SERVICE_GPS
         msg.latitude = lat
         msg.longitude = lon

@@ -7,10 +7,24 @@ fusion_node:
     use_isam2: true          # yarışma: iSAM2. Video: hardware.yaml false override
     publish_rate_hz: 10.0    # odom yayını = smoother flush hızı (10 Hz); daha
                              # hızlı republish yeni bilgi taşımaz, gereksiz yük
-    odom_period_s: 0.1       # IMU step → smoother flush periyodu (10 Hz)
-    gps_sigma_xy: 0.30       # m, mock için; saha RTK fix'te 0.05
+    odom_period_s: 0.1       # IMU delta biriktirme adımı (keyframe ALT sınırı)
+    gps_sigma_xy: 0.30       # m, mock için; saha RTK fix'te 0.05. Fix kalitesi
+                             # bilinen ölçümlerde gps_sigma_*_fix bunu ezer.
     imu_sigma_xy: 0.05       # m, pre-integration adımı
     imu_sigma_psi: 0.01      # rad
+    keyframe_rate_hz: 5.0    # key üretim tavanı — iSAM2 graf büyümesi kapısı.
+                             # Ölçüm (20 dk, IMU 50 Hz): kapalı → 11 416 key /
+                             # 17.8 s CPU; 5 Hz → 6 000 key / 4.0 s. Ara IMU
+                             # adımları tek BetweenFactor'da birikir (bilgi
+                             # kaybı yok), odom σ'sı √Δt ile ölçeklenir.
+                             # 0 → kapalı (eski davranış).
+    gps_robust_enabled: true # Huber M-estimator ile GPS outlier reddi
+    gps_huber_k: 1.345       # σ katı; Gauss verimliliğinin %95'ini korur
+    # Fix kalitesine göre GPS ölçüm sigma'sı (NavSatFix.status.status).
+    # STATUS_NO_FIX (-1) → ölçüm smoother'a HİÇ verilmez.
+    gps_sigma_gbas_fix: 0.05 # m, GBAS = RTK fixed (H-RTK F9P)
+    gps_sigma_sbas_fix: 0.50 # m, SBAS düzeltmeli
+    gps_sigma_fix: 2.50      # m, tek nokta (autonomous) — neredeyse etkisiz
 
 mock_sensors:
   ros__parameters:
@@ -32,6 +46,31 @@ planning_node:
     replan_proximity: 2.0    # m, RRT* replan tetiği
     mppi_K: 1000             # rollout sayısı (CLAUDE.md)
     mppi_T: 50               # horizon adımı (2.5 s @ dt=0.05)
+    # --- MPPI saha tuning yüzeyi (2026-08-02) ---
+    # Hepsi kod varsayılanıyla AYNI değerde; buradan değiştirmek yeniden
+    # derleme gerektirmez. Ölçüm tabloları: CLAUDE.md MPPI bölümleri.
+    mppi_lambda: 0.0         # softmax sıcaklığı. 0 = NÖBETÇİ: parkur profili
+                             # kazanır (PARKUR1/2 = 10, PARKUR3 = 50). >0 verirsen
+                             # profili EZER (üç parkurda da o değer kullanılır).
+                             # λ=1 dejenere (ESS 2.6/1000 → tek örnek seçimi,
+                             # |Δu₀| RMS 9.95 N); λ≥500 araç hedefe varamıyor.
+    mppi_sigma_u: 5.0        # N, kontrol gürültüsü σ (her thruster). Büyütmek
+                             # keşfi artırır, kontrolü sertleştirir.
+    mppi_obstacle_margin: 1.0  # m, engel emniyet payı (SOFT ceza yarıçapı).
+                             # Tekne yarı genişliği 0.375 m; 0.5 m'de gövde
+                             # payı −0.29 m (çarpma), 1.0 m'de +0.17 m.
+                             # ⚠ ÜST SINIR: Parkur-2 geçidi (net açıklık
+                             # ~1.35 m) — 1.5 m'de araç geçide HİÇ girmiyor.
+    mppi_terminal_mode: "lookahead"   # "lookahead" | "global" (eski davranış).
+                             # ⚠ "global"e dönersen parkur profillerindeki
+                             # w_terminal=50 fazla gelir (köşe keser).
+    mppi_terminal_lookahead_m: 15.0   # m, terminal hedefin çapadan yay uzaklığı.
+                             # ≥ seyir_hızı × horizon (T·dt) olmalı; 10 m'de
+                             # fren etkisi, 40 m'de engel açıklığı bozuluyor.
+    mppi_ref_window_size: 100   # nokta, kayan referans penceresi ileri derinliği
+                             # (0.5 m aralıkta 50 m ileri + 12.5 m geri).
+    mppi_ref_window_enabled: true  # false → eski tam tarama (regresyon/A-B).
+                             # Ölçüm: 736 → 58 ms/iter, d2 tensörü 16× küçük.
     mode_name: "GUIDED"      # mod geçidi — mavros_bridge ile aynı olmalı
     map_rate_hz: 10.0        # Dosya-3 yerel harita yayım hızı
     use_rrt: true            # yarışma: RRT*. Video: hardware.yaml false override

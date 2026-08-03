@@ -15,6 +15,15 @@ Faktörler:
     BetweenFactorPose2   — ardışık keyler arası odometri/IMU adımı
     PriorFactorPose2     — RTK GPS düzeltmesi (heading sigma=∞ ile (x,y)-only)
 
+Robust GPS (M-estimator):
+    RTK "fix" kaybı, çoklu-yol (multipath) yansıması ya da tek kötü uydu
+    geometrisi tek bir GPS ölçümünü metrelerce kaydırabilir. Saf Gauss
+    gürültü modelinde bu outlier kare-hata ile cezalandırıldığı için TÜM
+    çözümü (geçmiş keyler dahil) kendine çeker. Huber M-estimator hatanın
+    k·sigma eşiğinden sonra kare değil DOĞRUSAL büyümesini sağlar → outlier'ın
+    ağırlığı 1/|e| ile söner, çözüm sapması sınırlı kalır.
+    gps_robust_enabled=False eski (saf Gauss) davranışı birebir korur.
+
 Tasarım notu:
     Bu Layer 0 prototipi gerçek IMU pre-integration yapmaz; çağıran taraftan
     Pose2 delta (odom_delta) kabul eder. Saha tarafına geçişte (Layer 2) bu
@@ -28,11 +37,22 @@ GTSAM API: 4.2+. ISAM2 inkremental — sadece etkilenen düğümler relinearize.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import gtsam
 from gtsam.symbol_shorthand import X
+
+# GPS Pose2-prior'unda heading kanalını uninformative bırakan sigma (≈∞).
+# Robust kernel ile birlikte de güvenli: whitened hata bu kanalda ~0 kalır,
+# dolayısıyla Huber ağırlığını sulandırmaz.
+_HEADING_FREE_SIGMA = 1e6
+
+# add_gps(sigma_xy=...) / add_odometry(sigma_scale=...) ile üretilen gürültü
+# modelleri önbelleği. Değerler sabit bir tablodan (fix kalitesi) veya keyframe
+# periyodundan gelir → birkaç ayrık değer; sınır yalnız patolojik girdide
+# sınırsız büyümeyi engeller.
+_NOISE_CACHE_MAX = 16
 
 
 @dataclass
@@ -49,6 +69,13 @@ class ISAM2SmootherConfig:
 
     # RTK GPS — tipik fix doğruluğu ~2 cm; biraz pesimistik tutuyoruz
     gps_sigma_xy: float = 0.05            # m
+
+    # GPS outlier reddi (Huber M-estimator). False → eski saf Gauss davranışı.
+    gps_robust_enabled: bool = True
+    # Huber eşiği, whitened hata birimi (σ katı). 1.345 literatürdeki standart
+    # seçim: Gauss gürültüde en küçük kareler verimliliğinin %95'ini korur,
+    # bunun ötesindeki hataları doğrusal cezalandırır.
+    gps_huber_k: float = 1.345
 
     # iSAM2 incremental ayarları
     relinearize_threshold: float = 0.01
@@ -72,6 +99,14 @@ class ISAM2Smoother:
 
     def __init__(self, cfg: Optional[ISAM2SmootherConfig] = None) -> None:
         self.cfg = cfg or ISAM2SmootherConfig()
+
+        # k<=0'da Huber ağırlığı (k/|e|) her ölçüm için 0 olur → GPS TAMAMEN
+        # yok sayılır ve araç yalnız IMU ölü-hesabıyla seyreder. yaml'daki bir
+        # yazım hatası sessizce buraya düşmesin.
+        if self.cfg.gps_robust_enabled and not self.cfg.gps_huber_k > 0.0:
+            raise ValueError(
+                f"gps_huber_k pozitif olmalı, geldi: {self.cfg.gps_huber_k}"
+            )
 
         params = gtsam.ISAM2Params()
         params.setRelinearizeThreshold(self.cfg.relinearize_threshold)
@@ -109,9 +144,78 @@ class ISAM2Smoother:
         )
         # GPS Pose2-prior olarak modellenir; heading kanalı uninformative
         # (sigma=1e6 ≈ ∞) bırakılır ki sadece (x,y) ölçümü etkili olsun.
-        self._gps_noise = gtsam.noiseModel.Diagonal.Sigmas(
-            np.array([self.cfg.gps_sigma_xy, self.cfg.gps_sigma_xy, 1e6])
+        # gps_robust_enabled ise bu taban model Huber kernel'i ile sarılır.
+        self._gps_noise = self._make_gps_noise(self.cfg.gps_sigma_xy)
+
+        # Fix kalitesine göre override edilen (add_gps sigma_xy) ve keyframe
+        # periyoduna göre ölçeklenen (add_odometry sigma_scale) modeller —
+        # sıcak yolda her faktörde yeniden inşa etmemek için önbelleklenir.
+        self._gps_noise_cache: Dict[float, Any] = {}
+        self._odom_noise_cache: Dict[float, Any] = {}
+
+    # ----- gürültü modeli fabrikaları -----
+
+    def _make_gps_noise(self, sigma_xy: float) -> Any:
+        """(x, y) sigma'sından GPS prior gürültü modeli üret.
+
+        gps_robust_enabled=True → Huber M-estimator ile sarılmış model;
+        False → taban diyagonal model (geri uyumlu, eski davranış).
+        """
+        if not sigma_xy > 0.0:
+            raise ValueError(f"gps sigma_xy pozitif olmalı, geldi: {sigma_xy}")
+        base = gtsam.noiseModel.Diagonal.Sigmas(
+            np.array([sigma_xy, sigma_xy, _HEADING_FREE_SIGMA])
         )
+        if not self.cfg.gps_robust_enabled:
+            return base
+        return gtsam.noiseModel.Robust.Create(
+            gtsam.noiseModel.mEstimator.Huber.Create(self.cfg.gps_huber_k),
+            base,
+        )
+
+    def _gps_noise_for(self, sigma_xy: Optional[float]) -> Any:
+        """sigma_xy=None → config varsayılanı; aksi halde önbellekli override."""
+        if sigma_xy is None:
+            return self._gps_noise
+        key = round(float(sigma_xy), 6)
+        model = self._gps_noise_cache.get(key)
+        if model is None:
+            if len(self._gps_noise_cache) >= _NOISE_CACHE_MAX:
+                self._gps_noise_cache.clear()
+            model = self._make_gps_noise(key)
+            self._gps_noise_cache[key] = model
+        return model
+
+    def _odom_noise_for(self, sigma_scale: float) -> Any:
+        """Keyframe periyoduna göre ölçeklenmiş odometri gürültü modeli.
+
+        Odometri hatası rastgele yürüyüş: σ ∝ √Δt. Keyframe throttle'ı adım
+        süresini uzattığında ölçek verilmezse zincir aynı sürede DAHA GÜVENLİ
+        görünür (aynı σ, daha az faktör) ve GPS'i haksız yere bastırır.
+
+        Ölçek 4 haneye yuvarlanır (önbellek anahtarı sınırlı kalsın); σ'ya
+        etkisi ~1e-5 bağıl — gürültü modeli için tamamen ihmal edilebilir.
+        """
+        if not sigma_scale > 0.0:
+            raise ValueError(f"sigma_scale pozitif olmalı, geldi: {sigma_scale}")
+        key = round(float(sigma_scale), 4)
+        if key == 1.0:
+            return self._odom_noise
+        model = self._odom_noise_cache.get(key)
+        if model is None:
+            if len(self._odom_noise_cache) >= _NOISE_CACHE_MAX:
+                self._odom_noise_cache.clear()
+            model = gtsam.noiseModel.Diagonal.Sigmas(
+                np.array(
+                    [
+                        self.cfg.odom_sigma_xy * key,
+                        self.cfg.odom_sigma_xy * key,
+                        self.cfg.odom_sigma_psi * key,
+                    ]
+                )
+            )
+            self._odom_noise_cache[key] = model
+        return model
 
     # ----- public properties -----
 
@@ -137,10 +241,13 @@ class ISAM2Smoother:
         self._latest_key = 0
         self._flush()
 
-    def add_odometry(self, delta: gtsam.Pose2) -> int:
+    def add_odometry(self, delta: gtsam.Pose2, sigma_scale: float = 1.0) -> int:
         """
         Yeni Pose2 anahtarı oluştur ve önceki anahtara BetweenFactor bağla.
         delta: önceki frame'de ifade edilen relative pose (IMU pre-int çıktısı).
+        sigma_scale: odometri sigma'sı bu katsayıyla çarpılır — nominalden uzun
+            (ya da kısa) bir keyframe aralığı biriktirildiğinde √Δt ölçeklemesi
+            için. 1.0 → config sigma'ları (varsayılan, eski davranış).
         Yeni anahtarın indeksini döndürür (sm.latest_key ile aynı).
         """
         if not self.is_initialized:
@@ -151,7 +258,9 @@ class ISAM2Smoother:
         new_key = X(self._latest_key)
 
         self._graph.add(
-            gtsam.BetweenFactorPose2(prev_key, new_key, delta, self._odom_noise)
+            gtsam.BetweenFactorPose2(
+                prev_key, new_key, delta, self._odom_noise_for(sigma_scale)
+            )
         )
 
         # İlk tahmin: önceki poz ⊕ delta. Önceki poz initial'da pending olabilir
@@ -165,17 +274,28 @@ class ISAM2Smoother:
         self._initial.insert(new_key, prev_pose.compose(delta))
         return self._latest_key
 
-    def add_gps(self, key_index: int, x: float, y: float) -> None:
+    def add_gps(
+        self,
+        key_index: int,
+        x: float,
+        y: float,
+        sigma_xy: Optional[float] = None,
+    ) -> None:
         """
         Belirli bir keye RTK GPS düzeltmesi ekle (Pose2 prior; heading serbest).
         key_index: hedef anahtarın indeksi (genelde latest_key).
+        sigma_xy: bu ÖLÇÜME özel (x, y) sigma'sı — fix kalitesi (RTK/SBAS/tek
+            nokta) ölçümden ölçüme değiştiği için çağıran taraf override eder.
+            None → config gps_sigma_xy.
         """
         if key_index < 0 or key_index > self._latest_key:
             raise ValueError(f"Geçersiz key_index={key_index}")
         # heading gerçekten ölçülmediği için 0.0 — sigma=1e6 kanalı serbest bırakır
         gps_pose = gtsam.Pose2(x, y, 0.0)
         self._graph.add(
-            gtsam.PriorFactorPose2(X(key_index), gps_pose, self._gps_noise)
+            gtsam.PriorFactorPose2(
+                X(key_index), gps_pose, self._gps_noise_for(sigma_xy)
+            )
         )
 
     # ----- optimizer -----

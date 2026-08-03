@@ -14,11 +14,13 @@ Kapsam:
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import numpy as np
 import pytest
 
 from prototype.dynamics.catamaran import CatamaranDynamics
+from prototype.planning.mppi import MPPIConfig, MPPIController
 from prototype.planning.pipeline import (
     PlanningPipeline,
     PlanningPipelineConfig,
@@ -59,6 +61,173 @@ def test_parkur_profiles_switch_weights(bounds: Bounds) -> None:
     w_track, w_obs, w_term, kam = pipe.active_weights
     assert kam is True, "PARKUR3 kamikaze modunu açmalıydı"
     assert w_track == 1.0, "PARKUR3 referans takibini gevşetmeliydi"
+
+
+def test_parkur_gecisi_sicak_durumu_tasir(bounds: Bounds) -> None:
+    """F11.1 + F-M.2: parkur geçişi YENİ kontrolcü kurar (ağırlık profili
+    değişti) ama eskisinin sıcak durumu devredilmeli:
+      - U_nominal (warm-start) sürekliliği → geçişte zikzak yok
+      - kayan pencere çapası → geçişte tek adımlık tam taramaya düşülmez
+    """
+    dyn = CatamaranDynamics()
+    pipe = PlanningPipeline(bounds, _fast_cfg(), dynamics=dyn)
+    pipe.set_state(np.array([5.0, 5.0, 0.0, 0.0, 0.0, 0.0]))
+    pipe.set_waypoints([(5.0, 5.0), (45.0, 45.0)])
+    pipe.set_mission_state("PARKUR1")
+
+    # Çapa ilerlesin: bir süre PARKUR1'de koş
+    state = np.array([5.0, 5.0, math.radians(45.0), 0.0, 0.0, 0.0])
+    for _ in range(40):
+        pipe.set_state(state)
+        u = pipe.compute_control()
+        state = dyn.step_rk4(state, u, 0.05)
+
+    onceki = pipe._mppi
+    assert onceki is not None
+    capa_once = onceki._ref_anchor_idx
+    u_nominal_once = np.asarray(onceki.U_nominal).copy()
+    fallback_once = onceki._ref_window_fallbacks
+    assert capa_once > 0, "test kurulumu: çapa ilerlemeliydi"
+    assert np.any(u_nominal_once != 0.0), "test kurulumu: warm-start dolmalıydı"
+
+    pipe.set_mission_state("PARKUR2")            # ağırlık profili değişir
+    yeni = pipe._mppi
+    assert yeni is not onceki, "test kurulumu: yeni kontrolcü kurulmalıydı"
+    np.testing.assert_array_equal(np.asarray(yeni.U_nominal), u_nominal_once)
+    assert yeni._ref_anchor_idx == capa_once, "çapa taşınmadı → tam tarama"
+
+    # Geçişten sonraki ilk adım kenar-fallback'e DÜŞMEMELİ
+    pipe.set_state(state)
+    pipe.compute_control()
+    assert yeni._ref_window_fallbacks == fallback_once == 0
+
+
+def test_referans_degisirse_capa_tasinmaz(bounds: Bounds) -> None:
+    """Çapa yalnız referans birebir aynıysa taşınır — yol değiştiyse eski
+    indeks anlamsız, 0'dan başlar (warm-start yine de taşınır)."""
+    dyn = CatamaranDynamics()
+    ctrl_eski = MPPIController(dyn, bounds, [], MPPIConfig(K=8, T=4, backend="numpy"))
+    ctrl_eski.set_reference([(0.0, 0.0), (100.0, 0.0)], spacing=0.5)
+    ctrl_eski._ref_anchor_idx = 120
+    ctrl_eski.U_nominal[:] = 3.0
+
+    ctrl_yeni = MPPIController(dyn, bounds, [], MPPIConfig(K=8, T=4, backend="numpy"))
+    ctrl_yeni.set_reference([(0.0, 0.0), (80.0, 40.0)], spacing=0.5)   # BAŞKA yol
+    ctrl_yeni.carry_state_from(ctrl_eski)
+
+    assert ctrl_yeni._ref_anchor_idx == 0
+    np.testing.assert_allclose(np.asarray(ctrl_yeni.U_nominal), 3.0)
+
+
+def test_parkur_profili_lambdayi_mppi_configine_gecirir(bounds: Bounds) -> None:
+    """λ parkur profilinde (eskiden yalnız global MPPIConfig'teydi).
+
+    Benimsenen değerler donduruldu: PARKUR1/2 = 10 (λ=1 softmax'ı dejenere
+    ediyordu, ESS 2.6/1000), PARKUR3 = 50 (kamikaze maliyet yayılımı daha
+    büyük; temas hızı 1.18 → 1.81 m/s — IMU şok eşiği için kritik).
+    """
+    from prototype.planning.pipeline import _PARKUR_PROFILES
+
+    assert _PARKUR_PROFILES["PARKUR1"].lambda_ == 10.0
+    assert _PARKUR_PROFILES["PARKUR2"].lambda_ == 10.0
+    assert _PARKUR_PROFILES["PARKUR3"].lambda_ == 50.0
+
+    pipe = PlanningPipeline(bounds, _fast_cfg())
+    pipe.set_waypoints([(5.0, 5.0), (45.0, 45.0)])
+    for parkur in ("PARKUR1", "PARKUR2", "PARKUR3"):
+        pipe.set_mission_state(parkur)
+        assert pipe._active_mppi_cfg().lambda_ == _PARKUR_PROFILES[parkur].lambda_
+
+    # Profil değeri gerçekten aktif config'e ulaşıyor mu (sadece dataclass değil)
+    _PARKUR_PROFILES["PARKUR2"] = replace(_PARKUR_PROFILES["PARKUR2"], lambda_=7.5)
+    try:
+        pipe.set_mission_state("PARKUR2")
+        assert pipe._active_mppi_cfg().lambda_ == 7.5
+    finally:
+        _PARKUR_PROFILES["PARKUR2"] = replace(
+            _PARKUR_PROFILES["PARKUR2"], lambda_=10.0
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Saha tuning override'ları (ROS: planning_node mppi_* parametreleri)
+# --------------------------------------------------------------------------- #
+
+
+def test_tuning_override_verilmezse_kod_varsayilani_kazanir(bounds: Bounds) -> None:
+    """Override'sız PlanningPipelineConfig → MPPIConfig varsayılanları birebir
+    ve λ'da PARKUR PROFİLİ kazanır (yaml'da yoksa profil kazanmalı)."""
+    from prototype.planning.pipeline import _PARKUR_PROFILES
+
+    varsayilan = MPPIConfig()
+    pipe = PlanningPipeline(bounds, _fast_cfg())
+    base = pipe._base_mppi_cfg
+    for alan in ("sigma_u", "obstacle_margin", "terminal_mode",
+                 "terminal_lookahead_m", "ref_window_size",
+                 "ref_window_enabled", "lambda_"):
+        assert getattr(base, alan) == getattr(varsayilan, alan), alan
+
+    pipe.set_waypoints([(5.0, 5.0), (45.0, 45.0)])
+    pipe.set_mission_state("PARKUR3")
+    assert pipe._active_mppi_cfg().lambda_ == _PARKUR_PROFILES["PARKUR3"].lambda_
+
+
+def test_tuning_override_mppi_configine_gecer(bounds: Bounds) -> None:
+    """Verilen her override MPPIConfig'e ulaşmalı; λ override'ı PARKUR
+    PROFİLİNİ de ezmeli (saha tuning'i tek noktadan)."""
+    cfg = PlanningPipelineConfig(
+        mppi_K=200, mppi_T=30,
+        mppi_lambda=42.0,
+        mppi_sigma_u=8.5,
+        mppi_obstacle_margin=1.4,
+        mppi_terminal_mode="global",
+        mppi_terminal_lookahead_m=22.0,
+        mppi_ref_window_size=64,
+        mppi_ref_window_enabled=False,
+    )
+    pipe = PlanningPipeline(bounds, cfg)
+    pipe.set_waypoints([(5.0, 5.0), (45.0, 45.0)])
+    for parkur in ("PARKUR1", "PARKUR2", "PARKUR3"):
+        pipe.set_mission_state(parkur)
+        aktif = pipe._active_mppi_cfg()
+        assert aktif.lambda_ == 42.0, f"{parkur}: λ override profili ezmeliydi"
+        assert aktif.sigma_u == 8.5
+        assert aktif.obstacle_margin == 1.4
+        assert aktif.terminal_mode == "global"
+        assert aktif.terminal_lookahead_m == 22.0
+        assert aktif.ref_window_size == 64
+        assert aktif.ref_window_enabled is False
+
+
+def test_tuning_override_kismi_verilebilir(bounds: Bounds) -> None:
+    """Kısmi override: verilmeyen alanlar varsayılanda kalır (yaml'dan bir
+    anahtar silinince diğerleri etkilenmemeli)."""
+    varsayilan = MPPIConfig()
+    pipe = PlanningPipeline(
+        bounds, PlanningPipelineConfig(mppi_K=64, mppi_T=10,
+                                       mppi_obstacle_margin=1.3),
+    )
+    base = pipe._base_mppi_cfg
+    assert base.obstacle_margin == 1.3
+    assert base.sigma_u == varsayilan.sigma_u
+    assert base.terminal_mode == varsayilan.terminal_mode
+    assert base.ref_window_size == varsayilan.ref_window_size
+
+
+def test_tuning_override_kontrolcuye_gercekten_ulasir(bounds: Bounds) -> None:
+    """Config'te kalmasın — kurulan MPPIController gerçekten o değerle koşsun."""
+    pipe = PlanningPipeline(
+        bounds,
+        PlanningPipelineConfig(mppi_K=64, mppi_T=10, mppi_lambda=25.0,
+                               mppi_ref_window_enabled=False),
+    )
+    pipe.set_state(np.array([5.0, 5.0, 0.0, 0.0, 0.0, 0.0]))
+    pipe.set_waypoints([(5.0, 5.0), (30.0, 30.0)])
+    pipe.set_mission_state("PARKUR1")
+    assert pipe._mppi is not None
+    assert pipe._mppi.cfg.lambda_ == 25.0
+    assert pipe._mppi.cfg.ref_window_enabled is False
+    assert pipe.compute_control() is not None      # bu ayarla gerçekten koşuyor
 
 
 def test_kamikaze_target_is_last_waypoint(bounds: Bounds) -> None:

@@ -132,6 +132,51 @@ _CAMERA_DEFAULTS: dict[str, tuple[object, type]] = {
     "yolo_localizer_min_coverage": (0.15, float),
     "log_period_s": (5.0, float),
 }
+# fusion (KÖK blok) — iSAM2 GPS/IMU smoother. ⚠ _FUSION_DEFAULTS ile
+# karıştırma: o `perception.fusion` (kamera-LiDAR bearing) içindir.
+# Anahtarlar fusion_node'un ROS parametre adlarıyla BİREBİR; gps_sigma_by_status
+# sözlüğü düzleştirilir (ROS parametreleri sözlük taşımaz).
+_ISAM2_DEFAULTS: dict[str, tuple[object, type]] = {
+    "keyframe_rate_hz": (5.0, float),
+    "gps_robust_enabled": (True, bool),
+    "gps_huber_k": (1.345, float),
+    "gps_sigma_gbas_fix": (0.05, float),
+    "gps_sigma_sbas_fix": (0.50, float),
+    "gps_sigma_fix": (2.50, float),
+}
+# hardware.yaml `fusion.gps_sigma_by_status.<yaml_key>` → ROS param adı.
+_GPS_SIGMA_STATUS_KEYS = {
+    "gbas_fix": "gps_sigma_gbas_fix",
+    "sbas_fix": "gps_sigma_sbas_fix",
+    "fix": "gps_sigma_fix",
+}
+# planning.mppi_* — MPPI saha tuning yüzeyi (2026-08-02). Değerler
+# prototype/planning/mppi.py MPPIConfig ile AYNI olmalı; drift'i
+# test_hardware_launch_config.py::test_mppi_launch_varsayilanlari_kodla_ayni
+# (ROS'suz, ast ile okur) yakalar. λ nöbetçisi 0.0 = "parkur profili kazansın".
+_MPPI_DEFAULTS: dict[str, tuple[object, type]] = {
+    "mppi_lambda": (0.0, float),
+    "mppi_sigma_u": (5.0, float),
+    "mppi_obstacle_margin": (1.0, float),
+    "mppi_terminal_mode": ("lookahead", str),
+    "mppi_terminal_lookahead_m": (15.0, float),
+    "mppi_ref_window_size": (100, int),
+    "mppi_ref_window_enabled": (True, bool),
+}
+# --show-args çıktısında operatörün göreceği açıklamalar (sınırlar dahil).
+_MPPI_ARG_DESC = {
+    "mppi_lambda": "MPPI softmax sıcaklığı λ. 0 = parkur profili kazansın "
+                   "(PARKUR1/2=10, PARKUR3=50); >0 profili ezer. λ=1 dejenere "
+                   "(tek örnek seçimi), λ≥500 araç hedefe varamaz",
+    "mppi_sigma_u": "MPPI kontrol gürültüsü σ (N, her thruster)",
+    "mppi_obstacle_margin": "MPPI engel emniyet payı (m, SOFT ceza). "
+                            "⚠ 1.5 Parkur-2 geçidini kapatır (net açıklık 1.35 m)",
+    "mppi_terminal_mode": "Terminal hedef: lookahead | global (eski davranış)",
+    "mppi_terminal_lookahead_m": "Terminal hedefin çapadan yay uzaklığı (m); "
+                                 "≥ seyir_hızı × horizon olmalı",
+    "mppi_ref_window_size": "Kayan referans penceresi ileri derinliği (nokta)",
+    "mppi_ref_window_enabled": "false → eski tam tarama (16× yavaş, A/B için)",
+}
 # perception.fusion varsayılanları — kamera-LiDAR bearing füzyonu (Sprint 3).
 _FUSION_DEFAULTS: dict[str, tuple[object, type]] = {
     "bearing_tolerance_rad": (0.15, float),
@@ -152,6 +197,8 @@ def _load_hardware_config() -> dict:
     cfg["lidar"] = {k: v for k, (v, _) in _LIDAR_DEFAULTS.items()}
     cfg["camera"] = {k: v for k, (v, _) in _CAMERA_DEFAULTS.items()}
     cfg["fusion"] = {k: v for k, (v, _) in _FUSION_DEFAULTS.items()}
+    # kök `fusion:` bloğu (iSAM2) — perception.fusion'dan AYRI anahtar.
+    cfg["isam2"] = {k: v for k, (v, _) in _ISAM2_DEFAULTS.items()}
     cfg["mission_file"] = _MISSION_DEFAULT
     cfg["mission_source"] = _MISSION_SOURCE_DEFAULT
     cfg["skip_home_seq0"] = _SKIP_HOME_DEFAULT
@@ -166,6 +213,7 @@ def _load_hardware_config() -> dict:
         cfg[block] = {k: v for k, (v, _) in defaults.items()}
     # planning mod geçidi kök mode_name'i miras alır (drift önlemek için).
     cfg["planning_mode"] = cfg["mode_name"]
+    cfg["mppi"] = {k: v for k, (v, _) in _MPPI_DEFAULTS.items()}
     try:
         path = os.path.join(
             get_package_share_directory(_PKG), "config", "hardware.yaml"
@@ -181,9 +229,15 @@ def _load_hardware_config() -> dict:
             if key in algo:
                 cfg[key] = bool(algo[key])
         # planning: bloğu varsa mode_name'ini kullan, yoksa kökü miras al.
+        planning_block = data.get("planning") or {}
         cfg["planning_mode"] = str(
-            (data.get("planning") or {}).get("mode_name", cfg["mode_name"])
+            planning_block.get("mode_name", cfg["mode_name"])
         )
+        # planning.mppi_* — saha tuning; verilmeyen anahtarda kod varsayılanı
+        # (λ'da parkur profili) kazanır.
+        for key, (_, cast) in _MPPI_DEFAULTS.items():
+            if key in planning_block:
+                cfg["mppi"][key] = cast(planning_block[key])
         # mission: görev dosyası + kaynak seçimi (video ↔ competition, file ↔ fc)
         mission_block = data.get("mission") or {}
         cfg["mission_file"] = str(
@@ -220,6 +274,16 @@ def _load_hardware_config() -> dict:
             for key, (_, cast) in defaults.items():
                 if key in values:
                     cfg[block][key] = cast(values[key])
+        # kök `fusion:` bloğu — iSAM2 smoother (keyframe throttle + robust GPS).
+        isam2_block = data.get("fusion") or {}
+        for key, (_, cast) in _ISAM2_DEFAULTS.items():
+            if key in isam2_block:
+                cfg["isam2"][key] = cast(isam2_block[key])
+        # gps_sigma_by_status alt sözlüğü → düzleştirilmiş ROS param adları
+        sigma_block = isam2_block.get("gps_sigma_by_status") or {}
+        for yaml_key, param_name in _GPS_SIGMA_STATUS_KEYS.items():
+            if yaml_key in sigma_block:
+                cfg["isam2"][param_name] = float(sigma_block[yaml_key])
     except Exception as exc:                # paket kurulmadan --show-args vb.
         # F-V.5 (F3.3): fallback SESSİZ OLMAMALI — hardware.yaml'daki bir yazım
         # hatası video-modu bayraklarını (use_isam2/use_rrt=false) kaybettirip
@@ -342,6 +406,34 @@ def generate_launch_description() -> LaunchDescription:
                 description=f"Kamera-LiDAR bearing füzyonu: {key}",
             )
             for key in _FUSION_DEFAULTS
+        ],
+        # planning.mppi_* — MPPI saha tuning (hardware.yaml planning: bloğu
+        # varsayılanı; CLI: planning.mppi_lambda:=50.0). Ölçümler CLAUDE.md.
+        *[
+            DeclareLaunchArgument(
+                f"planning.{key}",
+                default_value=(
+                    _bool_default(hw["mppi"][key])
+                    if isinstance(hw["mppi"][key], bool)
+                    else str(hw["mppi"][key])
+                ),
+                description=_MPPI_ARG_DESC[key],
+            )
+            for key in _MPPI_DEFAULTS
+        ],
+        # fusion.* — iSAM2 smoother (keyframe throttle + robust GPS + fix
+        # kalitesi sigma'ları). CLI: fusion.keyframe_rate_hz:=10.0
+        *[
+            DeclareLaunchArgument(
+                f"fusion.{key}",
+                default_value=(
+                    _bool_default(hw["isam2"][key])
+                    if isinstance(hw["isam2"][key], bool)
+                    else str(hw["isam2"][key])
+                ),
+                description=f"iSAM2 sensör füzyonu: {key}",
+            )
+            for key in _ISAM2_DEFAULTS
         ],
         # mission_file — görev dosyası (Sprint 4 parkur katmanı). config/ altında
         # çözülür; CLI override: mission_file:=competition_mission.yaml
@@ -548,12 +640,19 @@ def generate_launch_description() -> LaunchDescription:
             ),
         },
     ]
-    # fusion: algorithm.use_isam2 (video → MAVROS EKF pass-through).
+    # fusion: algorithm.use_isam2 (video → MAVROS EKF pass-through) +
+    # kök `fusion:` bloğu (keyframe throttle, robust GPS, fix sigma'ları).
     fusion_params = [
         params_file,
         {
             "use_sim_time": use_sim_time,
             "use_isam2": ParameterValue(use_isam2, value_type=bool),
+            **{
+                key: ParameterValue(
+                    LaunchConfiguration(f"fusion.{key}"), value_type=cast
+                )
+                for key, (_, cast) in _ISAM2_DEFAULTS.items()
+            },
         },
     ]
     # planning: mode_name (tek kaynak) + algorithm.use_rrt (video → düz hedef).
@@ -570,6 +669,13 @@ def generate_launch_description() -> LaunchDescription:
             "use_rrt": ParameterValue(use_rrt, value_type=bool),
             "control_mode": LaunchConfiguration("control_mode"),
             "heartbeat_timeout_s": float(hw["heartbeat_timeout_s"]),
+            # MPPI saha tuning (planning.mppi_* launch-arg'ları)
+            **{
+                key: ParameterValue(
+                    LaunchConfiguration(f"planning.{key}"), value_type=cast
+                )
+                for key, (_, cast) in _MPPI_DEFAULTS.items()
+            },
         },
     ]
     # mission_file: config/ altında çözülen tam yol (video ↔ competition).

@@ -1,10 +1,12 @@
 """
-Girdap İDA — fusion_node bypass modu testi (F8.1).
+Girdap İDA — fusion_node bypass modu testi (F8.1) + GPS fix kalitesi kapısı.
 
 Doğrular (video zinciri, use_isam2=false → gtsam GEREKMEZ):
     - /mavros/local_position/pose → /girdap/fusion/odom pose geçişi
     - F8.1: /mavros/local_position/velocity_body → odom.twist doldurulur
       (planning_node MPPI durum vektörüne u,v,r'yi buradan okur)
+    - GPS fix kalitesi: NavSatFix.status.status → ölçüm sigma'sı;
+      STATUS_NO_FIX'te add_gps HİÇ çağrılmaz
 
 rclpy gerektirir → sistem python3.10 + ROS Humble; .venv'de SKIP.
 """
@@ -20,6 +22,7 @@ rclpy = pytest.importorskip("rclpy", reason="rclpy yok (.venv) — ROS ortamınd
 from rclpy.parameter import Parameter                    # noqa: E402
 from geometry_msgs.msg import PoseStamped, TwistStamped  # noqa: E402
 from nav_msgs.msg import Odometry                        # noqa: E402
+from sensor_msgs.msg import NavSatFix, NavSatStatus      # noqa: E402
 
 girdap = pytest.importorskip(
     "girdap_decision.fusion_node",
@@ -193,4 +196,116 @@ def test_fp7_bayat_velocity_body_twist_sifirlanir(ros_context) -> None:
         )
     finally:
         helper.destroy_node()
+        node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# GPS fix kalitesi kapısı (_on_gps)
+# --------------------------------------------------------------------------- #
+
+
+class _KaydedenKaynak:
+    """FusionPipeline yerine geçen kayıt tutucu (gtsam yüklenmesin)."""
+
+    def __init__(self) -> None:
+        self.cagrilar: list[tuple[float, float, float | None]] = []
+
+    def on_gps(self, lat: float, lon: float, sigma_xy: float | None = None) -> None:
+        self.cagrilar.append((lat, lon, sigma_xy))
+
+    def current_pose(self) -> tuple[float, float, float]:
+        raise RuntimeError("tahmin yok")            # yayım timer'ı sessiz kalsın
+
+
+def _gps_node(ros_context):                          # noqa: ANN001, ANN202
+    """Bypass modunda node + sahte kaynak: _on_gps'i doğrudan sınayabiliriz.
+
+    use_isam2=false seçilir ki test gtsam GEREKTİRMESİN; _on_gps'in kalite
+    kapısı moddan bağımsız aynı koddur.
+    """
+    node = girdap.FusionNode(
+        parameter_overrides=[
+            Parameter("use_isam2", Parameter.Type.BOOL, False),
+        ]
+    )
+    kaynak = _KaydedenKaynak()
+    node._source = kaynak
+    return node, kaynak
+
+
+def _navsatfix(status: int, lat: float = 36.85, lon: float = 28.27) -> NavSatFix:
+    msg = NavSatFix()
+    msg.status.status = status
+    msg.status.service = NavSatStatus.SERVICE_GPS
+    msg.latitude = lat
+    msg.longitude = lon
+    return msg
+
+
+def test_status_no_fix_add_gps_cagrilmaz(ros_context) -> None:
+    """STATUS_NO_FIX → ölçüm smoother'a HİÇ verilmemeli.
+
+    Fix yokken NavSatFix'in lat/lon alanı tanımsızdır (sürücüye göre 0/0 ya
+    da son geçerli değer). Prior olarak eklenirse grafiği kalıcı bozar —
+    üstelik yarışma alanında (0,0) binlerce km uzakta bir noktadır.
+    """
+    node, kaynak = _gps_node(ros_context)
+    try:
+        node._on_gps(_navsatfix(NavSatStatus.STATUS_NO_FIX))
+        assert kaynak.cagrilar == [], "NO_FIX ölçümü smoother'a gitti"
+        assert node._n_gps == 0
+        assert node._n_gps_rejected == 1
+    finally:
+        node.destroy_node()
+
+
+def test_fix_kalitesi_sigmayi_secer(ros_context) -> None:
+    """RTK / SBAS / tek nokta → farklı ölçüm sigma'ları (hardware.yaml)."""
+    node, kaynak = _gps_node(ros_context)
+    try:
+        for status, beklenen in (
+            (NavSatStatus.STATUS_GBAS_FIX, 0.05),     # RTK fixed
+            (NavSatStatus.STATUS_SBAS_FIX, 0.50),
+            (NavSatStatus.STATUS_FIX, 2.50),          # tek nokta
+        ):
+            node._on_gps(_navsatfix(status))
+            assert kaynak.cagrilar[-1][2] == pytest.approx(beklenen), (
+                f"status={status} için yanlış sigma"
+            )
+        assert node._n_gps == 3 and node._n_gps_rejected == 0
+    finally:
+        node.destroy_node()
+
+
+def test_sigma_tablosu_parametreden_gelir(ros_context) -> None:
+    """hardware.yaml fusion.gps_sigma_by_status → ROS parametreleri → tablo."""
+    node = girdap.FusionNode(
+        parameter_overrides=[
+            Parameter("use_isam2", Parameter.Type.BOOL, False),
+            Parameter("gps_sigma_gbas_fix", Parameter.Type.DOUBLE, 0.02),
+            Parameter("gps_sigma_fix", Parameter.Type.DOUBLE, 7.5),
+        ]
+    )
+    kaynak = _KaydedenKaynak()
+    node._source = kaynak
+    try:
+        node._on_gps(_navsatfix(NavSatStatus.STATUS_GBAS_FIX))
+        node._on_gps(_navsatfix(NavSatStatus.STATUS_FIX))
+        assert kaynak.cagrilar[0][2] == pytest.approx(0.02)
+        assert kaynak.cagrilar[1][2] == pytest.approx(7.5)
+    finally:
+        node.destroy_node()
+
+
+def test_fix_geri_gelince_olcum_yeniden_kabul_edilir(ros_context) -> None:
+    """NO_FIX kalıcı bir kapı DEĞİL — fix dönünce akış sürmeli."""
+    node, kaynak = _gps_node(ros_context)
+    try:
+        node._on_gps(_navsatfix(NavSatStatus.STATUS_NO_FIX))
+        node._on_gps(_navsatfix(NavSatStatus.STATUS_NO_FIX))
+        assert kaynak.cagrilar == []
+        node._on_gps(_navsatfix(NavSatStatus.STATUS_GBAS_FIX))
+        assert len(kaynak.cagrilar) == 1
+        assert node._n_gps_rejected == 2 and node._n_gps == 1
+    finally:
         node.destroy_node()

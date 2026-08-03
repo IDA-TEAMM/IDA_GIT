@@ -71,7 +71,7 @@ def test_start_or_goal_inside_margin_raises() -> None:
     """F10.1 sözleşmesi: start/goal (r + safety_margin) içinde → ValueError.
     planning pipeline bu istisnayı yakalayıp eski yolu korur — istisna tipi
     değişirse pipeline'ın try/except'i delinir; bu test onu dondurur."""
-    obs = CircleObstacle(10.0, 10.0, 1.0)                # pay: 1.0+0.3=1.3 m
+    obs = CircleObstacle(10.0, 10.0, 1.0)                # pay: 1.0+0.5=1.5 m
     rrt = RRTStar(Bounds(0.0, 50.0, 0.0, 50.0), [obs], RRTStarConfig(seed=0))
     with pytest.raises(ValueError):
         rrt.plan((10.5, 10.0), (45.0, 45.0))             # start pay içinde

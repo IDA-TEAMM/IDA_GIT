@@ -8,6 +8,8 @@ Subscribed topics:
         ~50-100 Hz raw IMU. Yaw rate (gyro z) → BetweenFactor adımı.
     /mavros/global_position/global   sensor_msgs/NavSatFix
         ~1 Hz RTK GPS. İlk fix origin → ENU projeksiyon, prior factor.
+        status.status fix kalitesini taşır → ölçüm sigma'sı ondan seçilir
+        (RTK/SBAS/tek-nokta); STATUS_NO_FIX ölçümü smoother'a HİÇ girmez.
     /mavros/local_position/velocity_body  geometry_msgs/TwistStamped
         Body-frame hız. Pre-integration için vx·dt, vy·dt kullanılır.
 
@@ -46,6 +48,16 @@ from sensor_msgs.msg import Imu, NavSatFix
 
 from girdap_decision.qos_profiles import sensor_data_qos
 
+# GTSAM'a bağımlı DEĞİL (düz int tablo) → video/bypass modunda da güvenle
+# import edilir; birim testi rclpy'siz .venv'de koşar.
+from prototype.fusion.gps_quality import (
+    STATUS_FIX,
+    STATUS_GBAS_FIX,
+    STATUS_SBAS_FIX,
+    sigma_for_status,
+    status_name,
+)
+
 
 def _stamp_to_seconds(stamp) -> float:
     return stamp.sec + stamp.nanosec * 1e-9
@@ -79,15 +91,45 @@ class FusionNode(Node):
         self.declare_parameter("gps_sigma_xy", 0.30)
         self.declare_parameter("imu_sigma_xy", 0.05)
         self.declare_parameter("imu_sigma_psi", 0.01)
+        # Key (keyframe) üretim hızı tavanı — iSAM2 graf büyümesini sınırlar.
+        # Ölçüm (20 dk, IMU 50 Hz + GPS 1 Hz): eski kadans 11 416 key / 17.8 s
+        # füzyon CPU; 5 Hz → 6 000 key / 4.0 s. Ara IMU adımları tek
+        # BetweenFactor'da biriktiği için bilgi kaybı yok. <=0 → throttle kapalı.
+        self.declare_parameter("keyframe_rate_hz", 5.0)
+        # GPS outlier reddi (Huber M-estimator). false → eski saf Gauss.
+        self.declare_parameter("gps_robust_enabled", True)
+        self.declare_parameter("gps_huber_k", 1.345)
+        # Fix kalitesine göre ölçüm sigma'sı [m] — hardware.yaml
+        # `fusion.gps_sigma_by_status` bloğu. ROS parametreleri sözlük
+        # taşımadığı için düzleştirilmiş skalerler.
+        self.declare_parameter("gps_sigma_gbas_fix", 0.05)   # RTK fixed
+        self.declare_parameter("gps_sigma_sbas_fix", 0.50)
+        self.declare_parameter("gps_sigma_fix", 2.50)        # tek nokta
 
         self._use_isam2 = bool(self.get_parameter("use_isam2").value)
         sensor_qos = sensor_data_qos()
+
+        # Fix kalitesi → sigma tablosu. Moddan bağımsız kurulur ki bypass
+        # modunda da (GTSAM yüklenmeden) birim testi çağırabilsin.
+        self._gps_sigma_by_status = {
+            STATUS_GBAS_FIX: float(
+                self.get_parameter("gps_sigma_gbas_fix").value
+            ),
+            STATUS_SBAS_FIX: float(
+                self.get_parameter("gps_sigma_sbas_fix").value
+            ),
+            STATUS_FIX: float(self.get_parameter("gps_sigma_fix").value),
+        }
 
         # Diagnostic sayaçları
         self._n_imu = 0
         self._n_gps = 0
         self._n_vel = 0
         self._n_pose = 0
+        self._n_gps_rejected = 0
+        # Fix reddi sürekli olabilir (1 Hz GPS → saniyede bir WARN spam'i).
+        # Yalnız DURUM DEĞİŞİMİNDE logla; sayım 5 sn'lik diag satırında.
+        self._gps_reject_warned = False
 
         # F8.1: son body-frame hız (velocity_body) — odom.twist'e yazılır.
         # planning_node MPPI durum vektörüne (u, v, r) buradan okur; boş
@@ -142,6 +184,22 @@ class FusionNode(Node):
             gps_sigma_xy=float(self.get_parameter("gps_sigma_xy").value),
             odom_sigma_xy=float(self.get_parameter("imu_sigma_xy").value),
             odom_sigma_psi=float(self.get_parameter("imu_sigma_psi").value),
+            keyframe_rate_hz=float(
+                self.get_parameter("keyframe_rate_hz").value
+            ),
+            gps_robust_enabled=bool(
+                self.get_parameter("gps_robust_enabled").value
+            ),
+            gps_huber_k=float(self.get_parameter("gps_huber_k").value),
+        )
+        self.get_logger().info(
+            f"iSAM2: keyframe≤{cfg.keyframe_rate_hz} Hz "
+            f"(periyot {cfg.keyframe_period_s:.3f} s), "
+            f"GPS robust={'AÇIK' if cfg.gps_robust_enabled else 'KAPALI'} "
+            f"(Huber k={cfg.gps_huber_k}), "
+            f"σ_fix RTK/SBAS/tek={self._gps_sigma_by_status[STATUS_GBAS_FIX]}/"
+            f"{self._gps_sigma_by_status[STATUS_SBAS_FIX]}/"
+            f"{self._gps_sigma_by_status[STATUS_FIX]} m"
         )
         self._source = FusionPipeline(cfg)
         self._sub_imu = self.create_subscription(
@@ -206,11 +264,35 @@ class FusionNode(Node):
         return (now - self._last_vel_t) > self._vel_timeout_s
 
     def _on_gps(self, msg: NavSatFix) -> None:
-        """RTK GPS fix → ENU projeksiyon → smoother prior."""
-        if msg.status.status < 0:
-            self.get_logger().warn("GPS fix yok (status<0), atlanıyor")
+        """RTK GPS fix → kalite kapısı → ENU projeksiyon → smoother prior.
+
+        Fix kalitesi ölçüm sigma'sını belirler: RTK (GBAS) santimetre
+        sınıfıdır, tek-nokta çözüm metrelerce sapar. Tek sabit sigma ile
+        ikisine de aynı ağırlığı vermek RTK kaybında smoother'ı kötü ölçüme
+        güvendirir. STATUS_NO_FIX ise ölçüm smoother'a HİÇ verilmez —
+        koordinat alanı fix yokken tanımsızdır (0/0 ya da son geçerli
+        değer olabilir), prior olarak eklenmesi grafiği bozar.
+        """
+        sigma_xy = sigma_for_status(
+            msg.status.status, self._gps_sigma_by_status
+        )
+        if sigma_xy is None:
+            self._n_gps_rejected += 1
+            if not self._gps_reject_warned:
+                self._gps_reject_warned = True
+                self.get_logger().warn(
+                    f"GPS fix kalitesi yetersiz "
+                    f"({status_name(msg.status.status)}) — ölçüm smoother'a "
+                    "VERİLMİYOR (poz yalnız IMU ile sürüyor, drift bekle)"
+                )
             return
-        self._source.on_gps(msg.latitude, msg.longitude)
+        if self._gps_reject_warned:
+            self._gps_reject_warned = False
+            self.get_logger().info(
+                f"GPS fix geri geldi ({status_name(msg.status.status)}, "
+                f"σ={sigma_xy} m)"
+            )
+        self._source.on_gps(msg.latitude, msg.longitude, sigma_xy=sigma_xy)
         self._n_gps += 1
 
     # ----- bypass callback'i -----
@@ -302,10 +384,13 @@ class FusionNode(Node):
             counts = (
                 f"imu={self._n_imu} gps={self._n_gps} vel={self._n_vel}"
             )
+            if self._n_gps_rejected:
+                counts += f" gps_red={self._n_gps_rejected}"
         else:
             counts = f"ekf_pose={self._n_pose}"
         self.get_logger().info(f"[diag 5s] {counts} | {pose_str}")
         self._n_imu = self._n_gps = self._n_vel = self._n_pose = 0
+        self._n_gps_rejected = 0
 
 
 def main(args: list[str] | None = None) -> None:

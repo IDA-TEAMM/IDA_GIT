@@ -227,3 +227,90 @@ def test_fs6_video_bypass_modda_yok_sayilir(ros_context) -> None:  # noqa: ANN00
         assert node._pipe._waypoints == []
     finally:
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# MPPI saha tuning parametreleri (2026-08-02) — yaml/CLI → MPPIConfig yolu.
+# Drift kapıları ROS'suz test_planning_config_drift.py'de; bunlar node'un
+# parametreyi GERÇEKTEN okuyup boru hattına geçirdiğini doğrular.
+# --------------------------------------------------------------------------- #
+
+
+def test_mppi_tuning_parametreleri_pipeline_e_gecer(ros_context) -> None:  # noqa: ANN001
+    """Verilen mppi_* parametreleri MPPIConfig'e ulaşmalı."""
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("mppi_lambda", Parameter.Type.DOUBLE, 42.0),
+            Parameter("mppi_sigma_u", Parameter.Type.DOUBLE, 8.5),
+            Parameter("mppi_obstacle_margin", Parameter.Type.DOUBLE, 1.4),
+            Parameter("mppi_terminal_mode", Parameter.Type.STRING, "global"),
+            Parameter("mppi_terminal_lookahead_m", Parameter.Type.DOUBLE, 22.0),
+            Parameter("mppi_ref_window_size", Parameter.Type.INTEGER, 64),
+            Parameter("mppi_ref_window_enabled", Parameter.Type.BOOL, False),
+        ]
+    )
+    try:
+        base = node._pipe._base_mppi_cfg
+        assert base.lambda_ == 42.0
+        assert base.sigma_u == 8.5
+        assert base.obstacle_margin == 1.4
+        assert base.terminal_mode == "global"
+        assert base.terminal_lookahead_m == 22.0
+        assert base.ref_window_size == 64
+        assert base.ref_window_enabled is False
+        # λ override'ı PARKUR PROFİLİNİ de ezmeli
+        node._pipe.set_waypoints([(5.0, 5.0), (20.0, 20.0)])
+        node._pipe.set_mission_state("PARKUR3")
+        assert node._pipe._active_mppi_cfg().lambda_ == 42.0
+    finally:
+        node.destroy_node()
+
+
+def test_mppi_lambda_nobetcisi_profili_birakir(ros_context) -> None:  # noqa: ANN001
+    """mppi_lambda=0 (varsayılan nöbetçi) → parkur profili kazanır."""
+    from prototype.planning.pipeline import _PARKUR_PROFILES
+
+    node = pn.PlanningNode()
+    try:
+        assert node._pipe.cfg.mppi_lambda is None
+        node._pipe.set_waypoints([(5.0, 5.0), (20.0, 20.0)])
+        for parkur in ("PARKUR1", "PARKUR2", "PARKUR3"):
+            node._pipe.set_mission_state(parkur)
+            assert (
+                node._pipe._active_mppi_cfg().lambda_
+                == _PARKUR_PROFILES[parkur].lambda_
+            )
+    finally:
+        node.destroy_node()
+
+
+def test_mppi_tuning_varsayilanlari_kod_ile_ayni(ros_context) -> None:  # noqa: ANN001
+    """Parametre verilmezse davranış MPPIConfig varsayılanıyla BİREBİR
+    (node kendi kopya varsayılanını dayatmasın — config-drift kapısı)."""
+    from prototype.planning.mppi import MPPIConfig
+
+    kod = MPPIConfig()
+    node = pn.PlanningNode()
+    try:
+        base = node._pipe._base_mppi_cfg
+        for alan in ("sigma_u", "obstacle_margin", "terminal_mode",
+                     "terminal_lookahead_m", "ref_window_size",
+                     "ref_window_enabled", "lambda_"):
+            assert getattr(base, alan) == getattr(kod, alan), alan
+    finally:
+        node.destroy_node()
+
+
+def test_mppi_terminal_mode_gecersizse_varsayilana_duser(ros_context) -> None:  # noqa: ANN001
+    """Yazım hatası node'u ÖLDÜRMEMELİ (F10.1) — WARN + varsayılana düşüş."""
+    from prototype.planning.mppi import MPPIConfig
+
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("mppi_terminal_mode", Parameter.Type.STRING, "lookahed")
+        ]
+    )
+    try:
+        assert node._pipe._base_mppi_cfg.terminal_mode == MPPIConfig().terminal_mode
+    finally:
+        node.destroy_node()

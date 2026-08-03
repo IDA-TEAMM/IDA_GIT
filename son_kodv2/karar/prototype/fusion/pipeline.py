@@ -8,11 +8,13 @@ olmadan koşar (gtsam içeren .venv yeterli).
 Akış:
     1) on_velocity(vx, vy)         — /mavros/local_position/velocity_body
     2) on_imu(t, omega_z)          — /mavros/imu/data, gyro yaw rate
-       Her IMU çağrısı odom_period_s'i geçtiyse Pose2 delta üretir
-       (vx·dt, vy·dt, ωz·dt) ve add_odometry'ye gönderir.
-    3) on_gps(lat, lon)            — /mavros/global_position/global
+       Her IMU çağrısında ara adım (vx·dt, vy·dt, ωz·dt) BİRİKTİRİLİR;
+       keyframe periyodu dolduğunda birikmiş delta TEK BetweenFactor
+       olarak add_odometry'ye gönderilir.
+    3) on_gps(lat, lon, sigma_xy)  — /mavros/global_position/global
        İlk fix origin olarak alınır; sonraki fix'ler ENU'ya
        eşit-dikdörtgensel projeksiyonla çevrilip add_gps prior'u olur.
+       sigma_xy fix kalitesinden gelir (bkz. fusion.gps_quality).
 
 Tasarım kararları:
     - IMU pre-integration ham accel'den değil, mavros'un EKF-temelli
@@ -23,6 +25,16 @@ Tasarım kararları:
       hızını içermez, bu yüzden ayrı kanal.
     - GPS prior kabul edilmeden önce bekleyen IMU integrasyonu flush
       edilir (latest_key güncel olsun).
+
+Keyframe throttle (graf büyümesi):
+    Eski davranışta her flush odom_period_s (0.1 s) = 10 Hz key üretiyordu;
+    20 dk'lık yarışma görevinde ~12 000 key → ISAM2 grafiği ve her
+    calculateEstimate() çağrısı bununla doğru orantılı büyür. keyframe_rate_hz
+    (varsayılan 5 Hz) key kadansını sınırlar; ara IMU adımları Pose2
+    kompozisyonuyla biriktirilip tek faktöre indirgendiği için BİLGİ KAYBI
+    YOKTUR (eski kod zaten yalnız son hız örneğini kullanıyordu — bu yönüyle
+    biriktirme daha da doğru). Odometri sigma'sı √Δt ile ölçeklenir ki
+    throttle filtreyi sessizce yeniden ayarlamasın.
 """
 
 from __future__ import annotations
@@ -44,10 +56,29 @@ _EARTH_R = 6378137.0
 class FusionPipelineConfig:
     """Boru hattı ayarları. ROS 2 parametre arayüzünden aynı isimle gelir."""
 
-    odom_period_s: float = 0.1            # IMU step → smoother flush periyodu (10 Hz)
+    odom_period_s: float = 0.1            # IMU delta biriktirme adımı (alt sınır)
     gps_sigma_xy: float = 0.30            # m (mock için RTK olmayan değer; saha 0.05)
     odom_sigma_xy: float = 0.05           # m, vel·dt ölçek gürültüsü
     odom_sigma_psi: float = 0.01          # rad
+
+    # Key (keyframe) üretim hızı tavanı — graf büyümesini sınırlar.
+    # <= 0 → throttle KAPALI, kadans odom_period_s'te kalır (eski davranış).
+    keyframe_rate_hz: float = 5.0
+
+    # GPS outlier reddi (ISAM2Smoother'a geçer)
+    gps_robust_enabled: bool = True
+    gps_huber_k: float = 1.345
+
+    @property
+    def keyframe_period_s(self) -> float:
+        """Etkin key periyodu: throttle ile odom_period_s'in büyüğü.
+
+        odom_period_s bir ALT SINIR olarak kalır — throttle'ı kapatmak
+        (keyframe_rate_hz<=0) eski kadansı birebir geri verir.
+        """
+        if self.keyframe_rate_hz <= 0.0:
+            return self.odom_period_s
+        return max(self.odom_period_s, 1.0 / self.keyframe_rate_hz)
 
 
 class FusionPipeline:
@@ -69,6 +100,8 @@ class FusionPipeline:
                 gps_sigma_xy=self.cfg.gps_sigma_xy,
                 odom_sigma_xy=self.cfg.odom_sigma_xy,
                 odom_sigma_psi=self.cfg.odom_sigma_psi,
+                gps_robust_enabled=self.cfg.gps_robust_enabled,
+                gps_huber_k=self.cfg.gps_huber_k,
             )
         )
         self._sm.initialize(gtsam.Pose2(0.0, 0.0, 0.0))
@@ -76,9 +109,12 @@ class FusionPipeline:
         # Pre-integration akümülatörleri
         self._vx_body: float = 0.0
         self._vy_body: float = 0.0
-        self._wz: float = 0.0
         self._last_imu_t: Optional[float] = None
         self._t_since_flush: float = 0.0
+        # Keyframe'ler arası birikmiş göreli poz (body frame). Ara IMU
+        # adımları Pose2 kompozisyonuyla eklenir → dönüş sırasında bile
+        # doğru; skaler toplam olsaydı yaw değişimi ihmal edilirdi.
+        self._acc_delta: gtsam.Pose2 = gtsam.Pose2()
 
         # GPS origin (ilk fix)
         self._lat0: Optional[float] = None
@@ -94,11 +130,10 @@ class FusionPipeline:
 
     def on_imu(self, t: float, omega_z: float) -> bool:
         """
-        IMU mesajı: yaw rate'i güncelle, dt biriktir, periyot dolduğunda
-        smoother'a Pose2 delta gönder.
-        Dönüş: True ise smoother'a yeni delta yazıldı.
+        IMU mesajı: yaw rate'i güncelle, ara adımı biriktir, keyframe periyodu
+        dolduğunda birikmiş deltayı TEK BetweenFactor olarak smoother'a gönder.
+        Dönüş: True ise smoother'a yeni key yazıldı.
         """
-        self._wz = omega_z
         if self._last_imu_t is None:
             self._last_imu_t = t
             return False
@@ -109,14 +144,26 @@ class FusionPipeline:
         if dt <= 0.0 or dt > 0.5:
             return False
 
+        # Ara adımı birikmiş deltaya BAĞLA (compose): her alt adım kendi
+        # body frame'inde ifade edildiği için düz toplam değil kompozisyon.
+        self._acc_delta = self._acc_delta.compose(
+            gtsam.Pose2(self._vx_body * dt, self._vy_body * dt, omega_z * dt)
+        )
         self._t_since_flush += dt
-        if self._t_since_flush < self.cfg.odom_period_s:
+        if self._t_since_flush < self.cfg.keyframe_period_s:
             return False
 
         return self._flush()
 
-    def on_gps(self, lat: float, lon: float) -> None:
-        """GPS fix: ENU'ya çevir, latest_key'e prior ekle."""
+    def on_gps(
+        self, lat: float, lon: float, sigma_xy: Optional[float] = None
+    ) -> None:
+        """GPS fix: ENU'ya çevir, latest_key'e prior ekle.
+
+        sigma_xy: fix kalitesinden türetilen ölçüm sigma'sı (m). None →
+        config gps_sigma_xy. Reddedilmiş fix'ler buraya HİÇ gelmemeli
+        (bkz. fusion.gps_quality.sigma_for_status).
+        """
         if self._lat0 is None:
             # İlk fix → origin. Smoother başlangıçtan beri (0,0)'da; origin
             # buraya pinlenir. add_gps eklemeden update yapma; X(0) zaten
@@ -131,26 +178,28 @@ class FusionPipeline:
             self._flush(force=True)
 
         x, y = self._latlon_to_enu(lat, lon)
-        self._sm.add_gps(self._sm.latest_key, x, y)
+        self._sm.add_gps(self._sm.latest_key, x, y, sigma_xy=sigma_xy)
         self._sm.update()
 
     # ----- iç yardımcılar -----
 
     def _flush(self, force: bool = False) -> bool:
-        """Birikmiş hız×dt + yaw rate×dt → Pose2 delta → smoother."""
+        """Birikmiş ara IMU adımlarını tek BetweenFactor olarak smoother'a yaz."""
         period = self._t_since_flush
         if period <= 0.0:
             return False
-        if not force and period < self.cfg.odom_period_s:
+        if not force and period < self.cfg.keyframe_period_s:
             return False
 
-        delta = gtsam.Pose2(
-            self._vx_body * period,
-            self._vy_body * period,
-            self._wz * period,
-        )
-        self._sm.add_odometry(delta)
+        # Rastgele yürüyüş: σ ∝ √Δt. Ölçek nominal odom_period_s'e göre alınır,
+        # böylece throttle kapalıyken (period == odom_period_s) katsayı 1.0 ve
+        # davranış eski koda birebir eşit kalır.
+        nominal = self.cfg.odom_period_s
+        sigma_scale = math.sqrt(period / nominal) if nominal > 0.0 else 1.0
+
+        self._sm.add_odometry(self._acc_delta, sigma_scale=sigma_scale)
         self._sm.update()
+        self._acc_delta = gtsam.Pose2()
         self._t_since_flush = 0.0
         return True
 

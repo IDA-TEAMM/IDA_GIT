@@ -491,8 +491,14 @@ geçişleri, kesik kırmızı oklar her durumdan KILL erişimini gösterir.
        → FSM PARKUR-3'e geç
 ```
 
-**MPPI ayarı:** `w_obstacle = 200` (agresif kaçınma),
-`obstacle_margin = 0.5 m` (RRT* safety_margin'iyle aynı), `w_track = 3`.
+**MPPI ayarı:** `w_obstacle = 200` (agresif kaçınma), `w_track = 3`,
+`obstacle_margin = 1.0 m`. Emniyet payları BİLEREK eşit değil: RRT*
+`safety_margin = 0.5 m` **hard** kısıt (bu payın içinden yol geçmez), MPPI
+`obstacle_margin = 1.0 m` **soft** ceza (quadratic barrier). Sıralama
+RRT* ≤ MPPI. Üst sınırı Parkur-2 geçidi belirler: net açıklık ~1.35 m →
+merkez hattından duba yüzeyine 0.675 m; RRT* payı 0.5 m'yi aşarsa global yol
+geçidin etrafından dolanır, MPPI payı 1.5 m'ye çıkarsa araç geçide hiç
+girmez (ikisi de ölçüldü — CLAUDE.md MPPI bölümü).
 
 ### Parkur 3 — Kamikaze
 

@@ -23,6 +23,11 @@ Tasarım notları:
     - Heading hatası atan2(sin, cos) ile sarılır — π sıçraması maliyeti bozmaz.
     - Engel maliyeti emniyet çemberi içinde quadratic barrier
       (max(0, r_safe - d))²; çember dışında sıfır.
+    - Referans takip maliyeti KAYAN PENCERE üzerinde (F-M.2): en yakın nokta
+      araması tüm referansta değil, önceki adımın çapası (_ref_anchor_idx)
+      etrafındaki [anchor-w/4, anchor+w) diliminde yapılır — (K, T+1, n_ref)
+      tensörü 16× küçülür. Çapa pencere kenarına dayanırsa o adım tam
+      taramaya düşer (geri manevra / yeniden planlama güvenliği).
     - K=1000 demoda yavaş olabilir; CUDA portu Jetson testinde son adım
       (CLAUDE.md). CPU prototip ~100 ms / iter ölçüldüğünde gerçek zamanlı
       kısıt 50 Hz GPU'da karşılanır.
@@ -199,8 +204,22 @@ class MPPIConfig:
     w_boundary: float = 1000.0       # sınır dışı adım sayısı
     w_terminal: float = 5.0          # terminal goal yakınlığı (m²)
 
-    # Engel emniyet payı (RRT* safety_margin'iyle uyumlu olmalı)
-    obstacle_margin: float = 0.5     # m
+    # Engel emniyet payı — quadratic barrier'ın başladığı yarıçap (r + margin).
+    # 0.5 → 1.0 (2026-08-02, F9.2 kapatma): MPPI aracı NOKTA sayar, tekne
+    # genişliği (0.75 m → yarı genişlik 0.375 m) maliyete girmez; tek pay bu.
+    # Ölçüm (200 m rota, rotanın üstünde 2 m yarıçaplı engel): margin 0.5 →
+    # engel yüzeyine min açıklık +0.08 m → gövde payı **−0.29 m = ÇARPMA**;
+    # margin 1.0 → açıklık +0.54 m, gövde payı **+0.17 m**. Yaklaşık kural:
+    # açıklık ≈ margin − 0.45 m. Bedel yalnız iz sapmasında ~0.1 m (RMS
+    # 0.67 → 0.76), hız ve varış performansı değişmiyor.
+    # ⚠ ÜST SINIR — Parkur-2 geçidi: net açıklık ~1.35 m (kod_denetimi F10.1),
+    # yani merkez hattından duba YÜZEYİNE 0.675 m. Bunun üstündeki her margin
+    # geçidin İÇİNİ sürekli ceza bölgesi yapar; çok büyürse (≥1.5) MPPI
+    # geçitten geçmek yerine ETRAFINDAN dolaşmayı ucuz bulur (görev ihlali).
+    # 1.0 m bu sınırın altında kalır — geçit ölçümü CLAUDE.md'de.
+    # ⚠ Bu SOFT ceza; RRT* safety_margin'i HARD kısıt (bkz. rrt_star.py) —
+    # ikisi eşit OLMAK ZORUNDA DEĞİL, sıralı olmalı: RRT* ≤ MPPI.
+    obstacle_margin: float = 1.0     # m
 
     # Parkur-3 kamikaze modu — hedef noktasına Gaussian çekici (negatif maliyet,
     # engel maliyetini ezer). Kapalı: tamamen geriye uyumlu.
@@ -220,6 +239,52 @@ class MPPIConfig:
     # (≤1 km, 0.5 m aralık) + pay; normal kullanımda tavana değilmez.
     max_ref_points: int = 2048
 
+    # F-M.2: kayan referans penceresi. Tavandaki rotada bile maliyet tensörü
+    # (K, T+1, n_ref) = 1000·51·2048 ≈ 104 M eleman (float32 418 MB; ara
+    # dx/dy/kare geçicileriyle ~1.7 GB) — Orin Nano'nun 8 GB PAYLAŞILAN
+    # belleğinde hem hız hem kapasite darboğazı. Tekne referans üzerinde
+    # MONOTON ilerlediği için tüm referansa bakmak gereksiz: bir önceki
+    # adımın en yakın indeksi (_ref_anchor_idx) etrafındaki dilim yeter.
+    # Pencere NOKTA cinsindendir; metre karşılığı set_reference(spacing) ile
+    # ölçeklenir (0.5 m aralıkta 100 nokta = 50 m ileri, 25 nokta = 12.5 m
+    # geri). Horizon'da kat edilen yol ≤ ~10 m (2.5 s, maks ~7.5 m/s) —
+    # ileri pay 5× güvenli. Kenar durumunda otomatik tam taramaya düşer.
+    ref_window_size: int = 100       # ileri pencere derinliği (nokta)
+    ref_window_enabled: bool = True  # False → eski tam tarama (regresyon testi)
+
+    # F-M.3: terminal maliyet hedefi.
+    #   "global"    = VARSAYILAN, eski davranış — daima ref[-1] (rotanın SONU).
+    #   "lookahead" = çapadan `terminal_lookahead_m` ileride, yay uzunluğu
+    #                 boyunca referans noktası; referans bitince ref[-1]'e
+    #                 düşer (varış davranışı korunur).
+    #
+    # ⚠⚠ MOD DEĞİŞTİRİRKEN w_terminal'i BİRLİKTE AYARLA. Terminal terim
+    # w·d² olduğundan ileri sürüş gradyanı 2·w·d — yani HEDEF UZAKLIĞIYLA
+    # ORANTILI. Uzak hedefte (140 m) gradyan w_control'ü ezer ve fiilen
+    # SEYİR HIZI KONTROLCÜSÜ görevi görür (maliyette ayrı hız terimi YOK).
+    # 15 m'lik hedefte aynı w ile gradyan ~13× düşer ve w_control kazanır:
+    # ölçüm (200 m rota, PARKUR2 profili) — global w=5 → 5.64 m/s, hedefe
+    # 1.42 m; lookahead w=5 → **1.07 m/s, hedefe hiç varamadı (102 m)**.
+    # Telafi ~10×: lookahead + w_terminal=50 → 5.31 m/s, hedefe 1.49 m.
+    #
+    # Lookahead'in ölçülen kazancı (telafi edilmiş w ile, DÖNÜŞLÜ rota):
+    # iz sapması RMS 1.66 → 0.52 m, maks 4.61 → 1.89 m (global terminal
+    # köşe keser; lookahead rotayı takip eder). Düz rotada fark küçük.
+    # Ayrıca sayısal: w·d² uzun rotada dev sabit ofset üretir (300 m'de
+    # ~1.1e5, 1 km'de ~3.6e6); Jetson float32 yolunda bu büyüklüğün ULP'si
+    # ince terimleri kuantalar (ölçüm: 858 m'de ULP 0.25, 3.9 km'de 8.0 —
+    # track std'si 8.6 iken). Lookahead terminali ~1e2-1e3'e indirir.
+    #
+    # terminal_lookahead_m ≥ seyir_hızı × horizon (T·dt) olmalı; altında hedef
+    # rollout uçlarının gerisinde kalır ve fren gibi davranır (ölçüm: 10 m →
+    # 3.85 m/s'de sınırlandı). 40 m'de ise engel açıklığı bozulur (+0.19 →
+    # −0.12 m): uzadıkça global davranışa yaklaşır.
+    # BENİMSENDİ (2026-08-02): varsayılan "lookahead" + profillerde
+    # w_terminal=50 (pipeline._PARKUR_PROFILES). İkisi BİRLİKTE değişir;
+    # w_terminal telafisi olmadan lookahead aracı 1.07 m/s'e düşürür.
+    terminal_mode: str = "lookahead"
+    terminal_lookahead_m: float = 15.0
+
     # Hesap backend'i (docs/mppi_cuda_plani.md): "numpy" = CPU float64
     # (eski davranış birebir), "cupy" = GPU float32, "auto" = cupy+CUDA
     # varsa GPU yoksa numpy. Jetson D3'te ölçüm: bench_mppi.py --backend.
@@ -232,6 +297,14 @@ class MPPIConfig:
     fused_rollout: bool = True
 
     seed: int = 0
+
+    def __post_init__(self) -> None:
+        """Yazım hatası saha ortasında değil, kurulumda patlasın (F-P.18 ruhu)."""
+        if self.terminal_mode not in ("lookahead", "global"):
+            raise ValueError(
+                f"MPPIConfig.terminal_mode geçersiz: {self.terminal_mode!r} "
+                "(geçerli: 'lookahead', 'global')"
+            )
 
 
 # --------------------------------------------------------------------------- #
@@ -272,6 +345,23 @@ class MPPIController:
         # Yoğunlaştırılmış RRT* referansı
         self._ref_xy: Optional[np.ndarray] = None      # (n_ref, 2)
         self._ref_psi: Optional[np.ndarray] = None      # (n_ref,)
+        # Referansın host kopyası — YALNIZ set_reference'ta "referans gerçekten
+        # değişti mi?" karşılaştırması için (cihazda karşılaştırmak senkron
+        # maliyeti getirir; 2048×2 float64 = 32 KB, ihmal edilebilir).
+        self._ref_xy_host: Optional[np.ndarray] = None
+        # Referansın FİİLİ nokta aralığı (m) — set_reference'ta yeniden
+        # örnekleme uniform olduğu için tek skaler yeter; F-M.3 lookahead'i
+        # metreyi indekse bununla çevirir (tavan uygulanınca aralık kabalaşır,
+        # istenen `spacing` değil bu değer doğrudur).
+        self._ref_spacing: float = 0.0
+
+        # F-M.2 kayan pencere durumu: çapa = teknenin son step'te en yakın
+        # olduğu GLOBAL referans indeksi. _trajectory_cost bir sonraki adayı
+        # _pending'e yazar, step() commit eder (maliyet fonksiyonu idempotent
+        # kalsın — art arda iki çağrı aynı pencereyi kullanır).
+        self._ref_anchor_idx: int = 0
+        self._ref_anchor_pending: int = 0
+        self._ref_window_fallbacks: int = 0   # kenar durumu sayacı (test + log)
 
         # Görselleştirme için son rollout snapshot'ı
         self._last_traj: Optional[np.ndarray] = None    # (K, T+1, 6)
@@ -317,6 +407,18 @@ class MPPIController:
         psi = np.arctan2(tan[:, 1], tan[:, 0])
         psi = np.concatenate([psi, [psi[-1]]])
 
+        # F-M.2: kayan pencere çapası YENİ bir referansta sıfırlanır — ama
+        # yalnız referans GERÇEKTEN değiştiyse. Boru hattı
+        # (PlanningPipeline._rebuild_mppi) her engel tazelemesinde AYNI yolla
+        # set_reference çağırır (5-10 Hz); koşulsuz sıfırlama pencereyi sürekli
+        # rotanın başına atar → her adımda kenar-fallback + WARN → kazanç
+        # tamamen kaybolur. (U_nominal'in F11.1 dersinin referans karşılığı.)
+        if self._ref_xy_host is None or not np.array_equal(ref, self._ref_xy_host):
+            self._ref_anchor_idx = 0
+            self._ref_anchor_pending = 0
+        self._ref_xy_host = ref
+        self._ref_spacing = float(s[-1]) / (n_new - 1) if n_new > 1 else 0.0
+
         # Sınır dönüşümü: referans cihaza BİR kez kopyalanır (seyrek çağrı)
         self._ref_xy = self.xp.asarray(ref, dtype=self._dtype)
         self._ref_psi = self.xp.asarray(psi, dtype=self._dtype)
@@ -324,6 +426,29 @@ class MPPIController:
     def reset_warm_start(self) -> None:
         """Başarısız iterasyon sonrası nominal kontrolü sıfırla."""
         self.U_nominal[:] = 0.0
+
+    def carry_state_from(self, other: "MPPIController") -> None:
+        """Eski kontrolcünün SICAK durumunu devral — parkur geçişi (F11.1+F-M.2).
+
+        Ağırlık profili değişince (`_active_mppi_cfg`) boru hattı YENİ bir
+        kontrolcü kurmak zorunda; taze nesne hem warm-start dizisini hem kayan
+        pencere çapasını sıfırdan başlatır → tek adımlık zikzak + tek adımlık
+        tam tarama (~790 ms ölçüldü). İkisi de burada taşınır.
+
+        `set_reference` çağrıldıktan SONRA çağrılmalı: çapa yalnız referans
+        birebir aynıysa taşınır — yol gerçekten değiştiyse eski indeks
+        anlamsızdır, 0'da kalır (kenar-fallback ilk adımda düzeltir).
+        """
+        if other.U_nominal.shape == self.U_nominal.shape:
+            self.U_nominal[:] = other.U_nominal
+        ayni_referans = (
+            self._ref_xy_host is not None
+            and other._ref_xy_host is not None
+            and np.array_equal(self._ref_xy_host, other._ref_xy_host)
+        )
+        if ayni_referans:
+            self._ref_anchor_idx = other._ref_anchor_idx
+            self._ref_anchor_pending = other._ref_anchor_pending
 
     def set_obstacles(self, obstacles: Sequence[CircleObstacle]) -> None:
         """Engel listesini yerinde güncelle — warm-start (U_nominal) KORUNUR.
@@ -460,6 +585,68 @@ class MPPIController:
         )
         return traj
 
+    # ----- referans penceresi (F-M.2) -----
+
+    def _ref_window(self, n_ref: int) -> Tuple[int, int]:
+        """Çapa etrafındaki [lo, hi) referans dilimi.
+
+        Asimetrik: geriye `size//4`, ileriye `size` — tekne referans üzerinde
+        ilerlediği için ileri pay geniş, geri pay yalnız salınım/akıntı
+        sapmasını karşılar. Dilim daima referans sınırlarına kırpılır; kısa
+        referansta (n_ref ≤ span) doğal olarak tam taramaya eşitlenir.
+        """
+        w = max(1, int(self.cfg.ref_window_size))
+        anchor = min(max(self._ref_anchor_idx, 0), n_ref - 1)
+        return max(0, anchor - w // 4), min(n_ref, anchor + w)
+
+    def _nearest_ref(
+        self, xs: np.ndarray, ys: np.ndarray, lo: int, hi: int
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """[lo, hi) dilimindeki en yakın referans → (idx_local, d2_min).
+
+        idx_local dilime GÖRE indekstir (global için `+ lo`). Baskın maliyet
+        tensörü (K, T+1, hi-lo) burada doğar ve fonksiyon kapsamında ölür —
+        çağıran yalnız iki (K, T+1) diziyi tutar.
+        """
+        xp = self.xp
+        ref = self._ref_xy[lo:hi]                         # cihazda view, kopya yok
+        dx = xs[:, :, None] - ref[None, None, :, 0]
+        dy = ys[:, :, None] - ref[None, None, :, 1]
+        d2 = dx * dx + dy * dy                            # (K, T+1, hi-lo)
+        idx_local = xp.argmin(d2, axis=-1)                # (K, T+1)
+        d2_min = xp.take_along_axis(d2, idx_local[..., None], axis=-1)[..., 0]
+        return idx_local, d2_min
+
+    def _terminal_goal(self, anchor: int) -> np.ndarray:
+        """Terminal maliyetin hedef noktası (F-M.3) — (2,) cihaz dizisi.
+
+        "global": rotanın sonu (ref[-1]) — eski davranış.
+        "lookahead": çapadan `terminal_lookahead_m` ileride, YAY UZUNLUĞU
+        boyunca. Yeniden örnekleme uniform olduğu için yay → indeks çevrimi
+        tek bölme; referans biterse doğal olarak ref[-1]'e kırpılır (varış
+        davranışı aynen korunur).
+        """
+        ref = self._ref_xy
+        if self.cfg.terminal_mode != "lookahead" or self._ref_spacing <= 0.0:
+            return ref[-1]
+        adim = int(round(self.cfg.terminal_lookahead_m / self._ref_spacing))
+        return ref[min(ref.shape[0] - 1, max(0, anchor) + adim)]
+
+    def _window_edge_hit(
+        self, idx_local: np.ndarray, lo: int, hi: int, n_ref: int
+    ) -> bool:
+        """En yakın nokta pencerenin YAPAY kenarına yapıştı mı?
+
+        Yapıştıysa gerçek en yakın nokta pencere dışında kalmış olabilir
+        (tekne geri gitti, referans yeniden planlandı, poz ışınlandı) → çapa
+        güvenilmez. Referansın GERÇEK uçları (lo==0 / hi==n_ref) kenar
+        sayılmaz: orada tam tarama da aynı sonucu verirdi; aksi hâlde rota
+        başında ve hedefe varışta her adım boşuna fallback + WARN olurdu.
+        """
+        if lo > 0 and bool((idx_local == 0).any()):
+            return True
+        return hi < n_ref and bool((idx_local == hi - lo - 1).any())
+
     # ----- maliyet -----
 
     def _trajectory_cost(
@@ -478,22 +665,52 @@ class MPPIController:
         if self._ref_xy is not None and self._ref_psi is not None:
             ref = self._ref_xy
             psi_ref = self._ref_psi
+            n_ref = ref.shape[0]
 
-            dx = xs[:, :, None] - ref[None, None, :, 0]
-            dy = ys[:, :, None] - ref[None, None, :, 1]
-            d2 = dx * dx + dy * dy                       # (K, T+1, n_ref)
-            idx_min = xp.argmin(d2, axis=-1)             # (K, T+1)
-            d2_min = xp.take_along_axis(
-                d2, idx_min[..., None], axis=-1
-            )[..., 0]
+            # F-M.2: en yakın nokta araması tam referansta değil, çapa
+            # etrafındaki dilimde. Kısıtlı küme üzerinde min alındığı için
+            # d2_min yalnız BÜYÜYEBİLİR — yani pencere dışına savrulan
+            # rollout'un takip maliyeti olduğundan yüksek çıkar; referansa
+            # yakın (kararı belirleyen) rolloutlarda sonuç birebir aynıdır.
+            lo, hi = (
+                self._ref_window(n_ref) if cfg.ref_window_enabled else (0, n_ref)
+            )
+            idx_local, d2_min = self._nearest_ref(xs, ys, lo, hi)
+
+            if self._window_edge_hit(idx_local, lo, hi, n_ref):
+                # Çapa güvenilmez → bu adımda tam tarama, çapayı yeniden bul.
+                self._ref_window_fallbacks += 1
+                n = self._ref_window_fallbacks
+                if n == 1 or n % 50 == 0:                # 20 Hz'te log seli olmasın
+                    logging.getLogger(__name__).warning(
+                        "MPPI referans penceresi kenarında eşleşme (çapa=%d, "
+                        "pencere=[%d,%d), n_ref=%d) → bu adımda TAM tarama, "
+                        "çapa yeniden bulundu (toplam %d kez). Sürekli "
+                        "tekrarlıyorsa ref_window_size küçük veya referans "
+                        "sık yeniden planlanıyor.",
+                        self._ref_anchor_idx, lo, hi, n_ref, n,
+                    )
+                lo, hi = 0, n_ref
+                idx_local, d2_min = self._nearest_ref(xs, ys, lo, hi)
+
+            idx_min = idx_local + lo                     # (K, T+1) GLOBAL indeks
+            # Sonraki adımın çapası = teknenin ŞU ANKİ (t=0) en yakın indeksi.
+            # step() içinde tüm rolloutlar aynı x0'dan başlar → sütun sabittir;
+            # medyan white-box çağrılarda da tek stabil değer verir.
+            anchor_now = int(self._as_numpy(xp.median(idx_min[:, 0])))
+            self._ref_anchor_pending = anchor_now
             cost += cfg.w_track * d2_min.sum(axis=1)
 
             psi_nearest = psi_ref[idx_min]               # (K, T+1)
             yaw_err = _wrap_angle(psis - psi_nearest, xp)
             cost += cfg.w_heading * (yaw_err ** 2).sum(axis=1)
 
-            # Terminal: rolloutun son noktası referansın bitişine yakın olsun
-            goal = ref[-1]
+            # Terminal (F-M.3): rolloutun son noktası hedefe yakın olsun.
+            # ⚠ Hedef ASLA kayan pencerenin ucu DEĞİL — ya global rota sonu
+            # (terminal_mode="global") ya da çapadan sabit yay uzaklığındaki
+            # nokta ("lookahead"). Dilimin ucu alınırsa araç pencere sınırını
+            # hedef sanar.
+            goal = self._terminal_goal(anchor_now)
             dxg = xs[:, -1] - goal[0]
             dyg = ys[:, -1] - goal[1]
             cost += cfg.w_terminal * (dxg * dxg + dyg * dyg)
@@ -561,6 +778,9 @@ class MPPIController:
         # Rollout & maliyet
         traj = self._rollout(state_xp, V)
         S = self._trajectory_cost(traj, V)
+        # F-M.2: kayan pencere çapasını bir sonraki iterasyon için ilerlet.
+        # Erken dönüş yollarından ÖNCE — çapa hiçbir adımda takılı kalmasın.
+        self._ref_anchor_idx = self._ref_anchor_pending
 
         # Softmax ağırlık (numerik stabil)
         S_min = S.min()

@@ -152,6 +152,79 @@ LiDAR engel haritası ──→ Cost map (≥1 Hz) ─────────�
 - **Tuning:** GPS gürültü modeli (~2 cm RTK fix), IMU bias rastgele yürüyüşü.
   Gerçek değerleri saha testinden ölçeceksin.
 
+### Sağlamlaştırma (2026-08-01) — outlier reddi + keyframe throttle
+
+> Üç kapı eklendi: **robust GPS**, **fix-kalitesi sigma'sı**, **key throttle**.
+> Hepsi geri uyumlu — eski davranış tek bayrakla geri gelir.
+
+**1. Robust GPS (Huber M-estimator)** — `isam2_smoother.py`
+
+- Tek kötü fix (multipath, RTK kaybı) saf Gauss modelinde kare-hatayla
+  cezalandırıldığı için TÜM çözüm penceresini kendine çeker.
+- `gps_robust_enabled: true` (varsayılan) → GPS prior'unun gürültü modeli
+  `noiseModel.Robust.Create(mEstimator.Huber.Create(gps_huber_k), base)`
+  ile sarılır. `gps_huber_k = 1.345` (σ katı) literatür standardı: Gauss
+  gürültüde en küçük kareler verimliliğinin %95'i korunur.
+- **Ölçülen etki** (40 key düz çizgi, 20. keye **10 m** outlier):
+  | | maks. sapma | RMS |
+  |---|---|---|
+  | robust KAPALI | 4.541 m | 0.823 m |
+  | robust AÇIK | 0.113 m | 0.020 m |
+  → **40× iyileşme**. Boru hattı seviyesinde (lat/lon→ENU, 30 s senaryo):
+  6.244 m → 0.224 m. Outlier YOKKEN iki mod arasında fark ~0 (Huber temiz
+  veride bedelsiz).
+- `gps_robust_enabled: false` → eski saf `Diagonal.Sigmas` modeli birebir.
+- ⚠ Kernel YALNIZ GPS'e uygulanır; odometri (IMU) outlier üretmez.
+
+**2. Fix kalitesine göre sigma** — `gps_quality.py` + `fusion_node`
+
+- `NavSatFix.status.status` okunur (eskiden yalnız `< 0` kontrolü vardı,
+  fix tipi tamamen yok sayılıyordu → RTK ile tek-nokta çözüm aynı ağırlıkta):
+
+  | status | anlam | σ (m) |
+  |---|---|---|
+  | `STATUS_GBAS_FIX` (2) | RTK fixed | 0.05 |
+  | `STATUS_SBAS_FIX` (1) | SBAS düzeltmeli | 0.50 |
+  | `STATUS_FIX` (0) | tek nokta | 2.50 |
+  | `STATUS_NO_FIX` (-1) | fix yok | **add_gps ÇAĞRILMAZ** + WARN |
+
+- Eşikler `hardware.yaml` → `fusion.gps_sigma_by_status`; launch-arg
+  override: `fusion.gps_sigma_by_status` düzleştirilip
+  `fusion.gps_sigma_gbas_fix:=0.02` gibi verilir.
+- Çekirdek (`prototype/fusion/gps_quality.py`) **ROS-bağımsız** — NavSatStatus
+  sabitleri düz int; rclpy'siz pytest'te koşar.
+- Bilinmeyen pozitif status → tablodaki EN KÖTÜMSER σ (sessizce RTK sanma).
+- ⚠ `mock_sensors` artık fix durumunu **enjekte ettiği gürültüden** türetir
+  (`_status_for_sigma`); sabit "status=2 (RTK)" derken 0.30 m gürültü basmak
+  smoother'a σ=0.05 dedirtirdi (36× fazla güven).
+
+**3. Keyframe throttle** — `pipeline.py`
+
+- **Teşhis:** key kadansı `odom_period_s`'e bağlıydı → 20 dk'lık yarışma
+  görevinde **11 416 key**. Graf ve her `calculateEstimate()` bununla
+  doğru orantılı büyür.
+- `keyframe_rate_hz: 5.0` (varsayılan) key üretimine tavan koyar; ara IMU
+  adımları **Pose2 kompozisyonuyla** biriktirilip **tek `BetweenFactor`**
+  olur. `<= 0` → throttle kapalı (eski kadans).
+- **Ölçülen** (20 dk, IMU 50 Hz + GPS 1 Hz): 11 416 key / 17.8 s füzyon CPU
+  → **6 000 key / 4.0 s** (4.5× ucuz). Aynı senaryoda iki ayarın ürettiği
+  poz farkı **< 1 cm** — bilgi kaybı yok.
+- Biriktirme eski koddan **daha doğru**: eski `_flush` yalnız SON hız
+  örneğini periyotla çarpıyordu (ZOH); artık her IMU alt adımı entegre edilir.
+- Odometri σ'sı `√(Δt/odom_period_s)` ile ölçeklenir (`add_odometry(
+  sigma_scale=...)`) — yoksa daha az/uzun faktör zinciri aynı sürede sahte
+  güven kazanıp GPS'i bastırırdı. Throttle kapalıyken katsayı tam 1.0.
+
+**Açık bulgu — `calculateEstimate()` sıcak yolda O(N)**
+
+`_flush()` her key'de argümansız `self._isam.calculateEstimate()` çağırıyor;
+bu TÜM değişkenler için Values üretir. Ölçüm: N=500 → 0.015 ms, N=4500 →
+0.121 ms (doğrusal). Görev boyunca toplam maliyet O(N²). Throttle bunu 4.5×
+küçülttü ama **kök neden duruyor** — `current_pose()` yalnız son key'i
+istiyor. Düzeltme adayı: tek-key `calculateEstimate(key)` + `all_poses()`
+için ayrı tam sorgu. `all_poses()`/`all_xy_psi()` sıcak yolda DEĞİL (yalnız
+offline demo + testler).
+
 ---
 
 ## 🌳 RRT* (Global Planlama)
@@ -180,15 +253,314 @@ LiDAR engel haritası ──→ Cost map (≥1 Hz) ─────────�
   T=50 step (horizon 2.5 s @ dt=0.05 s), λ=1.0, Σ_u sürat ve heading
   için ayrı ayar.
 - **Maliyet:** `cost = w1·yörünge_sapma + w2·engel_yakınlık + w3·heading_hata
-  + w4·kontrol_efor + w5·sınır_dışı_ceza`. Parkur-1: w2 düşük. Parkur-2:
-  w2 yüksek, engel haritası girer. Parkur-3: hedef duba **negatif maliyet**
-  (çekici), engel maliyetini ezer.
+  + w4·kontrol_efor + w5·sınır_dışı_ceza + w6·terminal`. Parkur-1: w2 düşük.
+  Parkur-2: w2 yüksek, engel haritası girer. Parkur-3: hedef duba **negatif
+  maliyet** (çekici), engel maliyetini ezer.
+  ⚠ Maliyette **ayrı hız terimi YOK** — seyir hızını fiilen terminal terimin
+  gradyanı (2·w_terminal·d) belirler. `terminal_mode`/`w_terminal`/`lambda_`
+  değiştirirken bunu hatırla (F-M.3 ve λ bölümleri).
 - **Gerçek zamanlı kısıt (GÜNCEL):** bugün CPU ~100 ms/iter →
   `control_rate_hz: 10.0` (params.yaml, F4.2). 50 Hz (20 ms) ancak CUDA
   portuyla; TYF raporu Jetson median 17.6 ms — saha testinde doğrula.
 - **CPU vs GPU:** NumPy CPU sürümü ~100 ms, prototip için yeter. CUDA
   (CuPy/raw kernel) Jetson testinde gerekli.
 - **Çıktı:** ilk kontrol adımı (u_l, u_r) → Cascade PID iç döngüsüne.
+
+### Kayan Referans Penceresi (F-M.2, 2026-08-02) — maliyet tensörü küçültme
+
+> Takip maliyetinin en yakın-nokta araması TÜM referansta değil, çapa
+> (anchor) etrafındaki dilimde yapılır. Geri uyumlu: tek bayrakla eski
+> tam tarama geri gelir.
+
+**Teşhis:** `_trajectory_cost` her adımda `d2 = (K, T+1, n_ref)` tam tensörünü
+kuruyordu. Yarışma ölçeğinde (K=1000, T+1=51, n_ref=2048 — F-M.1 tavanı, 1 km
+rota @0.5 m) **102 M eleman**: float32 389 MiB / float64 779 MiB, üstelik `dx`,
+`dy` ve kare geçicileri aynı anda canlı → tepe kullanım ~3-4×. Orin Nano'nun
+**8 GB PAYLAŞILAN** (CPU+GPU) belleğinde hem kapasite hem hız darboğazı.
+(CLAUDE.md'deki "~100 ms/iter" ölçümü n_ref≈114'lük demo sahnesine aitti;
+gerçek rota uzunluğunda maliyet doğrusal büyüyordu.)
+
+**Çözüm:** Tekne referans üzerinde **monoton ilerler** → önceki adımın en yakın
+indeksi (`_ref_anchor_idx`) etrafındaki dilim yeter:
+`lo = max(0, çapa − size/4)`, `hi = min(n_ref, çapa + size)` — asimetrik
+(geriye az, ileriye çok). `MPPIConfig`:
+
+| parametre | varsayılan | anlamı |
+|---|---|---|
+| `ref_window_size` | `100` | ileri pencere derinliği (**nokta**; 0.5 m aralıkta 50 m ileri + 12.5 m geri) |
+| `ref_window_enabled` | `True` | `False` → eski tam tarama (regresyon/A-B ölçümü) |
+
+**Ölçülen** (K=1000, T=50, n_ref=2001, numpy float64, Ryzen CPU, rota ortasından):
+
+| | step süresi | d2 elemanı | float32 | float64 |
+|---|---|---|---|---|
+| tam tarama | 736 ms | 102 051 000 | 389 MiB | 779 MiB |
+| pencereli | **58 ms** | **6 375 000** | 24 MiB | 49 MiB |
+| kazanç | **12.6×** | **16.0×** | −365 MiB | −730 MiB |
+
+Boru hattı seviyesinde (`PlanningPipeline`, RRT* referansı n_ref=632, 400 adım,
+10 Hz engel tazeleme): **258.6 ms → 61.1 ms (4.2×)**, p95 279 → 68 ms, 0
+fallback, son konum birebir aynı. (Kazanç oranı n_ref ile büyür: pencere sabit
+125 nokta tarar, tam tarama rota uzunluğuyla doğrusal.)
+
+Kapalı döngüde (dönüşlü rota, engelli, 745 adım) iki mod **bit-birebir**:
+maks |Δu₀| = 0.0 N, goal hatası 1.443 m (ikisinde de), iz sapması maks 5.846 m
+/ RMS 1.769 m (ikisinde de). Beklenen: gerçek argmin pencere içinde kaldığı
+sürece maliyet değişmez; dışına savrulan rollout'un takip maliyeti yalnız
+BÜYÜR (min kısıtlı küme üzerinde) — zaten cezalandırılması gereken rollout.
+
+**Kenar güvenliği:** en yakın nokta pencerenin **yapay** kenarına yapışırsa
+(referansın gerçek uçları sayılmaz — yoksa rota başında/hedefte her adım
+tetiklenirdi) o adım **tam taramaya düşer**, çapa yeniden bulunur, WARN
+loglanır (`_ref_window_fallbacks` sayacı; log 1. ve her 50. olayda — 20 Hz'te
+sel olmasın). Ölçülen bedel: fallback adımı **791 ms** (≈ tam tarama), sonraki
+adımlar 58 ms'e döner. Ne zaman tetiklenir:
+- ~~Parkur geçişinde yeni kontrolcü kurulması~~ → **kapatıldı** (aşağıya bak):
+  `carry_state_from` çapayı da taşıyor, geçişte fallback yok.
+- Tekne >12.5 m geri giderse, poz sıçrarsa (GPS/iSAM2 reinit).
+- Gerçek yeniden planlamada tetiklenmez: RRT* ve video bypass'ı referansı
+  **teknenin mevcut pozundan** başlatır → çapa 0 zaten doğru.
+
+**⚠ Çapa sıfırlama kuralı:** `set_reference` çapayı yalnız referans GERÇEKTEN
+değiştiyse sıfırlar. Boru hattı (`PlanningPipeline._rebuild_mppi`) her engel
+tazelemesinde AYNI yolla `set_reference` çağırır (5-10 Hz); koşulsuz sıfırlama
+pencereyi sürekli rotanın başına atar (U_nominal'in F11.1 dersinin referans
+karşılığı). **Ölçülen fark** — yukarıdaki 400 adımlık boru hattı koşusunda
+koşulsuz sıfırlama: ort **124.7 ms** (kazanç 4.2× → 2.1×), **112/400 adımda**
+fallback, **p95 300.8 ms** — yani en kötü %5 tam taramadan bile KÖTÜ (pencere
+denemesi + tam tarama üst üste). Davranış her üç kolda birebir aynı; fark
+tamamen hız/gecikme.
+
+**⚠ Terminal maliyet pencereden BAĞIMSIZ** — hedef ASLA dilimin ucu değil
+(bkz. F-M.3); dilimin ucu hedef sanılırsa araç pencere sınırında takılır.
+
+### Parkur Geçişinde Sıcak Durum Taşıma (2026-08-02)
+
+`MPPIController.carry_state_from(other)` — ağırlık profili değişince
+(`_rebuild_mppi`) YENİ kontrolcü kurulur; eskisinin **U_nominal**'i (warm-start,
+F11.1) **ve kayan pencere çapası** (F-M.2) devredilir. Çapa yalnız referans
+birebir aynıysa taşınır (`set_reference`'tan SONRA çağrılmalı).
+
+**Ölçülen** (boru hattı, K=1000, n_ref=632, PARKUR1→PARKUR2 geçişi):
+
+| | geçiş adımı | fallback | maks \|ΔU_nominal\| |
+|---|---|---|---|
+| taşıma yok | 304.5 ms | 1 | 30.0 N (doygunluktan sıfıra sıçrama) |
+| taşıma var | **62.2 ms** (= normal adım) | 0 | **0.0 N** |
+
+---
+
+## 🎯 MPPI Terminal Maliyeti (F-M.3, 2026-08-02)
+
+> `terminal_mode` = `"global"` (VARSAYILAN, eski davranış) | `"lookahead"`.
+> Ölçüm bulguları aşağıda — **mod değiştirirken `w_terminal` de değişmeli.**
+
+**Ölçülen maliyet bileşeni tablosu** (300 m rota, 150 m'de rotanın üstünde
+2 m yarıçaplı engel, tekne 8 m geride 4 m/s, K=1000, PARKUR2 profili). Softmax
+`S_min` çıkardığı için ORTALAMA değil **STANDART SAPMA** ayırt edicidir:
+
+| bileşen | ortalama | std | std payı |
+|---|---|---|---|
+| `w_obstacle` | 1 623 | **868** | **79.1%** |
+| `w_terminal` | **113 763** | 192 | 17.5% |
+| `w_track` | 57 | 29 | 2.7% |
+| `w_control` | 53 | 6 | 0.6% |
+| `w_heading` | 2 | 1.5 | 0.1% |
+| `w_boundary` | 0 | 0 | 0% |
+
+- **Terminal ortalamada 70× baskın, ayırt edicilikte DEĞİL.** "Uzun referans
+  terminal farkı engel maliyetini eziyor" hipotezi ölçümde doğrulanmadı: engel
+  terimi silindiğinde u₀ **25.3 N** değişiyor (PARKUR1 profilinde 5.8 N) —
+  engel softmax'ta net görünüyor.
+- **Asıl bulgu — softmax dejenere: ESS = 1.0 / 1000.** λ=1.0 maliyet ölçeğine
+  göre çok küçük; tek rollout w=1.0 alıyor, MPPI fiilen "en iyi rastgele
+  örneği seç"e düşüyor (ortalama alma özelliği kayıp). λ=1000'de ESS 740/1000
+  ama bu sefer engelin u₀'a etkisi 0.34 N'a düşüyor — λ ayrı bir tune ekseni,
+  saha testinde ölçülmeli.
+- **Sayısal (Jetson float32):** `w·d²` uzun rotada dev sabit ofset üretir.
+  858 m hedefte ULP 0.25, 3.9 km'de **ULP 8.0** iken `w_track` std'si 8.6 —
+  yani uzun rotada ince terimler kuantalanıyor. Lookahead terminali 113 763 →
+  321 (w=5) / 3 141 (w=50) ölçeğine indirir.
+
+**⚠ Lookahead'e geçerken w_terminal telafisi ZORUNLU.** Terminal `w·d²`'nin
+gradyanı `2·w·d` — hedef uzaklığıyla orantılı. Maliyette **ayrı hız terimi
+yok**; uzak hedefin gradyanı fiilen seyir hızı kontrolcüsü görevi görüyor.
+Ölçüm (200 m rota, engelli, PARKUR2):
+
+| mod | w_terminal | seyir hızı | goal hatası | min açıklık | iz sapma RMS |
+|---|---|---|---|---|---|
+| global | 5 | 5.64 m/s | 1.42 m | +0.08 m | 0.67 m |
+| lookahead | 5 | **1.07 m/s** | **102.6 m (varamadı)** | +0.53 m | 0.11 m |
+| lookahead | 50 | 5.31 m/s | 1.49 m | +0.21 m | 0.56 m |
+| lookahead | 100 | 5.52 m/s | 1.43 m | +0.16 m | 0.57 m |
+
+Telafisiz lookahead'in "daha iyi açıklığı" (+0.53 m) kazanç değil **yavaşlığın
+yan etkisi**. Eşleşen hızda açıklık farkı +0.08 → +0.21 m ile sınırlı.
+
+**Lookahead'in gerçek kazancı — DÖNÜŞLÜ rotada köşe kesmeme** (eşleşen hız):
+
+| mod (w_terminal) | iz sapma RMS | iz sapma maks | min açıklık | adım süresi |
+|---|---|---|---|---|
+| global (5) | 1.66 m | 4.61 m | +0.22 m | 53.0 ms |
+| lookahead (50) | **0.52 m** | **1.89 m** | +0.29 m | 56.4 ms |
+
+**`terminal_lookahead_m` seçimi:** ≥ seyir_hızı × horizon (T·dt) olmalı.
+Ölçüm (w=50): 10 m → hız 3.85 m/s'de sınırlanıyor (fren); 15 m → 5.31 m/s;
+25 m → 5.89 m/s; 40 m → açıklık +0.19 → −0.12 m'ye bozuluyor (global'e
+yaklaşıyor). **15-25 m** aralığı makul.
+
+**✅ BENİMSENDİ (2026-08-02):** `terminal_mode="lookahead"` varsayılan +
+`_PARKUR_PROFILES` üçünde de `w_terminal=50.0`. **İKİSİ AYRILMAZ** — biri
+diğeri olmadan değiştirilirse araç ya sürünür (w=5) ya köşe keser (global,
+w=50 gereksiz). `test_terminal_mode_varsayilan_lookahead` ikisini birden
+donduruyor. ⚠ Göl testinde doğrulanacak.
+
+**Boru hattı doğrulaması** (300 adım, K=1000, RRT* referansı + yol kenarında
+engel; eski↔yeni varsayılanlar):
+
+| varsayılan seti | iz sapma RMS | maks | seyir hızı | adım süresi |
+|---|---|---|---|---|
+| eski (global, w=5, margin 0.5) | 0.98 m | 1.68 m | 4.98 m/s | 65.1 ms |
+| **yeni** (lookahead, w=50, margin 1.0) | **0.20 m** | **0.50 m** | 4.65 m/s | 65.3 ms |
+
+İz takibi **4.9× daha iyi**, bedel %7 hız. Kayan pencere değişmezliği korunuyor
+(pencere açık/kapalı son konum birebir aynı).
+
+---
+
+## 🛟 Emniyet Payları — `obstacle_margin` ↔ `safety_margin` (F9.2 kapandı)
+
+> **İkisi eşit DEĞİL, sıralı:** RRT* `safety_margin` **0.5 m** (HARD kısıt,
+> bu payın içinden yol geçmez) ≤ MPPI `obstacle_margin` **1.0 m** (SOFT
+> quadratic barrier). Üst sınırı Parkur-2 geçidi belirler.
+
+**Açık alanda margin taraması** (tekne yarı genişliği **0.375 m** — gövde
+0.75 m, `kod_denetimi` F9.2; açıklık = engel YÜZEYİNE mesafe):
+
+| `obstacle_margin` | min açıklık | gövde payı | iz sapma RMS | goal hatası |
+|---|---|---|---|---|
+| 0.5 (eski) | +0.08 m | **−0.29 m → ÇARPMA** | 0.67 m | 1.42 m |
+| **1.0 (benimsendi)** | +0.54 m | **+0.17 m** | 0.76 m | 1.47 m |
+| 1.5 | +0.95 m | +0.58 m | 0.87 m | 1.46 m |
+
+Yaklaşık kural: **açıklık ≈ margin − 0.45 m**. Hız ve varış performansı
+değişmiyor, bedel iz sapmasında ~0.1 m.
+
+**⚠ ÜST SINIR — Parkur-2 geçidi (net açıklık ~1.35 m, duba r=0.15 m → merkez
+hattından duba YÜZEYİNE 0.675 m).** Geçitten geçiş ölçümü:
+
+| MPPI `obstacle_margin` | geçitten geçti mi | geçitte yanal sapma | duba yüzeyine açıklık |
+|---|---|---|---|
+| 0.3 / 0.5 / 0.675 / **1.0** | ✅ evet | 0.02-0.04 m (tam orta) | +0.64…+0.67 m |
+| 1.5 | ❌ **HAYIR** — geçit önünde durdu (x=38, geçit x=40) | — | — |
+
+1.5 m'de ceza bölgesi geçidin tamamını kaplıyor; MPPI geçitten geçmeyi
+etraftan dolaşmaktan pahalı buluyor → **görev ihlali**. 1.0 m güvenli tarafta.
+
+| RRT* `safety_margin` | 10 seed'de plan | ort yol | yorum |
+|---|---|---|---|
+| 0.3 (eski) / **0.5** | 10/10 | **60.00 m** | geçidin TAM içinden (düz) |
+| 0.675 | 10/10 | 60.08 m | sapmaya başlıyor |
+| 1.0 | 10/10 | 60.14 m | ⚠ "başarılı" ama geçidin **ETRAFINDAN** — sessiz görev ihlali |
+
+RRT* asla hata vermez, sadece geçidi es geçer — bu yüzden payı MPPI'ninkiyle
+eşitlemek YANLIŞ olurdu. **0.3 → 0.5** yükseltildi (0.3 m tekne yarı
+genişliğinin altındaydı; global yol gövdenin sığmayacağı kadar yakın
+planlanabiliyordu). F10.1 ret yarıçapı 0.45 → 0.65 m; geçit merkezinde tekne
+duba merkezine 0.825 m'de kaldığı için hâlâ güvenli.
+
+Geçidin fiziği: merkez hattında gövde payı 0.675 − 0.375 = **0.30 m/yan** —
+bunu hiçbir parametre büyütemez, geçit dar. Deniz Durumu-2 sürüklenmesi burada
+gerçek risk; saha testinde ölç.
+
+---
+
+## 🌡️ MPPI λ (softmax sıcaklığı) — BENİMSENDİ (2026-08-02)
+
+> λ artık `ParkurProfile.lambda_` ile parkur başına: **PARKUR1/2 = 10.0**,
+> **PARKUR3 = 50.0** (eskiden global `MPPIConfig` 1.0). ⚠ Göl testinde doğrula.
+
+Dönüşlü engelli rota, PARKUR2 profili (benimseme sonrası ayarlar), K=1000:
+
+| λ | ESS ort | ESS p5 | sapma RMS | maks | açıklık | goal | hız | **\|Δu₀\| RMS** | ms |
+|---|---|---|---|---|---|---|---|---|---|
+| **1 (mevcut)** | **2.6** | **1.0** | 0.61 | 2.34 | +0.72 | 1.42 | 5.26 | **9.95 N** | 61.8 |
+| **10** | 176 | 9.2 | 0.63 | 2.35 | +0.73 | 1.47 | 5.23 | **3.44 N** | 62.1 |
+| 50 | 462 | 216 | 0.69 | 2.40 | +0.75 | 1.44 | 4.29 | 2.64 N | 64.2 |
+| 100 | 661 | 530 | 0.72 | 2.39 | +0.69 | 1.42 | 3.38 | 2.46 N | 63.5 |
+| 500 | 954 | 942 | 1.00 | 3.01 | +6.10 | **69.2 ✗** | 1.39 | 2.18 N | 68.7 |
+| 1000 | 987 | 983 | 1.07 | 2.76 | +28.6 | **91.6 ✗** | 0.89 | 2.15 N | 67.5 |
+
+- **λ=1 dejenere:** ESS 2.6/1000, p5 = 1.0 → adımların en az %5'inde MPPI
+  ağırlıklı ortalama YAPMIYOR, tek rastgele örneği seçiyor. Sonuç: adımlar
+  arası |Δu₀| RMS **9.95 N** — ±30 N eyleyicide her 50 ms'de ~%33 sıçrama.
+  ("MPPI ilk iterasyon kararsız / zikzak" tuzağının ölçülmüş hâli.)
+- **λ=10 tatlı nokta:** |Δu₀| 9.95 → 3.44 N (**2.9× yumuşak**), iz sapması /
+  açıklık / goal / hız **pratikte değişmiyor**. Bedava kazanç.
+- λ≥50'de seyir hızı düşmeye başlıyor (5.23 → 4.29 → 3.38); λ≥500'de araç
+  **hedefe hiç varamıyor** — ağırlıklı ortalama maliyet farklarını siliyor,
+  kontrol nominale çöküyor. λ≥500'deki "yüksek açıklık" kazanç değil, aracın
+  engele hiç yaklaşamamasının yan etkisi.
+- λ'nın adım süresine etkisi yok (62-69 ms, gürültü içinde).
+
+**PARKUR3 (kamikaze) ayrı ölçüldü** — hedef 50 m ileride, yolda 2 dikkat
+dağıtıcı engel, K=1000:
+
+| λ | temas | **temas hızı** | \|Δu₀\| RMS | ESS ort | ESS p5 | adım |
+|---|---|---|---|---|---|---|
+| 1 | 0.25 m ✓ | 0.97 m/s | 8.34 N | 3.1 | 1.0 | 234 |
+| 10 | 0.30 m ✓ | 1.18 m/s | 4.52 N | 199 | **1.9** | 230 |
+| **50** | 0.28 m ✓ | **1.81 m/s** | 2.87 N | 475 | **112** | 260 |
+| 100 | 0.23 m ✓ | 1.48 m/s | 2.39 N | 679 | 438 | 327 |
+
+PARKUR3'te λ=10 **hâlâ dejenere** (ESS p5 = 1.9): kamikaze çekicisi
+(`w_kamikaze`·(T+1) ≈ 2550) maliyet yayılımını büyüttüğü için aynı λ daha sert
+softmax demek — λ maliyet ÖLÇEĞİYLE birlikte seçilmeli. λ=50: p5 112,
+**temas hızı +%53 (1.18 → 1.81 m/s)**. Bu metrik kritik çünkü Parkur-3'ün
+bitişi IMU şok eşiğiyle algılanıyor (`fsm_node shock_threshold_g = 5.0`) —
+yavaş temas = algılanmayan görev sonu. Bedel: yaklaşma %13 uzun (230 → 260
+adım). λ=100 daha da yumuşak ama temas hızı geri düşüyor (1.48).
+
+**Boru hattı doğrulaması** (300 adım, K=1000, PARKUR1, dağıtılan varsayılanlar):
+
+| | konum | hız | iz sapma RMS | **\|Δu₀\| RMS** | ms |
+|---|---|---|---|---|---|
+| λ=1 (önceki) | (67.78, 13.62) | 4.65 m/s | 0.20 m | 9.51 N | 68.6 |
+| **λ=10 (profil)** | (67.07, 13.49) | 4.61 m/s | 0.19 m | **4.80 N** | 69.3 |
+
+Kontrol yumuşaklığı **2.0×**, takip/hız/süre değişmedi.
+
+---
+
+## 🎛️ MPPI Saha Tuning Yüzeyi (ROS parametreleri, 2026-08-02)
+
+> Göl/yarışma gününde **yeniden derlemeden** ayarlanır. Üç katman:
+> `config/params.yaml` (node varsayılanı) → `config/hardware.yaml` `planning:`
+> bloğu (saha kökü) → `hardware.launch` CLI argümanı (anlık deneme).
+
+| ROS parametresi | varsayılan | sınır / not |
+|---|---|---|
+| `mppi_lambda` | `0.0` | **nöbetçi**: 0 → parkur profili kazanır (P1/P2=10, P3=50). >0 → üçünü de ezer |
+| `mppi_sigma_u` | `5.0` | N, kontrol gürültüsü σ |
+| `mppi_obstacle_margin` | `1.0` | m, SOFT ceza. ⚠ 1.5 Parkur-2 geçidini kapatır |
+| `mppi_terminal_mode` | `lookahead` | `global` = eski davranış; geçersiz değer → WARN + varsayılan (node ölmez) |
+| `mppi_terminal_lookahead_m` | `15.0` | m; ≥ seyir_hızı × horizon (T·dt) |
+| `mppi_ref_window_size` | `100` | nokta (0.5 m aralıkta 50 m ileri) |
+| `mppi_ref_window_enabled` | `true` | `false` → tam tarama (16× yavaş, A/B) |
+
+```bash
+ros2 launch girdap_decision hardware.launch.py --show-args   # açıklamalarıyla listeler
+ros2 launch girdap_decision hardware.launch.py planning.mppi_lambda:=50.0
+```
+
+- **Öncelik:** launch-arg > `hardware.yaml planning:` > `params.yaml` > kod
+  varsayılanı. Bir anahtar yaml'dan silinirse kod varsayılanı (λ'da parkur
+  profili) kazanır — yaml sessizce bir kopya varsayılan dayatmaz.
+- **⚠ Drift kapısı:** aynı varsayılan üç yerde yaşıyor (`MPPIConfig`,
+  `_MPPI_DEFAULTS`, iki yaml). `test_planning_config_drift.py` (ROS'suz, launch
+  dosyasını `ast` ile okur) değerleri ve anahtar kümelerini bağlar — biri
+  değişip diğeri kalırsa CI kırmızı. ROS bilinmeyen yaml anahtarını SESSİZCE
+  atar; yazım hatası (`mppi_lambdaa`) bu testle yakalanır.
 
 ---
 
@@ -587,6 +959,9 @@ Durum makinesi: IDLE→ACTIVE→DWELL→ACTIVE→…→COMPLETE (arrival_radius 
   `atan2(sin(Δψ), cos(Δψ))` ile farkı al.
 - **iSAM2 graf büyümesi:** uzun görevde graf büyür, RAM şişer. Marginal-out
   veya sliding window düşün (yarışma 20 dk, ~kabul edilebilir).
+  **Kısmen kapatıldı (2026-08-01):** `fusion.keyframe_rate_hz` throttle'ı
+  20 dk görevi 11 416 → 6 000 key'e indirdi. Kalan O(N) kaynağı: her
+  flush'taki tam `calculateEstimate()` (bkz. iSAM2 bölümü "Açık bulgu").
 - **MPPI ilk iterasyon kararsız.** Warm-start yoksa rastgele kontrol → araç
   zikzak. Önceki kontrol dizisini kaydır + yeni rastgele step ekle.
 - **Yeniden başlama hakkı 1 kere** (puan sıfırlanır). Algoritma "soft restart"
