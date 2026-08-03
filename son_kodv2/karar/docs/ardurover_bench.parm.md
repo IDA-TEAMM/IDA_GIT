@@ -110,6 +110,8 @@ Bench yeşil olsa bile **suya inmeden önce** bu listeyi operatör yüksek sesle
 - [ ] `ARMING_CHECK = 1` (pre-arm kontrolleri AÇIK)
 - [ ] `ARMING_REQUIRE = 1`
 - [ ] Kill switch bağlı **ve test edildi** (Runbook ADIM 6)
+- [ ] 🔴 **Uzaktan GÜÇ kesme kontaktörü takılı ve test edildi** (Runbook ADIM 6B —
+      ESC ucunda 0 V; şartname md 4.2 minimum gereksinimi, sinyal kesme YETMEZ)
 - [ ] RC failsafe test edildi (verici kapatma → Hold)
 - [ ] Motor mount sıkı, pervaneler **takılı ve sağlam**
 - [ ] Batarya voltajı **> 15 V** (4S için; hücre başına > 3.75 V)

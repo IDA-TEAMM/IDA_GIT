@@ -185,6 +185,44 @@ Araç **ARMED**, cmd_vel akıyor (ADIM 5 tekrar).
 - Eylem: RC vericiyi **kapat**
 - Beklenen: `FS_THR_ENABLE=1` / `FS_ACTION=2` (Hold) tetiklenir, motorlar durur
 
+> ⚠️ Bu adım yalnız **sinyal** kesmeyi doğrular. Şartname md 4.2 ayrıca gücün
+> kesilmesini şart koşuyor → ADIM 6B.
+
+---
+
+## ADIM 6B — Uzaktan GÜÇ Kesme (şartname md 4.2, minimum gereksinim)
+
+> Şartname: *"motorlara gönderilen sinyallerin akışını kesmek yeterli değildir,
+> **motorların gücünün kesilmesi şarttır**."* Donanım reçetesi:
+> [`fc_parametre_onerileri.md` §4.5](fc_parametre_onerileri.md).
+
+**Ön koşul:** Kontaktör/röle takılı (ESC kolunda, FC/Jetson kolunda DEĞİL) ·
+pervaneler **sökük** · multimetre hazır.
+
+Araç **ARMED**, cmd_vel akıyor (ADIM 5 tekrar).
+
+**Ölçüm noktası:** ESC besleme ucu (kontaktörün motor tarafı), DC volt kademesi.
+
+**Eylem:** RC kanal 8 kill anahtarına bas.
+
+**Beklenen — üçü birden:**
+
+| # | Beklenen | Nasıl görülür |
+|---|---|---|
+| 1 | ESC besleme **0 V** | Multimetre — **bu maddenin asıl kanıtı** |
+| 2 | `armed: false`, PWM 1000 | `ros2 topic echo /mavros/state` (üçüncü katman hâlâ çalışıyor) |
+| 3 | **Telemetri CSV yazmaya DEVAM ediyor** | `tail -f ~/girdap_logs/telemetri/.../*.csv` satır eklemeye devam etmeli |
+
+> 🔴 3. madde geçmezse röle **yanlış kola** takılmıştır: Jetson da güç kaybediyor
+> → Dosya-1/2/3 yarım kalır, her biri için 5 ceza puanı (md 5.5.4.3.5).
+
+**Eylem 2 (fail-safe yönü):** Anahtar basılıyken röle bobin kablosunu ayır.
+**Beklenen:** Motorlar güçsüz KALIR (NO/energize-to-run seçimi doğruysa). Kablo
+koptuğunda motorların çalışır hale gelmesi = ters emniyet, kontaktör yanlış tipte.
+
+**Geri alma:** Anahtarı bırak → ESC beslemesi geri gelir; araç **disarm** kalır
+(`mavros_bridge` KILL latch'lidir), yeniden arm operatörden beklenir.
+
 ---
 
 ## ADIM 7 — Heartbeat Kaybı Simülasyonu
@@ -218,9 +256,13 @@ node'ları yeniden başlat veya araç güç döngüsü).
 | 4. Manuel arm (success=true) | ☐ | |
 | 5. cmd_vel → PWM ~1600 | ☐ | pervane sökük |
 | 6. Kill switch + RC failsafe | ☐ | PWM→1000, armed=false |
+| 6B. **Uzaktan GÜÇ kesme** | ☐ | 🔴 ESC ucunda **0 V** + CSV yazmaya devam ediyor — md 4.2 minimum gereksinimi |
 | 7. Heartbeat kaybı → KILL | ☐ | 5 sn içinde |
 
-**7 adım da OK ise araç su testine hazır.**
+**8 adım da OK ise araç su testine hazır.**
+
+> 🔴 **ADIM 6B geçmeden yarışmaya gidilmez** — teknik kontrolde bakılan bir
+> minimum gereksinimdir (md 4), eksikliği yazılımla telafi edilemez.
 
 ---
 

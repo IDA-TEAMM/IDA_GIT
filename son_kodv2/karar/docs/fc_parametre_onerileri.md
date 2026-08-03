@@ -49,11 +49,105 @@
 | `SERIAL2_PROTOCOL/BAUD` | Mevcut 57600 çalışıyor (TELEM2, çapraz kablo sonrası); USB-C soketi tamir edilirse USB'ye dönülebilir | 57600 tavanı IMU'yu ~10 Hz'te sınırlıyor; `SR2_*` stream-rate paramlarıyla oynanabilir |
 | Pixhawk USB-C soketi | Çapraz test: başka bilgisayara tak; orada da descriptor hatası varsa tamir/RMA | `device descriptor read error -32` — donanım günlüğü §2 reçetesi |
 
+## 4.5. 🔴 UZAKTAN GÜÇ KESME — şartname MİNİMUM GEREKSİNİMİ (2026-08-03)
+
+> Şartname md 4.2, "Uzaktan Güç Kesme":
+> *"Aracın üzerindeki fiziki güç anahtarının yanı sıra **aktive edildiğinde tüm
+> motorlardan ve aktüatörlerden anında gücü kesebilecek bir uzak güç kesme
+> fonksiyonu olacaktır**. Uzaktan güç kesme İDA YKİ yazılımı üzerinden ya da RC
+> kumandadan verilebilecektir.*
+> *o **Güç kesme önlemlerinde motorlara gönderilen sinyallerin akışını kesmek
+> yeterli değildir, motorların gücünün kesilmesi şarttır.**"*
+
+**Bugünkü durumumuz bu maddeyi KARŞILAMIYOR.** Mevcut zincirin tamamı sinyal
+seviyesinde kalıyor:
+
+| Katman | Ne yapıyor | Şartname karşılığı |
+|---|---|---|
+| RC kanal 8 → `mavros_bridge` KILL | disarm + sıfır thrust | ❌ sinyal kesme |
+| `MOT_SAFE_DISARM=1` | disarm'da PWM min'e düşer | ❌ sinyal kesme |
+| Araç üstü kırmızı anahtar | gücü fiziksel keser | ✅ ama bu **ayrı** bir madde ("Araç Üzerinden Güç Kesme") — uzaktan değil |
+
+Bu bir **minimum gereksinim**: sağlanmazsa teknik kontrollerden geçilmez
+(md 4: *"Minimum gereksinimleri sağlayamayan takımlar final aşamasında yarışmaya
+hak kazanamaz"*). Yazılımla kapatılamaz — **donanım işi**.
+
+### 🔴 Röle hattının NEREYE konulacağı (en kritik karar)
+
+Kontaktör/röle **YALNIZCA ESC-motor güç kolunda** olacak. Pixhawk, Jetson, LiDAR,
+kamera ve telemetri **ayrı bir kolda** beslenmeye devam edecek.
+
+```
+Batarya ─┬─ [KONTAKTÖR] ─→ 4× ESC ─→ thruster'lar     ← uzaktan kesilen kol
+         └─ (kesilmez) ──→ Pixhawk + Jetson + sensörler + telemetri
+```
+
+**Neden:** Güç kesme anında Jetson da ölürse telemetri CSV'si, kamera mp4'ü ve
+lokal harita PNG'leri yarım kalır → md 4.2 Dosya-1/2/3 teslim edilemez, her biri
+için **5'er ceza puanı** (md 5.5.4.3.5). Ayrıca acil durum sonrası hakem
+"ne oldu" diye sorduğunda elde log kalmaz.
+
+### Kontaktör seçimi
+
+| Özellik | Gereklilik | Neden |
+|---|---|---|
+| Akım | Sürekli ≥ 4× thruster tepe akımı, marj ile | 4× 2838 thruster; ESC anlık çekişi nominalin üstünde |
+| Kutuplama | **NO — enerjilendirilince kapanan** (energize-to-run) | Bobin beslemesi/kablosu koparsa motorlar **durur**. NC seçilirse kablo kopması motorları serbest bırakır = ters emniyet |
+| Tip | Mekanik kontaktör ya da yüksek akım SSR | İkisi de kabul; SSR'de ısınma payı bırak |
+| Konum | Batarya (+) kolu, sigortadan sonra | Sızdırmaz bölme içinde, md 4.2 emniyet |
+
+### Uygulama — A ve B, İKİSİ BİRDEN
+
+**A) RC alıcı kanalı → doğrudan röle sürücüsü (BİRİNCİL, önerilen)**
+RC alıcının kanal çıkışı FC'ye uğramadan röle bobinini sürer (küçük bir MOSFET
+sürücü modülü üzerinden). **FC çökse, yazılım kilitlense, MAVLink kopsa bile
+çalışır** — şartnamenin istediği "anında" budur. Tek bağımlılık RC alıcısının
+kendisidir.
+
+**B) FC üzerinden röle (İKİNCİL katman)**
+
+| Parametre | Değer | Neden |
+|---|---|---|
+| `RELAY1_FUNCTION` | `1` (Relay) | Röle çıkışını etkinleştirir |
+| `RELAY1_PIN` | ⚠️ **MP'nin parametre açıklamasındaki listeden** AUX çıkışı seç | Pin numaralandırması karta göre değişir — tahmin etme, MP'nin kendi listesinden seç ve doğrula |
+| `RELAY1_DEFAULT` | `0` (boot'ta kapalı) | Boot'ta motorlar güçsüz açılsın — `INITIAL_MODE=HOLD` ile aynı felsefe |
+| `RCx_OPTION` (kill kanalı) | Dropdown'dan **"Relay On/Off"** | MP'de isimle seçilir, numara ezberlemeye gerek yok |
+
+> ⚠️ B tek başına YETMEZ: FC'ye bağımlıdır. A olmadan "FC kilitlendiğinde ne olacak"
+> sorusunun cevabı yok. B'nin değeri, aynı anahtarın hem röleyi hem `mavros_bridge`
+> KILL'ini tetiklemesidir (tek hareket, üç katman).
+
+### Kanal planı — mevcut yazılım DEĞİŞMİYOR
+
+`mavros_bridge_node` varsayılanları zaten kanal 8'i (`rc_kill_channel: 7`,
+0-indexli) kill için okuyor. Aynı fiziksel anahtar üç şeyi birden yapsın:
+
+```
+RC kanal 8 (kill anahtarı)
+  ├─→ (A) röle sürücüsü            → MOTOR GÜCÜ KESİLİR   ← şartname maddesi
+  ├─→ (B) FC RELAY1                → yedek güç kesme
+  └─→ mavros_bridge KILL           → disarm + sıfır thrust (üçüncü katman)
+```
+
+Yazılım tarafında yapılacak bir şey yok — kanal numarası değişirse
+`hardware.yaml` `rc_kill_channel` güncellenir.
+
+### Doğrulama
+
+Bench runbook **ADIM 6B** (pervanesiz, aşağıdaki §5 listesine de eklendi):
+anahtara basıldığında multimetreyle **ESC besleme ucunda 0 V** okunmalı —
+PWM'in 1000'e düşmesi bu maddenin kanıtı DEĞİLDİR.
+
+---
+
 ## 5. Doğrulama (parametreler yazıldıktan sonra, PERVANESİZ)
 
 1. Boot → HOLD'da açıldığını QGC'den teyit et (`INITIAL_MODE`).
 2. RC mod anahtarını TÜM konumlarda gez → hiçbirinde AUTO'ya geçmediğini gör.
 3. RC'yi kapat → `FS_TIMEOUT` içinde Hold + QGC'de "Radio Failsafe" mesajı.
 4. Emniyet düğmesine basmadan ARM dene → reddedilmeli (`BRD_SAFETY_DEFLT=1`).
+4b. **Uzaktan güç kesme (§4.5):** ARMED + cmd_vel akarken kill anahtarına bas →
+   multimetreyle **ESC besleme ucunda 0 V**; Jetson'ın telemetri CSV'si yazmaya
+   DEVAM etmeli (Dosya-2 kesilmemeli). Bkz. runbook ADIM 6B.
 5. Sonuçları `docs/olcum_formu.md` FC bölümüne işleyip geri gönderin —
    masa runbook M4-M6 bu değerlerle tekrarlanacak.
