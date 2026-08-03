@@ -177,6 +177,39 @@ _MPPI_ARG_DESC = {
     "mppi_ref_window_size": "Kayan referans penceresi ileri derinliği (nokta)",
     "mppi_ref_window_enabled": "false → eski tam tarama (16× yavaş, A/B için)",
 }
+# planning.gate_* — kapı takibi saha yüzeyi (2026-08-03). Sayısal değerler
+# prototype/mission/gate_follower.py GateFollowerConfig ile AYNI olmalı;
+# drift'i test_hardware_launch_config.py::test_gate_launch_varsayilanlari_
+# kodla_ayni yakalar. Üç anahtar (enabled/class_id/use_classified) node'a
+# özgüdür, GateFollowerConfig'te karşılığı yoktur.
+_GATE_DEFAULTS: dict[str, tuple[object, type]] = {
+    "gate_following_enabled": (True, bool),
+    "edge_buoy_class_id": (0, int),
+    "use_classified_obstacles": (True, bool),
+    "gate_width_min": (1.5, float),
+    "gate_width_max": (8.0, float),
+    "gate_max_lookahead": (25.0, float),
+    "gate_min_forward": (0.5, float),
+    "gate_pair_depth_tol": (3.0, float),
+    "gate_release_distance": (0.8, float),
+    "gate_match_radius": (2.5, float),
+}
+_GATE_ARG_DESC = {
+    "gate_following_enabled": "Kapı (kenar dubası ikilisi) orta noktası takibi. "
+                              "false → ham görev noktasına git (md 5.5.2.2 puanı "
+                              "kapıdan geçmekten gelir)",
+    "edge_buoy_class_id": "Turuncu KENAR dubasının sınıf kimliği; bu sınıf engel "
+                          "torbasından çıkarılıp kapı adayı sayılır",
+    "use_classified_obstacles": "/perception/classified_obstacles aktığında "
+                                "sınıfsız obstacle_map'in yerine geçsin mi",
+    "gate_width_min": "Geçerli kapı genişliği alt sınırı (m)",
+    "gate_width_max": "Geçerli kapı genişliği üst sınırı (m)",
+    "gate_max_lookahead": "Kapı arama menzili (m); ötesindeki dubalar elenir",
+    "gate_min_forward": "Duba en az bu kadar önde olmalı (m)",
+    "gate_pair_depth_tol": "Çiftin ileri-mesafe farkı toleransı (m, yan yana mı)",
+    "gate_release_distance": "Kapı 'geçildi' eşiği (m)",
+    "gate_match_radius": "'Aynı kapı' eşleşme yarıçapı (m)",
+}
 # perception.fusion varsayılanları — kamera-LiDAR bearing füzyonu (Sprint 3).
 _FUSION_DEFAULTS: dict[str, tuple[object, type]] = {
     "bearing_tolerance_rad": (0.15, float),
@@ -214,6 +247,7 @@ def _load_hardware_config() -> dict:
     # planning mod geçidi kök mode_name'i miras alır (drift önlemek için).
     cfg["planning_mode"] = cfg["mode_name"]
     cfg["mppi"] = {k: v for k, (v, _) in _MPPI_DEFAULTS.items()}
+    cfg["gate"] = {k: v for k, (v, _) in _GATE_DEFAULTS.items()}
     try:
         path = os.path.join(
             get_package_share_directory(_PKG), "config", "hardware.yaml"
@@ -238,6 +272,10 @@ def _load_hardware_config() -> dict:
         for key, (_, cast) in _MPPI_DEFAULTS.items():
             if key in planning_block:
                 cfg["mppi"][key] = cast(planning_block[key])
+        # planning.gate_* — kapı takibi saha tuning (aynı öncelik zinciri).
+        for key, (_, cast) in _GATE_DEFAULTS.items():
+            if key in planning_block:
+                cfg["gate"][key] = cast(planning_block[key])
         # mission: görev dosyası + kaynak seçimi (video ↔ competition, file ↔ fc)
         mission_block = data.get("mission") or {}
         cfg["mission_file"] = str(
@@ -420,6 +458,19 @@ def generate_launch_description() -> LaunchDescription:
                 description=_MPPI_ARG_DESC[key],
             )
             for key in _MPPI_DEFAULTS
+        ],
+        # planning.gate_* — kapı takibi saha tuning (md 5.5.2.2).
+        *[
+            DeclareLaunchArgument(
+                f"planning.{key}",
+                default_value=(
+                    _bool_default(hw["gate"][key])
+                    if isinstance(hw["gate"][key], bool)
+                    else str(hw["gate"][key])
+                ),
+                description=_GATE_ARG_DESC[key],
+            )
+            for key in _GATE_DEFAULTS
         ],
         # fusion.* — iSAM2 smoother (keyframe throttle + robust GPS + fix
         # kalitesi sigma'ları). CLI: fusion.keyframe_rate_hz:=10.0
@@ -675,6 +726,13 @@ def generate_launch_description() -> LaunchDescription:
                     LaunchConfiguration(f"planning.{key}"), value_type=cast
                 )
                 for key, (_, cast) in _MPPI_DEFAULTS.items()
+            },
+            # Kapı takibi saha tuning (planning.gate_* launch-arg'ları)
+            **{
+                key: ParameterValue(
+                    LaunchConfiguration(f"planning.{key}"), value_type=cast
+                )
+                for key, (_, cast) in _GATE_DEFAULTS.items()
             },
         },
     ]

@@ -314,3 +314,215 @@ def test_mppi_terminal_mode_gecersizse_varsayilana_duser(ros_context) -> None:  
         assert node._pipe._base_mppi_cfg.terminal_mode == MPPIConfig().terminal_mode
     finally:
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# Kapı takibi entegrasyonu (2026-08-03) + gövde→dünya frame düzeltmesi
+# --------------------------------------------------------------------------- #
+
+import math                                             # noqa: E402
+
+from geometry_msgs.msg import PoseArray, Pose           # noqa: E402
+from vision_msgs.msg import (                           # noqa: E402
+    Detection3D,
+    Detection3DArray,
+    ObjectHypothesisWithPose,
+)
+
+
+def _odom_poz(x: float, y: float, psi: float) -> Odometry:
+    """Verilen ψ ile odom mesajı (z-eksen quaternion; node 2·atan2(z,w) okur)."""
+    msg = Odometry()
+    msg.pose.pose.position.x = x
+    msg.pose.pose.position.y = y
+    msg.pose.pose.orientation.z = math.sin(psi / 2.0)
+    msg.pose.pose.orientation.w = math.cos(psi / 2.0)
+    return msg
+
+
+def _classified(items) -> Detection3DArray:
+    """items: [(x, y, yaricap, class_id)] — GÖVDE çerçevesinde."""
+    msg = Detection3DArray()
+    msg.header.frame_id = "base_link"
+    for x, y, r, cls in items:
+        d = Detection3D()
+        d.bbox.center.position.x = float(x)
+        d.bbox.center.position.y = float(y)
+        d.bbox.size.x = float(r) * 2.0
+        hyp = ObjectHypothesisWithPose()
+        hyp.hypothesis.class_id = str(cls)
+        d.results.append(hyp)
+        msg.detections.append(d)
+    return msg
+
+
+def test_govde_dunya_donusumu_psi_ile_dondurur(ros_context) -> None:  # noqa: ANN001
+    """🔴 2026-08-03 bulgusu: obstacle_map base_link'te (x=ileri) yayınlanıyor
+    ama planlama DÜNYA çerçevesinde çalışıyor. Dönüşüm eksikti."""
+    node = pn.PlanningNode()
+    try:
+        # Araç (10, 20)'de, burnu KUZEYE (ψ=90°). Gövdede 5 m "ileri" olan
+        # nokta dünyada (10, 25) olmalı — eski kod (10+5, 20+0)=(15,20) derdi.
+        node._on_odom(_odom_poz(10.0, 20.0, math.pi / 2.0))
+        wx, wy = node._body_to_world(5.0, 0.0)
+        assert wx == pytest.approx(10.0, abs=1e-6)
+        assert wy == pytest.approx(25.0, abs=1e-6)
+    finally:
+        node.destroy_node()
+
+
+def test_obstacle_map_dunya_cercevesine_cevrilir(ros_context) -> None:  # noqa: ANN001
+    """`_on_obstacles` artık gövde koordinatını olduğu gibi geçmiyor."""
+    node = pn.PlanningNode()
+    try:
+        node._on_odom(_odom_poz(0.0, 0.0, math.pi / 2.0))   # burun kuzeye
+        msg = PoseArray()
+        p = Pose()
+        p.position.x = 4.0          # gövdede 4 m İLERİ
+        p.position.y = 0.0
+        p.orientation.z = 0.5        # yarıçap (placeholder şema)
+        msg.poses.append(p)
+        node._on_obstacles(msg)
+        obs = node._pipe._obstacles
+        assert len(obs) == 1
+        assert obs[0].cx == pytest.approx(0.0, abs=1e-6)
+        assert obs[0].cy == pytest.approx(4.0, abs=1e-6)   # kuzeye 4 m
+    finally:
+        node.destroy_node()
+
+
+def test_turuncu_kenar_dubasi_engel_torbasindan_cikarilir(ros_context) -> None:  # noqa: ANN001
+    """Kapı dubası ENGEL DEĞİLDİR — engel kalırsa MPPI kapıya girmeyi pahalı
+    bulur (CLAUDE.md 'Emniyet Payları': margin 1.5 m'de geçitten HİÇ geçmiyor)."""
+    node = pn.PlanningNode()
+    try:
+        node._on_odom(_odom_poz(0.0, 0.0, 0.0))
+        node._on_classified(_classified([
+            (10.0, +2.0, 0.15, 0),      # turuncu kenar (kapı sol)
+            (10.0, -2.0, 0.15, 0),      # turuncu kenar (kapı sağ)
+            (12.0, +1.0, 0.20, 1),      # sarı ENGEL
+            (14.0, -1.0, 0.20, 99),     # eşleşmeyen (CLASS_UNKNOWN) → engel KALIR
+        ]))
+        # Yalnız sarı + bilinmeyen engel olmalı; iki turuncu kapıya gitmeli.
+        assert len(node._pipe._obstacles) == 2
+        assert len(node._edge_buoys) == 2
+    finally:
+        node.destroy_node()
+
+
+def test_kapi_ortasi_ham_gorev_noktasini_ezer(ros_context) -> None:  # noqa: ANN001
+    """md 5.5.2.2: hakemin noktası kapı ortasında OLMAYABİLİR → araç kapı
+    orta noktasına yönelmeli, ham GN'ye değil."""
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("use_rrt", Parameter.Type.BOOL, False)   # bypass yolu
+        ]
+    )
+    try:
+        node._on_odom(_odom_poz(0.0, 0.0, 0.0))
+        # Kapı x=10'da, ortası y=0. Ham GN ise y=+3'te (kapı ortasında DEĞİL).
+        node._on_classified(_classified([
+            (10.0, +2.0, 0.15, 0),
+            (10.0, -2.0, 0.15, 0),
+        ]))
+        target = PoseStamped()
+        target.pose.position.x = 20.0
+        target.pose.position.y = 3.0
+        node._on_target(target)
+        # Referansın son noktası kapı ortası (10, 0) olmalı — ham GN (20, 3) değil.
+        ref = node._pipe._ref_path
+        assert ref is not None
+        assert ref[-1][0] == pytest.approx(10.0, abs=1e-6)
+        assert ref[-1][1] == pytest.approx(0.0, abs=1e-6)
+    finally:
+        node.destroy_node()
+
+
+def test_kapi_yokken_ham_gorev_noktasina_dusulur(ros_context) -> None:  # noqa: ANN001
+    """Geriye uyumluluk: kapı görünmüyorsa davranış DEĞİŞMEZ (fallback)."""
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("use_rrt", Parameter.Type.BOOL, False)
+        ]
+    )
+    try:
+        node._on_odom(_odom_poz(0.0, 0.0, 0.0))
+        target = PoseStamped()
+        target.pose.position.x = 20.0
+        target.pose.position.y = 3.0
+        node._on_target(target)                       # hiç kenar dubası yok
+        ref = node._pipe._ref_path
+        assert ref is not None
+        assert ref[-1][0] == pytest.approx(20.0, abs=1e-6)
+        assert ref[-1][1] == pytest.approx(3.0, abs=1e-6)
+    finally:
+        node.destroy_node()
+
+
+def test_kapi_takibi_kapatilabilir(ros_context) -> None:  # noqa: ANN001
+    """gate_following_enabled=false → turuncu duba yine ENGEL, hedef ham GN."""
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("use_rrt", Parameter.Type.BOOL, False),
+            Parameter("gate_following_enabled", Parameter.Type.BOOL, False),
+        ]
+    )
+    try:
+        node._on_odom(_odom_poz(0.0, 0.0, 0.0))
+        node._on_classified(_classified([
+            (10.0, +2.0, 0.15, 0),
+            (10.0, -2.0, 0.15, 0),
+        ]))
+        assert len(node._pipe._obstacles) == 2        # turuncu ENGEL kaldı
+        assert node._edge_buoys == []
+        target = PoseStamped()
+        target.pose.position.x = 20.0
+        target.pose.position.y = 3.0
+        node._on_target(target)
+        assert node._pipe._ref_path[-1][1] == pytest.approx(3.0, abs=1e-6)
+    finally:
+        node.destroy_node()
+
+
+def test_parkur_degisince_kilitli_kapi_birakilir(ros_context) -> None:  # noqa: ANN001
+    """Parkur-1'in son kapısına kilitliyken Parkur-2'ye geçilirse eski kapı
+    hedefi taşınmamalı (gate_follower.reset sözleşmesi)."""
+    from std_msgs.msg import String
+
+    node = pn.PlanningNode()
+    try:
+        node._on_odom(_odom_poz(0.0, 0.0, 0.0))
+        node._on_classified(_classified([
+            (10.0, +2.0, 0.15, 0),
+            (10.0, -2.0, 0.15, 0),
+        ]))
+        node._refine_target((20.0, 3.0))
+        assert node._gate.committed_gate is not None
+
+        msg = String()
+        msg.data = "PARKUR2"
+        node._on_mission_state(msg)
+        assert node._gate.committed_gate is None
+    finally:
+        node.destroy_node()
+
+
+def test_classified_aktiginda_obstacle_map_susar(ros_context) -> None:  # noqa: ANN001
+    """İki kaynak aynı engelleri verir; sınıflı olan kazanır, yoksa çift sayım
+    (ve kapı dubalarının sınıfsız yoldan engel olarak geri sızması) olurdu."""
+    node = pn.PlanningNode()
+    try:
+        node._on_odom(_odom_poz(0.0, 0.0, 0.0))
+        node._on_classified(_classified([(12.0, 1.0, 0.2, 1)]))
+        assert len(node._pipe._obstacles) == 1
+
+        msg = PoseArray()                              # sınıfsız yol 3 engel verse de
+        for i in range(3):
+            p = Pose()
+            p.position.x = float(20 + i)
+            p.orientation.z = 0.3
+            msg.poses.append(p)
+        node._on_obstacles(msg)
+        assert len(node._pipe._obstacles) == 1         # yok sayıldı
+    finally:
+        node.destroy_node()

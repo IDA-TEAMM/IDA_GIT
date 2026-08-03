@@ -19,6 +19,11 @@
   <depend>sensor_msgs</depend>
   <depend>mavros_msgs</depend>
   <depend>visualization_msgs</depend>
+  <!-- Detection2DArray/Detection3DArray — perception_camera_node,
+       perception_fusion_node ve planning_node (kapı takibi) kullanır.
+       2026-08-03: kodda kullanılıyordu ama burada BEYAN EDİLMEMİŞTİ
+       (temiz bir ortamda rosdep bağımlılığı kuramaz). -->
+  <depend>vision_msgs</depend>
 
   <test_depend>ament_pep257</test_depend>
   <test_depend>python3-pytest</test_depend>

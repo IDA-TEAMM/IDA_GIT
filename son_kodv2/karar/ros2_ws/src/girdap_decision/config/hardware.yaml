@@ -103,6 +103,19 @@ planning:
   mppi_terminal_lookahead_m: 15.0  # m, terminal hedef yay uzaklığı
   mppi_ref_window_size: 100        # nokta, kayan referans penceresi
   mppi_ref_window_enabled: true    # false → tam tarama (16× yavaş, A/B için)
+  # --- Kapı takibi (2026-08-03) — md 5.5.2.2, puan kapıdan geçmekten gelir.
+  # ⚠ Genişlik/menzil değerleri TEMSİLİ; sahada gerçek duba aralığı ölçülüp
+  # buradan (yeniden derlemeden) güncellenmeli.
+  gate_following_enabled: true     # false → ham görev noktasına git (eski davranış)
+  edge_buoy_class_id: 0            # turuncu KENAR dubası → engel DEĞİL, kapı
+  use_classified_obstacles: true   # sınıflı topic aktığında obstacle_map'i ezer
+  gate_width_min: 1.5              # m
+  gate_width_max: 8.0              # m
+  gate_max_lookahead: 25.0         # m (OAK-D 69° HFOV'da duba ~20-25 m'de güvenilir)
+  gate_min_forward: 0.5            # m
+  gate_pair_depth_tol: 3.0         # m, "yan yana" toleransı
+  gate_release_distance: 0.8       # m, kapı geçildi eşiği
+  gate_match_radius: 2.5           # m, "aynı kapı" eşleşme yarıçapı
 
 # --- Görev dosyası seçimi (Sprint 4 parkur katmanı) ---
 # hardware.launch bu dosya adını config/ altında çözer ve HEM mission_manager

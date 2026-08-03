@@ -156,3 +156,85 @@ def test_terminal_mode_yaml_degeri_gecerli() -> None:
         _yaml(_HARDWARE_FILE)["planning"],
     ):
         MPPIConfig(terminal_mode=blok["mppi_terminal_mode"])   # ValueError = geçersiz
+
+
+# --------------------------------------------------------------------------- #
+# Kapı takibi (gate following, 2026-08-03) — aynı drift kapısı
+# --------------------------------------------------------------------------- #
+
+# launch anahtarı → GateFollowerConfig alanı. Üç anahtar (enabled / class_id /
+# use_classified) node'a özgüdür, çekirdek config'te karşılığı YOKTUR.
+_GATE_ESLEME = {
+    "gate_width_min": "gate_width_min",
+    "gate_width_max": "gate_width_max",
+    "gate_max_lookahead": "max_lookahead",
+    "gate_min_forward": "min_forward",
+    "gate_pair_depth_tol": "pair_depth_tol",
+    "gate_release_distance": "release_distance",
+    "gate_match_radius": "match_radius",
+}
+_GATE_NODE_ONLY = {
+    "gate_following_enabled",
+    "edge_buoy_class_id",
+    "use_classified_obstacles",
+}
+
+
+def test_gate_launch_varsayilanlari_kodla_ayni() -> None:
+    """`_GATE_DEFAULTS` ↔ `GateFollowerConfig`: değer VE tip birebir."""
+    from prototype.mission.gate_follower import GateFollowerConfig
+
+    kod = GateFollowerConfig()
+    launch = _sabit("_GATE_DEFAULTS")
+    for launch_key, cfg_key in _GATE_ESLEME.items():
+        deger, tip = launch[launch_key]
+        beklenen = getattr(kod, cfg_key)
+        assert deger == beklenen, (
+            f"{launch_key}: launch={deger!r} ≠ "
+            f"GateFollowerConfig.{cfg_key}={beklenen!r} — çekirdek varsayılanı "
+            "değiştiyse launch'ı da güncelle"
+        )
+        assert isinstance(beklenen, tip), f"{launch_key} tipi {tip} olmalı"
+
+
+def test_gate_takibi_varsayilan_ACIK() -> None:
+    """Kapı takibi varsayılan AÇIK olmalı — md 5.5.2.2'ye göre Parkur-1/2
+    puanı kapıdan geçmekten gelir; sessizce kapalı kalması puan kaybettirir.
+    (Kapı görünmüyorken çekirdek zaten ham GN'ye düşer, yani açık olmak
+    kapısız senaryoda davranışı DEĞİŞTİRMEZ.)"""
+    assert _sabit("_GATE_DEFAULTS")["gate_following_enabled"][0] is True
+    assert _yaml(_PARAMS_FILE)["planning_node"]["ros__parameters"][
+        "gate_following_enabled"
+    ] is True
+    assert _yaml(_HARDWARE_FILE)["planning"]["gate_following_enabled"] is True
+
+
+@pytest.mark.parametrize("dosya", ["params", "hardware"])
+def test_gate_yaml_anahtarlari_launch_ile_ayni(dosya: str) -> None:
+    """yaml'daki kapı anahtar KÜMESİ launch/node ile birebir (yazım hatası
+    kapanı — ROS bilinmeyen anahtarı sessizce atar)."""
+    if dosya == "params":
+        blok = _yaml(_PARAMS_FILE)["planning_node"]["ros__parameters"]
+    else:
+        blok = _yaml(_HARDWARE_FILE)["planning"]
+    anahtarlar = {
+        k for k in blok if k.startswith("gate_") or k in _GATE_NODE_ONLY
+    }
+    assert anahtarlar == set(_sabit("_GATE_DEFAULTS"))
+
+
+@pytest.mark.parametrize("dosya", ["params", "hardware"])
+def test_gate_yaml_degerleri_kod_varsayilaniyla_ayni(dosya: str) -> None:
+    """Sevk edilen yaml'lar çekirdek varsayılanını YANSITMALI."""
+    from prototype.mission.gate_follower import GateFollowerConfig
+
+    kod = GateFollowerConfig()
+    if dosya == "params":
+        blok = _yaml(_PARAMS_FILE)["planning_node"]["ros__parameters"]
+    else:
+        blok = _yaml(_HARDWARE_FILE)["planning"]
+    for yaml_key, cfg_key in _GATE_ESLEME.items():
+        assert blok[yaml_key] == getattr(kod, cfg_key), (
+            f"{dosya}.yaml {yaml_key}={blok[yaml_key]!r} ≠ "
+            f"GateFollowerConfig.{cfg_key}={getattr(kod, cfg_key)!r}"
+        )

@@ -71,6 +71,36 @@ planning_node:
                              # (0.5 m aralıkta 50 m ileri + 12.5 m geri).
     mppi_ref_window_enabled: true  # false → eski tam tarama (regresyon/A-B).
                              # Ölçüm: 736 → 58 ms/iter, d2 tensörü 16× küçük.
+    # --- Kapı takibi (gate following, 2026-08-03) ---
+    # Şartname md 5.5.2.2: Parkur-1/2 puanı GPS noktasına basmaktan DEĞİL,
+    # karşılıklı KENAR dubası ikilisinin ARASINDAN geçmekten gelir; hakemin
+    # verdiği nokta tam kapı ortasında olmayabilir. Çekirdek
+    # prototype/mission/gate_follower.py; bu blok onun saha yüzeyi.
+    # ⚠ Değerler TEMSİLİ başlangıç tahminleri — gerçek duba aralıkları
+    # yarışma anına göre değişir, sahada ölçülüp güncellenmeli.
+    gate_following_enabled: true   # false → ham görev noktasına gidilir (eski
+                             # davranış). Kapı görünmüyorken zaten fallback
+                             # çalışır, yani açık bırakmak risksiz.
+    edge_buoy_class_id: 0    # turuncu KENAR dubası (camera_buoys.CLASS_PARKUR_KENARI).
+                             # Bu sınıf engel torbasından ÇIKARILIR — arasından
+                             # geçilecek nesne engel sayılırsa MPPI kapıya
+                             # girmeyi pahalı bulur.
+    use_classified_obstacles: true  # /perception/classified_obstacles aktığında
+                             # sınıfsız /perception/obstacle_map'in yerine geçer.
+                             # false → eski davranış (kapı dubaları engel kalır).
+    gate_width_min: 1.5      # m, geçerli kapı genişliği alt sınırı (altı = tek
+                             # dubanın gürültüsü)
+    gate_width_max: 8.0      # m, üst sınır (üstü = ayrı kapıların dubaları)
+    gate_max_lookahead: 25.0 # m, bu mesafeden uzaktaki dubalar dikkate alınmaz
+                             # (OAK-D 69° HFOV'da Ø30 duba ~20-25 m'de güvenilir)
+    gate_min_forward: 0.5    # m, duba en az bu kadar ÖNDE olmalı (hizadaki/
+                             # geçilmiş dubaları eler)
+    gate_pair_depth_tol: 3.0 # m, çiftin ileri-mesafe farkı bunu aşarsa "yan yana"
+                             # değildir → kapı sayılmaz
+    gate_release_distance: 0.8  # m, kilitli kapının ortasına bu kadar yaklaşınca
+                             # "geçildi" sayılır ve sonraki kapıya geçilir
+    gate_match_radius: 2.5   # m, taze algı kilitli kapıya bu yarıçapta ise
+                             # "aynı kapı" kabul edilir (drift güncellemesi)
     mode_name: "GUIDED"      # mod geçidi — mavros_bridge ile aynı olmalı
     map_rate_hz: 10.0        # Dosya-3 yerel harita yayım hızı
     use_rrt: true            # yarışma: RRT*. Video: hardware.yaml false override

@@ -475,6 +475,76 @@ gerçek risk; saha testinde ölç.
 
 ---
 
+## 🚪 Kapı Takibi (gate following) — Layer 2 BAĞLANTISI (2026-08-03)
+
+> Çekirdek `prototype/mission/gate_follower.py` 27.07'de yazılmıştı (20 test)
+> ama **hiçbir node'a bağlı değildi** — ham GN doğrudan MPPI'ye gidiyordu.
+> Bu bölüm o bağlantıdır.
+
+**Neden gerekli (md 5.5.2.2):** Parkur-1/2 puanı GPS noktasına basmaktan DEĞİL,
+karşılıklı KENAR dubası ikilisinin **arasından geçmekten** gelir; üstelik
+hakemin verdiği nokta *"doğrudan iki kenar dubasının arasında bir nokta
+olmayabilir"* ve dubalar önceden haritalanamaz. Ham GN'ye yönelmek puan
+kaybettirir.
+
+**Bağlantı yeri: `planning_node`** (mission_manager değil — gövde→dünya dönüşümü
+için ψ gerekir, o da yalnız burada var):
+
+```
+/perception/classified_obstacles (Detection3DArray, base_link)
+        │  class_id == edge_buoy_class_id (0, turuncu KENAR)
+        ├────────────────────────────► _edge_buoys (dünya ENU)
+        │                                      │
+        │  diğer sınıflar (sarı=1, UNKNOWN=99…)│
+        └──► CircleObstacle → MPPI             │
+                                               ▼
+current_target / waypoints (ham GN) ──► _refine_target() ──► GateFollower
+                                               │
+                          kapı varsa: ORTA NOKTA │ kapı yoksa: ham GN (fallback)
+                                               ▼
+                                    set_reference_direct / set_waypoints
+```
+
+- **Turuncu duba ENGEL DEĞİLDİR.** Engel torbasında bırakılırsa
+  `obstacle_margin`=1.0 m'lik ceza halkası geçidin (net açıklık ~1.35 m) içini
+  kaplar → MPPI kapıdan geçmeyi etraftan dolanmaktan pahalı bulur (yukarıdaki
+  "Emniyet Payları" ölçümü: 1.5 m'de geçitten **hiç** geçmiyor). Bu yüzden
+  ayıklama ZORUNLU, tercih değil.
+- **Sınıflı topic aktığında `obstacle_map` susar** (`use_classified_obstacles`)
+  — aksi halde kapı dubaları sınıfsız yoldan engel olarak geri sızardı.
+- **CLASS_UNKNOWN=99 engel KALIR** (füzyon sözleşmesinin güvenlik kuralı).
+- **Geriye tam uyumlu:** kapı görünmüyorken çekirdek ham GN'ye düşer → kapısız
+  senaryoda davranış birebir aynı. `gate_following_enabled=false` tamamen kapatır.
+- **Parkur geçişinde `reset()`** — Parkur-1'in son kapısına kilitliyken
+  Parkur-2'ye geçilirse eski hedef taşınmaz.
+- Saha teşhisi: `/girdap/planning/gate` (PoseStamped, kilitli kapı ortası;
+  kontrol yolu DEĞİL, RViz'de "kapı görüyor muyuz" göstergesi).
+- Saha yüzeyi: `planning.gate_*` launch-arg'ları (params.yaml ↔ hardware.yaml ↔
+  `_GATE_DEFAULTS`, drift'i `test_planning_config_drift.py` bağlar).
+  ⚠ Genişlik/menzil değerleri TEMSİLİ — gerçek duba aralığı sahada ölçülmeli.
+
+### 🔴 Aynı turda bulunan CANLI HATA — engel frame'i dönüştürülmüyordu
+
+`/perception/obstacle_map` `perception_lidar_node`'da açıkça
+`frame_id="base_link"` ile yayınlanıyor (**gövde** çerçevesi, x=ileri), ama
+`planning_node._on_obstacles` koordinatları **olduğu gibi** `PlanningPipeline`'a
+veriyordu — oysa boru hattı **dünya** çerçevesinde çalışır (`set_state` odom
+mutlak pozu, RRT* start=mutlak poz, MPPI maliyeti rollout dünya konumlarını
+engel koordinatlarıyla karşılaştırır).
+
+- **Etki:** araç origin'de ve ψ=0 iken tesadüfen doğru; **başka her durumda**
+  engeller hem döndürülmemiş hem ötelenmemiş yanlış yere düşüyordu → var
+  olmayan engelden kaçınma + gerçek engelin üstüne sürme.
+- **Neden gözden kaçtı:** mission topic'leri (`current_target`, `waypoints`)
+  `latlon_to_enu` ile **ENU-hizalı öteleme** ofseti taşır — orada yalnız odom
+  xy eklemek DOĞRU. İki sözleşme aynı sanılmış.
+- **Düzeltme:** `planning_node._body_to_world()` (ψ ile döndür + ötele); hem
+  `obstacle_map` hem `classified_obstacles` bundan geçer.
+- ⚠ **Frame kuralı:** perception topic'leri GÖVDE, mission topic'leri ENU-hizalı
+  ÖTELEME. Yeni bir kaynak eklerken hangisi olduğunu yaz.
+
+---
+
 ## 🌡️ MPPI λ (softmax sıcaklığı) — BENİMSENDİ (2026-08-02)
 
 > λ artık `ParkurProfile.lambda_` ile parkur başına: **PARKUR1/2 = 10.0**,

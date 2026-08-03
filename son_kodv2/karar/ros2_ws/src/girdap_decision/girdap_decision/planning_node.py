@@ -14,9 +14,18 @@ Subscribed topics:
         Engel merkezleri; her poz position.{x,y} = merkez, orientation.z =
         yarıçap (PLACEHOLDER şema — perception ekibi topic'i teslim edince
         güncellenecek; OccupancyGrid gelirse costmap→circle çıkarımı eklenir).
-    /girdap/mission/waypoints        nav_msgs/Path          (F-S.6: base_link-
-        göreli ENU, current_target ile aynı referans; burada son bilinen
-        odom xy'sine eklenip mutlak "map" konumuna çevrilir)
+        ⚠ frame `base_link` (GÖVDE, x=ileri) — burada dünya ENU'ya çevrilir.
+    /perception/classified_obstacles vision_msgs/Detection3DArray
+        F-S.9 füzyon çıktısı: aynı engeller + RENK SINIFI. Aktığı anda
+        obstacle_map'in yerine geçer (sınıf bilgisi kesinlikle daha iyidir).
+        class_id=0 (turuncu KENAR dubası) engel torbasından ÇIKARILIR ve
+        kapı takibine (gate_follower) beslenir — arasından GEÇİLECEK nesne
+        engel sayılırsa MPPI kapıya girmeyi pahalı bulur (bkz. CLAUDE.md
+        "Emniyet Payları": margin 1.0 m, geçit net açıklığı ~1.35 m).
+    /girdap/mission/waypoints        nav_msgs/Path          (F-S.6/F-S.11:
+        base_link-göreli ENU, TEK aktif waypoint; current_target ile aynı
+        referans; burada son bilinen odom xy'sine eklenip mutlak "map"
+        konumuna çevrilir)
 
 Published topics:
     /mavros/setpoint_velocity/cmd_vel_unstamped  geometry_msgs/Twist
@@ -25,6 +34,17 @@ Published topics:
         RRT* çıkışı; RViz görselleştirmesi ve replan izleme için.
     /girdap/control/thrust           std_msgs/Float32MultiArray
         Diferansiyel thruster komutu [T_left, T_right] (N) — Layer 1 ESC kanalı.
+    /girdap/planning/gate            geometry_msgs/PoseStamped
+        Kilitlenilen kapının orta noktası (frame "map"). Kapı yokken
+        yayınlanmaz — RViz'de "şu an kapı görüyor muyuz" tek bakışta belli
+        olsun diye (saha teşhisi; hiçbir kontrol yolu bunu okumaz).
+
+⚠ FRAME SÖZLEŞMESİ (2026-08-03'te netleştirildi — bkz. `_body_to_world`):
+    - mission topic'leri (`current_target`, `waypoints`) ENU-hizalı ÖTELEME
+      ofsetidir (`latlon_to_enu` doğu/kuzey verir) → yalnız odom xy eklenir.
+    - perception topic'leri (`obstacle_map`, `classified_obstacles`) GÖVDE
+      çerçevesindedir (x=ileri) → hem ψ ile DÖNDÜRÜLÜR hem ötelenir.
+    İkisi aynı sanılırsa engeller yanlış yere düşer (aşağıdaki nota bak).
 
 Notlar:
     - Tüm planlama mantığı prototype.planning.pipeline.PlanningPipeline'da;
@@ -50,9 +70,11 @@ from geometry_msgs.msg import PoseArray, PoseStamped, Twist
 from mavros_msgs.msg import State as MavState
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from std_msgs.msg import Float32MultiArray, String
+from vision_msgs.msg import Detection3DArray
 
 from girdap_decision.qos_profiles import sensor_data_qos
 from prototype.control.mavros_bridge import MavrosBridge, MavrosBridgeConfig
+from prototype.mission.gate_follower import GateFollower, GateFollowerConfig
 from prototype.planning.mppi import MPPIConfig
 from prototype.planning.pipeline import PlanningPipeline, PlanningPipelineConfig
 from prototype.planning.rrt_star import Bounds, CircleObstacle
@@ -119,6 +141,32 @@ class PlanningNode(Node):
         self.declare_parameter("mppi_ref_window_size", _mppi.ref_window_size)
         self.declare_parameter("mppi_ref_window_enabled", _mppi.ref_window_enabled)
 
+        # --- Kapı takibi (gate following, 2026-08-03) ---
+        # Şartname md 5.5.2.2: Parkur-1/2 puanı GPS noktasına basmaktan DEĞİL,
+        # karşılıklı KENAR dubası ikilisinin ARASINDAN geçmekten gelir; hakemin
+        # verdiği nokta "doğrudan iki kenar dubasının arasında OLMAYABİLİR".
+        # Çekirdek `prototype/mission/gate_follower.py` (20 test, 27.07'de
+        # yazıldı) buraya kadar BAĞLI DEĞİLDİ — ham GN doğrudan MPPI'ye
+        # gidiyordu. Bu blok o bağlantıdır.
+        # Varsayılanlar GateFollowerConfig'ten OKUNUR (kopyalanmaz) → drift yok.
+        _gate = GateFollowerConfig()
+        self.declare_parameter("gate_following_enabled", True)
+        # Turuncu kenar dubasının sınıf kimliği (camera_buoys.CLASS_PARKUR_KENARI).
+        # Parametre olarak duruyor ki sınıf şeması değişirse kod değişmesin
+        # (ve planning_node cv2 bağımlısı camera_buoys'u import etmek zorunda
+        # kalmasın — bu node algı kütüphanesi çekmemeli).
+        self.declare_parameter("edge_buoy_class_id", 0)
+        # classified_obstacles aktığında obstacle_map'in yerine geçsin mi?
+        # false → eski davranış (sınıfsız harita), kapı dubaları da engel kalır.
+        self.declare_parameter("use_classified_obstacles", True)
+        self.declare_parameter("gate_width_min", _gate.gate_width_min)
+        self.declare_parameter("gate_width_max", _gate.gate_width_max)
+        self.declare_parameter("gate_max_lookahead", _gate.max_lookahead)
+        self.declare_parameter("gate_min_forward", _gate.min_forward)
+        self.declare_parameter("gate_pair_depth_tol", _gate.pair_depth_tol)
+        self.declare_parameter("gate_release_distance", _gate.release_distance)
+        self.declare_parameter("gate_match_radius", _gate.match_radius)
+
         bx = self.get_parameter("bounds_x").value
         by = self.get_parameter("bounds_y").value
         bounds = Bounds(bx[0], bx[1], by[0], by[1])
@@ -172,6 +220,37 @@ class PlanningNode(Node):
         # doğrudan MPPI referansı. Son poz absolute hedef hesabı için tutulur.
         self._use_rrt = bool(self.get_parameter("use_rrt").value)
         self._last_xy: Optional[tuple] = None
+        # Gövde→dünya dönüşümü için heading de gerekir (yalnız xy YETMEZ).
+        self._last_psi: float = 0.0
+
+        # --- Kapı takibi durumu ---
+        self._gate_enabled = bool(self.get_parameter("gate_following_enabled").value)
+        self._edge_class_id = int(self.get_parameter("edge_buoy_class_id").value)
+        self._use_classified = bool(
+            self.get_parameter("use_classified_obstacles").value
+        )
+        self._gate = GateFollower(
+            GateFollowerConfig(
+                gate_width_min=float(self.get_parameter("gate_width_min").value),
+                gate_width_max=float(self.get_parameter("gate_width_max").value),
+                max_lookahead=float(self.get_parameter("gate_max_lookahead").value),
+                min_forward=float(self.get_parameter("gate_min_forward").value),
+                pair_depth_tol=float(
+                    self.get_parameter("gate_pair_depth_tol").value
+                ),
+                release_distance=float(
+                    self.get_parameter("gate_release_distance").value
+                ),
+                match_radius=float(self.get_parameter("gate_match_radius").value),
+            )
+        )
+        # Kenar dubaları DÜNYA ENU'da (classified_obstacles'tan her taramada
+        # tazelenir). Boş liste = kapı görünmüyor → gate_follower ham GN'ye düşer.
+        self._edge_buoys: list[tuple[float, float]] = []
+        # classified_obstacles hiç aktı mı? (obstacle_map ile hakemlik için)
+        self._classified_seen = False
+        self._gate_log_t = 0.0
+        self._last_gate_used_fallback = True
 
         # MAVROS mod/arm geçidi — mavros_bridge ile aynı karar çekirdeği (DRY).
         # Hedef mod (mode_name) değilse cmd_vel yayınlanmaz; armed değilse thrust
@@ -210,6 +289,14 @@ class PlanningNode(Node):
         self._sub_obs = self.create_subscription(
             PoseArray, "/perception/obstacle_map", self._on_obstacles, 10
         )
+        # F-S.9 füzyon çıktısı — sınıflı engeller. Aktığı anda obstacle_map'in
+        # yerine geçer; turuncu kenar dubaları buradan kapı takibine gider.
+        self._sub_classified = self.create_subscription(
+            Detection3DArray,
+            "/perception/classified_obstacles",
+            self._on_classified,
+            10,
+        )
         self._sub_wp = self.create_subscription(
             Path, "/girdap/mission/waypoints", self._on_waypoints, 10
         )
@@ -231,6 +318,10 @@ class PlanningNode(Node):
         # Dosya-3: yerel maliyet haritası (RViz + local_map_node PNG dumper).
         self._pub_map = self.create_publisher(
             OccupancyGrid, "/girdap/map/local", sensor_data_qos()
+        )
+        # Saha teşhisi: kilitlenilen kapının orta noktası (kontrol yolu DEĞİL).
+        self._pub_gate = self.create_publisher(
+            PoseStamped, "/girdap/planning/gate", 10
         )
 
         # --- Kontrol döngüsü ---
@@ -255,6 +346,20 @@ class PlanningNode(Node):
             f"ref_pencere={cfg.mppi_ref_window_size}"
             f"{'' if cfg.mppi_ref_window_enabled else ' (KAPALI)'}"
         )
+        if self._gate_enabled:
+            self.get_logger().info(
+                "kapı takibi AÇIK: kenar dubası sınıfı="
+                f"{self._edge_class_id}, genişlik "
+                f"[{self.get_parameter('gate_width_min').value}, "
+                f"{self.get_parameter('gate_width_max').value}] m, "
+                f"menzil {self.get_parameter('gate_max_lookahead').value} m "
+                "— turuncu dubalar engel torbasından ÇIKARILIR"
+            )
+        else:
+            self.get_logger().warn(
+                "kapı takibi KAPALI (gate_following_enabled=false) → ham görev "
+                "noktasına gidilir; md 5.5.2.2 puanı kapıdan geçmekten gelir"
+            )
 
     # ----- subscriber callback'leri -----
 
@@ -268,14 +373,99 @@ class PlanningNode(Node):
         w = msg.twist.twist.angular
         self._pipe.set_state(np.array([p.x, p.y, psi, v.x, v.y, w.z]))
         self._last_xy = (p.x, p.y)               # bypass absolute hedef için
+        self._last_psi = psi                     # gövde→dünya dönüşümü için
+
+    # ----- frame dönüşümü -----
+
+    def _body_to_world(self, bx: float, by: float) -> tuple[float, float]:
+        """base_link (x=ileri) → dünya ENU. Döndürme + öteleme.
+
+        🔴 2026-08-03 BULGUSU — bu dönüşüm EKSİKTİ. `/perception/obstacle_map`
+        `perception_lidar_node`'da açıkça `frame_id="base_link"` ile yayınlanıyor
+        (gövde çerçevesi, x=ileri), ama `_on_obstacles` koordinatları OLDUĞU GİBİ
+        `PlanningPipeline`'a veriyordu — oysa boru hattı DÜNYA çerçevesinde
+        çalışır (`set_state` odom mutlak pozunu alır, RRT* start=mutlak poz,
+        MPPI maliyeti rollout dünya konumlarını engel koordinatlarıyla
+        karşılaştırır). Sonuç: araç origin'de ve ψ=0 iken tesadüfen doğru,
+        BAŞKA HER DURUMDA engeller hem döndürülmemiş hem ötelenmemiş yanlış
+        yere düşüyordu → var olmayan engelden kaçınma + gerçek engele sürme.
+        Mission topic'lerinde (`current_target`, `waypoints`) bu hata YOK: onlar
+        `latlon_to_enu` ile ENU-hizalı öteleme ofseti (doğu/kuzey) taşır, sadece
+        xy eklemek doğrudur — iki sözleşme aynı sanıldığı için gözden kaçmış.
+        """
+        if self._last_xy is None:
+            # Poz yok: döndüremeyiz. Gövde koordinatını dünya sanmak
+            # (eski davranış) sessiz bir hata olurdu — çağıran atlar.
+            raise ValueError("odom yok, gövde→dünya dönüşümü yapılamaz")
+        c, s = math.cos(self._last_psi), math.sin(self._last_psi)
+        return (
+            self._last_xy[0] + bx * c - by * s,
+            self._last_xy[1] + bx * s + by * c,
+        )
 
     def _on_obstacles(self, msg: PoseArray) -> None:
-        """PLACEHOLDER şema: position.{x,y} merkez, orientation.z yarıçap."""
-        self._last_obstacle_t = self._now()          # F-P.2: bayatlık saati
+        """PLACEHOLDER şema: position.{x,y} merkez, orientation.z yarıçap.
+
+        Sınıflı topic (`classified_obstacles`) bir kez aktıysa BU YOL SUSAR —
+        aynı engeller oradan sınıf bilgisiyle birlikte geliyordur ve kapı
+        dubalarının ayıklanması yalnız orada mümkündür (F-S.9).
+        """
+        if self._use_classified and self._classified_seen:
+            return
+        # F-P.2 bayatlık saati poz kontrolünden ÖNCE: bu bekçi "perception
+        # kaynağı sustu mu"yu ölçer, "biz dönüştürebildik mi"yi değil. Poz
+        # yokluğunda saati durdurmak bekçiyi sessizce kör ederdi.
+        self._last_obstacle_t = self._now()
+        if self._last_xy is None:                 # poz yok → dönüştürülemez
+            return
         obstacles = [
-            CircleObstacle(pp.position.x, pp.position.y, abs(pp.orientation.z))
+            CircleObstacle(*self._body_to_world(pp.position.x, pp.position.y),
+                           abs(pp.orientation.z))
             for pp in msg.poses
         ]
+        self._pipe.set_obstacles(obstacles)
+
+    def _on_classified(self, msg: Detection3DArray) -> None:
+        """Sınıflı engeller → kapı dubaları AYRIŞTIRILIR, gerisi engel kalır.
+
+        Turuncu KENAR dubası (class_id=`edge_buoy_class_id`, varsayılan 0)
+        arasından GEÇİLECEK bir nesnedir; engel torbasında bırakılırsa MPPI'nin
+        `obstacle_margin`=1.0 m'lik ceza halkası geçidin içini kaplar ve araç
+        kapıdan geçmek yerine etrafından dolanmayı ucuz bulur (CLAUDE.md
+        "Emniyet Payları" ölçümü: 1.5 m'de geçitten HİÇ geçmiyor). Bu yüzden
+        kenar dubaları engelden çıkarılıp `gate_follower`'a beslenir.
+
+        Eşleşmeyen LiDAR tespiti (CLASS_UNKNOWN=99) engel olarak KALIR —
+        füzyon sözleşmesinin güvenlik kuralı (bilinmeyeni atma).
+        """
+        self._classified_seen = True
+        self._last_obstacle_t = self._now()          # F-P.2 bekçisini besle (poz
+                                                     # kontrolünden ÖNCE — üstteki
+                                                     # _on_obstacles notuna bak)
+        if self._last_xy is None:                 # poz yok → dönüştürülemez
+            return
+
+        obstacles: list[CircleObstacle] = []
+        edges: list[tuple[float, float]] = []
+        for det in msg.detections:
+            cls = None
+            if det.results:
+                try:
+                    cls = int(det.results[0].hypothesis.class_id)
+                except (TypeError, ValueError):
+                    cls = None            # sayısal olmayan sınıf → engel say
+            c = det.bbox.center.position
+            try:
+                wx, wy = self._body_to_world(c.x, c.y)
+            except ValueError:
+                return
+            if self._gate_enabled and cls == self._edge_class_id:
+                edges.append((wx, wy))
+                continue                  # kapı dubası ENGEL DEĞİL
+            # bbox.size.x = çap (perception_fusion_node sözleşmesi)
+            obstacles.append(CircleObstacle(wx, wy, abs(det.bbox.size.x) / 2.0))
+
+        self._edge_buoys = edges
         self._pipe.set_obstacles(obstacles)
 
     def _obstacles_stale(self) -> bool:
@@ -300,10 +490,42 @@ class PlanningNode(Node):
             "thrust sıfır (F-P.2: bayat engel bilgisiyle kör sürme yok)"
         )
 
+    def _refine_target(self, coarse: tuple[float, float]) -> tuple[float, float]:
+        """Ham görev noktasını (GN) algılanan kapının ORTA NOKTASIYLA değiştir.
+
+        Şartname md 5.5.2.2: Parkur-1/2 puanı iki KENAR dubasının arasından
+        geçmekten gelir ve hakemin verdiği nokta tam kapı ortasında OLMAYABİLİR
+        → ham GN'ye yönelmek puan kaybettirir. Kapı görünmüyorsa (menzil dışı,
+        oklüzyon, Parkur-3) `GateFollower` ham GN'ye düşer; yani bu çağrı
+        kapısız durumda DAVRANIŞI DEĞİŞTİRMEZ (geriye tam uyumlu).
+
+        `gate_following_enabled=false` → tamamen devre dışı, eski davranış.
+        """
+        if not self._gate_enabled or self._last_xy is None:
+            return coarse
+        result = self._gate.update(self._last_xy, coarse, self._edge_buoys)
+        # Kapı bulundu/kaybedildi geçişini bir kez logla (10 Hz'te spam yok).
+        if result.used_fallback != self._last_gate_used_fallback:
+            self._last_gate_used_fallback = result.used_fallback
+            if result.gate is not None:
+                self.get_logger().info(
+                    f"kapı KİLİTLENDİ: orta ({result.target[0]:.1f}, "
+                    f"{result.target[1]:.1f}), genişlik {result.gate.width:.1f} m "
+                    f"— ham GN yerine buraya gidiliyor"
+                )
+            else:
+                self.get_logger().info(
+                    "kapı görüş dışı → ham görev noktasına dönüldü (fallback)"
+                )
+        if result.gate is not None:
+            self._publish_gate(result.target)
+        return result.target
+
     def _on_waypoints(self, msg: Path) -> None:
-        """F-S.6: mission_manager_node current_target'la AYNI referansta
-        (base_link-göreli ENU) yayınlar — burada son bilinen odom xy'sine
-        eklenerek mutlak "map" konumuna çevrilir (_on_target ile aynı desen).
+        """F-S.6/F-S.11: mission_manager_node current_target'la AYNI referansta
+        (base_link-göreli ENU ÖTELEMESİ) TEK aktif waypoint yayınlar — burada
+        son bilinen odom xy'sine eklenerek mutlak "map" konumuna çevrilir
+        (_on_target ile aynı desen), sonra kapı ortasıyla rafine edilir.
         """
         if not self._use_rrt:                    # video bypass → RRT* girişi yok
             return
@@ -315,6 +537,8 @@ class PlanningNode(Node):
             for ps in msg.poses
         ]
         if waypoints:
+            # RRT* hedefi listenin SON elemanı (F-S.11) → rafine edilecek olan o.
+            waypoints[-1] = self._refine_target(waypoints[-1])
             self._pipe.set_waypoints(waypoints)
             path = self._pipe.global_path
             if path is not None:
@@ -324,18 +548,26 @@ class PlanningNode(Node):
         """Video bypass: mission_manager hedefi → düz çizgi MPPI referansı.
 
         current_target base_link'te araç-göreli ENU ofsetidir; absolute hedef
-        için son odom pozuna eklenir (RRT* atlanır).
+        için son odom pozuna eklenir (RRT* atlanır), sonra kapı ortasıyla
+        rafine edilir.
         """
         if self._use_rrt or self._last_xy is None:
             return
         tx = self._last_xy[0] + msg.pose.position.x
         ty = self._last_xy[1] + msg.pose.position.y
+        tx, ty = self._refine_target((tx, ty))
         self._pipe.set_reference_direct(tx, ty)
         path = self._pipe.global_path
         if path is not None:
             self._publish_path(path)
 
     def _on_mission_state(self, msg: String) -> None:
+        # Parkur değişince kilitli kapıyı BIRAK: Parkur-1'in son kapısına
+        # kilitliyken Parkur-2'ye geçilirse eski kapı hedefi taşınmamalı
+        # (gate_follower.reset() sözleşmesi: "parkur geçişi / yeniden başlama").
+        if msg.data != self._pipe.mission_state:
+            self._gate.reset()
+            self._last_gate_used_fallback = True
         self._pipe.set_mission_state(msg.data)
 
     def _on_mav_state(self, msg: MavState) -> None:
@@ -410,6 +642,16 @@ class PlanningNode(Node):
             ps.pose.orientation.w = 1.0
             msg.poses.append(ps)
         self._pub_path.publish(msg)
+
+    def _publish_gate(self, midpoint: tuple[float, float]) -> None:
+        """Kilitli kapının orta noktası — RViz/saha teşhisi (kontrol yolu DEĞİL)."""
+        msg = PoseStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "map"
+        msg.pose.position.x = float(midpoint[0])
+        msg.pose.position.y = float(midpoint[1])
+        msg.pose.orientation.w = 1.0
+        self._pub_gate.publish(msg)
 
     def _publish_thrust(self, u: np.ndarray) -> None:
         msg = Float32MultiArray()
