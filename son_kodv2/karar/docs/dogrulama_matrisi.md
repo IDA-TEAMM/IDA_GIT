@@ -56,7 +56,9 @@ MPPI gerçek planning_node içinde sahte beslemeyle 9.90 Hz tuttu (günlük
 §8-9). Sıradaki oturum:
 
 1. **Ön şart:** pervaneler SÖKÜLÜ · RC kumanda bağlı (PreArm "Radio
-   failsafe on" çözülmeden ARM olmaz) · QGC laptop + RFD çifti ·
+   failsafe on" çözülmeden ARM olmaz — ⚠️ 2026-08-04: YARIŞMADA RC YOK
+   (kaptan kararı); alıcı sökülünce bu PreArm engeli SÜREKLİ tetiklenir,
+   `FS_THR_ENABLE=0` yapılmadan araç HİÇ ARM OLMAZ. Suya inmeden test et.) · QGC laptop + RFD çifti ·
    fcu_url=ttyUSB0:57600 (USB-C soketi tamirde).
 2. **Sıra:** M1 hızlı tekrar → M2 (QGC↔RFD) → M3 (QGC'den görev upload,
    `mission_source:=fc`, home=index0/komut=16 teyidi) → M4 (ARM→BEKLEMEDE)

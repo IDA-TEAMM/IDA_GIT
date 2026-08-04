@@ -697,7 +697,10 @@ ros2 launch girdap_decision hardware.launch.py planning.mppi_lambda:=50.0
 ```
 
 - **Geçişler dış komut almaz** (Şartname 5.5.2.2). Tamamen otonom.
-- **Acil durum:** her durumdan `KILL` durumuna RC kumanda + YKİ kill butonu.
+- **Acil durum:** her durumdan `KILL` durumuna. ⚠️ 2026-08-04: yarışmada RC
+  KULLANILMAYACAK (kaptan kararı) → tetik yolları **YKİ**: Mission Planner'dan
+  MAVLink `DO_SET_RELAY` (motor GÜCÜ kesilir, md 4.2) + `/girdap/mission/kill`
+  servisi (disarm + sıfır thrust). RC kill yolu `yarisma.yaml`'da `-1` ile kapalı.
 - **Implementasyon:** Python `enum.Enum` + `dict[State, Callable]` yeterli.
   Aşırı mühendislik yapma.
 

@@ -215,6 +215,22 @@ _FUSION_DEFAULTS: dict[str, tuple[object, type]] = {
 }
 
 
+def _deep_merge(base: dict, over: dict) -> dict:
+    """`over`u `base`in üstüne özyinelemeli bindirir (base DEĞİŞMEZ).
+
+    Sözlük değerler birleştirilir, diğer her tip üzerine yazılır. Overlay'in
+    yazmadığı anahtarlar base'den aynen gelir — yarışma dosyasının yalnız
+    farkları içerebilmesinin sebebi bu.
+    """
+    out = dict(base)
+    for k, v in (over or {}).items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
 def _load_hardware_config() -> dict:
     """config/hardware.yaml'ı oku; eksik/bulunamazsa varsayılanlara düş."""
     cfg = dict(_HW_DEFAULTS)
@@ -242,11 +258,28 @@ def _load_hardware_config() -> dict:
     cfg["gate"] = {k: v for k, (v, _) in _GATE_DEFAULTS.items()}
     cfg["tf"] = {}                      # ölçüm girilene kadar boş = hepsi 0
     try:
-        path = os.path.join(
-            get_package_share_directory(_PKG), "config", "hardware.yaml"
-        )
-        with open(path, "r", encoding="utf-8") as fh:
+        cfg_dir = os.path.join(get_package_share_directory(_PKG), "config")
+        with open(
+            os.path.join(cfg_dir, "hardware.yaml"), "r", encoding="utf-8"
+        ) as fh:
             data = yaml.safe_load(fh) or {}
+        # --- Yarışma/senaryo overlay'i (F-B.1) ---
+        # GIRDAP_CONFIG_OVERLAY=yarisma.yaml → o dosya hardware.yaml'ın ÜSTÜNE
+        # bindirilir; yalnız FARKLARI içerir, yazmadığı her anahtar
+        # hardware.yaml'dan miras kalır. Ayrı bir tam kopya tutmuyoruz çünkü
+        # iki tam dosya zamanla birbirinden kayar (drift) ve yarışma sabahı
+        # hangisinin güncel olduğu belirsizleşir.
+        overlay_name = os.environ.get("GIRDAP_CONFIG_OVERLAY", "").strip()
+        if overlay_name:
+            with open(
+                os.path.join(cfg_dir, overlay_name), "r", encoding="utf-8"
+            ) as fh:
+                data = _deep_merge(data, yaml.safe_load(fh) or {})
+            print(
+                f"*** config overlay UYGULANDI: {overlay_name} "
+                "(hardware.yaml üstüne)",
+                file=sys.stderr,
+            )
         for key in _HW_DEFAULTS:
             if key in data:
                 cfg[key] = data[key]

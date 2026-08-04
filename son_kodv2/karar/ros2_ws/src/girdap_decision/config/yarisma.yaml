@@ -1,0 +1,97 @@
+# GİRDAP İDA — YARIŞMA GÜNÜ config OVERLAY'i
+#
+# KULLANIM:
+#   GIRDAP_CONFIG_OVERLAY=yarisma.yaml ros2 launch girdap_decision hardware.launch.py
+#
+# Bu dosya `hardware.yaml`'ın ÜSTÜNE bindirilir; yalnız **farkları** içerir.
+# Yazmadığı her anahtar hardware.yaml'dan aynen gelir. (Tam kopya tutmuyoruz —
+# iki tam dosya zamanla birbirinden kayar ve yarışma sabahı hangisinin güncel
+# olduğu belirsizleşir.)
+#
+# hardware.yaml VİDEO senaryosuna ayarlıdır (AUTO modda görevi FC uçuruyor,
+# iSAM2/RRT* bypass). Yarışmada bunların hiçbiri geçerli değil — puan GPS
+# noktasına basmaktan değil duba kapısından GEÇMEKTEN geliyor (md 5.5.4.2),
+# yani tekneyi biz sürmeliyiz.
+#
+# 🔴 Yarışma sabahı bu overlay'in UYGULANDIĞINI doğrula: launch başında
+#    "*** config overlay UYGULANDI: yarisma.yaml" satırı stderr'e basılır.
+
+# --- Görevi FC değil BİZ sürüyoruz ---
+fsm:
+  # Video'da FC AUTO'da görevi kendi uçuruyordu; yarışmada GUIDED'da MPPI
+  # sürüyor. BEKLEMEDE'den çıkış tetiği GUIDED'a geçiş kenarı.
+  start_on_mode: "GUIDED"
+  # ⚠️ Video'da true'ydu (operatör önce AUTO'ya alıp sonra arm ederse mod kenarı
+  # oluşmuyordu). Yarışmada FALSE ŞART: GUIDED'dayken arm etmek görevi
+  # başlatmamalı — yoksa MPPI operatör hazır değilken motor sürer.
+  start_on_arm_in_mode: false
+
+bridge:
+  # AUTO'da köprü GUIDED'a zorlamıyordu (mod savaşı olmasın diye). Yarışmada
+  # GUIDED hedef mod, köprü onu sağlamalı.
+  auto_guided: true
+
+  # --- RC KAPALI (kaptan kararı 2026-08-04) ---
+  # Yarışmada kumanda kullanılmayacak; her şey otonom. Ayrıca mevcut set
+  # (RadioLink R9DS) 2.4 GHz ve md 4.1'e aykırı, alana götürülmeyecek.
+  # -1 = yol tamamen kapalı (F-S.12). ⚠️ Bu değerin GERÇEKTEN kapattığından emin
+  # ol: negatif kontrolü olmayan eski kod channels[-1]'i SON kanal olarak
+  # okuyordu ve rastgele bir PWM'e bakıp görev ortasında KILL basabilirdi.
+  rc_kill_channel: -1
+  rc_manual_channel: -1
+
+mission:
+  # AUTO'da FC waypoint'te durmuyordu → dwell=0 verilmişti (yoksa yön setpoint'i
+  # geride kalıp Ekran-2 grafiğini yanıltıyordu). Yarışmada tekneyi biz
+  # sürdüğümüz için dwell gerçek bir bekleme.
+  dwell_time_s: 2.0
+
+  # 🔴 PARKUR ETİKETLİ görev dosyası — bu satır olmadan yarışma ÇÖKER.
+  # Görev NOKTALARI Mission Planner'dan FC'ye yüklenir (mission_source: fc),
+  # ama PARKUR ETİKETLERİ (1/2/3) bu dosyadan okunur — fsm_node
+  # ParkurTransitionLogic her parkurun SON waypoint index'ini buradan hesaplar.
+  # hardware.yaml video_mission.yaml gösteriyor ve o dosyada etiket YOK
+  # (→ hepsi parkur 1 sayılır) → parkur katmanı PARKUR_1'de KİLİTLİ KALIR,
+  # Parkur 1→2→3 geçişi hiç olmaz. Şartname md 5.5.2.2 "parkurlar arası geçiş
+  # kullanıcı girişi olmadan OTOMATİK algılanacak" ihlal edilir ve
+  # (G2/KD2)×40 puanı gider.
+  mission_file: "competition_mission.yaml"
+
+telemetry:
+  # AUTO'da setpoint'ler FC'den okunuyordu; yarışmada üreten biziz.
+  setpoint_source: "girdap"
+
+# --- Tam algoritma yığını ---
+algorithm:
+  # ⚠️ use_isam2 BİLİNÇLİ OLARAK false BIRAKILDI: iSAM2 gerçek GPS/IMU ile hiç
+  # doğrulanmadı (dogrulama_matrisi 🔴). MAVROS EKF pass-through kanıtlanmış
+  # yol. Suda doğrulanırsa true yapılır — kod yolu hazır.
+  use_isam2: false
+  # RRT* global planlama açık: Parkur-2'de engel dubaları arasından geçerken
+  # düz çizgi referansı yetmez.
+  use_rrt: true
+  use_mppi: true
+
+# ---------------------------------------------------------------------------
+# 🔴 YARIŞMA SABAHI ELLE YAPILACAK — bu dosya tek başına yetmez
+# ---------------------------------------------------------------------------
+#
+# 1) GÖREV NOKTALARI HAKEMDEN GELİNCE (md 5.5.2.2):
+#    a) Mission Planner'dan noktaları FC'ye yükle (Write).
+#    b) `competition_mission.yaml`'daki waypoint SAYISINI ve PARKUR
+#       ETİKETLERİNİ yüklediğin göreve göre GÜNCELLE. Şu an 5 nokta var
+#       (parkur 1: 2 nokta, parkur 2: 2 nokta, parkur 3: 1 nokta) ve lat/lon'lar
+#       PLACEHOLDER (0.0). Etiket dizisi FC'ye yüklenen sıra ile BİREBİR
+#       hizalı olmalı — index'ler kayarsa parkur geçişi yanlış noktada tetiklenir.
+#       (lat/lon'ları doldurmak şart değil: mission_source=fc iken konumlar
+#       FC'den gelir, dosyadan yalnız `parkur` etiketleri okunur.)
+#
+# 2) FC PARAMETRELERİ (docs/fc_parametre_onerileri.md):
+#    - ARMING_CHECK = 1        (bench'te 0; suda TÜM pre-arm kontrolleri AÇIK)
+#    - FS_THR_ENABLE = 0       ⚠️ RC alıcısı sökülüyse ŞART — açık kalırsa FC
+#                              sürekli "Radio failsafe on" görüp ARM ETMEZ
+#    - INS_POS1_* / GPS1_POS_* girilmiş olmalı (docs/olcum_formu.md §0)
+#
+# 3) AĞ İZOLASYONU (şartname md 4.1):
+#    scripts/girdap-karar-yarisma.conf drop-in'i kur (ROS_LOCALHOST_ONLY=1).
+#    Bkz. docs/jetson_deployment.md "AĞ İZOLASYONU".

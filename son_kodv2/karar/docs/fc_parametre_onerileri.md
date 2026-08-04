@@ -87,7 +87,15 @@ doğrulanmadı**.
 
 ---
 
-## 0. 🔴 KANAL ÇAKIŞMASI — `MODE_CH=8` ile yazılım kill-switch'i aynı kanalda
+## 0. ~~🔴 KANAL ÇAKIŞMASI~~ — KONUSUZ KALDI (RC kaldırıldı, §0.0)
+
+> **Bu bölüm artık uygulanmıyor.** Yarışmada RC kullanılmayacağı için kanal
+> çakışması diye bir sorun kalmadı: `rc_kill_channel`/`rc_manual_channel` `-1`
+> (kapalı, `config/yarisma.yaml`), röle de RC kanalından değil MAVLink
+> `DO_SET_RELAY` ile tetikleniyor. Kayıt olarak bırakıldı — **bench testinde
+> RC kullanılırsa** çakışma yine geçerlidir.
+
+### (arşiv) Özgün bulgu
 
 2026-08-04 param dökümünden çıktı:
 
@@ -114,7 +122,8 @@ RC 8 → kill switch: röle + mavros_bridge KILL (tek amaç)
 RC 5 → manuel override (yarışmada kapalı, bkz. madde 8)
 ```
 
-> Karar FC ekibinin; ama **kanal 8'e röle atanmadan önce** çözülmeli.
+> ~~Karar FC ekibinin; ama kanal 8'e röle atanmadan önce çözülmeli.~~
+> → Röle artık RC kanalına bağlanmıyor; madde kapandı.
 
 ---
 
@@ -245,41 +254,57 @@ için **5'er ceza puanı** (md 5.5.4.3.5). Ayrıca acil durum sonrası hakem
 | Tip | Mekanik kontaktör ya da yüksek akım SSR | İkisi de kabul; SSR'de ısınma payı bırak |
 | Konum | Batarya (+) kolu, sigortadan sonra | Sızdırmaz bölme içinde, md 4.2 emniyet |
 
-### Uygulama — A ve B, İKİSİ BİRDEN
+### Uygulama — RC KALKTIĞI İÇİN GÜNCELLENDİ (2026-08-04)
 
-**A) RC alıcı kanalı → doğrudan röle sürücüsü (BİRİNCİL, önerilen)**
-RC alıcının kanal çıkışı FC'ye uğramadan röle bobinini sürer (küçük bir MOSFET
-sürücü modülü üzerinden). **FC çökse, yazılım kilitlense, MAVLink kopsa bile
-çalışır** — şartnamenin istediği "anında" budur. Tek bağımlılık RC alıcısının
-kendisidir.
+> ⚠️ Bu bölümün ilk hâlinde birincil yol **"RC alıcı kanalı → doğrudan röle,
+> FC'den bağımsız"** idi. Kaptan kararıyla yarışmada RC kullanılmayacağı için
+> (§0.0) **o yol artık yok.** Geriye FC üzerinden tetikleme kalıyor.
 
-**B) FC üzerinden röle (İKİNCİL katman)**
+**Tek yol: YKİ → MAVLink → FC rölesi**
+```
+Mission Planner  →  MAVLink DO_SET_RELAY  →  RELAY1_PIN  →  kontaktör
+                                                          →  ESC gücü kesilir
+```
+Şartname uygun: md 4.2 uzaktan güç kesmeyi *"İDA YKİ yazılımı üzerinden ya da
+RC kumandadan"* diye tanımlar; YKİ yolu yeterlidir.
+
+🔴 **Bilinçli kabul edilen zayıflık:** zincir artık **FC + telemetri linkine
+bağımlı**. FC donarsa/telemetri koparsa uzaktan güç kesme de gider; geriye
+yalnız araç üstündeki kırmızı buton kalır (o da uzaktan değil). RC-doğrudan
+yolda bu bağımlılık yoktu. Ekip bunu bilerek kabul ediyor.
+
+> **Azaltıcı önlem önerisi:** telemetri linki koptuğunda FC'nin kendi
+> `FS_GCS_ENABLE=1` failsafe'i devreye girebilir (şu an **0**, §3'te açık
+> karar). Güç kesmenin yerini tutmaz ama aracı Hold'a alır.
+
+**FC parametreleri**
 
 | Parametre | Değer | Neden |
 |---|---|---|
 | `RELAY1_FUNCTION` | `1` (Relay) | Röle çıkışını etkinleştirir |
 | `RELAY1_PIN` | ⚠️ **MP'nin parametre açıklamasındaki listeden** AUX çıkışı seç | Pin numaralandırması karta göre değişir — tahmin etme, MP'nin kendi listesinden seç ve doğrula |
 | `RELAY1_DEFAULT` | `0` (boot'ta kapalı) | Boot'ta motorlar güçsüz açılsın — `INITIAL_MODE=HOLD` ile aynı felsefe |
-| `RCx_OPTION` (kill kanalı) | Dropdown'dan **"Relay On/Off"** | MP'de isimle seçilir, numara ezberlemeye gerek yok |
+| ~~`RCx_OPTION`~~ | — | **GEREKMEZ** — RC yok; röle Mission Planner'dan MAVLink `DO_SET_RELAY` ile tetiklenir |
 
-> ⚠️ B tek başına YETMEZ: FC'ye bağımlıdır. A olmadan "FC kilitlendiğinde ne olacak"
-> sorusunun cevabı yok. B'nin değeri, aynı anahtarın hem röleyi hem `mavros_bridge`
-> KILL'ini tetiklemesidir (tek hareket, üç katman).
+> **Mission Planner'dan tetikleme:** bağlıyken röle çıkışı MP'nin servo/relay
+> kontrol arayüzünden veya `DO_SET_RELAY` komutuyla açılıp kapatılır.
+> Yarışma öncesi **kuru zeminde denenip** operatörün nereye basacağı
+> ezberlenmeli — acil anda menü aranmaz.
 
-### Kanal planı — mevcut yazılım DEĞİŞMİYOR
-
-`mavros_bridge_node` varsayılanları zaten kanal 8'i (`rc_kill_channel: 7`,
-0-indexli) kill için okuyor. Aynı fiziksel anahtar üç şeyi birden yapsın:
+### Katman planı (RC kalktıktan sonra)
 
 ```
-RC kanal 8 (kill anahtarı)
-  ├─→ (A) röle sürücüsü            → MOTOR GÜCÜ KESİLİR   ← şartname maddesi
-  ├─→ (B) FC RELAY1                → yedek güç kesme
-  └─→ mavros_bridge KILL           → disarm + sıfır thrust (üçüncü katman)
+YKİ (Mission Planner)
+  ├─→ MAVLink DO_SET_RELAY → RELAY1 → kontaktör → MOTOR GÜCÜ KESİLİR  ← md 4.2
+  └─→ /girdap/mission/kill (fsm_node)  → disarm + sıfır thrust        ← 2. katman
+
+Araç üstü kırmızı buton → fiziksel güç kesme (uzaktan DEĞİL, ayrı md 4.2 maddesi)
 ```
 
-Yazılım tarafında yapılacak bir şey yok — kanal numarası değişirse
-`hardware.yaml` `rc_kill_channel` güncellenir.
+**Yazılım tarafı:** `rc_kill_channel` / `rc_manual_channel` yarışmada `-1`
+(kapalı) — `config/yarisma.yaml` overlay'inde ayarlı. ⚠️ `-1`'in gerçekten
+kapattığı F-S.12'de düzeltildi; öncesinde negatif indeks Python'da SON kanalı
+okuyup görev ortasında yanlış KILL basabilirdi.
 
 ### Doğrulama
 
