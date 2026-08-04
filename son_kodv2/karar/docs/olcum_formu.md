@@ -25,13 +25,96 @@ değişmez**, ve araç üzerinde fiziksel olarak işaretlenir (bant/kalem).
 - **+z = YUKARI**
 - Açı birimi: **derece**, saat yönünün TERSİ (+) — yani +yaw = sola dönüş
 
-**Önerilen `base_link` konumu:** iki gövdenin tam ortası, güverte düzlemi,
-boy ekseninde ağırlık merkezi hizası. Farklı bir yer seçilirse buraya yazın:
+### 🔴 Önerilen konum: **Pixhawk'ın bulunduğu nokta**
+
+Sezgisel seçim "iki gövdenin tam ortası"dır ama **teknik olarak doğru seçim
+Pixhawk'tır.** Gerekçe:
+
+`/mavros/local_position/odom` — yani konum kaynağımız — ArduPilot EKF'inin
+çıktısıdır ve ArduPilot varsayılan olarak **IMU'yu (yani FC kartını) araç
+orijini** kabul eder (`INS_POS_*` / `GPS_POS_*` offset'leri 0 ise). Yani odom
+zaten "Pixhawk'ın konumu"nu söylüyor.
+
+`base_link`'i başka bir yere koyarsak: odom Pixhawk'ın yerini bildirir, engel
+koordinatları ise seçtiğimiz noktaya göre ölçülür → **aradaki mesafe kadar
+sistematik kayma** oluşur. Pixhawk pruvaya doğru 30 cm ileride ise her engel
+30 cm yanlış yerde görünür. Kapı net açıklığı ~1.35 m, tekne 0.78 m → boşluk
+zaten dar; 30 cm'lik sabit hata pahalıya patlar.
+
+**Uygulama:** Pixhawk'ın gövdesinin merkezini güverteye çekülle indir, o
+noktayı işaretle. `base_link` orası.
+
+> Alternatif isterseniz: geometrik merkezi `base_link` yapıp ArduPilot
+> `INS_POS_X/Y/Z` parametrelerine Pixhawk'ın o merkeze göre offset'ini girin.
+> İki iş yerine tek iş olduğu için önerimiz yukarıdaki.
+
+Farklı bir yer seçilirse buraya yazın:
 
 | | Değer |
 |---|---|
 | `base_link` seçilen konum (tarif) | `________________________________` |
 | Araç üzerinde işaretlendi mi? | ☐ evet |
+
+---
+
+## §0.5 — NASIL ÖLÇÜLÜR (yöntem)
+
+**Malzeme:** şerit metre · **çekül** (ipe bağlı somun yeter) · uzun sicim ·
+maskeleme bandı + keçeli kalem · su terazisi (telefon uygulaması olur) ·
+düz bir tahta/gönye.
+
+**Altın kural: 3B'de çapraz ölçmeyin.** Her şeyi çekülle güverteye indirip
+düzlemde (2B) ölçün — çapraz ölçüm hem zor hem hatalı.
+
+### Hazırlık
+1. Tekneyi **düz zemine** koyun, sallanmasın diye takoz koyun.
+2. Su terazisiyle güvertenin yatay olduğunu doğrulayın (sağa-sola ve
+   öne-arkaya). Eğikse ölçümler bozulur.
+3. **`base_link`'i işaretle:** Pixhawk gövdesinin merkezinden çekül sarkıtın,
+   ucun güverteye değdiği noktayı bantla işaretleyin. Üstüne "BL" yazın.
+4. **Merkez hattını ger:** pruvanın tam ortasından kıçın tam ortasına sicim
+   gerin. Bu **+x ekseni**. BL bu sicimin üstünde olmalı (değilse Pixhawk
+   merkezde değil demektir — sorun değil, y'sini ölçeceğiz).
+
+### Her sensör için (LiDAR, kamera)
+5. Sensörün **referans noktasından** çekül sarkıtın, yere düştüğü yeri
+   işaretleyin:
+   - **Livox Mid-360:** silindirik gövdenin merkezi, lazer penceresinin orta
+     yüksekliği
+   - **OAK-D Lite:** ortadaki (RGB) lensin merkezi
+6. **`x`** = BL ile sensör işaretinin **sicim boyunca** mesafesi.
+   Sensör BL'nin önündeyse **+**, arkasındaysa **−**.
+7. **`y`** = sensör işaretinin sicime **dik** mesafesi.
+   Sicimin **solunda** (iskele) **+**, sağında (sancak) **−**.
+8. **`z`** = yerdeki işaretten sensörün referans noktasına kadar **dik yukarı**
+   mesafe. Metreyi düz tutun (tahtayla dayayın).
+
+> **Hassasiyet:** ±2 cm yeter. LiDAR cluster toleransı 0.5 m, duba yarıçapı
+> 0.15 m — santimin altını kovalamayın. **İstisna: `z`** — F5.1 filtresini o
+> belirliyor, onu dikkatli ölçün.
+
+### Yaw (dönüklük) — mekanik değil, AMPİRİK ölçün
+Yaw'ı iletkiyle ölçmeye çalışmayın: **20 m'de 5°'lik hata 1.7 m yanal kayma**
+demek, ama 5°'yi elle ölçmek zordur. Bunun yerine:
+
+1. Mekanik olarak: sensör braketi gövdeye hizalı monte edildiyse `yaw ≈ 0`
+   yazın (başlangıç değeri).
+2. **Sonra doğrulayın:** merkez hattının tam üzerine, ~10 m ileriye bir duba
+   (ya da kova/direk) koyun. Yığın açıkken:
+   ```bash
+   ros2 topic echo /perception/obstacle_map --once
+   ```
+   Tek engelin `position.y`'si **≈ 0** olmalı. Değilse:
+   `yaw_hata(derece) = atan2(y, x) × 180/π` → bulduğunuz açıyı `tf` bloğuna
+   (radyan olarak) girin ve tekrarlayın.
+3. Aynı testi kamera için: duba görüntünün **tam ortasında** olmalı.
+
+> Bu yöntem hem daha doğru hem de montaj/optik eksen farklarını da yakalar.
+
+### Pitch (yalnız kamera)
+Telefonun eğim/su terazisi uygulamasını kameranın **düz üst yüzeyine** koyun.
+Ufka göre aşağı bakıyorsa **negatif** yazın. Duba mesafe tahminini doğrudan
+etkiler.
 
 ---
 
