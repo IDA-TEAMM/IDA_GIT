@@ -59,8 +59,8 @@ RC 5 → manuel override (yarışmada kapalı, bkz. madde 8)
 |---|---|---|---|
 | `ARMING_REQUIRE` | Varsayılan kalsın (arm şart) | ___ | 0 yapmak = güç verilince motorlar hazır; asla |
 | Ön-arm kontrolleri (`ARMING_CHECK`/`ARMING_SKIPCHK`) | HEPSİ AÇIK (0 = tümü) | ___ | GPS fix'siz/kalibrasyonsuz ARM engellenir — yazılımdaki F-M.1 guard'ıyla aynı yönde çift katman |
-| Çubukla arm/disarm (`ARMING_RUDDER` — adı QGC param aramasından teyit edin) | KAPALI (0) önerilir | ___ | Arm QGC'den yapılıyor (video md 3.3.1). RC trim'leri tuhafken (CH2 üst uçta dinleniyor) çubuk kombinasyonu yanlışlıkla arm/disarm edebilir |
-| RC kalibrasyonu | QGC ile BAŞTAN + `RCMAP_*` kontrolü | — | Masada trim'ler elle yazıldı (geçici). CH2/CH3 uç değerlerde dinleniyor — kanal eşlemesi şüpheli |
+| `ARMING_RUDDER` | ~~KAPALI (0) önerilir~~ → **2 KALACAK (ekip kararı 2026-08-04)** | **2** | Öneri 0'dı (kazara arm/disarm riski). **Ekip çubukla arm/disarm istiyor → karar kabul, tartışma kapandı.** Ara seçenek `1` (yalnız ARM) da sunuldu, `2` tercih edildi. **Telafi:** RC kalibrasyonu artık ZORUNLU (aşağıya bkz.) — risk büyük ölçüde değerlerin fabrika varsayılanında olmasından geliyordu. Kalan risk: görev sırasında çubuğa dokunulursa tekne parkur ortasında disarm olur; acil kesme için zaten kanal 8 kill + röle var |
+| RC kalibrasyonu | 🔴 **ZORUNLU** — Mission Planner → Mandatory Hardware → Radio Calibration | **YAPILMAMIŞ** | 2026-08-04 param dökümü: `RC3/RC5/RC8_MIN/TRIM/MAX = 1100/1500/1900`, yani tam olarak **fabrika varsayılanları** (gerçek kalibrasyon 1093, 1512 gibi yuvarlak olmayan sayılar üretir). Bu yapılmadan hiçbir RC fonksiyonu güvenilir değil: kill switch eşiği, `FS_THR_VALUE`, mod anahtarı, ve `ARMING_RUDDER=2` ile çubukla arm/disarm — hepsi tahmine dayalı kalır |
 
 ## 3. Failsafe'ler (F14.1'in FCU ayağı)
 
