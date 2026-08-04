@@ -49,6 +49,44 @@
 | `SERIAL2_PROTOCOL/BAUD` | Mevcut 57600 çalışıyor (TELEM2, çapraz kablo sonrası); USB-C soketi tamir edilirse USB'ye dönülebilir | 57600 tavanı IMU'yu ~10 Hz'te sınırlıyor; `SR2_*` stream-rate paramlarıyla oynanabilir |
 | Pixhawk USB-C soketi | Çapraz test: başka bilgisayara tak; orada da descriptor hatası varsa tamir/RMA | `device descriptor read error -32` — donanım günlüğü §2 reçetesi |
 
+## 4.4. SENSÖR KONUM OFSETLERİ — ölçüldü, girilmeyi bekliyor (2026-08-04)
+
+Araç orijini **gövde geometrik merkezi** olarak tanımlandı (ön uçtan 51.5 cm,
+merkez hattı, gövde tabanı). Ölçümler `docs/olcum_formu.md` §0/§2'de.
+
+**Girilecek değerler (metre):**
+
+| Parametre | Değer | Mevcut | Fiziksel karşılığı |
+|---|---|---|---|
+| `INS_POS1_X` | `-0.055` | `____` | Pixhawk 5.5 cm kıçta |
+| `INS_POS1_Y` | `-0.1375` | `____` | Pixhawk 13.75 cm iskelede |
+| `INS_POS1_Z` | `-0.155` | `____` | Pixhawk 15.5 cm yukarıda |
+| `GPS_POS1_X` | `-0.035` | `____` | Anten 3.5 cm kıçta |
+| `GPS_POS1_Y` | `-0.16` | `____` | Anten 16 cm iskelede |
+| `GPS_POS1_Z` | `-0.365` | `____` | Anten 36.5 cm yukarıda |
+
+**Neden gerekli:** Bu parametreler sıfırken ArduPilot "GPS de IMU da orijinde"
+varsayar; mutlak konumu GPS çivilediği için raporlanan konum pratikte **GPS
+anteninin** konumu olur. Anten merkez hattının 16 cm iskelesinde → tüm konum
+16 cm kayık. Kapı ortasına sürerken tekne gövdesi o kadar sancağa kaymış
+geçer; kapı ~1.35 m, tekne 0.78 m → yan pay 28.5 cm iken sancak payı yarıya
+iner (md 5.5.4.2 geçiş + `Ç1`/`Ç2` çarpma cezası).
+
+> ⚠️ **EKSEN:** ArduPilot body frame = X ileri, **Y sancak +**, **Z aşağı +**.
+> ROS/TF ise Y sol +, Z yukarı +. Yukarıdaki tabloda çevrim YAPILMIŞTIR —
+> "iskelede" ve "yukarıda" olanlar negatif. `hardware.yaml tf:` bloğundaki
+> aynı fiziksel konumlar ters işaretli görünür, bu normaldir.
+
+> ⚠️ ArduPilot dokümanı ofsetleri **ağırlık merkezine** göre tanımlar; biz
+> geometrik merkezi kullandık (küçük teknede yakın, düzeltmeyi asıl belirleyen
+> GPS↔IMU göreli geometrisi zaten doğru). CoG belirgin şekilde başkaysa
+> değerler ötelenir.
+
+**Doğrulama:** Parametreler yazıldıktan sonra Write+reboot; masa testinde
+konumun beklendiği gibi davrandığı GÖRÜLMEDEN "tamam" denmeyecek.
+
+---
+
 ## 4.5. 🔴 UZAKTAN GÜÇ KESME — şartname MİNİMUM GEREKSİNİMİ (2026-08-03)
 
 > Şartname md 4.2, "Uzaktan Güç Kesme":

@@ -230,20 +230,35 @@ topics:
 #    şu an TF dönüşümü UYGULAMIYOR, z_min=0.1 filtresi ham LiDAR çerçevesinde
 #    çalışıyor. LiDAR base_link'in üstündeyse dubalar negatif z'de kalıp
 #    tamamen elenebilir — ölçüm gelince perception ekibine bildirilecek.
+# ✅ ÖLÇÜLDÜ 2026-08-04, kullanıcıyla birlikte (docs/olcum_formu.md §2).
+#
+# base_link = TEKNENİN GEOMETRİK MERKEZİ (Pixhawk DEĞİL — 2026-08-04'te
+# değiştirildi). Tanım:
+#   x: gövde boy ortası      → ön uçtan 51.5 cm (tekne boyu 103 cm ölçüldü;
+#                              koddaki hull_length_m=1.04 böylece doğrulandı)
+#   y: gövde merkez hattı    → LiDAR zaten tam orada
+#   z: gövde tabanı          → tekne masadayken masa yüzeyi
+#
+# Ham ölçümler (metre 0'ı ön uçta, tekne masada):
+#   tekne boyu 103.0 · LiDAR ön uçtan 50.0 · LiDAR masadan 41.0
+#   kapak ağzı masadan 24.5 · kapak ağzı tekne tabanından 15.0
+#   Pixhawk tabandan 6.0 (3D baskı platform) → Pixhawk masadan 15.5
+#   Pixhawk, LiDAR'dan 7 cm KIÇA ve 13.75 cm İSKELEYE kayık
+#
+# 🔴 AÇIK — ODOM İLE HENÜZ HİZALI DEĞİL: bu blok base_link'i gövde merkezine
+#    koyuyor, ama /mavros/local_position/odom hâlâ ArduPilot'un raporladığı
+#    noktayı veriyor ve GPS_POS1_*/INS_POS1_* parametreleri SIFIR olduğu
+#    sürece o nokta pratikte GPS ANTENİ'dir. İkisi ancak o parametreler
+#    girilince çakışır. Girilene kadar sistemde bilinen bir sabit ofset var.
+#    Bkz. olcum_formu.md "Gövde merkezi ofseti".
 tf:
-  # ✅ ÖLÇÜLDÜ 2026-08-04 (docs/olcum_formu.md §2). base_link = Pixhawk 6C.
-  #    Ara ölçümler: LiDAR masadan 41.0 · kapak ağzı masadan 24.5 · kapak ağzı
-  #    tekne tabanından 15.0 · Pixhawk tekne tabanından 6.0 (3D baskı platform)
-  #    → Pixhawk masadan 15.5 → z = 41.0 − 15.5 = 25.5 cm.
-  #    x: LiDAR, Pixhawk'tan 6.5-7 cm PRUVA tarafında (pruva = kamera yuvası tarafı).
-  #    y: LiDAR gövde merkez hattında; Pixhawk 13.5-14 cm İSKELEDE (solda) →
-  #       LiDAR, base_link'e göre SANCAKTA kalıyor → y negatif.
-  #    ⏳ yaw: ampirik kalibre edilecek (olcum_formu §0.5 — merkez hattına 10 m
-  #       ileriye hedef koy, /perception/obstacle_map'te position.y ≈ 0 olmalı).
-  # ⚠️ TÜRETİLEN AÇIK KONU: base_link (=Pixhawk) gövde merkez hattının 13.75 cm
-  #    İSKELESİNDE. Kapı ortasına base_link'i sürersek tekne GÖVDESİ 13.75 cm
-  #    sancağa kaymış geçer (kapı 1.35 m, tekne 0.78 m → yan pay 28.5 cm; payın
-  #    yarısı gider). Bkz. olcum_formu.md "Gövde merkezi ofseti".
-  livox_frame: {x: 0.07, y: -0.1375, z: 0.255, yaw: 0.0, pitch: 0.0, roll: 0.0}
+  # LiDAR: enine tam merkezde, boyuna ortadan 1.5 cm pruvada.
+  # ⏳ yaw: ampirik kalibre edilecek (olcum_formu §0.5 — merkez hattına 10 m
+  #    ileriye hedef koy, /perception/obstacle_map'te position.y ≈ 0 olmalı).
+  livox_frame: {x: 0.015, y: 0.0, z: 0.41, yaw: 0.0, pitch: 0.0, roll: 0.0}
+  # ⏳ Kamera HENÜZ TAKILMADI (pruvadaki mavi kutu onun yuvası). Not: oak_frame
+  #    TF'i şu an hiçbir node tarafından tüketilmiyor (füzyon bearing
+  #    eşleştirmesi kalibrasyonsuz) — takılınca ölçülecek, önceliği düşük.
   oak_frame:   {x: 0.0, y: 0.0, z: 0.0, yaw: 0.0, pitch: 0.0, roll: 0.0}
-  imu_link:    {x: 0.0, y: 0.0, z: 0.0, yaw: 0.0, pitch: 0.0, roll: 0.0}
+  # Pixhawk 6C (IMU): ortadan 5.5 cm kıçta, 13.75 cm iskelede, tabandan 15.5 cm.
+  imu_link:    {x: -0.055, y: 0.1375, z: 0.155, yaw: 0.0, pitch: 0.0, roll: 0.0}

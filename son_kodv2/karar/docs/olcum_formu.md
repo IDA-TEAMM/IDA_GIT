@@ -37,28 +37,69 @@ değişmez**, ve araç üzerinde fiziksel olarak işaretlenir (bant/kalem).
 - **+z = YUKARI**
 - Açı birimi: **derece**, saat yönünün TERSİ (+) — yani +yaw = sola dönüş
 
-### 🔴 Önerilen konum: **Pixhawk'ın bulunduğu nokta**
+### ✅ KARAR (2026-08-04): `base_link` = **teknenin geometrik merkezi**
 
-Sezgisel seçim "iki gövdenin tam ortası"dır ama **teknik olarak doğru seçim
-Pixhawk'tır.** Gerekçe:
+| Eksen | Nerede | Ölçülen |
+|---|---|---|
+| `x` | Gövde **boy ortası** | Ön uçtan **51.5 cm** (tekne boyu 103 cm) |
+| `y` | Gövde **merkez hattı** | LiDAR zaten tam orada |
+| `z` | Gövde **tabanı** | Tekne masadayken masa yüzeyi |
 
-`/mavros/local_position/odom` — yani konum kaynağımız — ArduPilot EKF'inin
-çıktısıdır ve ArduPilot varsayılan olarak **IMU'yu (yani FC kartını) araç
-orijini** kabul eder (`INS_POS_*` / `GPS_POS_*` offset'leri 0 ise). Yani odom
-zaten "Pixhawk'ın konumu"nu söylüyor.
+> **Neden Pixhawk değil?** İlk öneri Pixhawk'tı; gerekçe "ArduPilot IMU'yu araç
+> orijini sayar" idi. **Bu eksikti:** mutlak konumu **GPS çiviliyor** ve
+> `GPS_POS1_*` sıfırken EKF, anten ölçümünü olduğu gibi kabul eder — yani
+> raporlanan konum pratikte **GPS anteninin** konumudur, Pixhawk'ın değil.
+> Bu teknede GPS anteni sancakta bir kol üzerinde, yani orijin daha da kayık.
+>
+> Ayrıca ölçüm gösterdi ki Pixhawk gövde merkez hattının **13.75 cm
+> iskelesinde**. `base_link` orada olsaydı kapı ortasına sürerken tekne gövdesi
+> 13.75 cm sancağa kaymış geçerdi (aşağıdaki hesap).
+>
+> **Doğru kurulum:** orijini biz seçeriz (gövde merkezi), ArduPilot'a da
+> "GPS şurada, IMU şurada" deriz → EKF gövde merkezini raporlar, kayma
+> kökünden biter.
 
-`base_link`'i başka bir yere koyarsak: odom Pixhawk'ın yerini bildirir, engel
-koordinatları ise seçtiğimiz noktaya göre ölçülür → **aradaki mesafe kadar
-sistematik kayma** oluşur. Pixhawk pruvaya doğru 30 cm ileride ise her engel
-30 cm yanlış yerde görünür. Kapı net açıklığı ~1.35 m, tekne 0.78 m → boşluk
-zaten dar; 30 cm'lik sabit hata pahalıya patlar.
+**⏳ FC'ye girilecek parametreler — hesaplandı, girilmeyi bekliyor:**
 
-**Uygulama:** Pixhawk'ın gövdesinin merkezini güverteye çekülle indir, o
-noktayı işaretle. `base_link` orası.
+```
+INS_POS1_X   -0.055     GPS_POS1_X   -0.035
+INS_POS1_Y   -0.1375    GPS_POS1_Y   -0.16
+INS_POS1_Z   -0.155     GPS_POS1_Z   -0.365
+```
 
-> Alternatif isterseniz: geometrik merkezi `base_link` yapıp ArduPilot
-> `INS_POS_X/Y/Z` parametrelerine Pixhawk'ın o merkeze göre offset'ini girin.
-> İki iş yerine tek iş olduğu için önerimiz yukarıdaki.
+Türetildiği fiziksel gerçek (gövde merkezine göre):
+
+| | ileri/geri | sağ/sol | yükseklik |
+|---|---|---|---|
+| Pixhawk (IMU) | 5.5 cm **kıçta** | 13.75 cm **iskelede** | 15.5 cm **yukarıda** |
+| GPS anteni | 3.5 cm **kıçta** | 16 cm **iskelede** | 36.5 cm **yukarıda** |
+
+> İşaretler ArduPilot eksenine çevrilmiştir (Y sancak +, Z aşağı +) — bu yüzden
+> "iskelede" ve "yukarıda" olan değerler **negatif** yazılıyor.
+
+> ⚠️ **Doğrulanacak varsayım:** ArduPilot dokümanı bu ofsetleri aracın **ağırlık
+> merkezine** göre tanımlar; biz **geometrik merkezi** kullandık. Küçük bir
+> teknede ikisi yakındır ve düzeltmeyi asıl belirleyen GPS↔IMU arasındaki
+> **göreli** geometridir (o doğru). Ağırlık merkezi belirgin şekilde başka
+> yerdeyse değerler ötelenir.
+
+> 🔴 **Bu parametreler girilene kadar** `base_link` tanımı ile odom'un
+> raporladığı nokta ÇAKIŞMIYOR — sistemde bilinen sabit bir ofset var.
+> Girildikten sonra masa testinde konumun beklendiği gibi davrandığı
+> doğrulanmalı (ArduPilot'un ofseti fiilen uyguladığı gözle görülmeden
+> "tamam" denmeyecek).
+
+**⚠️ EKSEN TUZAĞI — ArduPilot ile ROS ters:**
+
+| | ROS / TF (`hardware.yaml`) | ArduPilot `INS_POS`/`GPS_POS` |
+|---|---|---|
+| X | ileri + | ileri + (aynı) |
+| Y | **sol (iskele) +** | **sağ (sancak) +** ← ters |
+| Z | **yukarı +** | **aşağı +** ← ters |
+
+Aynı fiziksel konum iki dosyada farklı işaretle yazılır. Ölçümü hep fiziksel
+olarak ("şu kadar sağda", "şu kadar yukarıda") not edin, çevirmeyi tek yerde
+yapın.
 
 Farklı bir yer seçilirse buraya yazın:
 
@@ -180,6 +221,18 @@ Pixhawk tekne tabanından (3D platform) 6.0 cm
 > dubanın **tepesi bile** LiDAR'ın altında kalıyor → tüm noktalar negatif
 > z'de → filtre hepsini eliyor → `obstacle_map` boş. Atölyedeki "üretim
 > config'de 0 engel" gözlemiyle birebir uyuşuyor.
+
+---
+
+### GPS anteni (Holybro H-RTK F9P) — mutlak konumu bu çiviliyor
+
+| Ölçü | Değer |
+|---|---|
+| Ön uçtan mesafe | 55.0 cm → gövde merkezinden **3.5 cm kıçta** |
+| Merkez hattından | **16 cm iskelede** (Pixhawk ile aynı taraf) |
+| Masadan (gövde tabanından) yükseklik | **36.5 cm** |
+
+> `GPS_POS1_*`'e girilecek → §0'daki parametre bloğu.
 
 ---
 
