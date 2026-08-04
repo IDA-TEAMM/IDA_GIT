@@ -37,8 +37,46 @@ teknik kontrollerde (md 5.2) tespit edilir.
 TBS Crossfire 868/915 MHz · FrSky R9 (900 MHz) · 433 MHz LRS.
 Not: telemetri zaten RFD868x (868 MHz) — ekip bu banda aşina.
 
-> ⏳ **Aksiyon:** tedarik süresi gerektiği için ekibe derhal bildirilecek.
-> Mevcut 2.4 GHz seti **yalnız masa/bench testlerinde** kullanılabilir.
+### ✅ KAPTAN KARARI (2026-08-04): yarışmada RC HİÇ KULLANILMAYACAK
+
+RC seti yalnız otonomi kabiliyeti videosu ve masa/bench testleri içindi.
+Yarışmada her şey otonom, kumanda yok → **2.4 GHz ihlali ortadan kalkıyor**
+(modül yarışma alanına götürülmeyecek).
+
+Şartname uygunluğu ✅: md 4.2 uzaktan güç kesmeyi *"İDA YKİ yazılımı üzerinden
+**ya da** RC kumandadan"* diye tanımlar — RC zorunlu değil.
+
+**Ama bu karar üç şeyi değiştiriyor:**
+
+**(a) Uzaktan güç kesme yolu değişti (§4.5 güncellenecek).** Eski birincil
+tasarım "RC alıcı kanalı → doğrudan röle, FC'den BAĞIMSIZ" idi. Yeni yol:
+```
+Mission Planner → MAVLink DO_SET_RELAY → RELAY1_PIN → kontaktör
+```
+⚠️ **Sağlamlık kaybı bilinçli kabul edilmeli:** RC-doğrudan yolda FC çökse
+bile röle çalışıyordu. Artık zincir **FC + telemetri linkine bağımlı**; FC
+donarsa uzaktan kesme de gider, geriye yalnız araç üstü kırmızı buton kalır
+(o da uzaktan değil). Şartname yasaklamıyor ama tek nokta arıza yaratıyor.
+
+**(b) 🔴 RC'siz ARM olmayabilir.** `FS_THR_ENABLE=1` açıkken alıcı yoksa FC
+sürekli "Radio failsafe on" görür ve pre-arm'da arm'ı reddeder (bu proje
+daha önce tam bu duvara çarptı — `dogrulama_matrisi.md`: *"RC kumanda bağlı
+(PreArm 'Radio failsafe on' çözülmeden ARM olmaz)"*). Alıcı sökülünce
+`FS_THR_ENABLE=0` ve arming kontrollerinin RC ayağı kapatılmalı —
+**yarışmadan önce test edilmeden bırakılmayacak.**
+
+**(c) Görev sonrası geri getirme.** md 5.5.3.1 *"İDA'sını kalkış noktasına
+manuel olarak getirebilecektir"* diyor. RC yoksa: Mission Planner'dan mod
+değiştirip sürmek (görev bittiği için komut yasağı kalkar) ya da fiziksel
+alma (kayık/kanca). Ekibin planı netleşmeli.
+
+**(d) Kod tarafı:** `rc_kill_channel` ve `rc_manual_channel` yolları yarışmada
+ÖLÜ olacak. Yanlış güven yaratmamaları için yarışma config'inde (`-1`)
+kapatılmalı — bkz. açık iş listesi madde 3/8.
+
+> Mevcut 2.4 GHz seti **yalnız masa/bench testlerinde** kullanılabilir;
+> yarışma alanına götürülmeyecek (md 5.5.3.1: yarışma süresince atölye
+> çadırında bile yasaklı bantta modül çalıştırılamaz).
 
 **Ek durum (2026-08-04):** alıcı LED'i **kırmızı sabit** = beslenmiş ama
 vericiyle **bind DEĞİL**. `RC3/RC5/RC8_MIN/TRIM/MAX` hâlâ fabrika
