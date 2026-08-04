@@ -163,6 +163,62 @@ Doğrulama: multimetre (servo sinyali) **veya** ESC LED/ses.
 > 🔴 **DİKKAT:** Pervaneler **sökük** olmalı, motor mount sağlam sabitlenmiş
 > olmalı. Motor dönebilir; ani tork için hazır ol.
 
+> ⚠️ Bu adım yalnız **düz ileri**yi doğrular. Sol/sağ kanallar ters bağlıysa
+> düz gidişte HİÇBİR fark görünmez — dönüş yönü test edilmeden mixing
+> doğrulanmış sayılmaz → **ADIM 5B**.
+
+---
+
+## ADIM 5B — Diferansiyel Mixing / Dönüş Yönü (hiç yapılmadı)
+
+**Neden ayrı adım:** ADIM 5 iki motora da aynı komutu verir; `SERVO1`(sol) ve
+`SERVO3`(sağ) yer değiştirmiş olsa bile sonuç aynı görünür. Yanlış bağlantı
+ancak **dönüşte** ortaya çıkar — ve suda ortaya çıkarsa tekne her kapıda ters
+tarafa kırar (md 5.5.4.2 geçiş puanı sıfırlanır).
+
+**Ön koşul:** ESC kalibrasyonu yapılmış (`ardurover_bench.parm.md` → ESC
+KALİBRASYONU) · pervaneler **sökük** · araç ARMED + GUIDED.
+
+**Okuma yeri:** Mission Planner → **Setup → Optional Hardware → Servo Output**
+(ya da Status ekranında `ch1out` / `ch3out`).
+
+### Test 1 — sola dönüş (CCW)
+
+```bash
+ros2 topic pub /mavros/setpoint_velocity/cmd_vel_unstamped \
+  geometry_msgs/msg/Twist "{angular: {z: 0.3}}" -r 10
+```
+
+`planning_node` sözleşmesi: `angular.z = (sağ_itki − sol_itki)` → **pozitif
+angular.z = sola (CCW) dönüş**, yani sağ motor daha hızlı.
+
+| Çıkış | Beklenen |
+|---|---|
+| `SERVO3` (ThrottleRight, fn 74) | **> 1500** (ileri) |
+| `SERVO1` (ThrottleLeft, fn 73) | **< 1500** (geri/yavaş) |
+
+### Test 2 — sağa dönüş (CW)
+
+Aynı komut `z: -0.3` ile → **tam tersi** okunmalı.
+
+### Sonuç yorumu
+
+| Gözlem | Anlamı | Ne yapılacak |
+|---|---|---|
+| Beklendiği gibi | Mixing doğru | ✅ geç |
+| Sol/sağ **tam ters** | `SERVO1`/`SERVO3` fonksiyonları veya motor kabloları yer değişmiş | `SERVO1_FUNCTION=73` / `SERVO3_FUNCTION=74` teyit et; doğruysa fiziksel ESC çıkışları takas |
+| Bir taraf hiç değişmiyor | O kanal atanmamış / ESC ölü | `SERVOx_FUNCTION` ve besleme kontrol |
+| İkisi de aynı yöne gidiyor | Skid mixing devre dışı | `FRAME_CLASS=2` teyit + reboot |
+
+> 🔴 **AÇIK SORU — bu test cevaplayacak:** Eski `ida_topics/decision_node.py`'de
+> `cmd.angular.z = -angular` şeklinde **bilinçli bir işaret çevirmesi** vardı
+> ("ArduPilot yaw yönü uyumu" gerekçesiyle). `girdap_decision/planning_node.py`'de
+> böyle bir çevirme **YOK**. İkisi aynı anda doğru olamaz. Bu testte dönüş yönü
+> ters çıkarsa düzeltme **kodda** (`_publish_cmd_vel`) yapılacak, FC'de değil —
+> sonucu karar ekibine bildir.
+
+**Durdur:** komut terminalinde Ctrl-C.
+
 **Durdur:**
 ```bash
 # cmd_vel terminalinde Ctrl-C, ardından:
@@ -255,11 +311,12 @@ node'ları yeniden başlat veya araç güç döngüsü).
 | 3. hardware.launch (7 node) | ☐ | |
 | 4. Manuel arm (success=true) | ☐ | |
 | 5. cmd_vel → PWM ~1600 | ☐ | pervane sökük |
+| 5B. **Dönüş yönü / mixing** | ☐ | +z → SERVO3>1500, SERVO1<1500; ters çıkarsa kod işareti düzeltilir |
 | 6. Kill switch + RC failsafe | ☐ | PWM→1000, armed=false |
 | 6B. **Uzaktan GÜÇ kesme** | ☐ | 🔴 ESC ucunda **0 V** + CSV yazmaya devam ediyor — md 4.2 minimum gereksinimi |
 | 7. Heartbeat kaybı → KILL | ☐ | 5 sn içinde |
 
-**8 adım da OK ise araç su testine hazır.**
+**9 adım da OK ise araç su testine hazır.**
 
 > 🔴 **ADIM 6B geçmeden yarışmaya gidilmez** — teknik kontrolde bakılan bir
 > minimum gereksinimdir (md 4), eksikliği yazılımla telafi edilemez.

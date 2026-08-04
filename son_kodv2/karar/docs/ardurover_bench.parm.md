@@ -27,7 +27,47 @@ yüklenir). Suya inerken bazı parametreler değişecek — **⚠️ işaretlile
 | `MOT_PWM_MAX` | `1900` | ESC tam gaz üst sınırı; donanım ESC aralığıyla eşleşmeli. |
 | `MOT_SAFE_DISARM` | `1` | Disarm'da PWM min'e döner — kill/disarm anında motor kesin durur. |
 
-> **Doğrulama:** Runbook ADIM 5'te sol/sağ PWM ~1600; ADIM 6 disarm'da 1000/min.
+> **Doğrulama:** Runbook ADIM 5'te sol/sağ PWM ~1600; **ADIM 5B'de dönüş yönü**
+> (aşağı bkz.); ADIM 6 disarm'da 1000/min.
+
+> ⚠️ **Tekne 2 MOTORLU.** 2026-07-19'da yardımcı thruster'lar ESC'leriyle birlikte
+> fiziksel olarak söküldü; 2026-08-04'te bunun kalıcı olduğu (yarışma dahil)
+> teyit edildi. `SERVO2/4_FUNCTION` **atanmayacak**. KTR ve
+> `docs/KTR/algoritma_tasarimlari.md` içindeki "4× 2838 thruster" ifadeleri
+> güncel donanımı yansıtmıyor — rapor revizyonunda düzeltilmeli.
+
+---
+
+## ESC KALİBRASYONU (yapılmadı — bench ön koşulu)
+
+**Neden önemli:** İki ESC farklı kalibre edilirse **aynı PWM farklı itki**
+üretir. Sonuç: `angular.z=0` verilirken tekne bir tarafa kayar; navigasyon
+katmanı bunu sürekli düzeltmeye çalışır, kapı ortasından geçiş bozulur
+(md 5.5.4.2 geçiş puanı). Bu, yazılımda "PID kötü ayarlanmış" gibi görünen ama
+kaynağı donanımda olan, teşhisi en zor hatalardan biridir.
+
+**Sıra:**
+
+1. 🔴 **Pervaneler sökülü**, tekne sabit, batarya bağlı, RC verici açık.
+2. **ESC modelini ve tipini yaz** (bu repoda kayıtlı değil — `docs/olcum_formu.md`
+   FC bölümüne işlenecek):
+   - Marka/model: `____________`
+   - **Tek yönlü mü, çift yönlü (reversible) mi?** `____________`
+     → Çift yönlüde nötr **1500**, ileri 1500→1900, geri 1500→1100.
+     → Tek yönlüde min **1100** = stop, 1900 = tam ileri (geri yok → tekne
+       yalnız ileri + dönüş yapabilir; MPPI'nin geri komutu boşa gider,
+       bu durumda planlama tarafına bildir).
+3. **İki ESC'yi AYNI prosedürle, ardışık olarak kalibre et** — üreticinin kendi
+   yöntemiyle (tipik: tam gaz sinyaliyle güç ver → bip → min sinyale in → bip).
+   Birini kalibre edip diğerini atlama; asimetri buradan doğar.
+4. **FC parametreleriyle tutarlılığı doğrula:** `MOT_PWM_MIN=1100` /
+   `MOT_PWM_MAX=1900` ESC'nin gerçek aralığıyla **eşleşmeli**. ESC farklı bir
+   aralık öğrendiyse bu iki değeri ESC'ye göre güncelle (tersi değil).
+5. **`SERVO1_MIN/MAX/TRIM` ve `SERVO3_MIN/MAX/TRIM` birebir aynı olmalı** —
+   MP → Full Parameter List'te yan yana oku, farklıysa eşitle. Bu, adım 3'ten
+   arta kalan yazılım tarafı asimetriyi kapatır.
+6. Kalibrasyon sonrası **Write Params + reboot**, ardından Runbook ADIM 5 ve
+   **5B**'yi koş.
 
 ---
 

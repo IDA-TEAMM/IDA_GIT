@@ -91,7 +91,7 @@ için **5'er ceza puanı** (md 5.5.4.3.5). Ayrıca acil durum sonrası hakem
 
 | Özellik | Gereklilik | Neden |
 |---|---|---|
-| Akım | Sürekli ≥ 4× thruster tepe akımı, marj ile | 4× 2838 thruster; ESC anlık çekişi nominalin üstünde |
+| Akım | Sürekli ≥ **2×** thruster tepe akımı, marj ile | Tekne **2 motorlu** (2026-07-19'da yardımcı thruster'lar ESC'leriyle söküldü, 2026-08-04'te kalıcı olduğu teyit edildi). KTR'deki "4× thruster" ifadesi güncel DEĞİL. ESC anlık çekişi nominalin üstünde |
 | Kutuplama | **NO — enerjilendirilince kapanan** (energize-to-run) | Bobin beslemesi/kablosu koparsa motorlar **durur**. NC seçilirse kablo kopması motorları serbest bırakır = ters emniyet |
 | Tip | Mekanik kontaktör ya da yüksek akım SSR | İkisi de kabul; SSR'de ısınma payı bırak |
 | Konum | Batarya (+) kolu, sigortadan sonra | Sızdırmaz bölme içinde, md 4.2 emniyet |
