@@ -32,7 +32,11 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo
 from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import AnyLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import (
+    LaunchConfiguration,
+    PathJoinSubstitution,
+    PythonExpression,
+)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -441,17 +445,20 @@ def generate_launch_description() -> LaunchDescription:
             description="planning_node yerel kontrolcüsü: mppi | pid (F-S.10)",
         ),
         DeclareLaunchArgument(
-            "use_onboard_camera", default_value="true",
-            description="F3.1/F-P.22 (2026-07-17): VARSAYILAN true. Eskiden "
-                        "false idi (varsayım: /perception/buoys'u algı "
-                        "ekibinin AYRI paketi — girdap-ida-algi — üretir, "
-                        "DepthAI doğrudan VPU'da YOLO) — ama gerçek donanım "
-                        "testinde (2026-07-16) o paket bu ortamda hiç yok/"
-                        "çalışmıyordu, /perception/buoys hiç üretilmedi, "
-                        "hiç fark edilmeden sessizce kaldı. ⚠ algı ekibinin "
-                        "node'u AYRICA çalışacaksa bunu false yap — ikisi "
-                        "aynı anda açılırsa hem topic çakışır hem OAK-D USB "
-                        "cihazını iki süreç aynı anda açamaz.",
+            "use_onboard_camera", default_value="false",
+            description="HSV YEDEK kamera node'u (perception_camera_node). "
+                        "VARSAYILAN false (2026-08-04, algı ekibi kararı): "
+                        "/perception/buoys'un ASIL üreticisi artık repoda — "
+                        "son_kodv2/algi (girdap-ida-algi, DepthAI ile OAK-D'yi "
+                        "doğrudan açar, YOLO kameranın VPU'sunda). İkisi aynı "
+                        "anda açılırsa hem topic'te ÇİFT PUBLISHER olur hem de "
+                        "bbox piksel uzayları farklı olduğu için füzyon bearing'i "
+                        "karışır. Geçmiş (F-P.22, 2026-07-17): varsayılan geçici "
+                        "olarak true yapılmıştı çünkü algı paketi o ortamda hiç "
+                        "yoktu ve /perception/buoys sessizce hiç üretilmedi; "
+                        "artık paket burada ve fusion sync bekçisi de bu sessiz "
+                        "hâli WARN'la yakalıyor. ⚠ true yaparsan algı node'unu "
+                        "kapatmak ZORUNDASIN (tek OAK, tek süreç açabilir).",
         ),
         DeclareLaunchArgument(
             "use_mppi", default_value=_bool_default(hw["use_mppi"]),
@@ -543,7 +550,24 @@ def generate_launch_description() -> LaunchDescription:
         # final/algı testleri (Livox UDP + OAK-D + Dosya-1 kamera kaydı).
         DeclareLaunchArgument(
             "with_drivers", default_value="false",
-            description="Sensör sürücülerini başlat: Livox + OAK-D + kamera kaydı",
+            description="Sensör sürücülerini başlat: Livox (+ OAK-D/kamera kaydı "
+                        "yalnız with_oak_driver:=true ise — aşağıya bak)",
+        ),
+        # 🔴 2026-08-04 (algı ekibi): OAK sürücüsü with_drivers'tan AYRILDI.
+        # Önceden tek bayrak Livox + OAK sürücüsü + kamera kaydını birlikte
+        # açıyordu. Ama LiDAR'a ihtiyaç var ve OAK'ı bizim algı node'umuz
+        # (son_kodv2/algi) DOĞRUDAN DepthAI ile açıyor — tek USB cihazını iki
+        # süreç açamaz. Yani "with_drivers:=true" demek LiDAR'ı açarken kamerayı
+        # TAMAMEN ÖLDÜRMEK demekti; sahada belirti de vermiyordu.
+        # kamera_kayit_node da buraya bağlı: /oak/rgb/image_raw'ı yalnız
+        # oakd_driver_node üretiyor, o kapalıyken kaydedici BOŞ mp4 yazardı.
+        # Dosya-1 (md 4.2) mp4'ünü zaten algı node'u üretiyor (bbox + SINIF
+        # etiketi + her karede zaman damgası).
+        DeclareLaunchArgument(
+            "with_oak_driver", default_value="false",
+            description="OAK-D sürücüsü + kamera kayıt node'unu başlat. "
+                        "VARSAYILAN false: kamerayı algı node'u açıyor. "
+                        "true yaparsan algı node'unu KAPAT (tek OAK).",
         ),
         # with_mavros — masa testi (Pixhawk yok/bağlı değil). false: gerçek
         # mavros yerine mevcut mock_sensors node'u (/mavros/imu/data,
@@ -897,6 +921,14 @@ def generate_launch_description() -> LaunchDescription:
     # Topic hizalaması remap ile: sürücüler kendi isimlerinde yayınlar, girdap
     # perception /livox/lidar + /oak/rgb/image_raw bekler.
     _drv = IfCondition(LaunchConfiguration("with_drivers"))
+    # OAK'a dokunan sürücüler AYRI bayrakta (yukarıdaki gerekçe): LiDAR açılırken
+    # kamera ölmesin. AND mantığı: with_drivers VE with_oak_driver.
+    _drv_oak = IfCondition(
+        PythonExpression([
+            "'", LaunchConfiguration("with_drivers"), "' == 'true' and '",
+            LaunchConfiguration("with_oak_driver"), "' == 'true'",
+        ])
+    )
     driver_nodes = [
         # Livox Mid-360 — saf Python UDP (SDK'sız). IP/port gerçek cihazda
         # doğrulandı: 192.168.117.100, data 56301.
@@ -908,7 +940,7 @@ def generate_launch_description() -> LaunchDescription:
         # ⚠ use_onboard_camera:=true (F3.1, algı ekibinin OAK node'u) ile
         # AYNI ANDA açma — iki süreç aynı USB cihazını açamaz.
         Node(package="ida_topics", executable="oakd_driver_node",
-             name="oakd_driver_node", condition=_drv, output="screen",
+             name="oakd_driver_node", condition=_drv_oak, output="screen",
              remappings=[("/camera/image_raw", "/oak/rgb/image_raw")]),
         # Dosya-1 (Şartname 4.2): işlenmiş kamera mp4'ü (bbox overlay + zaman
         # etiketi) → ~/girdap_logs/kamera.
@@ -922,7 +954,7 @@ def generate_launch_description() -> LaunchDescription:
         # F-S.3). Düzgün çözüm: kamera_kayit_node'u class_id okur hale getirmek
         # (T1 — video için engelleyici değil, Dosya-1 formatı yine sağlanıyor).
         Node(package="ida_topics", executable="kamera_kayit_node",
-             name="kamera_kayit_node", condition=_drv, output="screen",
+             name="kamera_kayit_node", condition=_drv_oak, output="screen",
              remappings=[("/camera/image_raw", "/oak/rgb/image_raw"),
                          ("/perception/orange_buoys", "/perception/buoys")]),
     ]

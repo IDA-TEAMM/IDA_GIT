@@ -28,6 +28,42 @@ import numpy as np
 import os
 from datetime import datetime
 
+# 🔴 2026-08-04 (algı ekibi) — F-S.3 kapandı.
+# Şartname md 4.2 Dosya-1: "Tespit ve takip işlemleri sonucunda obje çerçeve
+# çizimleri ve **yapıldıysa tespit sınıf bilgileri görünecek** şekilde".
+# Bu node iki AYRI topic'ten (orange/yellow) besleniyordu ve etiketi topic'ten
+# türetiyordu. Ama hardware.launch.py tek-topic'li üreticiyi
+# (/perception/buoys, class_id'yi mesajın İÇİNDE taşır) orange_buoys'a
+# remap ediyor → sarı/hedef/bilinmeyen dâhil HER ŞEY "TURUNCU DUBA" yazılıyordu,
+# yani teslim edilen mp4'te sınıf bilgisi YANLIŞ görünüyordu.
+# Çözüm: class_id varsa ONDAN, yoksa (ida_topics'in kendi perception_node'u
+# `det.results`'ı hiç doldurmuyor) topic varsayılanından etiketle.
+# Sözleşme: "0"=kenar(turuncu) "1"=engel(sarı) "2"=hedef "3"/"4"/"5"=kırmızı/
+# yeşil/kahverengi, "99"=eşleşmemiş (füzyon CLASS_UNKNOWN).
+SINIF_ETIKET = {
+    0: ('KENAR DUBASI', (0, 127, 255)),
+    1: ('ENGEL DUBASI', (0, 255, 255)),
+    2: ('HEDEF', (255, 0, 255)),
+    3: ('KIRMIZI', (0, 0, 255)),
+    4: ('YESIL', (0, 200, 0)),
+    5: ('KAHVERENGI', (30, 90, 140)),
+    99: ('BILINMIYOR', (200, 200, 200)),
+}
+
+
+def etiket_ve_renk(det, varsayilan):
+    """Detection2D → (etiket, BGR renk). class_id yoksa varsayılana düşer.
+
+    Savunmacı: results boş olabilir, class_id sayısal olmayabilir (şema serbest
+    metin taşıyabilir) — hiçbir durumda kayıt döngüsünü patlatmamalı.
+    """
+    try:
+        if det.results:
+            return SINIF_ETIKET[int(det.results[0].hypothesis.class_id)]
+    except (ValueError, KeyError, AttributeError, IndexError):
+        pass
+    return varsayilan
+
 
 class KameraKayitNode(Node):
     def __init__(self):
@@ -176,9 +212,10 @@ class KameraKayitNode(Node):
                 h  = int(det.bbox.size_y)
                 x1, y1 = cx - w//2, cy - h//2
                 x2, y2 = cx + w//2, cy + h//2
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 127, 255), 2)
-                cv2.putText(frame, 'TURUNCU DUBA', (x1, y1-5),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 127, 255), 1)
+                etiket, renk = etiket_ve_renk(det, ('TURUNCU DUBA', (0, 127, 255)))
+                cv2.rectangle(frame, (x1, y1), (x2, y2), renk, 2)
+                cv2.putText(frame, etiket, (x1, y1-5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, renk, 1)
 
             # ── Sarı duba bbox'ları ────────────────────────────────────────
             for det in self.yellow_detections:
@@ -188,9 +225,10 @@ class KameraKayitNode(Node):
                 h  = int(det.bbox.size_y)
                 x1, y1 = cx - w//2, cy - h//2
                 x2, y2 = cx + w//2, cy + h//2
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
-                cv2.putText(frame, 'SARI DUBA', (x1, y1-5),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                etiket, renk = etiket_ve_renk(det, ('SARI DUBA', (0, 255, 255)))
+                cv2.rectangle(frame, (x1, y1), (x2, y2), renk, 2)
+                cv2.putText(frame, etiket, (x1, y1-5),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, renk, 1)
 
             # ── Zaman damgası overlay ────────────────────────────────────────
             zaman = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
