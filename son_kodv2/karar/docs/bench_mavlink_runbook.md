@@ -176,13 +176,53 @@ Doğrulama: multimetre (servo sinyali) **veya** ESC LED/ses.
 ancak **dönüşte** ortaya çıkar — ve suda ortaya çıkarsa tekne her kapıda ters
 tarafa kırar (md 5.5.4.2 geçiş puanı sıfırlanır).
 
-**Ön koşul:** ESC kalibrasyonu yapılmış (`ardurover_bench.parm.md` → ESC
-KALİBRASYONU) · pervaneler **sökük** · araç ARMED + GUIDED.
+Test **ikiye bölünmüştür**; ikisi ayrı şeyi doğrular ve **5B-1 ROS'suz koşar**:
+
+| | Ne doğrular | Neye ihtiyaç var |
+|---|---|---|
+| **5B-1** | FC'nin karıştırması: `FRAME_CLASS=2`, `SERVO1/3_FUNCTION`, ESC yönleri | **Yalnız RC + Mission Planner** |
+| **5B-2** | `cmd_vel` → yaw işaret sözleşmesi (MAVROS üzerinden) | ROS ortamı |
+
+> Karıştırmayı **FC yapıyor**, bizim yazılımımız değil. Bu yüzden 5B-1 karar
+> yığını hiç çalışmadan yapılabilir — ROS ortamı hazır değilken de ilerler.
+
+**Ortak ön koşul:** ESC kalibrasyonu yapılmış (`ardurover_bench.parm.md` → ESC
+KALİBRASYONU) · 🔴 pervaneler **sökük**.
 
 **Okuma yeri:** Mission Planner → **Setup → Optional Hardware → Servo Output**
 (ya da Status ekranında `ch1out` / `ch3out`).
 
-### Test 1 — sola dönüş (CCW)
+---
+
+### 5B-1 — RC ile mixing testi (ROS GEREKMEZ)
+
+1. Mod: **MANUAL** · araç **ARM** edilmiş
+2. Sağ çubuğu (steering) **sola** it, MP'de Servo Output'u izle
+
+| Çubuk | `SERVO1` (Sol, fn 73) | `SERVO3` (Sağ, fn 74) |
+|---|---|---|
+| Sola | **< 1500** (geri/yavaş) | **> 1500** (ileri) |
+| Sağa | **> 1500** | **< 1500** |
+| İleri (throttle) | ikisi de **> 1500**, birbirine **yakın** | |
+
+> Son satır ESC kalibrasyonunu da sınar: iki değer belirgin şekilde farklıysa
+> ESC'ler farklı kalibre edilmiştir → tekne düz gitmez.
+
+### Sonuç yorumu (5B-1)
+
+| Gözlem | Anlamı | Ne yapılacak |
+|---|---|---|
+| Beklendiği gibi | Mixing doğru | ✅ geç |
+| Sol/sağ **tam ters** | `SERVO1`/`SERVO3` fonksiyonları veya motor kabloları yer değişmiş | `SERVO1_FUNCTION=73` / `SERVO3_FUNCTION=74` teyit et; doğruysa fiziksel ESC çıkışlarını takas et |
+| Bir taraf hiç değişmiyor | O kanal atanmamış / ESC ölü | `SERVOx_FUNCTION` ve besleme kontrol |
+| İkisi de aynı yöne gidiyor | Skid mixing devre dışı | `FRAME_CLASS=2` teyit + reboot |
+| İleri komutta iki PWM farklı | ESC'ler farklı kalibre | ESC kalibrasyonunu ikisine birden tekrarla |
+
+---
+
+### 5B-2 — cmd_vel işaret sözleşmesi (ROS ortamı gerekir)
+
+5B-1 geçtikten sonra. Araç **ARMED + GUIDED**:
 
 ```bash
 ros2 topic pub /mavros/setpoint_velocity/cmd_vel_unstamped \
@@ -190,32 +230,17 @@ ros2 topic pub /mavros/setpoint_velocity/cmd_vel_unstamped \
 ```
 
 `planning_node` sözleşmesi: `angular.z = (sağ_itki − sol_itki)` → **pozitif
-angular.z = sola (CCW) dönüş**, yani sağ motor daha hızlı.
-
-| Çıkış | Beklenen |
-|---|---|
-| `SERVO3` (ThrottleRight, fn 74) | **> 1500** (ileri) |
-| `SERVO1` (ThrottleLeft, fn 73) | **< 1500** (geri/yavaş) |
-
-### Test 2 — sağa dönüş (CW)
-
-Aynı komut `z: -0.3` ile → **tam tersi** okunmalı.
-
-### Sonuç yorumu
-
-| Gözlem | Anlamı | Ne yapılacak |
-|---|---|---|
-| Beklendiği gibi | Mixing doğru | ✅ geç |
-| Sol/sağ **tam ters** | `SERVO1`/`SERVO3` fonksiyonları veya motor kabloları yer değişmiş | `SERVO1_FUNCTION=73` / `SERVO3_FUNCTION=74` teyit et; doğruysa fiziksel ESC çıkışları takas |
-| Bir taraf hiç değişmiyor | O kanal atanmamış / ESC ölü | `SERVOx_FUNCTION` ve besleme kontrol |
-| İkisi de aynı yöne gidiyor | Skid mixing devre dışı | `FRAME_CLASS=2` teyit + reboot |
+angular.z = sola (CCW) dönüş**, yani sağ motor daha hızlı. Yani beklenen çıktı
+5B-1'in "sola" satırıyla **aynı** olmalı. `z: -0.3` ile tersi.
 
 > 🔴 **AÇIK SORU — bu test cevaplayacak:** Eski `ida_topics/decision_node.py`'de
 > `cmd.angular.z = -angular` şeklinde **bilinçli bir işaret çevirmesi** vardı
 > ("ArduPilot yaw yönü uyumu" gerekçesiyle). `girdap_decision/planning_node.py`'de
-> böyle bir çevirme **YOK**. İkisi aynı anda doğru olamaz. Bu testte dönüş yönü
-> ters çıkarsa düzeltme **kodda** (`_publish_cmd_vel`) yapılacak, FC'de değil —
-> sonucu karar ekibine bildir.
+> böyle bir çevirme **YOK**. İkisi aynı anda doğru olamaz.
+>
+> **Ayrım kritik:** 5B-1 geçip 5B-2 ters çıkarsa sorun **kodda**
+> (`_publish_cmd_vel`) — FC'ye dokunma, karar ekibine bildir. İkisi birden ters
+> çıkarsa sorun **FC/kabloda**.
 
 **Durdur:** komut terminalinde Ctrl-C.
 
@@ -311,7 +336,8 @@ node'ları yeniden başlat veya araç güç döngüsü).
 | 3. hardware.launch (7 node) | ☐ | |
 | 4. Manuel arm (success=true) | ☐ | |
 | 5. cmd_vel → PWM ~1600 | ☐ | pervane sökük |
-| 5B. **Dönüş yönü / mixing** | ☐ | +z → SERVO3>1500, SERVO1<1500; ters çıkarsa kod işareti düzeltilir |
+| 5B-1. **Mixing (RC ile, ROS gerekmez)** | ☐ | sola → SERVO3>1500, SERVO1<1500; ileri → ikisi yakın (ESC simetrisi) |
+| 5B-2. **cmd_vel işaret sözleşmesi** | ☐ | 5B-1 geçtikten sonra; ters çıkarsa düzeltme KODDA |
 | 6. Kill switch + RC failsafe | ☐ | PWM→1000, armed=false |
 | 6B. **Uzaktan GÜÇ kesme** | ☐ | 🔴 ESC ucunda **0 V** + CSV yazmaya devam ediyor — md 4.2 minimum gereksinimi |
 | 7. Heartbeat kaybı → KILL | ☐ | 5 sn içinde |
