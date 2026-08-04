@@ -70,6 +70,7 @@ from std_msgs.msg import Bool, Int32, String
 from std_srvs.srv import Trigger
 
 from mavros_msgs.msg import State as MavState
+from mavros_msgs.msg import StatusText
 from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
 
@@ -144,6 +145,10 @@ class FSMNode(Node):
         # tekrarlandı). Artık armed+BEKLEMEDE X saniyeyi geçerse GÜRÜLTÜLÜ uyarı.
         self._armed_since: Optional[float] = None
         self.declare_parameter("armed_bekleme_watchdog_s", 15.0)
+        # F-A.4: görev/parkur durumunu MAVLink STATUSTEXT ile YKİ'ye (Mission
+        # Planner → Messages) yolla. Şartname md 4.2 gereği. Kapatmak için
+        # false (ör. mavros'suz masa testi).
+        self.declare_parameter("statustext_enabled", True)
         self._armed_watchdog_s = float(
             self.get_parameter("armed_bekleme_watchdog_s").value
         )
@@ -186,6 +191,20 @@ class FSMNode(Node):
         self._pub_parkur = self.create_publisher(
             String, "/girdap/parkur/state", 10
         )
+        # F-A.4 — şartname md 4.2: "Aracın anlık durum ve mod bilgileri İDA YKİ
+        # ekranında görülecektir." MOD bilgisi MAVLink'ten zaten geliyor (Mission
+        # Planner gösteriyor); DURUM (görev/parkur) hiçbir yerde görünmüyordu.
+        # STATUSTEXT tek yönlü telemetridir (aşağı yön) → md 4.1'e uygun, md
+        # 5.5.3.1'in yasakladığı "araca komut" DEĞİLDİR.
+        self._statustext_enabled = bool(
+            self.get_parameter("statustext_enabled").value
+        )
+        self._pub_statustext = (
+            self.create_publisher(StatusText, "/mavros/statustext/send", 10)
+            if self._statustext_enabled
+            else None
+        )
+        self._last_statustext = ""      # yalnız DEĞİŞİMDE gönder (10 Hz spam yok)
 
         # --- Services ---
         self._srv_start = self.create_service(
@@ -500,6 +519,44 @@ class FSMNode(Node):
         parkur_msg = String()
         parkur_msg.data = self._parkur.state.value
         self._pub_parkur.publish(parkur_msg)
+
+        # YKİ ekranı (şartname md 4.2)
+        self._publish_statustext(new_state)
+
+    def _publish_statustext(self, state: MissionState) -> None:
+        """Görev durumunu MAVLink STATUSTEXT ile YKİ'ye bildir (md 4.2).
+
+        Yalnız DEĞİŞİMDE gönderilir — tick 10 Hz, her tick'te yollamak MAVLink
+        hattını doldurur ve Mission Planner'ın mesaj penceresini kullanılamaz
+        hale getirir. STATUSTEXT metni MAVLink'te 50 karakterle sınırlı.
+
+        Yayın tek yönlüdür (araç → YKİ): md 4.1 telemetriye izin veriyor, md
+        5.5.3.1'in yasakladığı şey ters yön (YKİ → araç komut).
+        """
+        if self._pub_statustext is None:
+            return
+        # PARKUR* durumlarında parkur katmanını da göster (ikisi ayrı otorite:
+        # MissionFSM görev yaşam döngüsü, ParkurTransitionLogic waypoint
+        # ilerlemesi — sahada ayrıştıklarında bunu görmek teşhis için kritik).
+        if state in (
+            MissionState.PARKUR1, MissionState.PARKUR2, MissionState.PARKUR3
+        ):
+            text = f"GIRDAP {state.value} {self._parkur.state.value}"
+        else:
+            text = f"GIRDAP {state.value}"
+        if text == self._last_statustext:
+            return
+        self._last_statustext = text
+
+        msg = StatusText()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        # KILL operatörün ANINDA görmesi gereken tek durum → kırmızı seviye.
+        msg.severity = (
+            StatusText.CRITICAL if state is MissionState.KILL
+            else StatusText.NOTICE
+        )
+        msg.text = text[:50]
+        self._pub_statustext.publish(msg)
 
 
 def main(args: list[str] | None = None) -> None:

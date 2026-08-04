@@ -429,3 +429,87 @@ def test_fv6_kenar_tetigi_hala_calisiyor(ros_context, tmp_path) -> None:  # noqa
         assert node._fsm.state is MissionState.PARKUR1
     finally:
         node.destroy_node()
+
+
+# ------------------------------------------------- F-A.4 STATUSTEXT (md 4.2)
+# Şartname md 4.2: "Aracın anlık durum ve mod bilgileri İDA YKİ ekranında
+# görülecektir." MOD MAVLink'ten zaten geliyordu; DURUM (görev/parkur) hiçbir
+# yerde görünmüyordu. fsm_node artık /mavros/statustext/send'e yayın yapıyor.
+
+
+def _statustext_spy(node):                               # noqa: ANN001, ANN202
+    """Gerçek publisher'ı casusla değiştir (DDS'e bağımlı olmadan doğrula)."""
+    sent = []
+    class _Spy:
+        def publish(self, msg):                          # noqa: ANN001, ANN202
+            sent.append(msg)
+    node._pub_statustext = _Spy()
+    return sent
+
+
+def test_fa4_durum_degisiminde_statustext_gonderilir(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Görev durumu değişince YKİ'ye tek satır gider (md 4.2)."""
+    node = _make_node(ros_context, tmp_path, labels=[1, 1, 2])
+    try:
+        sent = _statustext_spy(node)
+        _drive_to_parkur1(node)
+        assert sent, "durum değişti ama STATUSTEXT gönderilmedi"
+        metinler = [m.text for m in sent]
+        assert any("GIRDAP" in t for t in metinler), metinler
+        assert any("PARKUR1" in t for t in metinler), metinler
+    finally:
+        node.destroy_node()
+
+
+def test_fa4_ayni_durumda_tekrar_gondermez(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """10 Hz tick MAVLink hattını doldurmamalı — yalnız DEĞİŞİMDE yayın."""
+    node = _make_node(ros_context, tmp_path, labels=[1, 1, 2])
+    try:
+        _drive_to_parkur1(node)
+        sent = _statustext_spy(node)                     # casusu ŞİMDİ tak
+        for _ in range(20):                              # 2 saniyelik tick
+            node._on_tick()
+        assert sent == [], f"durum sabitken {len(sent)} gereksiz mesaj gitti"
+    finally:
+        node.destroy_node()
+
+
+def test_fa4_metin_mavlink_sinirini_asmaz(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """MAVLink STATUSTEXT metni 50 karakterle sınırlı."""
+    node = _make_node(ros_context, tmp_path, labels=[1, 1, 2])
+    try:
+        sent = _statustext_spy(node)
+        _drive_to_parkur1(node)
+        for m in sent:
+            assert len(m.text) <= 50, f"{len(m.text)} karakter: {m.text!r}"
+    finally:
+        node.destroy_node()
+
+
+def test_fa4_kill_kritik_seviyede_gider(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """KILL operatörün ANINDA görmesi gereken tek durum → CRITICAL."""
+    from mavros_msgs.msg import StatusText
+
+    node = _make_node(ros_context, tmp_path, labels=[1, 1, 2])
+    try:
+        _drive_to_parkur1(node)
+        sent = _statustext_spy(node)
+        node._on_kill_srv(Trigger.Request(), Trigger.Response())
+        node._on_tick()
+        kill_msgs = [m for m in sent if "KILL" in m.text]
+        assert kill_msgs, f"KILL bildirilmedi: {[m.text for m in sent]}"
+        assert kill_msgs[0].severity == StatusText.CRITICAL
+    finally:
+        node.destroy_node()
+
+
+def test_fa4_kapatilabilir(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """statustext_enabled=false → publisher hiç kurulmaz (mavros'suz test)."""
+    node = girdap.FSMNode(
+        parameter_overrides=[Parameter("statustext_enabled", value=False)]
+    )
+    try:
+        assert node._pub_statustext is None
+        node._on_tick()                                  # çökmemeli
+    finally:
+        node.destroy_node()
