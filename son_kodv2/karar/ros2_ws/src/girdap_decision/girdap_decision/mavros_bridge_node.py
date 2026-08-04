@@ -31,11 +31,15 @@ Sorumluluklar (CLAUDE.md MAVROS bölümü + Şartname 4.1):
        (`rc_kill_threshold_pwm`, varsayılan 1500) altına düşerse → KILL.
        Yazılım/servis KILL yollarından bağımsız, companion computer canlı
        olmasa bile RC alıcısı üzerinden doğrudan çalışır.
+       ⚠️ **`-1` (ya da herhangi bir negatif) = bu yol KAPALI.** Yarışmada RC
+       kullanılmayacağı için (kaptan kararı 2026-08-04) config'de -1 verilir.
+       F-S.12: negatif kontrolü OLMADAN Python `channels[-1]`'i SON kanal
+       olarak okuyup rastgele bir PWM'e bakardı — yanlış KILL riski.
     6. RC manuel-override (F-S.4) — `rc_manual_channel` (varsayılan 4,
        0-indexed = RC kanal 5) eşik PWM'in (`rc_manual_threshold_pwm`,
        varsayılan 1700) üstündeyken `_maybe_auto_guided()` GUIDED istemeyi
        bırakır — pilot RC'den manuel moda geçmek istediğinde yazılım
-       kavga etmez.
+       kavga etmez. ⚠️ `-1` = KAPALI (F-S.12, yukarıdaki not).
 
 KILL, `/girdap/mission/kill` (fsm_node, Trigger) çağrılarak yayılır: FSM KILL
 durumuna geçer, planning_node sıfır thrust yayınlar → motorlar durur. Böylece
@@ -96,10 +100,12 @@ class MavrosBridgeNode(Node):
         self.declare_parameter("stream_rate_hz", 10)
         # F-S.1: RC donanım kill-switch — ida_topics/control_node.py ile aynı
         # varsayılanlar (RC kanal 8, 0-indexed 7; PWM eşiği 1500).
+        # F-S.12: -1 (negatif) = RC kill yolu KAPALI. Yarışmada RC yok.
         self.declare_parameter("rc_kill_channel", 7)
         self.declare_parameter("rc_kill_threshold_pwm", 1500)
         # F-S.4: RC manuel-override — ida_topics ile aynı varsayılanlar
         # (RC kanal 5, 0-indexed 4; PWM eşiği 1700).
+        # F-S.12: -1 (negatif) = manuel override KAPALI.
         self.declare_parameter("rc_manual_channel", 4)
         self.declare_parameter("rc_manual_threshold_pwm", 1700)
         # F-P.24 (2026-07-17): 2026-07-16 gerçek donanım testinde TELEM2/FTDI
@@ -261,6 +267,9 @@ class MavrosBridgeNode(Node):
         if self._killed:
             return
         idx = self._rc_kill_channel
+        if idx < 0:                      # F-S.12: kanal atanmamış → RC kill yolu KAPALI
+            self._on_rc_manual_check(msg)
+            return
         channel_pwm = msg.channels[idx] if len(msg.channels) > idx else None
         if self._bridge.is_rc_kill_active(channel_pwm):
             self.get_logger().error(
@@ -280,6 +289,8 @@ class MavrosBridgeNode(Node):
         seçtiği mod (ör. MANUAL) yazılım tarafından geri zorlanmaz.
         """
         idx = self._rc_manual_channel
+        if idx < 0:                      # F-S.12: kanal atanmamış → override KAPALI
+            return
         channel_pwm = msg.channels[idx] if len(msg.channels) > idx else None
         active = self._bridge.is_rc_manual_active(channel_pwm)
         if active != self._bridge.rc_manual_override:

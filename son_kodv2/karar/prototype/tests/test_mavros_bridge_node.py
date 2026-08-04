@@ -570,3 +570,68 @@ def test_fp25_mod_gercekten_degisirse_uyari_basmaz(ros_context) -> None:  # noqa
         assert errors == []
     finally:
         n.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# F-S.12 — RC yolları kapatılabilmeli (kanal = -1)
+# --------------------------------------------------------------------------- #
+#
+# Kaptan kararı 2026-08-04: YARIŞMADA RC KULLANILMAYACAK (her şey otonom;
+# ayrıca mevcut 2.4 GHz set şartname md 4.1'e aykırı, alana götürülmeyecek).
+# Yarışma config'inde bu yolların kapatılması gerekiyor — ama kapatmanın
+# doğal yolu olan `-1`, negatif kontrolü OLMADAN Python'da `channels[-1]`
+# yani SON KANAL demekti: kill yolu rastgele bir kanalın PWM'ine bakar,
+# o kanal 1500'ün altındaysa görev ortasında KENDİLİĞİNDEN KILL basardı.
+
+
+def test_fs12_kill_kanali_negatifse_hic_tetiklenmez(ros_context) -> None:  # noqa: ANN001
+    """rc_kill_channel=-1 → RC kill yolu kapalı; SON kanal düşük olsa bile."""
+    from rclpy.parameter import Parameter
+
+    n = girdap.MavrosBridgeNode(
+        parameter_overrides=[
+            Parameter("rc_kill_channel", Parameter.Type.INTEGER, -1)
+        ]
+    )
+    try:
+        calls = []
+        n._trigger_kill = lambda: calls.append(1)  # type: ignore[method-assign]
+        # Son kanal 900 — eski kod channels[-1]'i okuyup KILL basardı.
+        n._on_rc_in(_rc([1500, 1500, 1500, 1500, 1500, 1500, 1500, 900]))
+        assert calls == [], "kanal -1 (kapalı) iken RC KILL tetiklendi (F-S.12)"
+        assert n._killed is False
+    finally:
+        n.destroy_node()
+
+
+def test_fs12_manuel_kanali_negatifse_override_acilmaz(ros_context) -> None:  # noqa: ANN001
+    """rc_manual_channel=-1 → override kapalı; son kanal eşik üstü olsa bile."""
+    from rclpy.parameter import Parameter
+
+    n = girdap.MavrosBridgeNode(
+        parameter_overrides=[
+            Parameter("rc_kill_channel", Parameter.Type.INTEGER, -1),
+            Parameter("rc_manual_channel", Parameter.Type.INTEGER, -1),
+        ]
+    )
+    try:
+        # Son kanal 1900 — eski kod channels[-1]'i okuyup override AÇARDI,
+        # yani yazılım GUIDED istemeyi bırakırdı (görev sessizce durur).
+        n._on_rc_in(_rc([1500, 1500, 1500, 1500, 1500, 1500, 1500, 1900]))
+        assert n._bridge.rc_manual_override is False, (
+            "kanal -1 (kapalı) iken manuel override açıldı (F-S.12)"
+        )
+    finally:
+        n.destroy_node()
+
+
+def test_fs12_varsayilan_kanallar_bozulmadi(ros_context) -> None:  # noqa: ANN001
+    """Regresyon: negatif guard'ı normal (pozitif) kanal yolunu etkilememeli."""
+    n = girdap.MavrosBridgeNode()
+    try:
+        calls = []
+        n._trigger_kill = lambda: calls.append(1)  # type: ignore[method-assign]
+        n._on_rc_in(_rc([1500, 1500, 1500, 1500, 1500, 1500, 1500, 900]))
+        assert calls, "varsayılan kanal 8 ile RC KILL artık tetiklenmiyor"
+    finally:
+        n.destroy_node()
