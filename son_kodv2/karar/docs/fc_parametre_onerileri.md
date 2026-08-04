@@ -12,6 +12,43 @@
 > Doldurma: "Mevcut" sütununu QGC → Parameters ekranından okuyup yazın;
 > sonucu `docs/olcum_formu.md` FC bölümüyle birlikte geri gönderin.
 
+## 0.0 🔴🔴 MEVCUT RC SETİ ŞARTNAMEYE AYKIRI — 2.4 GHz (2026-08-04)
+
+**Takılı alıcı: RadioLink R9DS v2.1** (fotoğrafla teyit). RadioLink R9DS ve
+eşleştiği vericiler (AT9 / AT9S / AT10 / AT10II) **2.4 GHz** bandındadır.
+
+> Şartname md 4.1: *"İDA, İDA-YKİ, İHA, İHA-YKİ(varsa), **RC kumandalar** ve
+> telemetri modülleri dahilinde **2.4-2.8 GHz**, 5.15-5.85 GHz aralıklarında
+> çalışan herhangi bir bileşen ya da modül kullanılmayacaktır."*
+
+**Ceza:** md 5.5.4.3.2 → yasaklı frekans kullanımı **55 ceza puanı**. Ayrıca
+teknik kontrollerde (md 5.2) tespit edilir.
+
+**Zincirleme etkileri:**
+- md 4.2 uzaktan güç kesme *"RC kumandadan verilebilecektir"* diyor ve
+  **minimum gereksinimdir**. Uyumlu RC yoksa bu fonksiyon YKİ yazılımı
+  üzerinden çözülmek zorunda (§4.5 röle tasarımı buna göre gözden geçirilecek).
+- `rc_kill_channel`, `MODE_CH`, `rc_manual_channel` kanal planı yeni sete göre
+  **yeniden yapılacak**.
+- Şimdi yapılacak RC kalibrasyonu yeni sette **tekrarlanacak** (yine de bench
+  testleri için gerekli).
+
+**Uyumlu alternatifler** (2.4 ve 5.15-5.85 dışı): ExpressLRS 868/915 MHz ·
+TBS Crossfire 868/915 MHz · FrSky R9 (900 MHz) · 433 MHz LRS.
+Not: telemetri zaten RFD868x (868 MHz) — ekip bu banda aşina.
+
+> ⏳ **Aksiyon:** tedarik süresi gerektiği için ekibe derhal bildirilecek.
+> Mevcut 2.4 GHz seti **yalnız masa/bench testlerinde** kullanılabilir.
+
+**Ek durum (2026-08-04):** alıcı LED'i **kırmızı sabit** = beslenmiş ama
+vericiyle **bind DEĞİL**. `RC3/RC5/RC8_MIN/TRIM/MAX` hâlâ fabrika
+varsayılanında olması bununla tutarlı — bu FC'de RC hattı hiç çalışmamış
+görünüyor. Dolayısıyla `rc_kill_channel=8` varsayımı, `FS_THR_VALUE=910`
+eşiği ve `ARMING_RUDDER=2` ile çubuktan arm/disarm **hiçbiri fiilen
+doğrulanmadı**.
+
+---
+
 ## 0. 🔴 KANAL ÇAKIŞMASI — `MODE_CH=8` ile yazılım kill-switch'i aynı kanalda
 
 2026-08-04 param dökümünden çıktı:
