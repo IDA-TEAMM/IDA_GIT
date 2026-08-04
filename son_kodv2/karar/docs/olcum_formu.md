@@ -155,13 +155,63 @@ yazıyor (kaynak: GIRDAP_DURUM §1). **Teyit edin:**
 
 | Ölçü | Değer | Nasıl ölçülür |
 |---|---|---|
-| `x` — `base_link`'ten ileri (+) / geri (−) | `____` m | Yatay mesafe, cetvel |
-| `y` — iskeleye (+) / sancağa (−) | `____` m | Merkezdeyse 0 |
-| **`z` — `base_link`'ten yukarı (h)** | `____` m | 🔴 F5.1'i çözen sayı |
-| `yaw` — pruvaya göre dönüklük | `____` ° | 0 = konnektör kıça bakıyor varsayımı DEĞİL, ölçün |
-| `pitch` / `roll` — eğik monte edildi mi? | `____` / `____` ° | Düz monte ise 0/0 |
-| **Su hattından yükseklik** (yüklü tekne, sakin su) | `____` m | Menzil/kör nokta hesabı |
+| `x` — `base_link`'ten ileri (+) / geri (−) | **+0.07 m** ✅ | LiDAR, Pixhawk'tan 6.5-7 cm pruva tarafında |
+| `y` — iskeleye (+) / sancağa (−) | **−0.1375 m** ✅ | LiDAR gövde merkezinde, Pixhawk 13.5-14 cm iskelede → LiDAR sancakta kalıyor |
+| **`z` — `base_link`'ten yukarı (h)** | **+0.255 m** ✅ | 🔴 F5.1'i çözen sayı — aşağıdaki hesap |
+| `yaw` — pruvaya göre dönüklük | `____` ° ⏳ | **Ampirik ölç** (§0.5) — iletkiyle uğraşma |
+| `pitch` / `roll` — eğik monte edildi mi? | 0 / 0 | Düz monte |
+| **Su hattından yükseklik** (yüklü tekne, sakin su) | `____` m ⏳ | İlk suya inişte; `z_min`'in doğru değerini bu belirler |
 | Gövdenin LiDAR görüş alanına giren kısmı var mı? | ☐ var ☐ yok | Varsa `min_range` filtresi gerekir (F5.1 ile birlikte) |
+
+**`z` nasıl bulundu (2026-08-04, tekne masada):**
+```
+LiDAR masadan                        41.0 cm
+kapak ağzı masadan                   24.5 cm
+kapak ağzı tekne tabanından          15.0 cm
+Pixhawk tekne tabanından (3D platform) 6.0 cm
+→ Pixhawk kapak ağzından 15.0−6.0  =  9.0 cm aşağıda
+→ Pixhawk masadan       24.5−9.0   = 15.5 cm
+→ z = 41.0 − 15.5                  = 25.5 cm
+```
+
+> **F5.1 bu sayıyla kesinleşti:** `z_min=0.10 m` ham LiDAR çerçevesinde
+> uygulanıyor (node TF dönüşümü yapmıyor) → "LiDAR'ın 10 cm ÜSTÜ" demek.
+> Duba suyun üstünde ~30 cm; LiDAR ise su hattından ~40 cm+ yukarıda. Yani
+> dubanın **tepesi bile** LiDAR'ın altında kalıyor → tüm noktalar negatif
+> z'de → filtre hepsini eliyor → `obstacle_map` boş. Atölyedeki "üretim
+> config'de 0 engel" gözlemiyle birebir uyuşuyor.
+
+---
+
+### 🔴 Gövde merkezi ofseti — ölçümden türeyen YENİ açık konu
+
+Ölçüm şunu ortaya çıkardı: **LiDAR gövde merkez hattında, Pixhawk 13.75 cm
+iskelede.** Yani `base_link` (= Pixhawk = odom'un bildirdiği nokta) teknenin
+geometrik merkezinde DEĞİL.
+
+**Etkisi:** Kapı ortasına `base_link`'i sürersek, teknenin gövdesi ortadan
+13.75 cm **sancağa kaymış** olarak geçer.
+
+```
+kapı açıklığı (md 5.5.2.1'e göre değişken, ~1.35 m varsayımı)   1.350 m
+tekne genişliği                                                 0.780 m
+→ ideal yan pay (her iki yanda)                                 0.285 m
+base_link ofseti yüzünden sancak payı  0.285 − 0.1375       =   0.148 m
+                                       iskele payı           =   0.423 m
+```
+
+Yani sancak tarafındaki emniyet payı **yarıya iniyor**. Şartname kapı
+genişliğinin alana göre değişeceğini söylüyor (md 5.5.2.1/5.5.3.1) — dar bir
+kapıda bu fark çarpma cezasına dönüşebilir (`Ç1`/`Ç2`).
+
+**İki çözüm yolu (karar verilecek):**
+
+| | Yöntem | Artı / Eksi |
+|---|---|---|
+| **A** | ArduPilot `INS_POS_Y` ile IMU'nun gövde merkezine göre ofsetini gir → EKF gövde merkezini raporlasın | Tek parametre; ama TF değerleri de yeniden referanslanmalı. **ArduPilot'un konumu gerçekten düzelttiği masa testinde DOĞRULANMALI** |
+| **B** | `base_link` Pixhawk'ta kalsın, kapı hedefine 13.75 cm yanal düzeltme uygulansın | Kod değişikliği, `gate_follower`/`planning_node` = **karar ekibinin alanı** — onlara bildirilecek |
+
+⚠️ Bu konu kapanmadan suya inilirse dar kapılarda sancak tarafı riskli.
 
 ---
 

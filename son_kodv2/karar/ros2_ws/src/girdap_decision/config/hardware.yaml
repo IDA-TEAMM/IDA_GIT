@@ -231,6 +231,19 @@ topics:
 #    çalışıyor. LiDAR base_link'in üstündeyse dubalar negatif z'de kalıp
 #    tamamen elenebilir — ölçüm gelince perception ekibine bildirilecek.
 tf:
-  livox_frame: {x: 0.0, y: 0.0, z: 0.0, yaw: 0.0, pitch: 0.0, roll: 0.0}
+  # ✅ ÖLÇÜLDÜ 2026-08-04 (docs/olcum_formu.md §2). base_link = Pixhawk 6C.
+  #    Ara ölçümler: LiDAR masadan 41.0 · kapak ağzı masadan 24.5 · kapak ağzı
+  #    tekne tabanından 15.0 · Pixhawk tekne tabanından 6.0 (3D baskı platform)
+  #    → Pixhawk masadan 15.5 → z = 41.0 − 15.5 = 25.5 cm.
+  #    x: LiDAR, Pixhawk'tan 6.5-7 cm PRUVA tarafında (pruva = kamera yuvası tarafı).
+  #    y: LiDAR gövde merkez hattında; Pixhawk 13.5-14 cm İSKELEDE (solda) →
+  #       LiDAR, base_link'e göre SANCAKTA kalıyor → y negatif.
+  #    ⏳ yaw: ampirik kalibre edilecek (olcum_formu §0.5 — merkez hattına 10 m
+  #       ileriye hedef koy, /perception/obstacle_map'te position.y ≈ 0 olmalı).
+  # ⚠️ TÜRETİLEN AÇIK KONU: base_link (=Pixhawk) gövde merkez hattının 13.75 cm
+  #    İSKELESİNDE. Kapı ortasına base_link'i sürersek tekne GÖVDESİ 13.75 cm
+  #    sancağa kaymış geçer (kapı 1.35 m, tekne 0.78 m → yan pay 28.5 cm; payın
+  #    yarısı gider). Bkz. olcum_formu.md "Gövde merkezi ofseti".
+  livox_frame: {x: 0.07, y: -0.1375, z: 0.255, yaw: 0.0, pitch: 0.0, roll: 0.0}
   oak_frame:   {x: 0.0, y: 0.0, z: 0.0, yaw: 0.0, pitch: 0.0, roll: 0.0}
   imu_link:    {x: 0.0, y: 0.0, z: 0.0, yaw: 0.0, pitch: 0.0, roll: 0.0}
