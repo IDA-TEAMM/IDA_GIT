@@ -1,6 +1,11 @@
 # GİRDAP İDA — karar yığını systemd servisi (Jetson açılışında otomatik başlar)
 # Video/yarışma günü: güç ver → Jetson boot → yığın kendiliğinden ayakta;
-# operatör yalnız QGC kullanır (Upload → ARM → GUIDED = görev başlar).
+# operatör yalnız **Mission Planner** kullanır (Write → ARM → GUIDED = görev
+# başlar). [YKİ yazılımı 2026-08-03'te Mission Planner olarak kesinleşti.]
+#
+# 🔴 YARIŞMA GÜNÜ: bu servise ek olarak `girdap-karar-yarisma.conf` drop-in'i
+#    kurulacak (ROS_LOCALHOST_ONLY=1 — şartname md 4.1 + LiDAR ethernet hattını
+#    temiz tutma). Kurulum/geri alma o dosyanın başında yazılı.
 #
 # Kurulum (tek sefer, sudo ister):
 #   sudo cp ~/ros2_ws/src/girdap-decision/scripts/girdap-karar.service /etc/systemd/system/
@@ -21,6 +26,9 @@ User=__USER__
 Environment=PYTHONPATH=__WS__/src/girdap-decision
 # Interaktif terminallerle ayni DDS domain'i (bashrc ROS_DOMAIN_ID=42) —
 # yoksa operator `ros2 topic echo` ile servisi GOREMEZ (2026-07-13 bulgusu).
+# NOT: DOMAIN_ID tek basina trafigi makineye HAPSETMEZ, yalnizca ayni domain'i
+# kullananlari birbirinden ayirir. Ag izolasyonu icin ROS_LOCALHOST_ONLY gerekir
+# ve o bilincli olarak BURADA DEGIL, yarisma drop-in'inde (yukariya bkz.).
 Environment=ROS_DOMAIN_ID=42
 # F4.1/F15.1 dersi: cwd=/ olmasin — goreli yol kazalarina karsi HOME'dan kos.
 WorkingDirectory=/home/__USER__

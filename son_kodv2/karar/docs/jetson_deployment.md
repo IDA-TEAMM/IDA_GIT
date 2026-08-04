@@ -177,10 +177,49 @@ cd ~/girdap-decision && .venv/bin/python -m pytest prototype/tests/ -q
 
 ---
 
+## AĞ İZOLASYONU — geliştirme ↔ yarışma (şartname md 4.1)
+
+İki ayrı mod var; **karıştırma**:
+
+| | Geliştirme / masa testi | Yarışma / video günü |
+|---|---|---|
+| `ROS_DOMAIN_ID` | 42 (serviste + bashrc) | 42 (aynı) |
+| `ROS_LOCALHOST_ONLY` | **yok** (laptop'tan `ros2 topic echo` çalışsın) | **1** (drop-in ile) |
+| ROS trafiği | ethernet'e çıkar | Jetson içinde kalır |
+
+**Yarışma günü kurulumu** (`scripts/girdap-karar-yarisma.conf`):
+```bash
+sudo mkdir -p /etc/systemd/system/girdap-karar.service.d
+sudo cp ~/girdap-decision/scripts/girdap-karar-yarisma.conf \
+        /etc/systemd/system/girdap-karar.service.d/
+sudo systemctl daemon-reload && sudo systemctl restart girdap-karar
+```
+
+**Doğrulama:**
+```bash
+systemctl show girdap-karar -p Environment | grep LOCALHOST   # =1
+ros2 topic list        # Jetson'da DOLU, laptop'ta BOŞ olmalı
+```
+
+**Neden:**
+- md 4.1 *"YKİ'lerde görüntü işleme, sensör işleme ya da otonomi kabiliyeti
+  olmayacaktır"* — ROS topic'leri yer tarafından erişilemez olunca bu yapısal
+  olarak garanti altına alınır. Görev telemetrisi ayrı hattan (MAVLink/RFD868 →
+  Mission Planner) gittiği için etkilenmez.
+- Livox Mid-360 aynı ethernet üzerinde 10 Hz'te ~20k nokta basıyor; DDS keşif
+  multicast'ini o hattan çekmek LiDAR trafiğini rahatlatır.
+
+> ⚠️ Yarışma sonrası **geri al** — açık kalırsa bir sonraki masa testinde
+> "servisi göremiyorum" diye saatler kaybedilir (2026-07-13'te DOMAIN_ID
+> yüzünden tam bu yaşandı).
+
+---
+
 ## SU GÜNÜ — 3 TERMİNAL LAUNCH SIRASI
 
 > Her terminalde önce ADIM 5'teki üç `source/export` satırı (bashrc'de yoksa).
 > **Sıra önemlidir.** Her adımda beklenen çıktıyı gör, sonra ilerle.
+> 🔴 Yarışma günüyse önce yukarıdaki **AĞ İZOLASYONU** drop-in'ini kur.
 
 ### Terminal 1 — Sensör Sürücüleri (donanım ekibi)
 ```bash
