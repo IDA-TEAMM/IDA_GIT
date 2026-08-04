@@ -19,6 +19,18 @@
 Diğer tüm ölçümler bu noktaya göre alınacak. **Bir kez seçilir, bir daha
 değişmez**, ve araç üzerinde fiziksel olarak işaretlenir (bant/kalem).
 
+### Bu teknede yön ve konumlar (2026-08-04'te fotoğrafla teyit edildi)
+
+| | Nerede |
+|---|---|
+| **Pruva (ön, +x yönü)** | **Kamera yuvasının (mavi kutu) olduğu taraf** |
+| **Pixhawk 6C** | Merkez gövdenin içinde, kapak açılınca **sağ tarafta**, gri IP kutunun sağında; üstünde "Pixhawk 6C" yazılı, renkli kablolar ona giriyor |
+| **Livox Mid-360** | Merkez gövdenin **tepesinde**, gümüş soğutuculu kubbe |
+| **Kamera (OAK-D)** | ⏳ **henüz TAKILMADI** — pruvadaki mavi kutu onun yuvası. Takılınca §3 ölçülecek |
+| Kırmızı acil stop | Merkez gövdenin üstünde (md 4.2 "araç üzerinden güç kesme" ✅ mevcut) |
+| GPS (F9P) | Merkez gövdenin sağında, kısa kol üzerinde yuvarlak anten |
+| Telemetri anteni | Merkez gövdenin solunda, siyah çubuk |
+
 **Eksen kuralı (ROS REP-103, değiştirilemez):**
 - **+x = PRUVA** (ileri, teknenin burnu)
 - **+y = İSKELE** (sol taraf)
