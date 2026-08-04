@@ -1,0 +1,504 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+GİRDAP İDA — OAK-D Lite (DepthAI v3) YOLO VERİ SETİ TOPLAYICI
+=============================================================
+Canlı RGB akışından YOLO eğitimi için ETİKETLENMEYE HAZIR .jpg kareler kaydeder.
+Video dosyası DEĞİL — doğrudan kareler.
+
+İki mod, tek pencere:
+  • MANUEL   : SPACE / S  → o anki kareyi kaydet (en iyi kareleri SEN seç)
+  • OTOMATİK : A ile aç/kapa → her --interval saniyede bir kare kaydeder
+               (tekneyle gezerken elini kullanmadan çeşitli kare toplamak için)
+
+Çıktı düzeni (YOLO'ya hazır):
+  <out>/
+    images/    kare_00001.jpg ...     (kaydedilen kareler)
+    labels/    (BOŞ — labelImg / Roboflow / CVAT ile .txt etiketler buraya gelir)
+    data.yaml  (YOLO config — sınıf sırası GİRDAP sözleşmesine göre KİLİTLİ, aşağıya bak)
+    README.txt (etiketleme + eğitim notları)
+    manifest.csv (her kare: dosya, oturum, ISO zaman, saat güvenilir mi, çözünürlük, fps)
+
+Aynı klasöre tekrar çalıştırırsan numaradan DEVAM eder (üzerine YAZMAZ);
+manifest.csv de eklemeli yazılır → birden çok deniz oturumu sonradan ayrıştırılır.
+
+DENİZ OTURUMU (PC YOK, EKRAN YOK): systemd servisiyle açılışta kendi başına
+başlar — bkz. scripts/girdap-veriseti.service ve docs/veriseti_deniz_oturumu.md.
+⚠ Algı node'u ile AYNI ANDA çalışamaz (tek OAK, tek süreç açabilir).
+
+🔴 SINIF SIRASI (değiştirme — üç yerde birden değişmesi gerekir):
+   0 = kenar_dubasi (turuncu RAL 2003)   1 = engel_dubasi (sarı RAL 1026)
+   Sebep: karar yığınının `/perception/buoys` sözleşmesi "0"=kenar, "1"=engel;
+   ayrıca algı kodu sınıfı İSİMDEN çözüyor (`_sinif_indeksleri_coz`, "kenar"/"engel"
+   alt dizgisini arar). İsim/sıra bozulursa model sessizce yanlış sınıf yayınlar.
+   Aynı sıra: data.yaml + eğitim + NN Archive export'u (416x416).
+
+🔴 ÇÖZÜNÜRLÜK 4:3 OLMALI (varsayılan 1440x1080):
+   OAK-D Lite CAM_A = IMX214, native 4:3. Deploy node'u 640x480 (4:3) kare üretip
+   416x416 NN'e LETTERBOX ile veriyor (_LB_PAY=0.125 = 4:3→1:1 payı). 16:9 istersen
+   depthai varsayılanı CROP olduğu için sensörün altı/üstü kesilir → veri seti
+   deploy'dan DAR dikey FOV'la toplanır, model sahada görmediği açıları görür.
+
+Kullanım:
+  python3 oak_veriseti_topla.py                                   # önizlemeli
+  python3 oak_veriseti_topla.py --no-preview --interval 1.0       # ekransız (suda/servis)
+  python3 oak_veriseti_topla.py --min-fark 0                      # benzerlik filtresi KAPALI
+
+Kontroller (önizleme penceresi açıkken):
+  SPACE / S : kareyi kaydet         A : otomatik toplamayı aç/kapa
+  Q / ESC   : çık
+
+DepthAI v3 (3.7.x) API'si — ekipteki çalışan scriptlerle aynı idiom. Sadece RGB
+(YOLO 2D için derinlik gerekmez → stereo açılmaz, daha az yük).
+"""
+import argparse
+import re
+import shutil
+import sys
+import time
+from pathlib import Path
+
+import cv2
+import depthai as dai
+import numpy as np
+
+# ---------------------------------------------------------------- sabitler
+# Sınıf sırası tek yerde: data.yaml + README aynı kaynaktan yazılır.
+SINIFLAR = ["kenar_dubasi", "engel_dubasi"]
+
+# Benzerlik ölçümü bu küçük griye indirgenmiş karede yapılır (ucuz + gürültüye dayanıklı).
+KUCUK_EN = 160
+
+# 🔴 EN/BOY ORANI = 4:3 — pazarlıksız. Gerekçe (2026-08-04 doğrulaması):
+#   • OAK-D Lite CAM_A = IMX214, native 4208x3120 = 4:3 (HFOV 69°).
+#   • Deploy node'u (duba_gecis_navigator.py) 640x480 = 4:3 kare üretir,
+#     NN'e 416x416 LETTERBOX ile girer; _LB_PAY=0.125 tam da 4:3→1:1 letterbox
+#     payıdır ((1-0.75)/2). Yani model DEPLOY'da 4:3 sahne görüyor.
+#   • 16:9 (1920x1080) istersek depthai varsayılanı CROP (resizeMode=0) olduğu için
+#     sensörün ALTINI/ÜSTÜNÜ keser → veri seti dar dikey FOV'la toplanır, deploy'da
+#     karenin altında beliren yakın dubalar eğitimde HİÇ görülmemiş olur.
+SENSOR_ORANI = 4.0 / 3.0
+
+
+# ------------------------------------------------------------------ yardımcılar
+def res_ayristir(s: str):
+    """'1920x1080' -> (1920, 1080). Hatalıysa anlaşılır mesajla düşer."""
+    m = re.fullmatch(r"\s*(\d+)\s*[xX*]\s*(\d+)\s*", s)
+    if not m:
+        raise argparse.ArgumentTypeError(f"--res '1920x1080' biçiminde olmalı, gelen: {s!r}")
+    return int(m.group(1)), int(m.group(2))
+
+
+def cihaz_bekle(bulucu, timeout_s: float, uyku_s: float = 2.0, log=print) -> bool:
+    """OAK görünene kadar bekle. Saf/enjekte edilebilir (kamerasız test edilir).
+
+    NEDEN: boot'ta USB geç enumere olabilir ya da kamera sonradan takılır.
+    Script hemen exit(1) verirse systemd birkaç denemede pes eder ve SAHADA
+    (monitör/SSH yok) tek kare toplanmadan koşu biter — sessiz başarısızlık.
+
+    `bulucu()` cihaz listesi döndürür. timeout_s <= 0 → beklemeden tek deneme.
+    """
+    t0 = time.monotonic()
+    yazildi = False
+    while True:
+        if bulucu():
+            return True
+        if timeout_s <= 0 or (time.monotonic() - t0) >= timeout_s:
+            return False
+        if not yazildi:
+            log(f"[…] OAK görünmüyor — {timeout_s:g} sn'ye kadar bekleniyor "
+                f"(kamerayı şimdi takabilirsin)")
+            yazildi = True
+        time.sleep(uyku_s)
+
+
+def oran_uyumlu(w: int, h: int, tolerans: float = 0.02) -> bool:
+    """İstenen çözünürlük deploy geometrisiyle (4:3) uyumlu mu? Saf fonksiyon."""
+    if h <= 0:
+        return False
+    return abs((w / h) - SENSOR_ORANI) <= tolerans
+
+
+def kucult_gri(frame, en: int = KUCUK_EN):
+    """Kareyi benzerlik karşılaştırması için küçük gri görüntüye indir.
+
+    Saf fonksiyon (kamerasız test edilebilir). Dalga/ışık gürültüsü küçültmede
+    zaten ortalanır; asıl sahne değişimi kalır.
+    """
+    h, w = frame.shape[:2]
+    if w <= 0 or h <= 0:
+        raise ValueError("boş kare")
+    yeni = (en, max(1, int(round(h * en / w))))
+    kucuk = cv2.resize(frame, yeni, interpolation=cv2.INTER_AREA)
+    if kucuk.ndim == 3:
+        kucuk = cv2.cvtColor(kucuk, cv2.COLOR_BGR2GRAY)
+    return kucuk.astype(np.float32)
+
+
+def yeterince_farkli(onceki, simdiki, esik: float) -> bool:
+    """Bu kare son KAYDEDİLEN kareden yeterince farklı mı?
+
+    Saf fonksiyon. `onceki is None` → ilk kare, her zaman kaydedilir.
+    `esik <= 0` → filtre kapalı (her kare geçer).
+    Ölçüt: küçültülmüş gri kareler arası ORTALAMA MUTLAK FARK (0-255).
+    """
+    if esik <= 0 or onceki is None:
+        return True
+    if onceki.shape != simdiki.shape:
+        return True
+    return float(np.mean(np.abs(onceki - simdiki))) >= esik
+
+
+def bos_disk_gb(yol: Path) -> float:
+    """Verilen yolun bulunduğu diskteki boş alan (GB)."""
+    return shutil.disk_usage(str(yol)).free / (1024 ** 3)
+
+
+# --------------------------------------------------------- oturum / manifest
+# NEDEN MANIFEST: dosya adı yalnız sıra numarası taşıyor (kare_00001.jpg) —
+# YOLO araçları bunu sever, DEĞİŞTİRME. Ama deniz oturumunda hangi karenin
+# hangi saatte/hangi koşuda toplandığını bilmek ŞART: veri seti çeşitliliği
+# (farklı ışık/saat) ancak böyle denetlenebilir ve tek bir klasöre biriken
+# birden çok oturum sonradan ayrıştırılabilir. Çözüm: adı bozmadan yanına
+# manifest.csv yazmak.
+MANIFEST_ADI = "manifest.csv"
+MANIFEST_BASLIK = "dosya,oturum,iso_zaman,saat_guvenilir,genislik,yukseklik,fps"
+
+# Jetson'da RTC pili yoksa saat boot'ta GERİDE açılır (bu projede ölçüldü:
+# ~2 ay). Kare yine toplanır ama zaman etiketi yalan olur — sessiz kalmasın.
+SAAT_ALT_SINIR = 1767225600.0        # 2026-01-01T00:00:00Z
+
+
+def saat_guvenilir_mi(epoch_s: float, alt_sinir: float = SAAT_ALT_SINIR) -> bool:
+    """Sistem saati makul mü? (RTC'siz Jetson boot'ta geçmişte açılabilir)"""
+    return float(epoch_s) >= alt_sinir
+
+
+def oturum_kimligi(epoch_s: float) -> str:
+    """Bu koşunun kimliği: '20260804_204500' (yerel saat).
+
+    Aynı klasöre birden çok deniz oturumu birikeceği için gerekli.
+    """
+    return time.strftime("%Y%m%d_%H%M%S", time.localtime(epoch_s))
+
+
+def manifest_satiri(dosya: str, oturum: str, epoch_s: float,
+                    w: int, h: int, fps: int) -> str:
+    """Tek karenin manifest satırı (CSV, sonunda \\n)."""
+    iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(epoch_s))
+    guv = "1" if saat_guvenilir_mi(epoch_s) else "0"
+    return f"{dosya},{oturum},{iso},{guv},{int(w)},{int(h)},{int(fps)}\n"
+
+
+def manifest_ac(out: Path):
+    """manifest.csv'yi ekleme modunda aç; yeni dosyaya başlık yaz."""
+    yol = out / MANIFEST_ADI
+    yeni = not yol.exists()
+    fh = yol.open("a", encoding="utf-8")
+    if yeni:
+        fh.write(MANIFEST_BASLIK + "\n")
+        fh.flush()
+    return fh
+
+
+def sonraki_index(images_dir: Path, prefix: str) -> int:
+    """images/ içindeki en büyük {prefix}_NNNNN.jpg indeksinin bir fazlası
+    (yeniden çalıştırınca kaldığı yerden devam et, üzerine yazma)."""
+    en_buyuk = 0
+    desen = re.compile(rf"{re.escape(prefix)}_(\d+)\.jpg$")
+    for p in images_dir.glob(f"{prefix}_*.jpg"):
+        m = desen.search(p.name)
+        if m:
+            en_buyuk = max(en_buyuk, int(m.group(1)))
+    return en_buyuk + 1
+
+
+def klasor_hazirla(out: Path, prefix: str):
+    """images/ + labels/ + data.yaml + README.txt oluştur (varsa dokunma)."""
+    images = out / "images"
+    labels = out / "labels"
+    images.mkdir(parents=True, exist_ok=True)
+    labels.mkdir(parents=True, exist_ok=True)
+
+    isim_satirlari = "".join(f"  {i}: {ad}\n" for i, ad in enumerate(SINIFLAR))
+
+    data_yaml = out / "data.yaml"
+    if not data_yaml.exists():
+        data_yaml.write_text(
+            "# GİRDAP İDA — YOLO veri seti config\n"
+            "# 🔴 SINIF SIRASI KİLİTLİ — değiştirme:\n"
+            "#    karar yığını sözleşmesi /perception/buoys: \"0\"=kenar, \"1\"=engel\n"
+            "#    algı kodu sınıfı İSİMDEN çözer (\"kenar\"/\"engel\" alt dizgisi).\n"
+            "#    Aynı sıra NN Archive export'unda da geçerli olmalı (416x416).\n"
+            "# val: eğitimden ÖNCE ayrı bir bölme yap (Roboflow/CVAT böler);\n"
+            "#      aşağıdaki 'val: images' sadece taslak — aynı kalırsa metrikler yalan söyler.\n"
+            "path: .\n"
+            "train: images\n"
+            "val: images\n"
+            "names:\n" + isim_satirlari,
+            encoding="utf-8",
+        )
+
+    readme = out / "README.txt"
+    if not readme.exists():
+        readme.write_text(
+            "GİRDAP İDA — YOLO veri seti (OAK-D Lite ile toplandı)\n"
+            "=====================================================\n\n"
+            "images/  : kaydedilen kareler (.jpg)\n"
+            "labels/  : YOLO etiketleri (.txt) — HER görselle AYNI adta, örn:\n"
+            "           images/kare_00001.jpg  ->  labels/kare_00001.txt\n"
+            "data.yaml: sınıf isimleri + train/val yolları\n\n"
+            "SINIF SIRASI (KİLİTLİ):\n"
+            "  0 = kenar_dubasi  (turuncu RAL 2003, parkur kenarı)\n"
+            "  1 = engel_dubasi  (sarı RAL 1026, engel)\n"
+            "  Bu sıra karar yığınının /perception/buoys sözleşmesiyle aynıdır ve\n"
+            "  NN Archive export'unda da AYNI kalmalıdır. Parkur-3 hedef dubaları\n"
+            "  eklenirse 2,3,4 olarak SONA eklenir (mevcut sıra bozulmaz).\n\n"
+            "Etiketleme (birini seç):\n"
+            "  • Roboflow (web)  — kolay, otomatik böler/augment eder\n"
+            "  • CVAT (web/self) — çok görsel için hızlı\n"
+            "  • labelImg (yerel): pip install labelImg && labelImg images/ classes.txt labels/\n"
+            "    (labelImg'de 'YOLO' formatını seç)\n\n"
+            "YOLO .txt satır biçimi:  <sinif_id> <x_merkez> <y_merkez> <en> <boy>\n"
+            "  (hepsi 0-1 aralığında, görsel genişlik/yüksekliğine göre normalize)\n\n"
+            "İyi veri seti ipuçları:\n"
+            "  • Çeşitlilik: farklı mesafe/açı/ışık/arka plan.\n"
+            "  • Toplayıcı benzer kareleri --min-fark eşiğiyle zaten eler.\n"
+            "  • Sınıf başına dengeli sayı.\n"
+            "  • Eğitim: yolo detect train data=data.yaml model=yolo11n.pt imgsz=640\n"
+            "    (eğitim imgsz serbest; DEPLOY export'u 416x416 olmalı — kodun letterbox\n"
+            "     varsayımı _LB_PAY=0.125 buna bağlı.)\n",
+            encoding="utf-8",
+        )
+    return images, labels
+
+
+def hud_yaz(frame, satirlar, org=(10, 26)):
+    """Sol üste yarı saydam arka planlı çok satırlı bilgi yaz."""
+    x, y = org
+    for i, (metin, r) in enumerate(satirlar):
+        yy = y + i * 26
+        (tw, th), _ = cv2.getTextSize(metin, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        cv2.rectangle(frame, (x - 6, yy - th - 6), (x + tw + 6, yy + 6), (0, 0, 0), -1)
+        cv2.putText(frame, metin, (x, yy), cv2.FONT_HERSHEY_SIMPLEX, 0.6, r, 2)
+
+
+# ------------------------------------------------------------------------- main
+def main():
+    ap = argparse.ArgumentParser(
+        description="OAK-D Lite (DepthAI v3) ile YOLO veri seti (kare) toplayıcı.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    ap.add_argument("--out", type=str, default="~/girdap_veriseti",
+                    help="Çıktı klasörü (images/ + labels/ + data.yaml burada oluşur)")
+    ap.add_argument("--res", type=res_ayristir, default="1440x1080",
+                    help="Kayıt çözünürlüğü (GENİŞxYÜKSEK). 4:3 OLMALI — deploy "
+                         "(640x480 → 416x416 letterbox) ile aynı FOV. 16:9 verirsen "
+                         "sensörün altı/üstü kırpılır, veri seti deploy'a uymaz.")
+    ap.add_argument("--fps", type=int, default=20, help="Kamera sensör FPS'i")
+    ap.add_argument("--interval", type=float, default=1.0,
+                    help="OTOMATİK modda kaç saniyede bir kare denensin")
+    ap.add_argument("--min-fark", type=float, default=3.0,
+                    help="Benzer kare filtresi: son kaydedilenle ortalama mutlak fark "
+                         "(0-255) bu değerin altındaysa kare ATLANIR. 0 = filtre kapalı")
+    ap.add_argument("--max-kare", type=int, default=0,
+                    help="Bu oturumda en fazla kaç kare (0 = sınırsız). Sınıra gelince temiz çıkar")
+    ap.add_argument("--min-bos-gb", type=float, default=5.0,
+                    help="Diskte bu kadar GB'den az boş kalırsa temiz çıkar")
+    ap.add_argument("--prefix", type=str, default="kare",
+                    help="Dosya adı ön eki (kare_00001.jpg)")
+    ap.add_argument("--jpg-quality", type=int, default=95, help="JPEG kalitesi (0-100)")
+    ap.add_argument("--cihaz-bekle", type=float, default=30.0,
+                    help="OAK görünmüyorsa kaç saniye beklensin (0 = bekleme, hemen çık). "
+                         "Serviste yüksek tut: boot'ta geç enumere olur / sonradan takılır")
+    ap.add_argument("--no-preview", action="store_true",
+                    help="Ekransız çalış (SSH/servis): sadece OTOMATİK topla, Ctrl+C ile dur")
+    ap.add_argument("--auto-start", action="store_true",
+                    help="Açılışta OTOMATİK mod zaten AÇIK başlasın")
+    args = ap.parse_args()
+
+    out = Path(args.out).expanduser().resolve()
+    w, h = args.res
+    images_dir, _ = klasor_hazirla(out, args.prefix)
+    idx = sonraki_index(images_dir, args.prefix)
+    headless = args.no_preview
+    auto = headless or args.auto_start   # ekransızsa otomatik şart (klavye yok)
+
+    print(f"[i] Çıktı klasörü : {out}")
+    print(f"[i] Çözünürlük    : {w}x{h} @ {args.fps} FPS, JPEG kalite {args.jpg_quality}")
+    print(f"[i] Başlangıç no  : {idx:05d}  (klasörde zaten {idx-1} kare varsa devam)")
+    print(f"[i] Benzer filtre : min-fark={args.min_fark:g}"
+          f"{' (KAPALI)' if args.min_fark <= 0 else ''}")
+    print(f"[i] Sınırlar      : max-kare={args.max_kare or 'yok'} | "
+          f"min-boş-disk={args.min_bos_gb:g} GB (şu an {bos_disk_gb(out):.1f} GB boş)")
+    print(f"[i] Mod           : {'EKRANSIZ (otomatik)' if headless else 'önizlemeli'}"
+          f"  |  otomatik={'AÇIK' if auto else 'kapalı'} ({args.interval:g}s)")
+    print(f"[i] Sınıflar      : " + ", ".join(f"{i}={a}" for i, a in enumerate(SINIFLAR)))
+    oturum = oturum_kimligi(time.time())
+    manifest = manifest_ac(out)
+    print(f"[i] Oturum        : {oturum}  (manifest: {out / MANIFEST_ADI})")
+    if not saat_guvenilir_mi(time.time()):
+        print(f"\n[!!] SİSTEM SAATİ ŞÜPHELİ: {time.strftime('%Y-%m-%d %H:%M')}\n"
+              f"     Jetson'da RTC pili yoksa saat boot'ta geride açılır. Kareler\n"
+              f"     yine toplanır ve manifest'e saat_guvenilir=0 yazılır, ama\n"
+              f"     ışık/saat çeşitliliği analizi bu oturumda YAPILAMAZ.\n"
+              f"     Denize açılmadan önce saati düzelt: sudo date -s '...'\n", flush=True)
+    if not oran_uyumlu(w, h):
+        print(f"\n[!!] UYARI: {w}x{h} oranı {w/h:.3f} — deploy 4:3 (1.333) çalışıyor.\n"
+              f"     Sensör (IMX214) 4:3; 4:3 dışı istekte kare KIRPILIR ve bu veri setiyle\n"
+              f"     eğitilen model sahada farklı FOV görür. Önerilen: --res 1440x1080\n", flush=True)
+
+    # --- OAK görünene kadar bekle (boot'ta geç enumere olabilir) ---
+    if not cihaz_bekle(dai.Device.getAllAvailableDevices, args.cihaz_bekle):
+        print(f"\n[HATA] {args.cihaz_bekle:g} sn içinde OAK-D bulunamadı.")
+        print("       • USB'ye takılı ve enerji alıyor mu? (lsusb'de 03e7 görünmeli)")
+        print("       • Başka bir program (algı node'u) kamerayı tutuyor olabilir.")
+        sys.exit(1)
+
+    # --- DepthAI v3 pipeline (RGB-only) ---
+    try:
+        pipeline = dai.Pipeline()
+        cam = pipeline.create(dai.node.Camera).build(
+            dai.CameraBoardSocket.CAM_A, sensorFps=args.fps
+        )
+        # resizeMode AÇIKÇA veriliyor: depthai varsayılanı CROP(0) — deploy node'u
+        # LETTERBOX kullanıyor ("tam yatay FOV korunur, CROP kenardaki dubaları keser").
+        # 4:3 istekte fark yok; yanlışlıkla 4:3 dışı verilirse FOV'u kesmek yerine korur.
+        rgb_q = cam.requestOutput(
+            (w, h), resizeMode=dai.ImgResizeMode.LETTERBOX
+        ).createOutputQueue(maxSize=4, blocking=False)
+        pipeline.start()
+    except Exception as e:                                  # cihaz yok / çözünürlük hatası
+        print("\n[HATA] Kamera pipeline başlatılamadı.")
+        print(f"       Sebep: {type(e).__name__}: {e}")
+        print("       • OAK-D Lite USB'ye takılı ve enerji alıyor mu?  (lsusb'de 03e7 görünmeli)")
+        print("       • Başka bir program (algı node'u) kamerayı tutuyor olabilir.")
+        print(f"       • Bu çözünürlük ({w}x{h}) desteklenmiyorsa dene: --res 1280x720")
+        sys.exit(1)
+
+    if not headless:
+        pencere = "GIRDAP veri seti — SPACE=kaydet  A=otomatik  Q=cik"
+        cv2.namedWindow(pencere, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(pencere, min(w, 1280), int(min(w, 1280) * h / w))
+
+    def kaydet(frame):
+        """Kareyi tam çözünürlükte diske yaz + manifest satırını ekle."""
+        nonlocal idx
+        yol = images_dir / f"{args.prefix}_{idx:05d}.jpg"
+        cv2.imwrite(str(yol), frame, [cv2.IMWRITE_JPEG_QUALITY, int(args.jpg_quality)])
+        # Manifest HER karede flush'lanır: denizde güç kesilirse en fazla son
+        # satır kaybolur, o ana kadarki oturum kaydı sağlam kalır.
+        manifest.write(manifest_satiri(yol.name, oturum, time.time(), w, h, args.fps))
+        manifest.flush()
+        idx += 1
+        return yol
+
+    kaydedilen = 0
+    atlanan = 0                # benzerlik filtresinin elediği kare sayısı
+    onceki_kucuk = None        # son KAYDEDİLEN karenin küçük gri hâli
+    son_auto = 0.0
+    son_kayit_yaz = 0.0        # ekranda "KAYDEDILDI" flaşı için zaman damgası
+    son_ozet = time.monotonic()
+    dur_sebep = None
+    t_fps, sayac, fps_txt = time.monotonic(), 0, "..."
+
+    try:
+        while pipeline.isRunning():
+            msg = rgb_q.tryGet()
+            if msg is None:
+                if not headless and cv2.waitKey(1) & 0xFF in (ord("q"), 27):
+                    break
+                if headless:
+                    time.sleep(0.003)      # ekransızken CPU'yu boşa döndürme (Jetson yük/termal)
+                continue
+            frame = msg.getCvFrame()
+            simdi = time.monotonic()
+
+            # anlık FPS
+            sayac += 1
+            if simdi - t_fps >= 1.0:
+                fps_txt = f"{sayac / (simdi - t_fps):.1f} FPS"
+                t_fps, sayac = simdi, 0
+
+            kaydet_bu_kare = False
+            zorla = False              # manuel kayıt: benzerlik filtresini uygulama
+
+            # otomatik mod: interval dolduysa, kare boş/siyah değilse ve öncekinden
+            # yeterince farklıysa kaydet
+            if auto and (simdi - son_auto) >= args.interval:
+                son_auto = simdi
+                if frame.mean() > 1.0:          # açılıştaki simsiyah kareyi atla
+                    if yeterince_farkli(onceki_kucuk, kucult_gri(frame), args.min_fark):
+                        kaydet_bu_kare = True
+                    else:
+                        atlanan += 1
+
+            if not headless:
+                disp = frame.copy()
+                hud_yaz(disp, [
+                    (f"{fps_txt} | {w}x{h}", (0, 255, 0)),
+                    (f"Kaydedilen: {kaydedilen}  Atlanan: {atlanan}  Sonraki: {idx:05d}",
+                     (0, 255, 255)),
+                    (f"OTOMATIK: {'ACIK' if auto else 'kapali'} ({args.interval:g}s)",
+                     (0, 255, 0) if auto else (170, 170, 170)),
+                ])
+                if simdi - son_kayit_yaz < 0.35:
+                    cv2.rectangle(disp, (0, 0), (disp.shape[1] - 1, disp.shape[0] - 1),
+                                  (0, 255, 0), 8)
+                    cv2.putText(disp, "KAYDEDILDI", (disp.shape[1] // 2 - 130, 60),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 0), 3)
+                cv2.putText(disp, "SPACE=kaydet  A=otomatik  Q=cik",
+                            (10, disp.shape[0] - 14), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6, (255, 255, 255), 2)
+                cv2.imshow(pencere, disp)
+
+                k = cv2.waitKey(1) & 0xFF
+                if k in (ord("q"), 27):
+                    break
+                elif k in (ord("s"), ord("S"), 32):     # 32 = SPACE
+                    kaydet_bu_kare, zorla = True, True
+                elif k in (ord("a"), ord("A")):
+                    auto = not auto
+                    son_auto = simdi
+                    print(f"[i] Otomatik toplama {'AÇILDI' if auto else 'kapatıldı'}")
+
+            if kaydet_bu_kare:
+                # sınır kontrolleri — sınıra gelince TEMİZ çık (systemd yeniden başlatmasın)
+                if args.max_kare and kaydedilen >= args.max_kare:
+                    dur_sebep = f"--max-kare {args.max_kare} sınırına ulaşıldı"
+                    break
+                if bos_disk_gb(out) < args.min_bos_gb:
+                    dur_sebep = f"disk {args.min_bos_gb:g} GB'nin altına indi"
+                    break
+
+                yol = kaydet(frame)
+                kaydedilen += 1
+                onceki_kucuk = kucult_gri(frame)
+                son_kayit_yaz = simdi
+                if headless or kaydedilen % 10 == 0 or zorla:
+                    print(f"[+] {kaydedilen:4d} kare  ->  {yol.name}", flush=True)
+
+            # ekransızken 60 sn'de bir özet (journal'dan sonradan okunur)
+            if headless and simdi - son_ozet >= 60.0:
+                son_ozet = simdi
+                print(f"[=] özet: {kaydedilen} kayıt / {atlanan} benzer-atlandı / "
+                      f"{fps_txt} / disk {bos_disk_gb(out):.1f} GB boş", flush=True)
+
+    except KeyboardInterrupt:
+        print("\n[i] Ctrl+C — kapatılıyor.")
+    finally:
+        pipeline.stop()
+        manifest.close()
+        if not headless:
+            cv2.destroyAllWindows()
+
+    if dur_sebep:
+        print(f"\n[!] DURDURULDU: {dur_sebep}")
+    print(f"\n[✓] Bitti. Bu oturumda {kaydedilen} kare kaydedildi, "
+          f"{atlanan} benzer kare atlandı.")
+    print(f"    Toplam klasörde ~{idx-1} kare: {images_dir}")
+    print(f"    Sonraki adım — etiketle: README.txt (Roboflow/CVAT/labelImg).")
+
+
+if __name__ == "__main__":
+    main()

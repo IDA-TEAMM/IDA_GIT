@@ -112,6 +112,35 @@ def letterbox_payi(nn_w, nn_h, kaynak_w, kaynak_h):
     return max(0.0, (nn_h - icerik_h) / 2.0 / nn_h)
 
 
+def bbox_piksel(cx, cy, w, h, lb_pay, hedef_w, hedef_h):
+    """NN-normalize bbox → YAYINLANAN piksel uzayında (x, y, w, h).
+
+    NEDEN AYRI PARAMETRE (hedef_w/h ≠ gerçek kare boyutu):
+    `/perception/buoys` sözleşmesi bbox'ı PİKSEL uzayında taşır ama mesajda
+    görüntü boyutu YOK. Tüketici (perception_fusion_node) merkezi kendi
+    `camera_image_width_px` parametresine BÖLEREK normalize eder — yani
+    yayınlayanın piksel uzayı ile tüketicinin parametresi AYNI olmak
+    zorundadır. Uyuşmazsa hiçbir hata basılmaz, yalnız bearing kayar:
+    640 uzayı yayınlayıp 1280'e bölmek her dubayı gerçek açısının yarısında
+    gösterir (kare ortasındaki duba +17°'de görünür, tolerans 8,6°) → kamera
+    tespiti hiçbir LiDAR kümesine eşleşmez → sınıf bilgisi düşer → geçit
+    bulunamaz (P1 şartı G1/KD1≥0,5 · P2 şartı ≥2 ikili).
+    Bu yüzden yayın uzayı GERÇEK kare boyutundan bağımsız verilir.
+
+    Yatay: letterbox tam FOV'u korur → doğrudan ölçeklenir.
+    Dikey: üst/alt şerit payı çıkarılıp içeriğe geri açılır, sonra kırpılır.
+    """
+    if not hedef_w or not hedef_h or hedef_w <= 0 or hedef_h <= 0:
+        raise ValueError(
+            f"gecersiz bbox hedef uzayi: {hedef_w}x{hedef_h} "
+            "(tuketicinin camera_image_width_px/height_px degeriyle ayni olmali)"
+        )
+    icerik = max(1e-6, 1.0 - 2.0 * lb_pay)
+    cy_ic = min(1.0, max(0.0, (cy - lb_pay) / icerik))
+    h_ic = min(1.0, h / icerik)
+    return (cx * hedef_w, cy_ic * hedef_h, w * hedef_w, h_ic * hedef_h)
+
+
 def yan_yana_mi(a_ileri, a_yanal, b_ileri, b_yanal) -> bool:
     """Bu iki duba bir KAPI mı (kursa dik), yoksa ardışık kapılara mı ait?
 

@@ -1,0 +1,54 @@
+# GİRDAP İDA — YOLO VERİ SETİ TOPLAYICI servisi (DENİZ OTURUMU, PC/EKRAN YOK)
+#
+# NEDEN VAR: veri seti denizde toplanacak ve orada dizüstüyle bağlanamayacağız.
+# Elle komut çalıştıramayacağımıza göre toplayıcı AÇILIŞTA kendi başına
+# başlamalı; yoksa tekne suya girer, kimse fark etmeden tek kare toplanmadan
+# geri döner ve o oturum bir daha kurulamaz.
+#
+# Kurulum:
+#   sudo cp scripts/girdap-veriseti.service /etc/systemd/system/
+#   sudo sed -i "s|__USER__|$USER|g; s|__WS__|$HOME/ros2_ws|g" \
+#        /etc/systemd/system/girdap-veriseti.service
+#   sudo systemctl daemon-reload
+#
+# 🔴 VERİ SETİ GÜNÜ (tek OAK var, iki süreç açamaz — kıyıda, denize girmeden):
+#   sudo systemctl disable --now girdap-algi
+#   sudo systemctl enable  --now girdap-veriseti
+# 🔴 YARIŞMA/TEST GÜNÜ (geri al):
+#   sudo systemctl disable --now girdap-veriseti
+#   sudo systemctl enable  --now girdap-algi
+#
+# Doğrulama (kıyıda, denize girmeden ÖNCE — zorunlu):
+#   docs/veriseti_deniz_oturumu.md kontrol listesi
+#   journalctl -fu girdap-veriseti      # "[+] N kare" satırları akmalı
+#   ls ~/girdap_veriseti/images | wc -l # sayı ARTMALI
+
+[Unit]
+Description=GIRDAP IDA veri seti toplayici (OAK-D Lite, ekransiz)
+After=network.target
+# Emniyet kemeri: ikisi aynı anda AÇILAMAZ. Tek OAK'ı iki süreç açamaz;
+# çakışırsa kamera tamamen ölür ve sahada belirti vermez.
+Conflicts=girdap-algi.service
+
+[Service]
+Type=simple
+User=__USER__
+# --no-preview: ekran yok (cv2.imshow çağrılmaz), otomatik mod zorunlu açılır.
+# --cihaz-bekle 120: boot'ta USB geç enumere olabilir / kamera sonradan takılır;
+#     hemen exit(1) verirsek systemd birkaç denemede pes eder.
+# --interval 1.5 + --min-fark 2.0: BİLEREK BOL TOPLA. Denize bir kez giriliyor;
+#     fazla kareyi sonradan atmak kolay, kaçan oturumu geri toplamak İMKÂNSIZ.
+#     (1440x1080 q95 ≈ 0,5 MB/kare → ~1,5 GB/saat; diskte 400+ GB boş var.)
+# --min-bos-gb 10: disk dolmadan TEMİZ dur (exit 0 → systemd yeniden başlatmaz).
+ExecStart=/bin/bash -lc 'exec python3 __WS__/src/girdap-ida-algi/scripts/oak_veriseti_topla.py \
+    --no-preview --out ~/girdap_veriseti \
+    --res 1440x1080 --fps 20 --interval 1.5 --min-fark 2.0 --min-bos-gb 10 \
+    --cihaz-bekle 120'
+# on-failure: kamera kopması/çökme → yeniden dene (indeks kaldığı yerden devam
+# eder, manifest EKLEMELİ yazılır). Sınıra/diske takılıp temiz çıkarsa (exit 0)
+# yeniden başlatmaz — sonsuz döngü olmasın.
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

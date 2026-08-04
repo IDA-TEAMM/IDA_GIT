@@ -186,8 +186,22 @@ KAMERA_FRAME = "oak_rgb"
 # devreye girer.
 SINIF_ESLEME = {KENAR_CLASS: "0", ENGEL_CLASS: "1"}
 
-# bbox piksel uzayı: fusion_node camera_image_width_px=640 varsayıyor — AYNI kal.
+# ---- GERÇEK kamera karesi (letterbox oranı + kayıt overlay'i buna dayanır) ----
 IMG_W, IMG_H = 640, 480
+
+# ---- YAYINLANAN bbox piksel uzayı (Detection2D piksel uzayı) ----
+# 🔴 BU İKİSİ, TÜKETİCİNİN PARAMETRESİYLE AYNI OLMAK ZORUNDA:
+#   son_kodv2 perception_fusion_node → camera_image_width_px / height_px
+#   (hardware.launch.py:211-212 · hardware.yaml:207-208 · params.yaml:228-229
+#    üçünde de 1280x720 — 2026-07-17'de oakd_driver 1280x720'e çıkınca)
+# Mesaj görüntü boyutunu TAŞIMADIĞI için tüketici bbox merkezini bu sayıya
+# böler; uyuşmazsa hiçbir hata basılmaz, yalnız bearing sessizce kayar
+# (640 yayınlayıp 1280'e bölmek → kare ortasındaki duba +17°'de görünür,
+# tolerans 8,6° → kamera tespiti hiçbir LiDAR kümesine eşleşmez → sınıf
+# düşer → geçit bulunamaz: P1 G1/KD1≥0,5 ve P2 ≥2 ikili sağlanmaz).
+# GERÇEK kare boyutundan (IMG_W/IMG_H) BAĞIMSIZDIR — bilinçli: yatayda
+# letterbox tam FOV koruduğu için ölçek yeterli, HFOV değişmez.
+BBOX_W, BBOX_H = 1280, 720
 # LETTERBOX dikey düzeltme: 4:3 kare (640x480) kare NN girişine (416x416)
 # sığdırılırken üst/alt şerit eklenir. YATAY normalizasyon değişmez (bearing
 # füzyonu zaten yalnız yatayı kullanır); dikey için şerit payı çıkarılır.
@@ -672,14 +686,14 @@ class DubaNavigator(Node):
         for d in self.dubalar:
             det = Detection2D()
             det.header = arr.header
-            # Yatay: LETTERBOX tam FOV korur, normalize doğrudan ölçeklenir.
-            det.bbox.center.position.x = d.cx * IMG_W
-            # Dikey: üst/alt şerit payı çıkarılıp 4:3 görüntüye geri açılır.
-            icerik = max(1e-6, 1.0 - 2.0 * self._lb_pay)
-            cy = min(1.0, max(0.0, (d.cy - self._lb_pay) / icerik))
-            det.bbox.center.position.y = cy * IMG_H
-            det.bbox.size_x = d.w * IMG_W
-            det.bbox.size_y = min(1.0, d.h / icerik) * IMG_H
+            # Piksel uzayı = tüketicinin beklediği uzay (BBOX_W/BBOX_H
+            # açıklamasına bak) — gerçek kare boyutu DEĞİL.
+            bx, by, bw, bh = gm.bbox_piksel(
+                d.cx, d.cy, d.w, d.h, self._lb_pay, BBOX_W, BBOX_H)
+            det.bbox.center.position.x = bx
+            det.bbox.center.position.y = by
+            det.bbox.size_x = bw
+            det.bbox.size_y = bh
             hyp = ObjectHypothesisWithPose()
             hyp.hypothesis.class_id = self.sinif_esleme.get(d.cls, str(d.cls))
             hyp.hypothesis.score = d.conf

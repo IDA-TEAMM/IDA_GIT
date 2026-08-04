@@ -272,3 +272,67 @@ def test_p2_mutlak_sart():
     """Parkur-2: en az 2 duba ikilisi (md 5.5.2.4)."""
     assert gm.p2_gecit_sarti(1) is False
     assert gm.p2_gecit_sarti(2) is True
+
+
+# ------------------------------------------------- bbox piksel uzayı (E-1)
+# NEDEN: perception_fusion_node bbox merkezini `camera_image_width_px`e BÖLER
+# (bearing normalizasyonu). Bizim yayınladığımız piksel uzayı onun beklediği
+# uzayla AYNI olmazsa bearing sessizce yanlış çıkar → sınıf yanlış LiDAR
+# kümesine eşlenir → geçit bulunamaz (P1: G1/KD1≥0,5 · P2: ≥2 ikili).
+
+def test_bbox_merkez_hedef_uzayina_olceklenir():
+    """cx=0,5 → hedef genişliğin ortası; uzay 640 değil 1280 ise 640 px."""
+    x, _y, _w, _h = gm.bbox_piksel(0.5, 0.5, 0.1, 0.1, 0.0, 1280, 720)
+    assert x == pytest.approx(640.0)
+
+
+def test_bbox_sag_kenar_hedef_genisligi():
+    """cx=1,0 → tam sağ kenar. 640 uzayı yayınlayıp 1280'e bölmek bu dubayı
+    kare ORTASINDA gösterirdi (E-1 hatasının ta kendisi)."""
+    x, _y, _w, _h = gm.bbox_piksel(1.0, 0.5, 0.1, 0.1, 0.0, 1280, 720)
+    assert x == pytest.approx(1280.0)
+
+
+def test_bbox_letterbox_ortayi_ortada_birakir():
+    """Şerit payı simetrik → dikey merkez merkezde kalır."""
+    _x, y, _w, _h = gm.bbox_piksel(0.5, 0.5, 0.1, 0.1, 0.125, 1280, 720)
+    assert y == pytest.approx(360.0)
+
+
+def test_bbox_letterbox_ust_serit_sifira_gider():
+    """İçeriğin üst kenarı (cy=lb_pay) hedef karede y=0 olmalı."""
+    _x, y, _w, _h = gm.bbox_piksel(0.5, 0.125, 0.1, 0.1, 0.125, 1280, 720)
+    assert y == pytest.approx(0.0)
+
+
+def test_bbox_serit_icinde_kalan_tespit_KIRPILIR():
+    """Şeride düşen (imkânsız ama savunmacı) değer taşmaz."""
+    _x, y, _w, _h = gm.bbox_piksel(0.5, 0.05, 0.1, 0.1, 0.125, 1280, 720)
+    assert y == pytest.approx(0.0)
+    _x2, y2, _w2, _h2 = gm.bbox_piksel(0.5, 0.99, 0.1, 0.1, 0.125, 1280, 720)
+    assert y2 == pytest.approx(720.0)
+
+
+def test_bbox_yatay_letterboxtan_ETKILENMEZ():
+    """Letterbox yalnız dikeyde şerit ekler; yatay tam FOV korur."""
+    x_paysiz, *_ = gm.bbox_piksel(0.25, 0.5, 0.1, 0.1, 0.0, 1280, 720)
+    x_payli, *_ = gm.bbox_piksel(0.25, 0.5, 0.1, 0.1, 0.125, 1280, 720)
+    assert x_paysiz == pytest.approx(x_payli)
+
+
+def test_bbox_yukseklik_icerige_geri_acilir():
+    """h, şerit çıkarılmış içeriğe göre büyür (0,125 pay → içerik 0,75)."""
+    *_, h = gm.bbox_piksel(0.5, 0.5, 0.1, 0.1, 0.125, 1280, 720)
+    assert h == pytest.approx(0.1 / 0.75 * 720)
+
+
+def test_bbox_yukseklik_tavani_kareyi_asmaz():
+    """Aşırı büyük h kareyi taşmamalı (VideoWriter/tüketici savunması)."""
+    *_, h = gm.bbox_piksel(0.5, 0.5, 0.1, 0.95, 0.125, 1280, 720)
+    assert h <= 720.0 + 1e-6
+
+
+def test_bbox_gecersiz_hedef_uzayi_hata_verir():
+    """0/negatif uzay sessizce 0'a bölmemeli — yapılandırma hatası görünür olsun."""
+    with pytest.raises(ValueError):
+        gm.bbox_piksel(0.5, 0.5, 0.1, 0.1, 0.0, 0, 720)
