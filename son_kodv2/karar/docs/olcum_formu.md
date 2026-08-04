@@ -180,7 +180,7 @@ yazıyor (kaynak: GIRDAP_DURUM §1). **Teyit edin:**
 | Ölçü | Kodda | Ölçülen | Not |
 |---|---|---|---|
 | Gövde genişliği (uçtan uca, en geniş yer) | 0.78 m | `____` m | Kapıdan sığma hesabı |
-| Gövde boyu | 1.04 m | `____` m | Burun hattı / min_forward |
+| Gövde boyu | 1.04 m | **1.03 m** ✅ | Ölçüldü 2026-08-04; koddaki 1.04 ile 1 cm fark → tolerans içinde, kod değişmiyor |
 | Şamandıra/fender vb. ile toplam genişlik | — | `____` m | Çarpma payı için |
 
 ---
