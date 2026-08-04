@@ -390,6 +390,7 @@
 - **Kök neden:** noktalar sensör çerçevesinde, filtre su-hattı varsayıyor; `h` bilinmiyor.
 - **Etki:** Parkur-2 (T1). Videoyu bloke ETMEZ.
 - **Durum:** BLOKE — mekanik `h` ölçüsü bekliyor (`olcum_formu.md`). Geldiğinde: üreteç+testlerle AYNI commit + min_range değerlendirmesi.
+- **2026-08-04:** Blokajın asıl sebebi bulundu — **`docs/olcum_formu.md` hiç yazılmamıştı** (7 dokümandan referans veriliyordu, dosya yoktu) → ölçüm talebi kimseye ulaşmamış, 12.07'den beri öylece beklemiş. Form artık yazıldı (§2 = LiDAR montajı, `z` = aranan `h`). `hardware.yaml`'a `tf:` bloğu + `hardware.launch.py` `_static_tf` okuması eklendi, yani ölçüm gelince girilecek yer hazır. ⚠️ Not: static TF'in doldurulması TEK BAŞINA F5.1'i çözmez — `perception_lidar_node` TF dönüşümü uygulamıyor, yalnız `frame_id`'yi etiketliyor; asıl düzeltme perception tarafında (o ekibe bildirilecek).
 
 ### [2026-07-12] F-L.2 — kamera-LiDAR sync ~0.2 s zaman kayması (🟡)
 - **Belirti:** Livox stamp'i Jetson saatinden ~0.2 s geride; çiftler kaymalı eşleşiyor.

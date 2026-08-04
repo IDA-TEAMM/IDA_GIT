@@ -219,3 +219,18 @@ topics:
   oak_depth: /oak/stereo/depth
   gps:       /mavros/global_position/global
   imu:       /mavros/imu/data
+
+# --- Sensör montaj offset'leri (static TF) ---
+# ⚠️ HEPSİ 0 = KALİBRE EDİLMEMİŞ. Gerçek değerler `docs/olcum_formu.md`
+# §2 (LiDAR) ve §3 (kamera) doldurulunca buraya girilecek.
+# Eksen kuralı (REP-103): +x pruva, +y iskele, +z yukarı.
+# ⚠️ AÇILAR RADYAN (static_transform_publisher radyan bekler; form derece
+#    topluyor → rad = derece * pi / 180).
+# 🔴 livox_frame.z (= mekanik "h") F5.1'i çözen sayıdır: perception_lidar_node
+#    şu an TF dönüşümü UYGULAMIYOR, z_min=0.1 filtresi ham LiDAR çerçevesinde
+#    çalışıyor. LiDAR base_link'in üstündeyse dubalar negatif z'de kalıp
+#    tamamen elenebilir — ölçüm gelince perception ekibine bildirilecek.
+tf:
+  livox_frame: {x: 0.0, y: 0.0, z: 0.0, yaw: 0.0, pitch: 0.0, roll: 0.0}
+  oak_frame:   {x: 0.0, y: 0.0, z: 0.0, yaw: 0.0, pitch: 0.0, roll: 0.0}
+  imu_link:    {x: 0.0, y: 0.0, z: 0.0, yaw: 0.0, pitch: 0.0, roll: 0.0}

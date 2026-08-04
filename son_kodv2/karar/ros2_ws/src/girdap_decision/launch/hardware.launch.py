@@ -240,6 +240,7 @@ def _load_hardware_config() -> dict:
     cfg["planning_mode"] = cfg["mode_name"]
     cfg["mppi"] = {k: v for k, (v, _) in _MPPI_DEFAULTS.items()}
     cfg["gate"] = {k: v for k, (v, _) in _GATE_DEFAULTS.items()}
+    cfg["tf"] = {}                      # ölçüm girilene kadar boş = hepsi 0
     try:
         path = os.path.join(
             get_package_share_directory(_PKG), "config", "hardware.yaml"
@@ -249,6 +250,10 @@ def _load_hardware_config() -> dict:
         for key in _HW_DEFAULTS:
             if key in data:
                 cfg[key] = data[key]
+        # tf: bloğu — sensör montaj offset'leri (docs/olcum_formu.md §2/§3)
+        tf_block = data.get("tf")
+        if isinstance(tf_block, dict):
+            cfg["tf"] = tf_block
         # algorithm: bloğu (video ↔ yarışma modu seçimi)
         algo = data.get("algorithm") or {}
         for key in _ALGO_DEFAULTS:
@@ -332,15 +337,26 @@ def _load_hardware_config() -> dict:
     return cfg
 
 
-def _static_tf(parent: str, child: str) -> Node:
-    """Kalibre edilmemiş (0,0,0) static transform yayıncısı."""
+def _static_tf(parent: str, child: str, tf_cfg: dict | None = None) -> Node:
+    """Sensör montaj offset'ini hardware.yaml `tf:` bloğundan okuyan static TF.
+
+    Değerler ÖLÇÜLMÜŞ olmalı (`docs/olcum_formu.md` §2/§3). Blok yoksa ya da
+    anahtar eksikse 0 kullanılır — yani ölçüm girilene kadar davranış eski
+    (kalibre edilmemiş) haliyle BİREBİR aynıdır.
+
+    Eksen kuralı (REP-103): +x pruva, +y iskele, +z yukarı; açılar RADYAN
+    (static_transform_publisher radyan bekler, form derece topluyor → çevir).
+    """
+    v = (tf_cfg or {}).get(child) or {}
+    def _g(key: str) -> str:
+        return str(float(v.get(key, 0.0)))
     return Node(
         package="tf2_ros",
         executable="static_transform_publisher",
         name=f"static_tf_{child}",
         arguments=[
-            "--x", "0", "--y", "0", "--z", "0",
-            "--yaw", "0", "--pitch", "0", "--roll", "0",
+            "--x", _g("x"), "--y", _g("y"), "--z", _g("z"),
+            "--yaw", _g("yaw"), "--pitch", _g("pitch"), "--roll", _g("roll"),
             "--frame-id", parent, "--child-frame-id", child,
         ],
     )
@@ -644,9 +660,9 @@ def generate_launch_description() -> LaunchDescription:
 
     # --- Static TF (kalibre edilmemiş; mekanik ekip gerçek ölçümle günceller) ---
     static_tfs = [
-        _static_tf("base_link", "livox_frame"),
-        _static_tf("base_link", "oak_frame"),
-        _static_tf("base_link", "imu_link"),
+        _static_tf("base_link", "livox_frame", hw["tf"]),
+        _static_tf("base_link", "oak_frame", hw["tf"]),
+        _static_tf("base_link", "imu_link", hw["tf"]),
     ]
 
     # --- Karar yığını node'ları ---
