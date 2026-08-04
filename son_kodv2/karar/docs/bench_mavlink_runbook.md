@@ -199,14 +199,34 @@ KALİBRASYONU) · 🔴 pervaneler **sökük**.
 1. Mod: **MANUAL** · araç **ARM** edilmiş
 2. Sağ çubuğu (steering) **sola** it, MP'de Servo Output'u izle
 
-| Çubuk | `SERVO1` (Sol, fn 73) | `SERVO3` (Sağ, fn 74) |
-|---|---|---|
-| Sola | **< 1500** (geri/yavaş) | **> 1500** (ileri) |
-| Sağa | **> 1500** | **< 1500** |
-| İleri (throttle) | ikisi de **> 1500**, birbirine **yakın** | |
+> 🔴 **ÖNCE ŞUNU BİL — `SERVO1_REVERSED=1`, `SERVO3_REVERSED=0`** (2026-08-04
+> param dökümü). Kanallardan biri ters çevrilmiş, yani **ekrandaki PWM'lere
+> bakarak mixing'i yorumlayamazsın.** Ters çevrilmiş kanalda "ileri" komutu
+> ekranda 1500'ün ALTINDA görünür.
+>
+> Bu asimetri **fiziksel motor yönü farkını telafi ediyor olabilir** (doğru) ya
+> da hata olabilir. **Bu testin asıl amacı bunu ayırt etmek.**
 
-> Son satır ESC kalibrasyonunu da sınar: iki değer belirgin şekilde farklıysa
-> ESC'ler farklı kalibre edilmiştir → tekne düz gitmez.
+**Beklenen (mevcut REVERSED ayarlarına göre):**
+
+| Komut | `SERVO1` (Sol, fn 73, **ters**) | `SERVO3` (Sağ, fn 74, düz) |
+|---|---|---|
+| İleri (throttle) | **< 1500** | **> 1500** |
+| Sola dönüş | 1500'e yaklaşır/geçer | **> 1500**, artar |
+| Sağa dönüş | **daha da < 1500** | 1500'e yaklaşır/geçer |
+
+**Simetri kontrolü (ESC kalibrasyonunu sınar):** düz ileri komutta iki çıkışın
+**1500'e uzaklıkları eşit** olmalı:
+```
+|SERVO1 − 1500|  ≈  |SERVO3 − 1500|
+örn. SERVO1=1400, SERVO3=1600  → ikisi de 100 → simetrik ✅
+     SERVO1=1400, SERVO3=1560  → 100 vs 60   → asimetrik ❌ tekne düz gitmez
+```
+
+> ⚠️ **PWM yeterli değil — motor yönünü GÖZLE doğrula.** ESC'lere güç verip
+> (pervaneler SÖKÜK) düz ileri komutunda **iki motorun da aynı yöne, ileri
+> itecek şekilde** döndüğünü gör. `REVERSED` ayarları doğruysa öyle olur;
+> yanlışsa motorlar zıt yöne döner ve tekne ileri gitmek yerine yerinde döner.
 
 ### Sonuç yorumu (5B-1)
 

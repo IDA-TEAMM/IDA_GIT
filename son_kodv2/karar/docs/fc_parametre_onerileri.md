@@ -12,6 +12,37 @@
 > Doldurma: "Mevcut" sütununu QGC → Parameters ekranından okuyup yazın;
 > sonucu `docs/olcum_formu.md` FC bölümüyle birlikte geri gönderin.
 
+## 0. 🔴 KANAL ÇAKIŞMASI — `MODE_CH=8` ile yazılım kill-switch'i aynı kanalda
+
+2026-08-04 param dökümünden çıktı:
+
+| Kim | Ne yapıyor | Kanal |
+|---|---|---|
+| ArduPilot | `MODE_CH=8` → **mod seçici** | RC 8 |
+| `mavros_bridge_node` | `rc_kill_channel: 7` (0-indeksli) → **KILL** | RC 8 |
+| Planlanan (§4.5) | Uzaktan güç kesme rölesi | RC 8 |
+
+**Aynı fiziksel anahtar üç işi birden yapıyor.** Şu an görünür bir arıza yok
+çünkü `MODE1..MODE6` hepsi `0` (MANUAL) — anahtar hangi konumda olursa olsun
+mod değişmiyor. Ama bu **tesadüfi bir güvenlik**:
+
+- İleride bir konuma GUIDED/AUTO atanırsa, **kill switch'e basmak mod
+  değiştirir** — tam da acil durumda istenmeyecek şey.
+- `RCx_OPTION = "Relay On/Off"` ataması da bu kanala yapılacaktı; mod seçici
+  bir kanala ikinci fonksiyon bindirmek karışıklık üretir.
+
+**Öneri:** `MODE_CH`'i **kullanılmayan bir kanala taşı** (ör. 7 — `RC7_OPTION=0`,
+boşta) ve **kanal 8'i tamamen kill/röle'ye ayır**. Böylece:
+```
+RC 7 → mod seçici (ArduPilot)
+RC 8 → kill switch: röle + mavros_bridge KILL (tek amaç)
+RC 5 → manuel override (yarışmada kapalı, bkz. madde 8)
+```
+
+> Karar FC ekibinin; ama **kanal 8'e röle atanmadan önce** çözülmeli.
+
+---
+
 ## 1. OLAY'ı bir daha yaşamamak için (öncelik 🔴)
 
 | Parametre | Öneri | Mevcut | Neden |
@@ -58,12 +89,17 @@ merkez hattı, gövde tabanı). Ölçümler `docs/olcum_formu.md` §0/§2'de.
 
 | Parametre | Değer | Mevcut | Fiziksel karşılığı |
 |---|---|---|---|
-| `INS_POS1_X` | `-0.055` | `____` | Pixhawk 5.5 cm kıçta |
-| `INS_POS1_Y` | `-0.1375` | `____` | Pixhawk 13.75 cm iskelede |
-| `INS_POS1_Z` | `-0.155` | `____` | Pixhawk 15.5 cm yukarıda |
-| `GPS_POS1_X` | `-0.035` | `____` | Anten 3.5 cm kıçta |
-| `GPS_POS1_Y` | `-0.16` | `____` | Anten 16 cm iskelede |
-| `GPS_POS1_Z` | `-0.365` | `____` | Anten 36.5 cm yukarıda |
+| `INS_POS1_X` | `-0.055` | **0** | Pixhawk 5.5 cm kıçta |
+| `INS_POS1_Y` | `-0.1375` | **0** | Pixhawk 13.75 cm iskelede |
+| `INS_POS1_Z` | `-0.155` | **0** | Pixhawk 15.5 cm yukarıda |
+| `GPS1_POS_X` | `-0.035` | **0** | Anten 3.5 cm kıçta |
+| `GPS1_POS_Y` | `-0.16` | **0** | Anten 16 cm iskelede |
+| `GPS1_POS_Z` | `-0.365` | **0** | Anten 36.5 cm yukarıda |
+
+> ⚠️ **Parametre adı:** GPS ofsetleri bu firmware'de **`GPS1_POS_X/Y/Z`**
+> (eski `GPS_POS1_*` DEĞİL — 2026-08-04 param dökümünden teyit edildi).
+> Mevcut değerlerin hepsi **0** → tahmin doğrulandı: konum referansı şu an
+> düzeltilmemiş, yani raporlanan konum GPS anteninin konumu.
 
 **Neden gerekli:** Bu parametreler sıfırken ArduPilot "GPS de IMU da orijinde"
 varsayar; mutlak konumu GPS çivilediği için raporlanan konum pratikte **GPS
