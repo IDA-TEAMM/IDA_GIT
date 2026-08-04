@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# colcon / ROS 2
+build/
+install/
+log/
+
+# Model dosyalari (buyuk - HubAI'den indirilir, models/ altina konur)
+*.tar.xz
+*.blob
+*.onnx
+*.pt
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+.cache/

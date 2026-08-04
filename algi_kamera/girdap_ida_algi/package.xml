@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>girdap_ida_algi</name>
+  <version>0.1.0</version>
+  <description>GIRDAP IDA - duba algilama ve gecit gorev mantigi (TEKNOFEST 2026 Insansiz Deniz Araci)</description>
+  <maintainer email="girdap@example.com">Team GIRDAP</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

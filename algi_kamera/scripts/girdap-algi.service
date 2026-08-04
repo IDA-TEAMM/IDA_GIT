@@ -1,0 +1,24 @@
+# GİRDAP İDA — algı node'u systemd servisi (Jetson açılışında otomatik başlar)
+# Kurulum: jetson_kur.sh --servis  (__USER__/__WS__ yer tutucularını doldurur)
+# El ile:  sudo cp scripts/girdap-algi.service /etc/systemd/system/
+#          sudo sed -i "s|__USER__|$USER|g; s|__WS__|$HOME/ros2_ws|g" /etc/systemd/system/girdap-algi.service
+#          sudo systemctl daemon-reload && sudo systemctl enable --now girdap-algi
+# Log:     journalctl -fu girdap-algi
+# Durdur:  sudo systemctl stop girdap-algi   (saha müdahalesi / Plan B'ye geçiş)
+
+[Unit]
+Description=GIRDAP IDA algi node (OAK-D Lite YOLO + gecit)
+After=network.target
+
+[Service]
+Type=simple
+User=__USER__
+# Login shell: ROS + workspace ortamini yukle, launch'i kostur.
+# Launch respawn'li - node cokerse launch toparlar; launch'in kendisi cokerse
+# systemd 10 sn sonra yeniden dener.
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source __WS__/install/setup.bash && exec ros2 launch girdap_ida_algi algi.launch.py'
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
