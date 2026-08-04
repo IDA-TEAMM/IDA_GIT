@@ -23,9 +23,40 @@ yüklenir). Suya inerken bazı parametreler değişecek — **⚠️ işaretlile
 | `FRAME_CLASS` | `2` | Boat sınıfı — su aracı dinamiği + skid steering karışımı. |
 | `SERVO1_FUNCTION` | `73` | ThrottleLeft — sol thruster çıkışı (diferansiyel tahrik sol). |
 | `SERVO3_FUNCTION` | `74` | ThrottleRight — sağ thruster çıkışı (diferansiyel tahrik sağ). |
-| `MOT_PWM_MIN` | `1100` | ESC ölü bölgesi üstü minimum; motorun güvenli "durur" PWM'i. |
-| `MOT_PWM_MAX` | `1900` | ESC tam gaz üst sınırı; donanım ESC aralığıyla eşleşmeli. |
-| `MOT_SAFE_DISARM` | `1` | Disarm'da PWM min'e döner — kill/disarm anında motor kesin durur. |
+| `MOT_PWM_MIN` | `1100` | Çıkış aralığının alt ucu = **tam GERİ** (aşağıdaki uyarıya bak). |
+| `MOT_PWM_MAX` | `1900` | Çıkış aralığının üst ucu = tam ileri; ESC aralığıyla eşleşmeli. |
+| `MOT_SAFE_DISARM` | `1` | Disarm'da motor çıkışı kesilir. ⚠️ Ne ürettiği **ölçülecek** (bkz. uyarı). |
+
+> ## 🔴 ÇİFT YÖNLÜ (BIDIRECTIONAL) ESC — 1100 "DUR" DEĞİL, "TAM GERİ"
+>
+> **ESC'ler çift yönlü, 50 A** (2026-08-04 teyidi). Bu, PWM anlamlarını
+> değiştirir:
+>
+> | PWM | Tek yönlü ESC'de | **Bizim çift yönlü ESC'de** |
+> |---|---|---|
+> | 1100 | dur | **TAM GERİ** |
+> | 1500 | orta hız | **DUR (nötr)** |
+> | 1900 | tam ileri | tam ileri |
+>
+> **Bu dokümanın önceki hâli yanlıştı:** `MOT_PWM_MIN=1100` "motorun güvenli
+> durur PWM'i" diye açıklanmıştı ve runbook ADIM 6 disarm'da "PWM 1000"
+> bekliyordu. Çift yönlü ESC'de o değer **tam geri** demektir — yani "güvenli
+> duruş" sandığımız şey tam ters yönde tam gaz olurdu.
+>
+> **Gereken ayarlar:**
+> - `SERVO1_TRIM` = `SERVO3_TRIM` = **1500** (nötr = duruş)
+> - `SERVO1_MIN`/`SERVO3_MIN` = 1100, `..._MAX` = 1900, **ikisi birebir aynı**
+>
+> **🔴 ÖLÇÜLMEDEN VARSAYMA — ADIM 6'da şunu gör:** disarm anında servo
+> çıkışında ne var?
+> - **Sinyal yok** (pals kesilmiş) → ESC kendi failsafe'iyle durur ✅ beklenen
+> - **1500** → nötr, motor durur ✅
+> - **1100** → 🔴 **TAM GERİ** — bu çıkarsa `MOT_SAFE_DISARM` /
+>   `SERVOx_TRIM` yapılandırması yanlış, suya İNİLMEZ
+>
+> Not: uzaktan güç kesme kontaktörü (§4.5) bu riskin üstünde ayrı bir katman —
+> gücü kestiği için ESC ne komut alırsa alsın motor dönmez. Yine de FC
+> tarafının doğru olması gerekir (kontaktör her senaryoda devrede değil).
 
 > **Doğrulama:** Runbook ADIM 5'te sol/sağ PWM ~1600; **ADIM 5B'de dönüş yönü**
 > (aşağı bkz.); ADIM 6 disarm'da 1000/min.
@@ -49,25 +80,29 @@ kaynağı donanımda olan, teşhisi en zor hatalardan biridir.
 **Sıra:**
 
 1. 🔴 **Pervaneler sökülü**, tekne sabit, batarya bağlı, RC verici açık.
-2. **ESC modelini ve tipini yaz** (bu repoda kayıtlı değil — `docs/olcum_formu.md`
-   FC bölümüne işlenecek):
-   - Marka/model: `____________`
-   - **Tek yönlü mü, çift yönlü (reversible) mi?** `____________`
-     → Çift yönlüde nötr **1500**, ileri 1500→1900, geri 1500→1100.
-     → Tek yönlüde min **1100** = stop, 1900 = tam ileri (geri yok → tekne
-       yalnız ileri + dönüş yapabilir; MPPI'nin geri komutu boşa gider,
-       bu durumda planlama tarafına bildir).
-3. **İki ESC'yi AYNI prosedürle, ardışık olarak kalibre et** — üreticinin kendi
-   yöntemiyle (tipik: tam gaz sinyaliyle güç ver → bip → min sinyale in → bip).
-   Birini kalibre edip diğerini atlama; asimetri buradan doğar.
-4. **FC parametreleriyle tutarlılığı doğrula:** `MOT_PWM_MIN=1100` /
-   `MOT_PWM_MAX=1900` ESC'nin gerçek aralığıyla **eşleşmeli**. ESC farklı bir
-   aralık öğrendiyse bu iki değeri ESC'ye göre güncelle (tersi değil).
-5. **`SERVO1_MIN/MAX/TRIM` ve `SERVO3_MIN/MAX/TRIM` birebir aynı olmalı** —
-   MP → Full Parameter List'te yan yana oku, farklıysa eşitle. Bu, adım 3'ten
-   arta kalan yazılım tarafı asimetriyi kapatır.
-6. Kalibrasyon sonrası **Write Params + reboot**, ardından Runbook ADIM 5 ve
-   **5B**'yi koş.
+2. **ESC: çift yönlü (bidirectional), 50 A** ✅ (2026-08-04 teyidi).
+   → Nötr **1500**, ileri 1500→1900, geri 1500→1100.
+   → İyi haber: **geri gidiş var**, MPPI'nin negatif itki komutları
+     kullanılabilir (tek yönlü olsaydı boşa giderdi).
+   → Marka/model hâlâ kayıtlı değil: `____________` (`olcum_formu.md` §4).
+3. **Çift yönlü ESC'de "throttle kalibrasyonu" çoğu modelde YOKTUR** — nötr
+   noktası fabrikada sabittir ya da programlama kartı/uygulamasıyla ayarlanır.
+   Önce **üreticinin kendi dokümanına bak**; "stick-max → stick-min" tipi
+   klasik kalibrasyon çift yönlü modda genelde geçersizdir, hatta yanlış
+   uygulanırsa nötr noktasını kaydırır.
+   - Kalibrasyon **gerekiyorsa**: iki ESC'yi **AYNI prosedürle, ardışık**
+     yap. Birini yapıp diğerini atlama — asimetri buradan doğar.
+   - Kalibrasyon **gerekmiyorsa**: adım 4-5 yine de yapılacak (asıl simetri
+     orada sağlanıyor).
+4. **FC parametreleriyle tutarlılık:**
+   - `SERVO1_TRIM` = `SERVO3_TRIM` = **1500** ← nötr/duruş, en kritik satır
+   - `SERVO1_MIN` = `SERVO3_MIN` = 1100 · `SERVO1_MAX` = `SERVO3_MAX` = 1900
+   - `MOT_PWM_MIN/MAX` bu aralıkla eşleşmeli
+5. **İki kanalın altı değeri de BİREBİR aynı olmalı** — MP → Full Parameter
+   List'te yan yana oku. Farklıysa eşitle: aynı komut farklı itki üretirse
+   tekne düz gitmez, navigasyon bunu sürekli düzeltmeye çalışır.
+6. **Write Params + reboot**, ardından Runbook **ADIM 5B-1** (RC ile mixing,
+   ROS gerekmez) ve **ADIM 6** (disarm'da 1100 çıkmadığını gör).
 
 ---
 

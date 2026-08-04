@@ -287,9 +287,10 @@ Tekne **2 motorlu** (sol/sağ). Her iki ESC de aynı model olmalı.
 
 | | Değer |
 |---|---|
-| Marka / model | `________________` |
-| **Tek yönlü mü, çift yönlü (reversible) mi?** | ☐ tek yönlü ☐ çift yönlü |
-| PWM aralığı (üretici verisi) | min `____` / nötr `____` / max `____` µs |
+| Marka / model | `________________` ⏳ |
+| **Tek yönlü mü, çift yönlü (reversible) mi?** | ☑ **ÇİFT YÖNLÜ** ✅ (2026-08-04) |
+| Akım değeri | **50 A** ✅ |
+| PWM aralığı | min **1100** / nötr **1500** / max **1900** µs |
 | Kalibrasyon yapıldı mı (ikisi de, aynı prosedürle)? | ☐ evet, tarih: `______` |
 | **Thruster tepe akımı (tek motor)** | `____` A |
 | **2 motor toplam tepe akım** | `____` A |

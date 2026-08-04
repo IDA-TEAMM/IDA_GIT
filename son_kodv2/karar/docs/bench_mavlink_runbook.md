@@ -259,8 +259,17 @@ Araç **ARMED**, cmd_vel akıyor (ADIM 5 tekrar).
 **Eylem:** Fiziksel kill switch'e bas.
 
 **Beklenen:**
-- Motor PWM anında **minimum (1000)** (`MOT_SAFE_DISARM=1` → disarm'da PWM min)
 - `/mavros/state` → `armed: false`
+- Motor durur. 🔴 **ESC'ler ÇİFT YÖNLÜ** → "PWM min (1100)" duruş DEĞİL,
+  **tam geri** demektir. Servo çıkışında kabul edilebilir tek iki sonuç:
+
+| Gözlenen | Anlamı |
+|---|---|
+| Sinyal yok (pals kesik) | ESC failsafe'iyle durur ✅ |
+| **1500** | nötr = duruş ✅ |
+| **1100** | 🔴 **TAM GERİ** — `MOT_SAFE_DISARM`/`SERVOx_TRIM` yanlış, **suya inilmez** |
+
+> Ayrıntı: [`ardurover_bench.parm.md`](ardurover_bench.parm.md) → "ÇİFT YÖNLÜ ESC".
 
 **Ayrıca — RC failsafe:**
 - Eylem: RC vericiyi **kapat**
