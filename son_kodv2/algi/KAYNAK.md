@@ -1,6 +1,6 @@
 # algi — GİRDAP görüntü işleme katmanı (son_kodv2'nin algı ayağı)
 
-**Kaynak repo:** github.com/EyupEker1/girdap-ida-algi — commit `91aecfc`
+**Kaynak repo:** github.com/EyupEker1/girdap-ida-algi — commit `0aed367`
 **Kopya tarihi:** 2026-08-05 (önce `algi_kamera/` idi, `son_kodv2/algi/`e taşındı)
 **Sorumlu:** Eyüp (görüntü işleme)
 

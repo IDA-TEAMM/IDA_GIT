@@ -68,25 +68,44 @@ Environment=HOME=/home/__USER__
 # --cihaz-bekle 3600: boot'ta USB geç enumere olabilir / kamera sonradan
 #     takılabilir. Sahada monitör ve SSH YOK → "bulamadım, pes ettim" sessiz
 #     başarısızlığı kabul edilemez, 1 saat bekle.
-# --interval 1.0: saniyede en fazla 1 kare. 1,5 m/s'te 15 m'den 2 m'ye yaklaşma
-#     ~9 sn sürer → aynı duba ~9 farklı mesafede yakalanır (mesafe çeşitliliği).
+# 🔴 2026-08-05 AKŞAMI DEĞİŞTİ (Eyüp: "fotoğraf çok hızlı çekiyor, kalıcı
+#     düşürelim, farklı farklı fotoğraflar olmalı"):
+#       --fps 15 → 10 · --interval 1.0 → 2.0 · --zorunlu-aralik 5 → 10
+#     `--min-fark` BİLEREK 0.5'te BIRAKILDI — yükseltmek en doğrudan çözüm gibi
+#     görünür ama filtrenin uzak dubaya körlüğünü geri getirir (aşağıya bak).
+#     Hız yerine ARALIK düşürüldü: kareler arası mesafe artar, çeşitlilik artar.
+#
+# --interval 2.0: 2 sn'de en fazla 1 kare = kare başına ~3 m yol (1,5 m/s'te).
+#     15 m'den 2 m'ye yaklaşma ~9 sn sürer → aynı duba ~4-5 farklı mesafede
+#     yakalanır. (1.0'da ~9 kare oluyordu ama ardışıklar birbirine çok benziyordu;
+#     mesafe çeşitliliği kare SAYISINDAN değil kareler arası MESAFEDEN geliyor.)
+#     🔴 Bundan daha fazla büyütme: 3.0'da yaklaşma başına ~3 kare kalır, uzak
+#     mesafe bandı (8-15 m) temsilsiz kalabilir — model orayı öğrenemez.
 # --min-fark 0.5 (2.0 DEĞİL): 🔴 2026-08-05 hesabı — filtre TÜM karenin ortalama
 #     farkına bakıyor; 10 m'deki 30 cm duba ortalamaya yalnız 0,11 katıyor.
 #     Eşik 2,0 iken uzaktaki duba kadraja girdiğinde kare ELENİYORDU.
-# --zorunlu-aralik 5: KALP ATIŞI — 5 sn'dir hiç kayıt yoksa filtreyi aş. Masada
-#     doğrulandı: min-fark 20 (imkânsız eşik) ile bile tam 5 sn'de bir kare geldi.
+# --zorunlu-aralik 10: KALP ATIŞI — 10 sn'dir hiç kayıt yoksa filtreyi aş.
+#     Bu bir SİGORTA: filtre uzak dubaya kör (yukarı bak), o yüzden "hiç kare
+#     almama" hâli imkânsız kılınıyor. 5 → 10 yapıldı çünkü tekne dururken
+#     (kıyı/bekleme) kalp atışı tek başına aynı kareyi üretip duruyordu.
+#     🔴 Daha fazla büyütme: 1,5 m/s'te 10 sn = 15 m yol; sigortanın koruduğu
+#     senaryo tam bu mesafede (uzak duba kadraja girer, filtre eler). 15-20 sn
+#     yapılırsa sigorta işlevini kaybeder.
 #     BİLEREK BOL TOPLA: fazla kareyi atmak kolay, kaçan oturum geri gelmez.
-#     Ölçülen boyut ~0,25 MB/kare → 1 kare/sn ≈ 0,9 GB/saat; diskte 419 GB boş.
-# --fps 15 (Eyüp kararı, 05.08 — ölçümle desteklendi): 120 sn kesintisiz, 62 kare,
-#     çökme yok. Asıl gerekçe DAYANIKLILIK: 15 fps = 35,0 MB/s ve bu USB2'nin
-#     pratik tavanının (~35-40 MB/s) ALTINDA. Yani kablo/port USB2'ye düşse bile
-#     çökmez. 20 fps (46,7 MB/s) USB2'de ÇÖKTÜĞÜ ölçüldü, 10 fps ise gereksiz
-#     kısıtlıyor. Saniyede ~1 kare kaydettiğimiz için 15↔20 farkı veri setine
-#     yansımıyor. Toplayıcı USB hızını açılışta journal'a yazar — kıyıda BAKILACAK.
+#     Ölçülen boyut ~0,25 MB/kare → ~0,45 GB/saat; diskte 418 GB boş.
+# --fps 10 (2026-08-05 akşamı 15'ten indirildi): akış 23,3 MB/s.
+#     🔴 GEREKÇE DEĞİŞTİ: USB3 bu Jetson'da kararsız olduğu için artık USB2'ye
+#     BİLEREK zorluyoruz (girdap_ida_algi/oak_baglanti.py) — yani USB2 bir
+#     yedek senaryo değil, KALICI durum. 15 fps = 35,0 MB/s, USB2'nin pratik
+#     tavanının (~35-40) tam kenarı, pay yok. Üstelik `lsusb -t`: OAK ile
+#     telefon tethering'i AYNI 480 Mbps hattını paylaşıyor. 20 fps (46,7 MB/s)
+#     USB2'de ÇÖKTÜĞÜ ölçüldü. Kaydı --interval yönettiği için 10↔15 farkı
+#     veri setine YANSIMIYOR — sadece USB yükü ve ısı azalıyor.
+#     Toplayıcı USB hızını + VPU sıcaklığını açılışta journal'a yazar.
 # --min-bos-gb 10: disk dolmadan TEMİZ dur (exit 0 → systemd yeniden başlatmaz).
 ExecStart=/bin/bash -lc 'exec python3 __WS__/src/girdap-ida-algi/scripts/oak_veriseti_topla.py \
     --no-preview --auto-start --out ~/girdap_veriseti \
-    --res 1440x1080 --fps 15 --interval 1.0 --min-fark 0.5 --zorunlu-aralik 5 \
+    --res 1440x1080 --fps 10 --interval 2.0 --min-fark 0.5 --zorunlu-aralik 10 \
     --min-bos-gb 10 --cihaz-bekle 3600'
 # on-failure: kamera kopması/çökme → yeniden dene (indeks kaldığı yerden devam
 # eder, manifest EKLEMELİ yazılır). Sınıra/diske takılıp temiz çıkarsa (exit 0)

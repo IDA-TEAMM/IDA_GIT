@@ -41,7 +41,7 @@ başlar — bkz. scripts/girdap-veriseti.service ve docs/veriseti_deniz_oturumu.
 
 Kullanım:
   python3 oak_veriseti_topla.py                                   # önizlemeli
-  python3 oak_veriseti_topla.py --no-preview --interval 1.0       # ekransız (suda/servis)
+  python3 oak_veriseti_topla.py --no-preview --interval 2.0       # ekransız (suda/servis)
   python3 oak_veriseti_topla.py --min-fark 0                      # benzerlik filtresi KAPALI
 
 Kontroller (önizleme penceresi açıkken):
@@ -301,10 +301,12 @@ def main():
                     help="Kayıt çözünürlüğü (GENİŞxYÜKSEK). 4:3 OLMALI — deploy "
                          "(640x480 → 416x416 letterbox) ile aynı FOV. 16:9 verirsen "
                          "sensörün altı/üstü kırpılır, veri seti deploy'a uymaz.")
-    ap.add_argument("--fps", type=int, default=20, help="Kamera sensör FPS'i")
-    ap.add_argument("--interval", type=float, default=1.0,
+    ap.add_argument("--fps", type=int, default=10,
+                    help="Kamera sensör FPS'i. Varsayılan 10 = 23,3 MB/s @1440x1080; "
+                         "20 (46,7 MB/s) USB2'de ÇÖKTÜĞÜ ölçüldü — yükseltme.")
+    ap.add_argument("--interval", type=float, default=2.0,
                     help="OTOMATİK modda kaç saniyede bir kare denensin")
-    ap.add_argument("--zorunlu-aralik", type=float, default=5.0,
+    ap.add_argument("--zorunlu-aralik", type=float, default=10.0,
                     help="KALP ATIŞI: bu kadar saniyedir hiç kare kaydedilmediyse "
                          "benzerlik filtresini AŞ ve yine de kaydet (0 = kapalı). "
                          "Filtre uzaktaki dubayı göremediği için gerekli.")
