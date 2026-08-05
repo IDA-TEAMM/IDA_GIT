@@ -4,30 +4,41 @@ catamaran:
   # bekliyor" notuyla duruyordu ve GERÇEK teknenin 2,5 KATIYDI → MPPI var
   # olmayan bir tekneyi simüle ediyordu (ataleti fazla, ivmelenmesi yavaş).
   mass: 11.8              # kg - ÖLÇÜLEN tekne (GIRDAP_DURUM §1)
-  # 🔴 AÇIK — kütleyle BİRLİKTE düşmesi gerekiyordu, henüz düşürülmedi.
-  # 11,8 kg / 1,03 × 0,78 m bir tekne için:
-  #     dikdörtgen yaklaşımı  I_z = m(L²+B²)/12 = 1.64 kg·m²
-  #     teorik ÜST SINIR (tüm kütle dört köşede) = 4.92 kg·m²
-  # Yani 5.0, üst sınırın da üstünde: jirasyon yarıçapı 0.651 m çıkıyor,
-  # oysa teknenin YARI BOYU 0.515 m. Sonuç: model dönüşe gerçekte olduğundan
-  # ~3× fazla direnir → MPPI yaw komutlarını gereğinden sert seçer, kapı
-  # ortasına nişan alırken dönüş gecikir. Değiştirmek AYRI karar (bkz. §0.5).
-  inertia_z: 5.0          # kg·m² - ⚠ 11.8 kg ile TUTARSIZ, önerilen 1.64
-  # 🔴 AÇIK — sürükleme HÂLÂ ~6× yanlış; kütleden BAĞIMSIZ bir hata.
-  # Terminal hız 2·T/|Xu| = 2·30/8 = 7.5 m/s öngörüyor; ölçülen tam gaz
-  # 1.26 m/s (log 58). 1.26 için Xu ≈ -47.6 gerekirdi (2 motor, T=30 N).
-  # ⚠ Doğrudan -47.6 YAZMA: max_thrust=30 N CFD değeri, gerçek itki
-  # ölçülmedi — iki bilinmeyen tek denklem. Sabit-gaz step testi şart (§7).
-  Xu: -8.0                # N·s/m - saha testinde kalibre edilecek
-  Yv: -12.0               # N·s/m
-  Nr: -3.0                # N·m·s/rad
+  # ⚠ Yaw ekseni SUDAN KİMLİKLENDİRİLEMEDİ — CFD değeri korunuyor.
+  # Denendi (log 58 IMU GyrZ + gaz farkı) ve SONUÇ REDDEDİLDİ, iki sebeple:
+  #   1. KAPALI ÇEVRİM: AUTO'da gaz farkı heading HATASININ fonksiyonu, bağımsız
+  #      uyarım değil → plant bu veriden kimliklendirilemez (klasik bias).
+  #   2. Çıkan I_z = 10.1 kg·m² kuru cisim değerinin (1.64) 6 katı. Bunun bir
+  #      kısmı GERÇEK: suda dönen gövde çevresindeki suyu da döndürür (added
+  #      moment of inertia, Fossen) → efektif atalet kuru değeri AŞAR, yani
+  #      5.0 "imkânsız" DEĞİL. Ama 6× katkıyı bu veriyle doğrulayamayız.
+  # Gerekli: heading kontrolü KAPALI, diferansiyel gaz step testi.
+  inertia_z: 5.0          # kg·m² - CFD; suda doğrulanmadı (added inertia dahil)
+  # ⬇ 2026-08-05: log 58 SİSTEM TANILAMASI (kaptan talebi "log58'den bak").
+  # Yöntem: dv/dt = A·u − B·v en küçük kareler (629 örnek, AUTO + manevra,
+  # u = (C1+C3)/2 ileri gaz oranı) → A=0.2466, B=0.2103, m=11.8 ile:
+  #     |Xu| = B·m = 2.48        2·T_max = A·m = 2.91 N
+  # ÇAPRAZ DOĞRULAMA (logun kendi gaz dizisiyle ileri simülasyon):
+  #     tanılanan model     RMS 0.19 m/s, tepe 1.13 (gerçek 1.26)  ✅
+  #     eski (T=30, Xu=-8)  RMS 3.32-3.64 m/s, tepe 7.5            ❌
+  # Model YAPISI de sınandı (lineer/karesel itki × lineer/karesel sürükleme):
+  # kodun mevcut lineer/lineer yapısı RMS 0.192 ile en iyisi kadar → yapı
+  # değişikliği GEREKMİYOR.
+  Xu: -2.48               # N·s/m - log 58'den TANILANDI (eski -8.0 CFD)
+  Yv: -12.0               # N·s/m - ⚠ yanal hız verisi YOK, CFD değeri duruyor
+  Nr: -3.0                # N·m·s/rad - ⚠ yukarıdaki inertia_z notu geçerli
   thruster_spacing: 0.596 # m - GERÇEK DEĞER (596.32 mm)
-  max_thrust: 30.0        # N - tek motor maks (5000+ RPM)
-  # RPM → Newton tablosu:
-  # 1000 RPM → 0.85 N
-  # 2500 RPM → 6.5 N
-  # 5000 RPM → 26.0 N
-  # 5500 RPM → ~30 N (max)
+  # 🔴 30.0 → 1.455: CFD raporu (5500 RPM → 30 N) SUDA DOĞRULANMADI.
+  # Log 58'de RCOU 11,8 sn boyunca 2000'de (TAM gaz) kaldı ve tekne yalnız
+  # 1.26 m/s yaptı; tanılama o çalışmadan 1.455 N/motor veriyor — spec'in
+  # ~1/20'si. MPPI açısından doğru olan bu: "tam komutta tekne fiilen bunu
+  # yapıyor". ⚠ AMA BU BİR DONANIM BULGUSUDUR, kabullenilmemeli — olası
+  # sebepler: 4 motorun yalnız 2'sinin sürülmesi (§7.2 açık sorusu) · ESC/
+  # batarya akım sınırı · pervane/yön hatası · CFD'nin fazla iyimser olması.
+  # Sabit-gaz step testinde ölçülüp buraya gerçek değer yazılacak.
+  max_thrust: 1.455       # N - tek motor, log 58'den TANILANDI (CFD: 30.0)
+  # CFD'nin RPM → Newton tablosu (SUDA DOĞRULANMADI, referans olarak duruyor):
+  # 1000 RPM → 0.85 N · 2500 RPM → 6.5 N · 5000 RPM → 26.0 N · 5500 → ~30 N
 
 # Sinüsoidal dalga bozucusu (Deniz Durumu-2 yaklaşık modeli).
 # enabled=false → derivatives(t) tamamen geriye uyumlu (t göz ardı edilir).

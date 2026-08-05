@@ -90,7 +90,12 @@ def test_bypass_closed_loop_moves_toward_target() -> None:
     p.set_mission_state("PARKUR1")
     p.set_reference_direct(40.0, 10.0)        # 30 m ileride (RRT* bypass)
     dyn = p._dyn
-    for _ in range(60):                       # ~3 s (dt=0.05)
+    # ⏱ Süre log 58'den TÜRETİLDİ: tanılanan model (dv/dt = 0.2466·u − 0.2103·v)
+    # DURAĞANDAN tam gazla 2 m'yi ancak ~6 s'de alır (v(t)=1.173·(1−e^−0.2103t)
+    # integrali). Eski 3 s bütçesi 7,5 m/s'lik HAYALİ tekneye göreydi; itki
+    # 2026-08-05'te log 58'den tanılanınca (30 N → 1.455 N) gerçek tekne o
+    # sürede 2 m gidemiyor. %50 payla 10 s.
+    for _ in range(200):                      # 10 s (dt=0.05)
         p.set_state(state)
         u = p.compute_control()
         assert u is not None

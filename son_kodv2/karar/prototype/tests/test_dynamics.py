@@ -85,7 +85,9 @@ def test_duragan_arac_hareketsiz(model: CatamaranDynamics) -> None:
 def test_esit_thrust_duz_ileri(model: CatamaranDynamics) -> None:
     """Eşit thrust → yaw değişmemeli, araç ileri gitmeli."""
     state0 = np.zeros(6)  # psi=0, düz ileri
-    control = np.array([10.0, 10.0])
+    # Newton değerleri max_thrust'a GÖRELİ: itki 2026-08-05'te log 58'den
+    # yeniden tanılandı (30.0 → 1.455 N) ve sabit 10 N doyuma giriyordu.
+    control = np.array([0.7, 0.7]) * model.p.max_thrust
     history = model.simulate(state0, np.tile(control, (200, 1)), dt=0.05)
     final = history[-1]
     # İleri gitmiş olmalı
@@ -97,7 +99,9 @@ def test_esit_thrust_duz_ileri(model: CatamaranDynamics) -> None:
 def test_asimetrik_thrust_donus(model: CatamaranDynamics) -> None:
     """Asimetrik thrust → yaw hızı oluşmalı."""
     state = np.zeros(6)
-    control = np.array([5.0, 15.0])  # sağ > sol → sola dönüş
+    # sağ > sol → sola dönüş (göreli: sabit 5/15 N artık ikisi de doyuma
+    # girip simetrikleşiyor ve yaw HİÇ oluşmuyordu)
+    control = np.array([0.3, 0.9]) * model.p.max_thrust
     derivs = model.derivatives(state, control)
     assert derivs[5] > 0, "r_dot pozitif olmalıydı (sola dönüş)"
 
@@ -105,7 +109,7 @@ def test_asimetrik_thrust_donus(model: CatamaranDynamics) -> None:
 def test_yerinde_donus(model: CatamaranDynamics) -> None:
     """Ters thrust → yerinde dönüş (x,y sabit kalmalı)."""
     state0 = np.zeros(6)
-    control = np.array([-10.0, 10.0])
+    control = np.array([-0.7, 0.7]) * model.p.max_thrust
     history = model.simulate(state0, np.tile(control, (100, 1)), dt=0.05)
     final = history[-1]
     # Konum fazla değişmemeli
