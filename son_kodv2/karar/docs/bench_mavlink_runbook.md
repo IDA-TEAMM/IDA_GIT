@@ -169,7 +169,7 @@ Doğrulama: multimetre (servo sinyali) **veya** ESC LED/ses.
 
 ---
 
-## ADIM 5B — Diferansiyel Mixing / Dönüş Yönü (hiç yapılmadı)
+## ADIM 5B — Diferansiyel Mixing / Dönüş Yönü
 
 **Neden ayrı adım:** ADIM 5 iki motora da aynı komutu verir; `SERVO1`(sol) ve
 `SERVO3`(sağ) yer değiştirmiş olsa bile sonuç aynı görünür. Yanlış bağlantı
@@ -180,7 +180,7 @@ Test **ikiye bölünmüştür**; ikisi ayrı şeyi doğrular ve **5B-1 ROS'suz k
 
 | | Ne doğrular | Neye ihtiyaç var |
 |---|---|---|
-| **5B-1** | FC'nin karıştırması: `FRAME_CLASS=2`, `SERVO1/3_FUNCTION`, ESC yönleri | **Yalnız RC + Mission Planner** |
+| **5B-1** | FC'nin karıştırması: `FRAME_CLASS=2`, `SERVO1/3_FUNCTION`, ESC yönleri | **Yalnız Mission Planner** (Motor Test — RC bile gerekmedi) |
 | **5B-2** | `cmd_vel` → yaw işaret sözleşmesi (MAVROS üzerinden) | ROS ortamı |
 
 > Karıştırmayı **FC yapıyor**, bizim yazılımımız değil. Bu yüzden 5B-1 karar
@@ -194,7 +194,55 @@ KALİBRASYONU) · 🔴 pervaneler **sökük**.
 
 ---
 
-### 5B-1 — RC ile mixing testi (ROS GEREKMEZ)
+### 5B-1 — Mixing testi — ✅ **KOŞULDU 2026-08-05, GEÇTİ**
+
+> **RC'ye gerek kalmadı.** Test Mission Planner **Motor Test** sayfasıyla
+> yapıldı (`KURULUM → Opsiyonel ekipmanlar → Motor testi`), araç disarm,
+> pervaneler sökülü, `Guc %=20`, `Sure=2`.
+
+#### 🔑 ArduRover motor-test numaralandırması (bulundu, Copter'dan FARKLI)
+
+| Buton | Örnek | Rover'da karşılığı | Sonuç |
+|---|---|---|---|
+| A | 1 | yön (steering) — skid steer'de doğrudan çıkış yok | hiçbir şey dönmez (normal) |
+| B | 2 | gaz (throttle) — aynı şekilde | hiçbir şey dönmez (normal) |
+| **C** | 3 | **ThrottleLeft** | 🔵 **SOL motor** |
+| **D** | 4 | **ThrottleRight** | 🔵 **SAĞ motor** |
+
+> ⚠️ A ve B'nin dönmemesi ARIZA DEĞİLDİR. İlk denemede "motor testi çalışmıyor"
+> sanıldı; gerçek motorlar C ve D'dir.
+>
+> Ayrıca: **parametreler tam inmeden** sayfaya girilirse butonlar kilitli
+> görünür (`Class: unknown`). Telemetride (57600) indirme ~1 dk sürer, bekle.
+
+#### Ölçülen sonuç (2026-08-05)
+
+```
+C (ThrottleLeft)  → SOL motor,  saat yönü        ✓ eşleme doğru
+D (ThrottleRight) → SAĞ motor,  saat tersi       ✓ eşleme doğru
+Pervaneler        → AYNA ÇİFT (counter-rotating)
+```
+
+**Yorum:** Ayna pervanede zıt dönüş **doğrudur** — ikisi de ileri iter.
+Dolayısıyla `SERVO1_REVERSED=1` / `SERVO3_REVERSED=0` asimetrisi bilinçli ve
+yerindedir, **dokunulmayacak**.
+
+**Elenen iki tehlikeli arıza:**
+- sol/sağ kanal takası (tekne kapıda ters tarafa kırardı) → **YOK**
+- aynı-pervane + zıt dönüş (tekne ileri gitmez, yerinde dönerdi) → **YOK**
+
+#### ⏳ Doğrulanmayan tek şey: MUTLAK yön
+
+Test iki motorun **birbirine göre** doğru olduğunu kanıtladı. "İleri komutu
+gerçekten ileri itiyor mu, yoksa ikisi de geri mi itiyor" pervanesiz
+anlaşılamaz. Bu **düşük riskli**: ikisi birden ters olsaydı tekne sadece geri
+giderdi — ilk suya inişte anında görülür ve simetrik olduğu için tehlikeli
+değil. Asıl tehlikeli olan iki mod (takas / yerinde dönme) yukarıda elendi.
+**İlk su testinde teyit edilecek.**
+
+---
+
+### (arşiv) RC ile alternatif yöntem — kullanılmadı
 
 1. Mod: **MANUAL** · araç **ARM** edilmiş
 2. Sağ çubuğu (steering) **sola** it, MP'de Servo Output'u izle
@@ -365,7 +413,7 @@ node'ları yeniden başlat veya araç güç döngüsü).
 | 3. hardware.launch (7 node) | ☐ | |
 | 4. Manuel arm (success=true) | ☐ | |
 | 5. cmd_vel → PWM ~1600 | ☐ | pervane sökük |
-| 5B-1. **Mixing (RC ile, ROS gerekmez)** | ☐ | sola → SERVO3>1500, SERVO1<1500; ileri → ikisi yakın (ESC simetrisi) |
+| 5B-1. **Mixing / kanal + yön** | ✅ | 2026-08-05 GEÇTİ — MP Motor Test C=sol/saat yönü, D=sağ/saat tersi, pervaneler ayna → REVERSED asimetrisi DOĞRU |
 | 5B-2. **cmd_vel işaret sözleşmesi** | ☐ | 5B-1 geçtikten sonra; ters çıkarsa düzeltme KODDA |
 | 6. Kill switch + RC failsafe | ☐ | PWM→1000, armed=false |
 | 6B. **Uzaktan GÜÇ kesme** | ☐ | 🔴 ESC ucunda **0 V** + CSV yazmaya devam ediyor — md 4.2 minimum gereksinimi |
