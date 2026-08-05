@@ -60,6 +60,12 @@ from pathlib import Path
 
 import cv2
 import depthai as dai
+
+# Ortak OAK bağlantı katmanı (USB2'ye zorlama + kilit kurtarma + termal denetim).
+# Betik systemd'den MUTLAK yolla çalıştığı için paket dizinini sys.path'e ekliyoruz
+# (testlerin `scripts`i eklemesiyle aynı desen).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "girdap_ida_algi"))
+from girdap_ida_algi import oak_baglanti as ob  # noqa: E402
 import numpy as np
 
 # ---------------------------------------------------------------- sabitler
@@ -298,6 +304,10 @@ def main():
     ap.add_argument("--fps", type=int, default=20, help="Kamera sensör FPS'i")
     ap.add_argument("--interval", type=float, default=1.0,
                     help="OTOMATİK modda kaç saniyede bir kare denensin")
+    ap.add_argument("--zorunlu-aralik", type=float, default=5.0,
+                    help="KALP ATIŞI: bu kadar saniyedir hiç kare kaydedilmediyse "
+                         "benzerlik filtresini AŞ ve yine de kaydet (0 = kapalı). "
+                         "Filtre uzaktaki dubayı göremediği için gerekli.")
     ap.add_argument("--min-fark", type=float, default=3.0,
                     help="Benzer kare filtresi: son kaydedilenle ortalama mutlak fark "
                          "(0-255) bu değerin altındaysa kare ATLANIR. 0 = filtre kapalı")
@@ -328,7 +338,9 @@ def main():
     print(f"[i] Çözünürlük    : {w}x{h} @ {args.fps} FPS, JPEG kalite {args.jpg_quality}")
     print(f"[i] Başlangıç no  : {idx:05d}  (klasörde zaten {idx-1} kare varsa devam)")
     print(f"[i] Benzer filtre : min-fark={args.min_fark:g}"
-          f"{' (KAPALI)' if args.min_fark <= 0 else ''}")
+          f"{' (KAPALI)' if args.min_fark <= 0 else ''}"
+          f" | kalp atışı={args.zorunlu_aralik:g}s"
+          f"{' (KAPALI)' if args.zorunlu_aralik <= 0 else ''}")
     print(f"[i] Sınırlar      : max-kare={args.max_kare or 'yok'} | "
           f"min-boş-disk={args.min_bos_gb:g} GB (şu an {bos_disk_gb(out):.1f} GB boş)")
     print(f"[i] Mod           : {'EKRANSIZ (otomatik)' if headless else 'önizlemeli'}"
@@ -356,8 +368,18 @@ def main():
         sys.exit(1)
 
     # --- DepthAI v3 pipeline (RGB-only) ---
+    # 🔴 USB2'ye ZORLANIYOR (2026-08-05 ölçümü): bu Jetson'da SuperSpeed linki
+    # `tegra-xusb`ın U1/U2 pazarlığında çöküyor → cihaz bootlanıp ROM'a düşüyor
+    # (`X_LINK_DEVICE_NOT_FOUND`). HIGH'a zorlanınca 5/5 açılış; otomatik
+    # pazarlıkta ~6 denemede 1. Ayrıntı: girdap_ida_algi/oak_baglanti.py
+    # Kilit gelirse `dayanikli_ac` sudo'suz USB reset atıp yeniden dener —
+    # denizde fişe kimse uzanamayacağı için bu ZORUNLU.
     try:
-        pipeline = dai.Pipeline()
+        dev = ob.dayanikli_ac(
+            lambda: dai.Device(dai.UsbSpeed.HIGH),
+            kaydet=lambda m: print(f"[!] {m}", flush=True),
+        )
+        pipeline = dai.Pipeline(dev)
         cam = pipeline.create(dai.node.Camera).build(
             dai.CameraBoardSocket.CAM_A, sensorFps=args.fps
         )
@@ -375,6 +397,45 @@ def main():
         print("       • Başka bir program (algı node'u) kamerayı tutuyor olabilir.")
         print(f"       • Bu çözünürlük ({w}x{h}) desteklenmiyorsa dene: --res 1280x720")
         sys.exit(1)
+
+    # --- USB link hızı: sessiz çökme tuzağı (2026-08-05'te bu Jetson'da ölçüldü) ---
+    # ⚠ 05.08 AKŞAMI DÜZELTİLDİ: burada eskiden "link SUPER değilse UYAR" yazıyordu.
+    # Artık HIGH'ı BİLEREK istiyoruz (USB3 bu platformda kararsız), o yüzden asıl
+    # risk link hızı değil BANT GENİŞLİĞİ: USB2'nin pratik sınırı ~35-40 MB/s.
+    # Ölçüm (1440x1080 NV12): 10 fps=23,3 · 15 fps=35,0 · 20 fps=46,7 MB/s —
+    # 20 fps'te cihaz ÇÖKTÜ (crash dump), 15 fps sığdı. Denizde ekran/SSH YOK,
+    # bu yüzden hesap journal'a yazılır: kıyı kontrolünde tek bakışta görülsün.
+    USB2_GUVENLI_MBS = 30.0        # 35-40 tavanına pay bırakan eşik
+    try:
+        usb_hiz = pipeline.getDefaultDevice().getUsbSpeed()
+        ad = str(usb_hiz).rsplit(".", 1)[-1]
+        akis_mbs = w * h * 1.5 * args.fps / 1e6           # NV12 = 1,5 bayt/piksel
+        print(f"[i] USB link      : {ad}  (akış ≈ {akis_mbs:.1f} MB/s)  [HIGH istendi]")
+        if ad in ("LOW", "FULL"):
+            print(f"\n[!!] USB 1.x LİNKİ ({ad}) — bu hızda kare akmaz.\n"
+                  f"     Kablo/port arızalı; USB'yi çıkar tak.\n", flush=True)
+        elif akis_mbs > USB2_GUVENLI_MBS:
+            onerilen = int(USB2_GUVENLI_MBS * 1e6 / (w * h * 1.5))
+            print(f"\n[!!] AKIŞ ÇOK YÜKSEK: {akis_mbs:.1f} MB/s — USB2 pratik sınırı ~35-40.\n"
+                  f"     Bu ayarda cihazın oturum ortasında ÇÖKTÜĞÜ ölçüldü ve sahada\n"
+                  f"     bunu görecek kimse yoktur. Öneri: --fps {onerilen} veya altı.\n",
+                  flush=True)
+    except Exception as e:      # hız okunamazsa toplama durmasın — kare > tanılama
+        print(f"[!] USB hızı okunamadı ({type(e).__name__}: {e}) — toplama devam ediyor.")
+
+    # --- VPU sıcaklığı: cihazda OTOMATİK KISMA YOK, doğrudan çöküyor ---
+    # Luxonis: çip anma sınırı 105 °C, gözlenen çökme 125 °C; OAK-D *Lite* küçük
+    # soğutuculu (azami ortam ~40 °C). Deniz oturumu güneş altında ve saatler
+    # sürebilir → sıcaklık periyodik loglanır, eşik aşılırsa uyarı basılır.
+    _sicaklik_dev = None
+    try:
+        _sicaklik_dev = pipeline.getDefaultDevice()
+        _c0 = ob.vpu_sicakligi(_sicaklik_dev)
+        if _c0 is not None:
+            print(f"[i] VPU sıcaklık  : {_c0:.1f} °C  "
+                  f"(uyarı {ob.SICAKLIK_UYARI:.0f} / kritik {ob.SICAKLIK_KRITIK:.0f})")
+    except Exception:
+        pass
 
     if not headless:
         pencere = "GIRDAP veri seti — SPACE=kaydet  A=otomatik  Q=cik"
@@ -395,12 +456,17 @@ def main():
 
     kaydedilen = 0
     atlanan = 0                # benzerlik filtresinin elediği kare sayısı
+    kalp_atisi = 0             # filtre elediği hâlde "zorunlu aralık" yüzünden alınan kare
     onceki_kucuk = None        # son KAYDEDİLEN karenin küçük gri hâli
     son_auto = 0.0
     son_kayit_yaz = 0.0        # ekranda "KAYDEDILDI" flaşı için zaman damgası
     son_ozet = time.monotonic()
     dur_sebep = None
     t_fps, sayac, fps_txt = time.monotonic(), 0, "..."
+    son_sicaklik_t = 0.0       # VPU sıcaklığı en son ne zaman okundu
+    son_sicaklik_durum = "normal"
+    SICAKLIK_OKUMA_PERIYODU = 60.0   # sn — NE SIKLIKTA okunacağı (sıcaklık DEĞERİ değil).
+                                 # Eşikler oak_baglanti.py: uyarı 85, kritik 95 °C.
 
     try:
         while pipeline.isRunning():
@@ -413,6 +479,27 @@ def main():
                 continue
             frame = msg.getCvFrame()
             simdi = time.monotonic()
+
+            # --- VPU termal denetimi (cihazda otomatik kısma YOK) ---
+            # Güneş altındaki uzun oturumda ısınma sonradan gelir; açılışta bir kez
+            # bakmak yetmez. Durum DEĞİŞTİĞİNDE basılır → journal spam'i olmaz.
+            if _sicaklik_dev is not None and simdi - son_sicaklik_t >= SICAKLIK_OKUMA_PERIYODU:
+                son_sicaklik_t = simdi
+                _c = ob.vpu_sicakligi(_sicaklik_dev)
+                _durum = ob.sicaklik_durumu(_c)
+                if _durum != son_sicaklik_durum:
+                    son_sicaklik_durum = _durum
+                    if _durum == "kritik":
+                        print(f"\n[!!] VPU {_c:.1f} °C — KRİTİK. Çip anma sınırı 105 °C,\n"
+                              f"     gözlenen çökme 125 °C ve cihaz KENDİNİ KISMIYOR.\n"
+                              f"     Kamerayı gölgele; toplama sürüyor ama çökme riski var.\n",
+                              flush=True)
+                    elif _durum == "uyari":
+                        print(f"[!] VPU {_c:.1f} °C — uyarı eşiği aşıldı "
+                              f"({ob.SICAKLIK_UYARI:.0f} °C). Gölge/hava akışı kontrol et.",
+                              flush=True)
+                    else:
+                        print(f"[i] VPU {_c:.1f} °C — normale döndü.", flush=True)
 
             # anlık FPS
             sayac += 1
@@ -430,6 +517,19 @@ def main():
                 if frame.mean() > 1.0:          # açılıştaki simsiyah kareyi atla
                     if yeterince_farkli(onceki_kucuk, kucult_gri(frame), args.min_fark):
                         kaydet_bu_kare = True
+                    elif (args.zorunlu_aralik > 0
+                          and simdi - son_kayit_yaz >= args.zorunlu_aralik):
+                        # KALP ATIŞI — benzerlik filtresi elese bile bu kadar süredir
+                        # hiç kayıt yoksa kareyi yine de al.
+                        # NEDEN (2026-08-05 ölçümü, tahmin değil): filtre TÜM karenin
+                        # ortalama mutlak farkına bakıyor. 1440x1080'de 30 cm'lik duba
+                        # 10 m'de ~31x52 px = karenin %0,1'i → ortalama farka katkısı
+                        # yalnız 0,11, eşik ise 2,0. Yani UZAKTAKİ DUBA KADRAJA
+                        # GİRDİĞİNDE KARE ELENİR — tam da en değerli kare. Masada
+                        # ölçüldü: sahne durunca 61 sn boyunca tek kare alınmadı.
+                        # Denizde müdahale yok; "hiç kare almama" hâli kabul edilemez.
+                        kaydet_bu_kare = True
+                        kalp_atisi += 1
                     else:
                         atlanan += 1
 
@@ -481,7 +581,8 @@ def main():
             # ekransızken 60 sn'de bir özet (journal'dan sonradan okunur)
             if headless and simdi - son_ozet >= 60.0:
                 son_ozet = simdi
-                print(f"[=] özet: {kaydedilen} kayıt / {atlanan} benzer-atlandı / "
+                print(f"[=] özet: {kaydedilen} kayıt ({kalp_atisi} kalp atışı) / "
+                      f"{atlanan} benzer-atlandı / "
                       f"{fps_txt} / disk {bos_disk_gb(out):.1f} GB boş", flush=True)
 
     except KeyboardInterrupt:

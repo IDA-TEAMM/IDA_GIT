@@ -307,7 +307,18 @@ def pipeline_kur():
     """OAK-D Lite üzerinde çalışan pipeline: RGB + Stereo + YOLO (VPU'da)."""
     nn_archive = dai.NNArchive(MODEL_NNARCHIVE)
 
-    pipeline = dai.Pipeline()
+    # 🔴 USB2'ye ZORLANIYOR (2026-08-05 ölçümü, bu Jetson'da):
+    # SuperSpeed linki `tegra-xusb`ın U1/U2 güç durumu pazarlığında çöküyor —
+    # cihaz bootlanıp SuperSpeed'e geçiyor, link dağılıyor, ROM'a düşüyor
+    # (`X_LINK_DEVICE_NOT_FOUND`). Kernel logu 2 saatte 100× "Disable of
+    # device-initiated U1/U2 failed" + error -71; hataların TAMAMI SuperSpeed
+    # yolunda, high-speed yolunda sıfır. HIGH'a zorlanınca **5/5** açılış.
+    # Bant genişliği kaybı YOK: bu pipeline ~15 MB/s, USB2 tavanı ~35-40 MB/s.
+    # Kilit gelirse dayanikli_ac() sudo'suz USB reset atıp yeniden dener —
+    # teknede kameraya fiziksel erişim olmayacağı için bu ZORUNLU.
+    # Ayrıntı: girdap_ida_algi/oak_baglanti.py
+    dev = ob.dayanikli_ac(lambda: dai.Device(dai.UsbSpeed.HIGH))
+    pipeline = dai.Pipeline(dev)
 
     # depthai 3.7.1'e karşı doğrulandı — Tem 2026 itibarıyla EN GÜNCEL sürüm
     # (resmi SpatialDetectionNetwork örneğiyle aynı desen)

@@ -5,50 +5,97 @@
 # başlamalı; yoksa tekne suya girer, kimse fark etmeden tek kare toplanmadan
 # geri döner ve o oturum bir daha kurulamaz.
 #
-# Kurulum:
+# 🔴 2026-08-05 DURUM TESPİTİ (ölçüldü, tahmin değil):
+#   /etc/systemd/system/girdap-veriseti.service DOSYASI VAR ama
+#   (a) `systemctl is-enabled` = **disabled** → AÇILIŞTA BAŞLAMIYOR,
+#   (b) kurulu kopya BU dosya değil; 04.08 19:30'daki ESKİ sürüm ve
+#       ~/oak_veriseti_topla.py'yi (git dışı, **manifest.csv'siz**) çağırıyor.
+#   ⇒ Bugün denize girilse tek kare toplanmazdı. Aşağıdaki kurulum ŞART.
+#
+# Kurulum (kurulu ESKİ kopyanın ÜZERİNE yazar):
 #   sudo cp scripts/girdap-veriseti.service /etc/systemd/system/
 #   sudo sed -i "s|__USER__|$USER|g; s|__WS__|$HOME/ros2_ws|g" \
 #        /etc/systemd/system/girdap-veriseti.service
 #   sudo systemctl daemon-reload
 #
 # 🔴 VERİ SETİ GÜNÜ (tek OAK var, iki süreç açamaz — kıyıda, denize girmeden):
-#   sudo systemctl disable --now girdap-algi
-#   sudo systemctl enable  --now girdap-veriseti
+#   sudo systemctl enable --now girdap-veriseti
+#   # OAK'ı başka süreç tutuyor mu, DOĞRULA (algı/karar yığını kamerayı açarsa
+#   # toplayıcı hiç kare alamaz; `girdap-algi.service` bu makinede YOK, o yüzden
+#   # Conflicts= tek başına yetmez):
+#   lsusb | grep 03e7        # 03e7:2485 = bootloader, yani cihaz BOŞTA
+#   ps aux | grep -iE "oakd|perception_camera|depthai" | grep -v grep
 # 🔴 YARIŞMA/TEST GÜNÜ (geri al):
 #   sudo systemctl disable --now girdap-veriseti
-#   sudo systemctl enable  --now girdap-algi
 #
-# Doğrulama (kıyıda, denize girmeden ÖNCE — zorunlu):
+# Doğrulama (kıyıda, denize girmeden ÖNCE — zorunlu, ATLANAMAZ):
 #   docs/veriseti_deniz_oturumu.md kontrol listesi
 #   journalctl -fu girdap-veriseti      # "[+] N kare" satırları akmalı
 #   ls ~/girdap_veriseti/images | wc -l # sayı ARTMALI
+#   sudo reboot && (boot sonrası) systemctl is-active girdap-veriseti
+#                                 # "enable ettim" ≠ "boot'ta başladı"
 
 [Unit]
 Description=GIRDAP IDA veri seti toplayici (OAK-D Lite, ekransiz)
 After=network.target
 # Emniyet kemeri: ikisi aynı anda AÇILAMAZ. Tek OAK'ı iki süreç açamaz;
 # çakışırsa kamera tamamen ölür ve sahada belirti vermez.
+# ⚠ 2026-08-05 ÖLÇÜMÜ: bu makinede `girdap-algi.service` diye bir unit YOK
+#   (yalnız girdap-karar.service var, enabled+active). Yani bu satır bugün
+#   hiçbir şeyi engellemiyor — gerçek koruma kıyı kontrol listesindeki
+#   "OAK'ı tutan süreç var mı" adımı (docs/veriseti_deniz_oturumu.md).
 Conflicts=girdap-algi.service
+# Kamera hiç takılı değilse script exit(1) verir; sonsuz döngü yerine 300 sn
+# penceresinde 5 denemeden sonra pes et (journal şişmesin).
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=__USER__
-# --no-preview: ekran yok (cv2.imshow çağrılmaz), otomatik mod zorunlu açılır.
-# --cihaz-bekle 120: boot'ta USB geç enumere olabilir / kamera sonradan takılır;
-#     hemen exit(1) verirsek systemd birkaç denemede pes eder.
-# --interval 1.5 + --min-fark 2.0: BİLEREK BOL TOPLA. Denize bir kez giriliyor;
-#     fazla kareyi sonradan atmak kolay, kaçan oturumu geri toplamak İMKÂNSIZ.
-#     (1440x1080 q95 ≈ 0,5 MB/kare → ~1,5 GB/saat; diskte 400+ GB boş var.)
+# 🔴 ŞART — 2026-08-05'te servis TAM BURADAN ÇÖKTÜ:
+# depthai önbelleğini/telemetrisini ÇALIŞMA DİZİNİNE GÖRELİ yazıyor
+# (`.cache/depthai/...`). WorkingDirectory verilmezse systemd cwd'yi `/` yapar →
+# depthai `/.cache` yaratmaya çalışır → "Permission denied" → pipeline HİÇ
+# açılmaz, tek kare toplanmaz. Belirti kameraymış gibi görünür ("pipeline
+# başlatılamadı"), oysa sebep izin. Elle çalıştırınca cwd ev dizini olduğu
+# için sorun GÖRÜNMEZ — yalnız servis olarak çökerdi.
+WorkingDirectory=/home/__USER__
+Environment=HOME=/home/__USER__
+# --no-preview: ekran yok (cv2.imshow çağrılmaz); toplayıcıda otomatik modu
+#     ZORLAR (oak_veriseti_topla.py:325 `auto = headless or args.auto_start`).
+#     --auto-start yine de açıkça veriliyor: niyet kodun içine gömülü kalmasın.
+# --cihaz-bekle 3600: boot'ta USB geç enumere olabilir / kamera sonradan
+#     takılabilir. Sahada monitör ve SSH YOK → "bulamadım, pes ettim" sessiz
+#     başarısızlığı kabul edilemez, 1 saat bekle.
+# --interval 1.0: saniyede en fazla 1 kare. 1,5 m/s'te 15 m'den 2 m'ye yaklaşma
+#     ~9 sn sürer → aynı duba ~9 farklı mesafede yakalanır (mesafe çeşitliliği).
+# --min-fark 0.5 (2.0 DEĞİL): 🔴 2026-08-05 hesabı — filtre TÜM karenin ortalama
+#     farkına bakıyor; 10 m'deki 30 cm duba ortalamaya yalnız 0,11 katıyor.
+#     Eşik 2,0 iken uzaktaki duba kadraja girdiğinde kare ELENİYORDU.
+# --zorunlu-aralik 5: KALP ATIŞI — 5 sn'dir hiç kayıt yoksa filtreyi aş. Masada
+#     doğrulandı: min-fark 20 (imkânsız eşik) ile bile tam 5 sn'de bir kare geldi.
+#     BİLEREK BOL TOPLA: fazla kareyi atmak kolay, kaçan oturum geri gelmez.
+#     Ölçülen boyut ~0,25 MB/kare → 1 kare/sn ≈ 0,9 GB/saat; diskte 419 GB boş.
+# --fps 15 (Eyüp kararı, 05.08 — ölçümle desteklendi): 120 sn kesintisiz, 62 kare,
+#     çökme yok. Asıl gerekçe DAYANIKLILIK: 15 fps = 35,0 MB/s ve bu USB2'nin
+#     pratik tavanının (~35-40 MB/s) ALTINDA. Yani kablo/port USB2'ye düşse bile
+#     çökmez. 20 fps (46,7 MB/s) USB2'de ÇÖKTÜĞÜ ölçüldü, 10 fps ise gereksiz
+#     kısıtlıyor. Saniyede ~1 kare kaydettiğimiz için 15↔20 farkı veri setine
+#     yansımıyor. Toplayıcı USB hızını açılışta journal'a yazar — kıyıda BAKILACAK.
 # --min-bos-gb 10: disk dolmadan TEMİZ dur (exit 0 → systemd yeniden başlatmaz).
 ExecStart=/bin/bash -lc 'exec python3 __WS__/src/girdap-ida-algi/scripts/oak_veriseti_topla.py \
-    --no-preview --out ~/girdap_veriseti \
-    --res 1440x1080 --fps 20 --interval 1.5 --min-fark 2.0 --min-bos-gb 10 \
-    --cihaz-bekle 120'
+    --no-preview --auto-start --out ~/girdap_veriseti \
+    --res 1440x1080 --fps 15 --interval 1.0 --min-fark 0.5 --zorunlu-aralik 5 \
+    --min-bos-gb 10 --cihaz-bekle 3600'
 # on-failure: kamera kopması/çökme → yeniden dene (indeks kaldığı yerden devam
 # eder, manifest EKLEMELİ yazılır). Sınıra/diske takılıp temiz çıkarsa (exit 0)
 # yeniden başlatmaz — sonsuz döngü olmasın.
 Restart=on-failure
 RestartSec=10
+# Ekransız çalışıyor → tek görünürlük journal. `journalctl -fu girdap-veriseti`
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

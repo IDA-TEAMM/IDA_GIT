@@ -1,7 +1,7 @@
 # algi — GİRDAP görüntü işleme katmanı (son_kodv2'nin algı ayağı)
 
-**Kaynak repo:** github.com/EyupEker1/girdap-ida-algi — commit `bf397ec`
-**Kopya tarihi:** 2026-08-04 (önce `algi_kamera/` idi, `son_kodv2/algi/`e taşındı)
+**Kaynak repo:** github.com/EyupEker1/girdap-ida-algi — commit `91aecfc`
+**Kopya tarihi:** 2026-08-05 (önce `algi_kamera/` idi, `son_kodv2/algi/`e taşındı)
 **Sorumlu:** Eyüp (görüntü işleme)
 
 Bu klasör son_kodv2'nin **kamera algısı**dır. `karar/` (Sude) karar/görev
@@ -83,3 +83,32 @@ ros2 launch girdap_ida_algi algi.launch.py
 ```
 Gereken: `~/models/yolo11n_duba_rvc2.tar.xz` (NN Archive) — **henüz üretilmedi**,
 veri seti toplama + eğitim sürüyor. Model olmadan node açılmaz.
+
+## 🔴 2026-08-05 — donanım bulguları (ÖLÇÜM, tahmin değil)
+
+**1) OAK USB2'ye ZORLANIYOR — `dai.Device(dai.UsbSpeed.HIGH)`.**
+Bu Jetson'da (L4T R36.5) SuperSpeed linki `tegra-xusb`ın U1/U2 güç durumu
+pazarlığında çöküyor: cihaz firmware'i yükleyip USB3'e geçiyor, link dağılıyor,
+ROM'a düşüyor → `X_LINK_DEVICE_NOT_FOUND`. Kernel logu 2 saatte 100×
+*"Disable of device-initiated U1 failed"* + error -71; hataların **tamamı**
+SuperSpeed yolunda, high-speed yolunda sıfır. NVIDIA forumunda aynı platformda
+aynı belirti kayıtlı (Luxonis `xusb-tegra`'yı işaret ediyor, konu çözümsüz).
+⇒ HIGH'a zorlanınca **5/5 açılış** (otomatik pazarlıkta ~6 denemede 1).
+Bant genişliği kaybı **yok**: pipeline ~15 MB/s, USB2 tavanı ~35-40 MB/s.
+
+**2) Kilit yazılımdan açılıyor** — `girdap_ida_algi/oak_baglanti.py`,
+`usb_reset()` sudo'suz `USBDEVFS_RESET` atıyor (udev `MODE=0666`), cihaz
+0,5 sn'de dönüyor. Teknede fişe erişim olmayacağı için bu **zorunlu**.
+
+**3) `setDepthAlign(CAM_A)` yanında `setOutputSize()` ZORUNLU.** Tek başına
+derinliği RGB çözünürlüğüne (1920×1080 = 4,1 MB/kare) ölçekliyor, USB'yi
+dolduruyor: **8,1 FPS**. `setOutputSize(640,400)` ile **14,7 FPS**.
+
+**4) Termal — cihazda OTOMATİK KISMA YOK.** Luxonis: çip anma sınırı 105 °C,
+gözlenen çökme 125 °C; OAK-D **Lite** küçük soğutuculu (azami ortam ~40 °C).
+Ölçüm (11 FPS, derinlik+YOLO açık, 20 dk): VPU 63,5 → 68,7 °C, tepe **69,3**,
+plato oturdu, FPS 11,00 sabit. ⇒ İç mekânda pay bol; **güneş altında değil** —
+etkin ortamı +10-20 °C ittiği için **gölgelik şart**. Güvenlik ağı kodda:
+`sicaklik_durumu()` (uyarı 85 °C, kritik 95 °C), toplayıcı 60 sn'de bir okuyor.
+
+Ölçüm aracı: `scripts/oak_derinlik_termal_testi.py` (tekrar çalıştırılabilir).
