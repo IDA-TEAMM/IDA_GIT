@@ -35,9 +35,11 @@ Published topics:
     /girdap/control/thrust           std_msgs/Float32MultiArray
         Diferansiyel thruster komutu [T_left, T_right] (N) — Layer 1 ESC kanalı.
     /girdap/planning/gate            geometry_msgs/PoseStamped
-        Kilitlenilen kapının orta noktası (frame "map"). Kapı yokken
-        yayınlanmaz — RViz'de "şu an kapı görüyor muyuz" tek bakışta belli
-        olsun diye (saha teşhisi; hiçbir kontrol yolu bunu okumaz).
+        Kilitlenilen kapının NİŞAN noktası (frame "map") = MPPI'ye verilen
+        hedefin ta kendisi. Geometrik ortadan farkı, kirişteki engellere göre
+        yapılan kaymadır (gate_follower.aim_point). Kapı yokken yayınlanmaz —
+        RViz'de "şu an kapı görüyor muyuz + nereye nişan alıyoruz" tek bakışta
+        belli olsun diye (saha teşhisi; hiçbir kontrol yolu bunu OKUMAZ).
 
 ⚠ FRAME SÖZLEŞMESİ (2026-08-03'te netleştirildi — bkz. `_body_to_world`):
     - mission topic'leri (`current_target`, `waypoints`) ENU-hizalı ÖTELEME
@@ -266,6 +268,11 @@ class PlanningNode(Node):
         # Kenar dubaları DÜNYA ENU'da (classified_obstacles'tan her taramada
         # tazelenir). Boş liste = kapı görünmüyor → gate_follower ham GN'ye düşer.
         self._edge_buoys: list[tuple[float, float]] = []
+        # Dairesel engeller DÜNYA ENU'da (x, y, r) — MPPI'ye giden torbanın
+        # AYNISI, kopya değil aynı taramadan. Kapı NİŞANININ engellere göre
+        # kayması için gerekli: kenar dubaları MPPI'de engel olmadığından
+        # geçitte iten tek kuvvet budur (gate_follower.aim_point).
+        self._obstacles_world: list[tuple[float, float, float]] = []
         # classified_obstacles hiç aktı mı? (obstacle_map ile hakemlik için)
         self._classified_seen = False
         self._gate_log_t = 0.0
@@ -444,6 +451,7 @@ class PlanningNode(Node):
                            abs(pp.orientation.z))
             for pp in msg.poses
         ]
+        self._obstacles_world = [(o.cx, o.cy, o.r) for o in obstacles]
         self._pipe.set_obstacles(obstacles)
 
     def _on_classified(self, msg: Detection3DArray) -> None:
@@ -487,6 +495,7 @@ class PlanningNode(Node):
             obstacles.append(CircleObstacle(wx, wy, abs(det.bbox.size.x) / 2.0))
 
         self._edge_buoys = edges
+        self._obstacles_world = [(o.cx, o.cy, o.r) for o in obstacles]
         self._pipe.set_obstacles(obstacles)
 
     def _obstacles_stale(self) -> bool:
@@ -512,7 +521,7 @@ class PlanningNode(Node):
         )
 
     def _refine_target(self, coarse: tuple[float, float]) -> tuple[float, float]:
-        """Ham görev noktasını (GN) algılanan kapının ORTA NOKTASIYLA değiştir.
+        """Ham görev noktasını (GN) algılanan kapının NİŞAN NOKTASIYLA değiştir.
 
         Şartname md 5.5.2.2: Parkur-1/2 puanı iki KENAR dubasının arasından
         geçmekten gelir ve hakemin verdiği nokta tam kapı ortasında OLMAYABİLİR
@@ -520,19 +529,32 @@ class PlanningNode(Node):
         oklüzyon, Parkur-3) `GateFollower` ham GN'ye düşer; yani bu çağrı
         kapısız durumda DAVRANIŞI DEĞİŞTİRMEZ (geriye tam uyumlu).
 
+        🔑 **MPPI ile birlikte çalışma noktası burası.** Dönen değer doğrudan
+        MPPI'nin referansı olur (`set_reference_direct` / `set_waypoints` →
+        `PlanningPipeline`). Nişan kör orta nokta DEĞİL, kapı kirişi üzerinde
+        engellerden en açık yerdir: kenar dubaları MPPI'nin engel torbasından
+        çıkarıldığı için (`_on_classified`) geçitte iten tek kuvvet budur —
+        bu yüzden aynı taramadan gelen engel listesi de `GateFollower`'a
+        geçirilir. Engel yoksa nişan tam ortadır (eski davranış birebir).
+
         `gate_following_enabled=false` → tamamen devre dışı, eski davranış.
         """
         if not self._gate_enabled or self._last_xy is None:
             return coarse
-        result = self._gate.update(self._last_xy, coarse, self._edge_buoys)
+        result = self._gate.update(
+            self._last_xy, coarse, self._edge_buoys, self._obstacles_world
+        )
         # Kapı bulundu/kaybedildi geçişini bir kez logla (10 Hz'te spam yok).
         if result.used_fallback != self._last_gate_used_fallback:
             self._last_gate_used_fallback = result.used_fallback
             if result.gate is not None:
+                kayma = result.gate.aim_shift
                 self.get_logger().info(
-                    f"kapı KİLİTLENDİ: orta ({result.target[0]:.1f}, "
-                    f"{result.target[1]:.1f}), genişlik {result.gate.width:.1f} m "
-                    f"— ham GN yerine buraya gidiliyor"
+                    f"kapı KİLİTLENDİ: nişan ({result.target[0]:.1f}, "
+                    f"{result.target[1]:.1f}), genişlik {result.gate.width:.1f} m, "
+                    f"ortadan kayma {kayma:.2f} m "
+                    f"({'engel var, nişan kaydı' if kayma > 0.01 else 'temiz, tam orta'})"
+                    " — MPPI referansı buraya kuruluyor"
                 )
             else:
                 self.get_logger().info(
@@ -722,13 +744,19 @@ class PlanningNode(Node):
             msg.poses.append(ps)
         self._pub_path.publish(msg)
 
-    def _publish_gate(self, midpoint: tuple[float, float]) -> None:
-        """Kilitli kapının orta noktası — RViz/saha teşhisi (kontrol yolu DEĞİL)."""
+    def _publish_gate(self, aim: tuple[float, float]) -> None:
+        """Kilitli kapının NİŞAN noktası — RViz/saha teşhisi (kontrol yolu DEĞİL).
+
+        Yayınlanan nokta MPPI'ye verilen hedefin AYNISIDIR; geometrik ortadan
+        sapması engellere göre yapılan kaymadır. (Parametre adı eskiden
+        `midpoint`'ti — artık ikisi ayrı kavram, bkz. `Gate.midpoint` ↔
+        `Gate.aim`.)
+        """
         msg = PoseStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = "map"
-        msg.pose.position.x = float(midpoint[0])
-        msg.pose.position.y = float(midpoint[1])
+        msg.pose.position.x = float(aim[0])
+        msg.pose.position.y = float(aim[1])
         msg.pose.orientation.w = 1.0
         self._pub_gate.publish(msg)
 
