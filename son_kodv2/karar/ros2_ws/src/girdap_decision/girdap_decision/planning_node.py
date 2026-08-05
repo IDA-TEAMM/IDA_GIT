@@ -587,10 +587,16 @@ class PlanningNode(Node):
         sebep = []
         if d.reddedilen_genislik:
             dar = ", ".join(f"{s:.2f}" for s in sorted(d.reddedilen_genislik)[:4])
+            # ⚠ Karşılaştırma MERKEZ-merkez mesafeyle yapılır; sığma eşiği
+            # gövde genişliği DEĞİL `hull + 2r`'dir (duba yüzeyleri arası
+            # serbest açıklık) — mesajda o sayı basılmalı, yoksa operatör
+            # "0.90 < 0.78" gibi yanlış görünen bir satır okur.
+            esik = self._gate._cfg.min_passable_width
             sebep.append(
-                f"{len(d.reddedilen_genislik)} çift gövdeden DAR ({dar} m < "
-                f"{self._gate._cfg.hull_width_m} m — tekne sığmaz, muhtemelen "
-                "tek duba iki tespite bölünmüş)"
+                f"{len(d.reddedilen_genislik)} çift GEÇİLEMEZ (merkez arası "
+                f"{dar} m < {esik:.2f} m = gövde {self._gate._cfg.hull_width_m} "
+                "+ 2×duba yarıçapı 0.15 — tekne sığmaz, muhtemelen tek duba "
+                "iki tespite bölünmüş)"
             )
         if d.reddedilen_derinlik:
             sebep.append(
