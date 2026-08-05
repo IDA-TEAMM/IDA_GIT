@@ -20,9 +20,13 @@ def model() -> CatamaranDynamics:
 
 
 def _make_params(wave: WaveDisturbance) -> CatamaranParams:
-    """Test fikstürü — Mitras YAML değerleri + verilen wave."""
+    """Test fikstürü — Mitras YAML değerleri + verilen wave.
+
+    ⚠ Bu fikstür configs/dynamics.yaml'ı AYNALAR; oradaki kütle 2026-08-05'te
+    ölçülen değere (11.8 kg) çekildi, burası da onunla birlikte güncellendi.
+    """
     return CatamaranParams(
-        mass=30.0,
+        mass=11.8,
         inertia_z=5.0,
         Xu=-8.0,
         Yv=-12.0,
@@ -47,7 +51,7 @@ def test_fp18_sifir_mass_reddedilir() -> None:
 def test_fp18_sifir_inertia_reddedilir() -> None:
     with pytest.raises(ValueError, match="inertia_z"):
         CatamaranParams(
-            mass=30.0, inertia_z=0.0, Xu=-8.0, Yv=-12.0, Nr=-3.0,
+            mass=11.8, inertia_z=0.0, Xu=-8.0, Yv=-12.0, Nr=-3.0,
             thruster_spacing=0.596, max_thrust=30.0,
         )
 
@@ -57,7 +61,7 @@ def test_fp18_sifir_thruster_spacing_reddedilir() -> None:
     yok) — bu da sessizce geçmemeli."""
     with pytest.raises(ValueError, match="thruster_spacing"):
         CatamaranParams(
-            mass=30.0, inertia_z=5.0, Xu=-8.0, Yv=-12.0, Nr=-3.0,
+            mass=11.8, inertia_z=5.0, Xu=-8.0, Yv=-12.0, Nr=-3.0,
             thruster_spacing=0.0, max_thrust=30.0,
         )
 
@@ -65,7 +69,7 @@ def test_fp18_sifir_thruster_spacing_reddedilir() -> None:
 def test_fp18_normal_degerler_kabul_edilir() -> None:
     """Regresyon: normal (pozitif) değerler hâlâ sorunsuz kurulmalı."""
     CatamaranParams(
-        mass=30.0, inertia_z=5.0, Xu=-8.0, Yv=-12.0, Nr=-3.0,
+        mass=11.8, inertia_z=5.0, Xu=-8.0, Yv=-12.0, Nr=-3.0,
         thruster_spacing=0.596, max_thrust=30.0,
     )
 
