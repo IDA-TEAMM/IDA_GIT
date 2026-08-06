@@ -72,7 +72,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import PoseArray, PoseStamped, Twist
 from mavros_msgs.msg import State as MavState
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
-from std_msgs.msg import Float32MultiArray, String
+from std_msgs.msg import Float32MultiArray, Int32, String
 from vision_msgs.msg import Detection3DArray
 
 from girdap_decision.qos_profiles import sensor_data_qos
@@ -354,12 +354,23 @@ class PlanningNode(Node):
         self._pub_gate = self.create_publisher(
             PoseStamped, "/girdap/planning/gate", 10
         )
-        # ⏳ GEÇİŞ SAYACI (B3) — `GateFollower.passed_gate_count` çekirdekte
-        # HAZIR ama hâlâ hiçbir yere yayınlanmıyor: ne operatör görüyor ne de
-        # md 5.5.2.4'ün "en az 2 duba ikilisi" şartı için G1/G2 kanıtı üretiliyor.
-        # Kanalı açmak KAPI işinin dışında bırakıldı (kapsam kararı 06.08) ve
-        # fsm_node'daki PARKUR2→PARKUR3 tuzağıyla birlikte karara bağlanacak
-        # (bkz. fsm_node._on_gate_passed, A/B yolları + GIRDAP_DURUM §18/4).
+        # GEÇİŞ SAYACI (B3) — SALT TEŞHİS/KANIT kanalı, kontrol yolu DEĞİL.
+        # `GateFollower.passed_gate_count` çekirdekte zaten hesaplanıyordu ama
+        # hiçbir yere çıkmıyordu: ne operatör görüyordu ne de md 5.5.2.4'ün
+        # "en az 2 duba ikilisinden geçiş" şartı için G1/G2 kanıtı üretiliyordu.
+        #
+        # 🔴 FSM'e BİLEREK BAĞLANMADI. `fsm_node._on_gate_passed` gelen HERHANGİ
+        # bir True'yu PARKUR3'e atlama tetiği sayıyor → sayaç oraya bağlanırsa
+        # İLK kapıda Parkur-2 yarıda kesilir, md 5.5.2.4 sağlanmaz ve md 657
+        # gereği P3'ün 145 puanı hiç açılmaz. O tuzağın çözümü ayrı bir karar
+        # (A: tetiğe "sayaç ≥ 2" şartı · B: geçişi waypoint ilerlemesinden sür,
+        # sayaç yalnız kanıt olsun — GIRDAP_DURUM §0.6d/§18-4).
+        # Bu kanal o kararı BEKLEMEDEN güvenle açılabilir: kimse tüketmiyor,
+        # yalnız operatör görüyor ve hakem sorarsa puan kanıtı oluyor.
+        self._pub_gate_count = self.create_publisher(
+            Int32, "/girdap/planning/gate_count", 10
+        )
+        self._son_gate_count = -1        # yalnız DEĞİŞİNCE yayınla + logla
 
         # --- Kontrol döngüsü ---
         rate = float(self.get_parameter("control_rate_hz").value)
@@ -577,7 +588,28 @@ class PlanningNode(Node):
             self._publish_gate(result.target)
         else:
             self._warn_sessiz_ret()
+        self._publish_gate_count()
         return result.target
+
+    def _publish_gate_count(self) -> None:
+        """Geçilen FARKLI kapı sayısı — md 5.5.2.4 için G1/G2 kanıtı.
+
+        Yalnız DEĞİŞTİĞİNDE yayınlanır (20 Hz'te sabit sayı basmanın anlamı
+        yok) ve aynı anda INFO'ya düşer: operatör telemetride "kaç kapıdan
+        geçtik"i görür, koşu sonrası da logda kalır.
+
+        ⚠ Bu bir TEŞHİS kanalıdır — hiçbir node tüketmiyor, kontrol/geçiş
+        kararı buradan sürülmüyor (yukarıdaki fsm tuzağı notu).
+        """
+        n = self._gate.passed_gate_count
+        if n == self._son_gate_count:
+            return
+        self._son_gate_count = n
+        self._pub_gate_count.publish(Int32(data=int(n)))
+        self.get_logger().info(
+            f"KAPI GEÇİLDİ — toplam {n} farklı kapı "
+            "(md 5.5.2.4 kanıtı; parkur geçişi bu sayıdan SÜRÜLMÜYOR)"
+        )
 
     def _warn_sessiz_ret(self) -> None:
         """Turuncu duba GÖRÜNÜYOR ama kapı oluşmuyorsa ne olduğunu yaz.

@@ -663,3 +663,88 @@ def test_cmd_vel_tavani_OLCULEN_tam_gaz_hiziyla_uyumlu(ros_context) -> None:  # 
         )
     finally:
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# B3 — GEÇİŞ SAYACI teşhis kanalı (2026-08-06). Çekirdek sayıyordu ama sayı
+# hiçbir yere çıkmıyordu: ne operatör görüyordu ne de md 5.5.2.4'ün "en az iki
+# duba ikilisinden geçiş" şartı için kanıt üretiliyordu.
+# 🔴 KASITLI OLARAK FSM'E BAĞLI DEĞİL — aşağıdaki son test onu donduruyor.
+# --------------------------------------------------------------------------- #
+
+
+def _kapidan_gecir(node, kapi_x: float = 10.0) -> None:  # noqa: ANN001
+    """Aracı kapıya kilitleyip düzlemini geçir (ONAY_TICK + geçiş)."""
+    dubalar = [(kapi_x, +2.0, 0.15, 0), (kapi_x, -2.0, 0.15, 0)]
+    target = PoseStamped()
+    target.pose.position.x = kapi_x + 10.0
+    target.pose.position.y = 0.0
+    for _ in range(ONAY_TICK):
+        node._on_odom(_odom_poz(0.0, 0.0, 0.0))
+        node._on_classified(_classified(dubalar))
+        node._on_target(target)
+    # Kapının ötesine geç: kilitli kapı bırakılır ve GEÇİŞ sayılır.
+    node._on_odom(_odom_poz(kapi_x + 1.0, 0.0, 0.0))
+    node._on_classified(_classified([]))          # kapı artık görünmüyor
+    node._on_target(target)
+
+
+def test_B3_gecis_sayaci_teshis_kanalina_yayinlaniyor(ros_context) -> None:  # noqa: ANN001
+    """Kapı geçilince /girdap/planning/gate_count artmalı (md 5.5.2.4 kanıtı)."""
+    from std_msgs.msg import Int32
+
+    node = pn.PlanningNode(
+        parameter_overrides=[Parameter("use_rrt", Parameter.Type.BOOL, False)]
+    )
+    try:
+        yayin: list = []
+        node._pub_gate_count.publish = yayin.append   # type: ignore[assignment]
+        assert node._gate.passed_gate_count == 0
+
+        _kapidan_gecir(node, kapi_x=10.0)
+
+        assert node._gate.passed_gate_count == 1
+        assert [m.data for m in yayin if isinstance(m, Int32)][-1] == 1
+    finally:
+        node.destroy_node()
+
+
+def test_B3_sayac_yalniz_DEGISINCE_yayinlanir(ros_context) -> None:  # noqa: ANN001
+    """20 Hz'te sabit sayıyı tekrar tekrar basmak telemetriyi kirletir."""
+    node = pn.PlanningNode(
+        parameter_overrides=[Parameter("use_rrt", Parameter.Type.BOOL, False)]
+    )
+    try:
+        yayin: list = []
+        node._pub_gate_count.publish = yayin.append   # type: ignore[assignment]
+        _kapidan_gecir(node, kapi_x=10.0)
+        onceki = len(yayin)
+
+        target = PoseStamped()
+        target.pose.position.x = 30.0
+        for _ in range(20):                # kapı yok, sayı değişmiyor
+            node._on_target(target)
+        assert len(yayin) == onceki, "sayı değişmediği hâlde tekrar yayınlandı"
+    finally:
+        node.destroy_node()
+
+
+def test_B3_sayac_FSMe_BAGLANMADI_kasitli(ros_context) -> None:  # noqa: ANN001
+    """🔴 Bu kanal parkur geçişini SÜRMEZ — bağlanırsa Parkur-2 kırılır.
+
+    `fsm_node._on_gate_passed` gelen HERHANGİ bir True'yu PARKUR3'e atlama
+    tetiği sayıyor. Sayaç oraya bağlanırsa araç İLK kapıdan geçtiğinde
+    Parkur-2 yarıda kesilir → md 5.5.2.4'ün "en az 2 duba ikilisi" şartı
+    sağlanmaz → md 657 gereği P3'ün 145 puanı hiç açılmaz.
+    Çözüm ayrı bir karar (A: tetiğe sayaç≥2 şartı · B: geçişi waypoint
+    ilerlemesinden sür) — GIRDAP_DURUM §0.6d. O karar verilene kadar bu
+    test, kanalın kontrol yoluna sızmasını engeller.
+    """
+    import inspect
+
+    fsm = pytest.importorskip("girdap_decision.fsm_node")
+    kaynak = inspect.getsource(fsm)
+    assert "/girdap/planning/gate_count" not in kaynak, (
+        "fsm_node geçiş sayacına abone olmuş — Parkur-2 ilk kapıda kesilir "
+        "(önce §0.6d'deki A/B kararı verilmeli)"
+    )
