@@ -282,11 +282,14 @@ def _dinamik():
     return CatamaranParams.from_yaml()
 
 
-# ÖLÇÜLEN ÇALIŞMA ARALIĞI (2026-08-06, 3 koşul × 2 sahne × taze tohumlar;
-# koşullar: temiz · bozucu %30 · plant yaw 1.9× çevik — GIRDAP_DURUM §0.8g):
-#   σ/T_max ∈ [0.25, 0.41]  → σ_u ∈ [0.364, 0.597] N   (hepsi %100 başarı)
-#   σ/T ≤ 0.10 ve ≥ 0.69 KESİN başarısız (alt: keşif yetersiz · üst: doygunluk)
-_ORAN_ALT, _ORAN_UST = 0.25, 0.41
+# ÖLÇÜLEN ÇALIŞMA BANDI (2026-08-06, GIRDAP_DURUM §0.8g/0.8i):
+#   ÇALIŞAN   σ/T ∈ [0.15, 0.50]  (temiz + bozucu %30'da %100)
+#   ÇÖKEN     σ/T ≤ 0.10 (keşif yetersiz) · σ/T ≥ 0.69 (doygunluk)
+#   SEVK      σ/T = 0.25 → çöküş bandının geometrik ortası √(0.10·0.69)=0.263
+# Test sınırları çalışan bandın İÇİ: kenarına dayanmış bir değeri de reddeder,
+# çünkü sahada model hatası bizi kenara doğru itebilir (yaw doğrulanmadı,
+# itki 2-4× yanlış olabilir).
+_ORAN_ALT, _ORAN_UST = 0.20, 0.45
 
 
 def test_mppi_sigma_u_olculen_calisma_araliginda() -> None:
@@ -351,3 +354,116 @@ def test_parkur_lambdalari_olculen_degerlerde_donduruldu() -> None:
         _PARKUR_PROFILES["PARKUR3"].lambda_
         > _PARKUR_PROFILES["PARKUR2"].lambda_
     )
+
+
+# --------------------------------------------------------------------------- #
+# ÖLÇÜM TABLOLARI (2026-08-06, kapalı döngü, GIRDAP_DURUM §0.8g).
+# Aşağıdaki testler σ seçimini FARKLI AÇILARDAN bağlar: yalnız "hedefe varıyor
+# mu" değil, teknenin hızını ne kadar yiyor · gürültünün ne kadarı gerçekleşiyor
+# · yarışma overlay'i bunları sessizce ezebiliyor mu.
+# --------------------------------------------------------------------------- #
+
+#: σ/T → tepe hızın modelin terminal hızına oranı (80-100 m düz hat, p99).
+_HIZ_OLCUMU = {0.10: 0.944, 0.15: 0.944, 0.20: 0.931, 0.25: 0.919,
+               0.33: 0.891, 0.41: 0.871, 0.50: 0.845, 0.69: 0.794, 1.03: 0.749}
+#: σ/T → ETKİN gürültünün komut edilene oranı (kırpma sonrası, aynı sahne).
+_ETKIN_OLCUMU = {0.03: 1.00, 0.10: 0.94, 0.25: 0.85, 0.33: 0.82, 0.50: 0.78,
+                 0.69: 0.74, 1.03: 0.66, 1.72: 0.52, 3.44: 0.33}
+
+
+def _ara_deger(tablo: dict, x: float) -> float:
+    """Ölçüm noktaları arasında doğrusal ara değer (dışında en yakın uç)."""
+    xs = sorted(tablo)
+    if x <= xs[0]:
+        return tablo[xs[0]]
+    for a, b in zip(xs[:-1], xs[1:]):
+        if a <= x <= b:
+            return tablo[a] + (x - a) / (b - a) * (tablo[b] - tablo[a])
+    return tablo[xs[-1]]
+
+
+def test_sigma_teknenin_tepe_hizini_en_fazla_yuzde_15_yer() -> None:
+    """σ, tepe hızın en az %85'ini bırakmalı — 20 dk sınırı doğrudan mesafe.
+
+    Mekanizma tek yönlü kırpma: seyirde nominal itki zaten doyuma yakın
+    (ölçüldü: ~%68) → POZİTİF gürültü kırpılır, negatif kırpılmaz, ortalama
+    itki düşer. Kapalı form: kayıp ≈ 0.4·(σ/T); ölçümle uyumlu (%6/%6.7 ·
+    %13/%11 · %20/%16). Eski σ=5.0 N ayarı tepe hızın **%37'sini** yiyordu.
+    """
+    p = _dinamik()
+    oran = MPPIConfig().sigma_u / p.max_thrust
+    kalan = _ara_deger(_HIZ_OLCUMU, oran)
+    assert kalan >= 0.85, (
+        f"σ/T={oran:.3f} tepe hızın yalnız %{100*kalan:.0f}'ini bırakıyor "
+        "(alt sınır %85) — gürültü aktüatörü doyuruyor (GIRDAP_DURUM §0.8g)"
+    )
+
+
+def test_komut_edilen_gurultunun_cogu_GERCEKLESIYOR() -> None:
+    """Kırpma sonrası ETKİN gürültü, komut edilenin ≥%75'i olmalı.
+
+    σ ≥ max_thrust olduğunda örneklerin çoğu ±T_max'a yapışır: MPPI 'kontrol
+    keşfi' yapmayı bırakıp fiilen rastgele tam gaz üretir ve komut edilen
+    σ'nın anlamı kalmaz (ölçüm: σ/T=3.44'te örneklerin %78'i kırpılıyor,
+    etkin/komut oranı 0.33). Bu test o rejime girilmesini engeller.
+    """
+    p = _dinamik()
+    oran = MPPIConfig().sigma_u / p.max_thrust
+    etkin = _ara_deger(_ETKIN_OLCUMU, oran)
+    assert etkin >= 0.75, (
+        f"σ/T={oran:.3f} → komut edilen gürültünün yalnız %{100*etkin:.0f}'i "
+        "gerçekleşiyor; gerisi doygunluğa gidiyor"
+    )
+
+
+def test_p3_lambdasi_temas_hizini_koruyan_bantta() -> None:
+    """PARKUR3 λ ∈ [3, 30] — P3'ün bitişi TEMAS HIZINA bağlı.
+
+    Ölçüm (5 tohum, hedef duba Ø0.64 m): λ≤1 → araç hedefe sürünüp **0.00
+    m/s** ile yaslanıyor (0/5 içinden geçiş); λ=10 → 5/5 temas, 0.390 m/s,
+    5/5 İÇİNDEN GEÇİŞ; λ=50 → temas var ama 0.034 m/s.
+    Görev sonu IMU şokuyla algılandığı için (fsm_node shock_threshold_g)
+    yavaş temas = **algılanmayan görev sonu** = 145 puan riski.
+    ⚠ Bu test λ'yı bağlar; şok EŞİĞİNİN kendisi ayrı bir açık madde
+    (0.39 m/s ölçülen temas, eşik 1.81 m/s'lik hayali tekneye göre konmuştu).
+    """
+    from prototype.planning.pipeline import _PARKUR_PROFILES
+
+    lam = _PARKUR_PROFILES["PARKUR3"].lambda_
+    assert 3.0 <= lam <= 30.0, (
+        f"PARKUR3 λ={lam} — ölçülen temas-hızı bandının ({3.0}-{30.0}) dışında"
+    )
+
+
+def test_yarisma_overlayi_mppi_sabitlerini_sessizce_ezemez() -> None:
+    """🔴 yarisma.yaml `planning:` yazarsa ölçülen bandın DIŞINA çıkamaz.
+
+    Overlay yalnız FARKLARI içerir ve hardware.yaml'ın üstüne biner; bugün
+    `planning:` bloğu YOK. Ama biri yarışma sabahı oraya `mppi_sigma_u: 5.0`
+    yazarsa hiçbir şey uyarmaz — drift testi yalnız params/hardware/launch
+    üçlüsünü bağlıyor. Bu test o dördüncü yolu kapatır.
+    """
+    yol = _PKG_DIR / "config" / "yarisma.yaml"
+    if not yol.exists():
+        pytest.skip("yarisma.yaml yok")
+    import yaml
+    with open(yol, "r", encoding="utf-8") as f:
+        overlay = yaml.safe_load(f) or {}
+    planning = overlay.get("planning") or {}
+    p = _dinamik()
+
+    if "mppi_sigma_u" in planning:
+        oran = float(planning["mppi_sigma_u"]) / p.max_thrust
+        assert _ORAN_ALT <= oran <= _ORAN_UST, (
+            f"yarisma.yaml σ_u={planning['mppi_sigma_u']} → σ/T={oran:.3f}, "
+            f"ölçülen [{_ORAN_ALT}, {_ORAN_UST}] bandının dışında"
+        )
+    if "mppi_lambda" in planning:
+        lam = float(planning["mppi_lambda"])
+        if lam > 0.0:                     # 0 = nöbetçi, profil kazanır
+            oran = float(planning.get("mppi_sigma_u", MPPIConfig().sigma_u))
+            oran = oran / p.max_thrust
+            assert lam <= 13.1 * oran / 2.0, (
+                f"yarisma.yaml λ={lam}, σ/T={oran:.3f} için emniyetli tavan "
+                f"{13.1*oran/2:.1f} — softmax ortalamaya kayar"
+            )

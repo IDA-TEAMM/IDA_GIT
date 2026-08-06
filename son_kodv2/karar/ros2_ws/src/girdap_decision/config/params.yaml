@@ -58,10 +58,12 @@ planning_node:
                              # 6/9 sahnede hedefe VARAMIYOR; P3'te λ=50 temas
                              # hızını 0.60 → 0.14 m/s'e düşürüyor (IMU şok
                              # eşiği ile görev sonu algılanmayabilir).
-    mppi_sigma_u: 0.485      # N, kontrol gürültüsü σ (her thruster). 06.08
-                             # ölçümü; kural σ ≲ max_thrust/2 (=0.73), yoksa
-                             # örnekler doygunluğa kırpılır ve gürültü fiilen
-                             # 'rastgele tam gaz' olur (eski 5.0 buydu).
+    mppi_sigma_u: 0.364      # N, kontrol gürültüsü σ (her thruster). 06.08
+                             # ölçümü = 0.25·max_thrust. Çalışma bandı
+                             # σ/T ∈ [0.15, 0.50]; ≤0.10 keşif yetersiz,
+                             # ≥0.69 doygunluk (örnekler ±T'ye kırpılır ve
+                             # gürültü 'rastgele tam gaz' olur — eski 5.0 buydu).
+                             # ⚠ İtki değişirse ORANI koru, N'yi değil.
     mppi_obstacle_margin: 1.0  # m, engel emniyet payı (SOFT ceza yarıçapı).
                              # Tekne yarı genişliği 0.375 m; 0.5 m'de gövde
                              # payı −0.29 m (çarpma), 1.0 m'de +0.17 m.

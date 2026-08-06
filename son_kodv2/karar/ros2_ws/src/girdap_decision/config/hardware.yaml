@@ -97,7 +97,7 @@ planning:
   # Buradan silinen anahtarda kod varsayılanı (λ'da parkur profili) kazanır.
   # Ölçüm tabloları ve üst sınırlar: CLAUDE.md MPPI bölümleri.
   mppi_lambda: 0.0                 # 0 = parkur profili kazansın (P1/P2=1, P3=10)
-  mppi_sigma_u: 0.485              # N, σ (06.08 ölçümü; ≲ max_thrust/2)
+  mppi_sigma_u: 0.364              # N, σ = 0.25·max_thrust (06.08 ölçümü)
   mppi_obstacle_margin: 1.0        # m, SOFT emniyet payı (⚠ 1.5 geçidi kapatır)
   mppi_terminal_mode: "lookahead"  # lookahead | global (eski davranış)
   mppi_terminal_lookahead_m: 15.0  # m, terminal hedef yay uzaklığı

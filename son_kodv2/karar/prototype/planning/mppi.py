@@ -194,15 +194,25 @@ class MPPIConfig:
     T: int = 50                      # horizon adımı (2.5 s @ dt=0.05)
     dt: float = 0.05                 # entegrasyon adımı (s)
     lambda_: float = 1.0             # softmax sıcaklığı
-    # σ_u 5.0 → 0.485 (2026-08-06, 405 koşumluk kapalı-döngü ızgarası +
-    # 162 koşumluk bozucu taraması — GIRDAP_DURUM §0.8). 5.0 N, itkisi
-    # 30 N/motor sanılan HAYALİ tekneye aitti; ölçülen aktüatör ±1.455 N
-    # (log 58 tanılaması) olduğu için örneklerin ~%77'si doygunluğa kırpılıyor,
-    # yani gürültü fiilen "rastgele tam gaz" oluyordu. Ölçülen bedel: slalom
-    # sahnesi medyan 98 s (σ=5) ↔ 62 s (σ=0.485), engel yüzeyine gövde payı
-    # +0.152 m ↔ +0.209 m, |Δu₀| 1.38 ↔ 0.83. Kural: σ_u ≲ max_thrust/2
-    # (test_mppi_sigma_u_aktuatore_gore_olcekli donduruyor).
-    sigma_u: float = 0.485           # N, kontrol gürültüsü σ (her thruster)
+    # σ_u 5.0 → 0.364 N (2026-08-06). Eski 5.0, itkisi 30 N/motor sanılan
+    # HAYALİ tekneye aitti; ölçülen aktüatör ±1.455 N (log 58) olduğu için
+    # örneklerin %78'i doygunluğa kırpılıyor, gürültü fiilen "rastgele tam
+    # gaz" oluyordu (tepe hızın %37'si kayıp).
+    #
+    # DEĞER TEK NOKTA DEĞİL, ÖLÇÜLEN BANDIN İÇİNDEN SEÇİLDİ (§0.8g/0.8i):
+    #   çalışma bandı  σ/T ∈ [0.15, 0.50]   (kesin çöküş: ≤0.10 ve ≥0.69)
+    #   seçilen        σ/T = 0.25  →  σ_u = 0.25 · 1.455 = 0.364 N
+    # 3 finalist (σ/T = 0.25 / 0.33 / 0.41) 4 koşulda 40'ar koşumla
+    # yarıştırıldı (temiz · bozucu %30 · bozucu %50 · plant yaw 1.9× çevik):
+    #   güvenilirlik 40/40 ÜÇÜNDE DE eşit → ayırt etmiyor
+    #   gövde payı p10  0.123 / 0.130 / 0.103 m → pratikte eşit (0.41 en kötü)
+    #   TEPE HIZ        1.078 / 1.046 / 1.022 m/s  → 0.25 kazanıyor
+    #   |Δu₀| (ESC)     0.620 / 0.781 / 0.925      → 0.25 kazanıyor (%21-33)
+    #   kenar payı      0.25, [0.10, 0.69] çöküş bandının GEOMETRİK ORTASI
+    #                   (√(0.10·0.69) = 0.263) → model hatasına en dayanıklı
+    # ⚠ İtki yeniden tanılanırsa σ_u'yu ORANI koruyarak taşı (0.25·T_yeni);
+    #   λ tavanı da aynı oranla ölçeklendiği için λ=1.0 geçerli kalır.
+    sigma_u: float = 0.364           # N, kontrol gürültüsü σ (her thruster)
 
     # Maliyet ağırlıkları (CLAUDE.md MPPI bölümü ile uyumlu)
     w_track: float = 5.0             # yörünge sapması (m²)

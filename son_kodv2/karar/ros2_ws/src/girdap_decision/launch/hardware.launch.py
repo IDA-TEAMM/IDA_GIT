@@ -160,7 +160,7 @@ _GPS_SIGMA_STATUS_KEYS = {
 # (ROS'suz, ast ile okur) yakalar. λ nöbetçisi 0.0 = "parkur profili kazansın".
 _MPPI_DEFAULTS: dict[str, tuple[object, type]] = {
     "mppi_lambda": (0.0, float),
-    "mppi_sigma_u": (0.485, float),   # 06.08 ölçümü (bkz. MPPIConfig)
+    "mppi_sigma_u": (0.364, float),   # 06.08 ölçümü (bkz. MPPIConfig)
     "mppi_obstacle_margin": (1.0, float),
     "mppi_terminal_mode": ("lookahead", str),
     "mppi_terminal_lookahead_m": (15.0, float),
