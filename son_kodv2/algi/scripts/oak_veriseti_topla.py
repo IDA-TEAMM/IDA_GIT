@@ -72,6 +72,7 @@ import depthai as dai
 # (testlerin `scripts`i eklemesiyle aynı desen).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "girdap_ida_algi"))
 from girdap_ida_algi import oak_baglanti as ob  # noqa: E402
+from girdap_ida_algi import saat as st  # noqa: E402
 import numpy as np
 
 # ---------------------------------------------------------------- sabitler
@@ -177,14 +178,14 @@ def bos_disk_gb(yol: Path) -> float:
 MANIFEST_ADI = "manifest.csv"
 MANIFEST_BASLIK = "dosya,oturum,iso_zaman,saat_guvenilir,genislik,yukseklik,fps"
 
-# Jetson'da RTC pili yoksa saat boot'ta GERİDE açılır (bu projede ölçüldü:
-# ~2 ay). Kare yine toplanır ama zaman etiketi yalan olur — sessiz kalmasın.
-SAAT_ALT_SINIR = 1767225600.0        # 2026-01-01T00:00:00Z
-
-
-def saat_guvenilir_mi(epoch_s: float, alt_sinir: float = SAAT_ALT_SINIR) -> bool:
-    """Sistem saati makul mü? (RTC'siz Jetson boot'ta geçmişte açılabilir)"""
-    return float(epoch_s) >= alt_sinir
+# Saat güvenilirliği ORTAK katmanda (girdap_ida_algi/saat.py): aynı mantığı
+# Dosya-1 kaydedicisi de kullanıyor, iki kopya ayrışmasın.
+# 🔴 2026-08-06'da genişletildi: eski ölçüt yalnız MUTLAK EŞİKTİ ve o gün
+# Jetson ~15 saat bayat saatle açılınca 18 kare "dünün tarihi + saat_guvenilir=1"
+# ile yazıldı (05.08 19:50 de 2026'nın içinde, eşiği geçiyor). Artık çekirdeğin
+# kendi senkron bayrağı (adjtimex/STA_UNSYNC) da soruluyor. Ayrıntı: saat.py
+SAAT_ALT_SINIR = st.SAAT_ALT_SINIR
+saat_guvenilir_mi = st.saat_guvenilir_mi
 
 
 def oturum_kimligi(epoch_s: float) -> str:
@@ -196,10 +197,22 @@ def oturum_kimligi(epoch_s: float) -> str:
 
 
 def manifest_satiri(dosya: str, oturum: str, epoch_s: float,
-                    w: int, h: int, fps: int) -> str:
-    """Tek karenin manifest satırı (CSV, sonunda \\n)."""
+                    w: int, h: int, fps: int,
+                    senkron=None, elle_dogrulandi: bool = False) -> str:
+    """Tek karenin manifest satırı (CSV, sonunda \\n).
+
+    🔴 KOLON SAYISI DEĞİŞMEZ (7) — bilerek: `manifest_ac` başlığı yalnız YENİ
+    dosyaya yazıyor, yani süregelen bir manifest'e fazladan kolon eklemek
+    başlığı YALANCI yapardı (eski satırlar 7, yenileri 8 alan). Yeni bilgi
+    kolon açarak değil, `saat_guvenilir` alanının ANLAMINI güçlendirerek
+    taşınıyor (bkz. girdap_ida_algi/saat.py).
+
+    `senkron=None` → bilinmiyor: eski davranış (yalnız mutlak eşik). Gerçek
+    koşuda `main` çekirdekten okunan değeri geçer.
+    """
     iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(epoch_s))
-    guv = "1" if saat_guvenilir_mi(epoch_s) else "0"
+    guv = "1" if saat_guvenilir_mi(epoch_s, senkron=senkron,
+                                   elle_dogrulandi=elle_dogrulandi) else "0"
     return f"{dosya},{oturum},{iso},{guv},{int(w)},{int(h)},{int(fps)}\n"
 
 
@@ -400,17 +413,24 @@ def main():
                          "veri seti deploy'a uymaz. 1440x1080 istenirse otomatik "
                          "1352x1014'e düşer (o sensör modu bu cihazda kare üretmiyor).")
     ap.add_argument("--fps", type=int, default=10,
-                    help="Kamera sensör FPS'i. Varsayılan 10 = 23,3 MB/s @1440x1080; "
-                         "20 (46,7 MB/s) USB2'de ÇÖKTÜĞÜ ölçüldü — yükseltme.")
+                    help="Kamera sensör FPS'i. Varsayılan 10 = 20,6 MB/s @1352x1014 "
+                         "(12MP+ispScale çıktısı; eski 1440x1080 hesabı 23,3 idi). "
+                         "20 fps (46,7 MB/s) USB2'de ÇÖKTÜĞÜ ölçüldü — yükseltme.")
     ap.add_argument("--interval", type=float, default=2.0,
                     help="OTOMATİK modda kaç saniyede bir kare denensin")
     ap.add_argument("--zorunlu-aralik", type=float, default=10.0,
                     help="KALP ATIŞI: bu kadar saniyedir hiç kare kaydedilmediyse "
                          "benzerlik filtresini AŞ ve yine de kaydet (0 = kapalı). "
                          "Filtre uzaktaki dubayı göremediği için gerekli.")
-    ap.add_argument("--min-fark", type=float, default=3.0,
+    ap.add_argument("--min-fark", type=float, default=0.5,
                     help="Benzer kare filtresi: son kaydedilenle ortalama mutlak fark "
-                         "(0-255) bu değerin altındaysa kare ATLANIR. 0 = filtre kapalı")
+                         "(0-255) bu değerin altındaysa kare ATLANIR. 0 = filtre kapalı. "
+                         "🔴 VARSAYILAN 3.0 DEĞİL 0.5 (2026-08-06 düzeltmesi): filtre TÜM "
+                         "karenin ortalama farkına bakıyor, 10 m'deki 30 cm duba ortalamaya "
+                         "yalnız 0,11 katıyor — yani en değerli kare (uzak duba kadraja "
+                         "girdiği an) eleniyor. Eşik 2,0 iken bu SAHADA ÖLÇÜLDÜ; 3,0 daha "
+                         "da kötüydü. Servis zaten 0.5 geçiyor, varsayılan ona hizalandı ki "
+                         "betiği elle çalıştıran farklı davranış almasın.")
     ap.add_argument("--max-kare", type=int, default=0,
                     help="Bu oturumda en fazla kaç kare (0 = sınırsız). Sınıra gelince temiz çıkar")
     ap.add_argument("--min-bos-gb", type=float, default=5.0,
@@ -425,6 +445,13 @@ def main():
                     help="Ekransız çalış (SSH/servis): sadece OTOMATİK topla, Ctrl+C ile dur")
     ap.add_argument("--auto-start", action="store_true",
                     help="Açılışta OTOMATİK mod zaten AÇIK başlasın")
+    ap.add_argument("--saat-elle-dogrulandi", action="store_true",
+                    help="Saati kıyıda GÖZLE doğruladım (ör. `sudo date -s` ile "
+                         "kurdum). Gerekçe: elle ayar çekirdeğin senkron bayrağını "
+                         "TEMİZLEMEZ, o yüzden bu bayrak olmadan kareler ağsız "
+                         "oturumda 'saat güvenilmez' damgalanır. İnsan doğrulaması "
+                         "da bir kanıttır — ama YALAN SÖYLEME: yanlış saatle "
+                         "verirsen ışık/saat analizi sessizce zehirlenir.")
     args = ap.parse_args()
 
     out = Path(args.out).expanduser().resolve()
@@ -449,16 +476,28 @@ def main():
     oturum = oturum_kimligi(time.time())
     manifest = manifest_ac(out)
     print(f"[i] Oturum        : {oturum}  (manifest: {out / MANIFEST_ADI})")
-    if not saat_guvenilir_mi(time.time()):
+    # --- SAAT DENETİMİ (2026-08-06'da güçlendirildi — bkz. girdap_ida_algi/saat.py) ---
+    # Eski hâli yalnız mutlak eşiğe bakıyordu ve 06.08'de ~15 saatlik bayat saati
+    # KAÇIRDI (18 kare dünün tarihiyle "güvenilir" damgalandı). Artık çekirdeğin
+    # senkron bayrağı da soruluyor; ikisi birlikte karar veriyor.
+    senkron = st.cekirdek_senkron_mu()
+    print(f"[i] Saat          : {st.saat_raporu(senkron)}")
+    if not saat_guvenilir_mi(time.time(), senkron=senkron,
+                             elle_dogrulandi=args.saat_elle_dogrulandi):
         print(f"\n[!!] SİSTEM SAATİ ŞÜPHELİ: {time.strftime('%Y-%m-%d %H:%M')}\n"
-              f"     Jetson'da RTC pili yoksa saat boot'ta geride açılır. Kareler\n"
-              f"     yine toplanır ve manifest'e saat_guvenilir=0 yazılır, ama\n"
-              f"     ışık/saat çeşitliliği analizi bu oturumda YAPILAMAZ.\n"
-              f"     Denize açılmadan önce saati düzelt: sudo date -s '...'\n", flush=True)
+              f"     Kareler yine toplanır ve manifest'e saat_guvenilir=0 yazılır\n"
+              f"     (veri KAYBOLMAZ — göreli sıra dosya adında ve manifest'te durur),\n"
+              f"     ama mutlak saat iddiası edilemez.\n"
+              f"     Kıyıda çözüm: tethering ile NTP senkronu, ya da\n"
+              f"     `sudo date -s '...'` + bu betiğe --saat-elle-dogrulandi ver.\n",
+              flush=True)
     if not oran_uyumlu(w, h):
         print(f"\n[!!] UYARI: {w}x{h} oranı {w/h:.3f} — deploy 4:3 (1.333) çalışıyor.\n"
               f"     Sensör (IMX214) 4:3; 4:3 dışı istekte kare KIRPILIR ve bu veri setiyle\n"
-              f"     eğitilen model sahada farklı FOV görür. Önerilen: --res 1440x1080\n", flush=True)
+              f"     eğitilen model sahada farklı FOV görür. Önerilen: --res 1352x1014\n"
+              f"     (12MP + ispScale 1/3 = tam 4:3, kırpma yok — bu cihazda ölçülen tek\n"
+              f"     çalışan 4:3 modu; 1440x1080 sensör modu SESSİZCE 0 kare üretiyor)\n",
+              flush=True)
 
     # --- OAK görünene kadar bekle (boot'ta geç enumere olabilir) ---
     if not cihaz_bekle(dai.Device.getAllAvailableDevices, args.cihaz_bekle):
@@ -564,7 +603,19 @@ def main():
 
     def kaydet(frame):
         """Kareyi tam çözünürlükte diske yaz + manifest satırını ekle."""
-        nonlocal idx
+        nonlocal idx, senkron
+        # Senkron durumu HER KAYITTA yeniden okunur (tek syscall, ≤1/2 sn).
+        # NEDEN: 06.08'de NTP oturumun ORTASINDA geldi ve saati düzeltti —
+        # açılışta bir kez bakmak o kırılmayı göremezdi. Durum değişince
+        # journal'a basılır: sonradan "hangi kareden itibaren saat doğru"
+        # sorusunun cevabı (post-hoc çapa) log'da durur.
+        yeni_senkron = st.cekirdek_senkron_mu()
+        if yeni_senkron != senkron:
+            print(f"[!] SAAT DURUMU DEĞİŞTİ ({senkron} -> {yeni_senkron}) "
+                  f"kare_{idx:05d} öncesinde | duvar saati "
+                  f"{time.strftime('%Y-%m-%dT%H:%M:%S')} | "
+                  f"{st.saat_raporu(yeni_senkron)}", flush=True)
+            senkron = yeni_senkron
         yol = images_dir / f"{args.prefix}_{idx:05d}.jpg"
         cv2.imwrite(str(yol), frame, [cv2.IMWRITE_JPEG_QUALITY, int(args.jpg_quality)])
         # Manifest HER karede flush'lanır: denizde güç kesilirse en fazla son
@@ -573,7 +624,9 @@ def main():
         # ayrışabiliyor (1440x1080 istenip 1352x1014 alınması gibi). Manifest
         # veri setinin tek doğrusu — istenen değeri yazmak sessiz yalan olurdu.
         _h, _w = frame.shape[:2]
-        manifest.write(manifest_satiri(yol.name, oturum, time.time(), _w, _h, args.fps))
+        manifest.write(manifest_satiri(yol.name, oturum, time.time(), _w, _h,
+                                       args.fps, senkron=senkron,
+                                       elle_dogrulandi=args.saat_elle_dogrulandi))
         manifest.flush()
         idx += 1
         return yol

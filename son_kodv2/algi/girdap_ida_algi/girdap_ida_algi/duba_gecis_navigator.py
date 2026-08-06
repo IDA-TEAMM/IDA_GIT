@@ -75,9 +75,11 @@ import rclpy
 try:                                  # paket içi saf mantık (kamerasız testli)
     from girdap_ida_algi import gecit_mantik as gm
     from girdap_ida_algi import oak_baglanti as ob
+    from girdap_ida_algi import saat as st
 except ImportError:                   # dosya doğrudan çalıştırılırsa
     import gecit_mantik as gm
     import oak_baglanti as ob
+    import saat as st
 # ⚠️ `ob` import'u 05.08 smoke testinde eklendi — daha önce YOKTU ama kod
 # ob.dayanikli_ac çağırıyordu. Fark edilmedi çünkü node model dosyası
 # olmadan ilk satırda çöküyor, bu satıra hiç ulaşılamıyordu. Ders:
@@ -602,14 +604,24 @@ class DubaNavigator(Node):
         # katmanı testli duruyor; letterbox'a dönülürse hazır — ama o gün
         # EĞİTİM ön işlemesi de birlikte değişmeli.)
         self._lb_pay = 0.0
-        # S2: Dosya-1 (md 4.2) "her frame zaman etiketli" olmak zorunda. Jetson'da
-        # RTC pili yoksa saat boot'ta geride açılır (ölçüldü: ~2 ay) → etiketler
-        # yanlış olur, teslimde 5 ceza riski. Kod saati düzeltemez; SESSİZ KALMASIN.
-        if time.localtime().tm_year < 2026:
+        # S2: Dosya-1 (md 4.2) "her frame zaman etiketli" olmak zorunda; geçersiz
+        # dosya başına 5 ceza (md 5.5.4.3.5). Kod saati DÜZELTEMEZ, ama sessiz
+        # kalmamalı.
+        # 🔴 2026-08-06'da GÜÇLENDİRİLDİ: eski kontrol `tm_year < 2026` idi —
+        # yani yalnız YIL yanlışsa uyarırdı. Aynı gün Jetson ~15 saat bayat
+        # saatle açıldı (05.08 19:50 iken gerçek 06.08 11:07); yıl doğru olduğu
+        # için bu kontrol HİÇBİR ŞEY DEMEDİ ve veri seti tarafında 18 kare
+        # yanlış tarihle "güvenilir" damgalandı. Artık çekirdeğin senkron
+        # bayrağı soruluyor (adjtimex/STA_UNSYNC — ağ GEREKTİRMEZ).
+        # Ayrıntı ve 8,9 saatlik sınır: girdap_ida_algi/saat.py
+        self._saat_senkron = st.cekirdek_senkron_mu()
+        self.get_logger().info(f"Saat: {st.saat_raporu(self._saat_senkron)}")
+        if not st.saat_guvenilir_mi(time.time(), senkron=self._saat_senkron):
             self.get_logger().error(
-                f"SAAT YANLIŞ görünüyor ({time.strftime('%Y-%m-%d %H:%M')}) — "
-                "Dosya-1 zaman etiketleri geçersiz olur (md 4.2). "
-                "Koşudan ÖNCE: sudo date -s '...' → sonra bu node'u yeniden başlat.")
+                f"SAAT KANITLANAMIYOR ({time.strftime('%Y-%m-%d %H:%M:%S')}) — "
+                "Dosya-1 zaman etiketleri yanlış olabilir (md 4.2, teslimde "
+                "5 ceza riski). Koşudan ÖNCE: tethering ile NTP senkronu, ya da "
+                "`sudo date -s '...'` → sonra bu node'u yeniden başlat.")
         self._son_log = 0.0
         self._fps_n = 0            # ölçülen NN FPS (beklenen: ~11, tavan 12,2)
         self._fps_t0 = time.time()
@@ -880,6 +892,12 @@ class DubaNavigator(Node):
         d_mono = gm.mesafe_genislikten(d.w, gm.DUBA_CAP_M, self._f_norm)
         ok = gm.menzil_tutarli(d.z, d_mono, MENZIL_BAGIL_TOL)
         if not ok:
+            # 🔴 2026-08-06: bu sayaç tanımlıydı ve durum_log'da BASILIYORDU ama
+            # hiçbir yerde ARTIRILMIYORDU → "sessiz ret" tablosunda menzil
+            # çelişkisi kalemi her zaman 0 görünüyordu. Tanılamanın tek amacı
+            # sahada (SSH yok) "dubaları görüyorum ama kapı kuramıyorum" hâlinin
+            # SEBEBİNİ göstermek; kör bir kalem o tabloyu yanıltıcı yapar.
+            self._tani["menzil_celiski"] += 1
             self.get_logger().warn(
                 f"Tespit atıldı — stereo {d.z:.1f} m ↔ genişlikten {d_mono:.1f} m "
                 "çelişiyor (uzak/kısmi görünen duba?)",

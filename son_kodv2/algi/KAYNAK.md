@@ -1,6 +1,6 @@
 # algi — GİRDAP görüntü işleme katmanı (son_kodv2'nin algı ayağı)
 
-**Kaynak repo:** github.com/EyupEker1/girdap-ida-algi — commit `ce3ccef`
+**Kaynak repo:** github.com/EyupEker1/girdap-ida-algi — commit `ee3d623`
 **Kopya tarihi:** 2026-08-06 (bu klasör kaynağın **birebir aynası**; burada
 düzenleme yapılmaz, kaynak repoda yapılıp buraya yeniden kopyalanır)
 **Sorumlu:** Eyüp (görüntü işleme)
@@ -8,6 +8,17 @@ düzenleme yapılmaz, kaynak repoda yapılıp buraya yeniden kopyalanır)
 Bu klasör son_kodv2'nin **kamera algısı**dır. `karar/` (Sude/Yahya) karar/görev
 katmanı, burası tespit katmanı. Kimse kimsenin dosyasına dokunmuyor; bağlantı
 aşağıdaki topic sözleşmesi üzerinden.
+
+> ℹ️ **06.08 (akşam) güncellemesi — saat güvenilirliği:** zaman damgaları artık
+> **çekirdeğin senkron bayrağından** (adjtimex/STA_UNSYNC) doğrulanıyor, sadece
+> "tarih makul mü" diye bakılmıyor. Sebebi ölçülü bir arıza: Jetson 06.08'de
+> ~15 saat bayat saatle açıldı ve 18 kare **dünün tarihiyle "güvenilir"**
+> damgalandı. Karar tarafını ilgilendiren yanı: **Dosya-1 (md 4.2) zaman
+> etiketleri** aynı kör noktayı taşıyordu (geçersiz dosya = 5 ceza puanı).
+> Yöntem **ağ gerektirmez**; ağsız ~8,9 saat sonra bayrak düşer (çekirdek
+> `NTP_PHASE_LIMIT`), bu bilinçli bir yanlış-negatiftir. `manifest.csv`
+> **şeması değişmedi** (7 kolon) — `saat_guvenilir` alanının anlamı güçlendi.
+> Ayrıntı: `girdap_ida_algi/saat.py`.
 
 > ℹ️ **06.08 güncellemesi:** bu klasör 05.08'deki hâlinde donmuştu (depthai v3
 > API'si, FPS 12). Bu sürümle **komple değiştirildi**. Aradaki en kritik fark:
@@ -104,7 +115,7 @@ aktarılmaz).
 
 ## Testler (donanım GEREKMEZ)
 ```bash
-cd son_kodv2/algi && python3 -m pytest girdap_ida_algi/test/ -q   # 104 passed
+cd son_kodv2/algi && python3 -m pytest -q          # 116 passed (kokten de calisir)
 ```
 
 ## Çalıştırma
