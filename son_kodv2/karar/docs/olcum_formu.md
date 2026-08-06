@@ -316,8 +316,8 @@ Tekne **2 motorlu** (sol/sağ). Her iki ESC de aynı model olmalı.
 | PWM aralığı (canlı FC, 2026-08-06) | min **1000** / sıfır itki **1487** / max **2000** µs — ✅ su testinden geçti |
 | **FC tarafı simetri** (`SERVOn_MIN/MAX/TRIM` iki kanalda aynı mı?) | ☑ **EVET** ✅ (2026-08-06, canlı param dökümünden) |
 | Kalibrasyon yapıldı mı (ikisi de, aynı prosedürle)? | ☑ **YAPILMAYACAK** — bilinçli karar ✅ 2026-08-06. Çift yönlü ESC'de klasik gaz kalibrasyonu nötrü kaydırabilir; nötrümüz zaten doğru ve simetrik. Gerekçe + kalan risk: `ardurover_bench.parm.md` ESC adım 3 |
-| **Thruster tepe akımı (tek motor)** | `____` A |
-| **2 motor toplam tepe akım** | `____` A |
+| **Thruster tepe akımı (tek motor)** | `____` A ⏳ |
+| **2 motor toplam tepe akım** | `____` A ⏳ 🔴 **KONTAKTÖR SINIRI 50 A** — GRDNER HEV50-A12NS temin edildi (2026-08-06). Toplam tepe bu değeri aşarsa kontaktör görev sırasında yanar. Suda tam gazda ölç |
 
 > Son iki satır uzaktan güç kesme kontaktörünün boyutlandırılması için gerekli
 > (`fc_parametre_onerileri.md` §4.5).

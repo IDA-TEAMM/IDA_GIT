@@ -245,7 +245,34 @@ lokal harita PNG'leri yarım kalır → md 4.2 Dosya-1/2/3 teslim edilemez, her 
 için **5'er ceza puanı** (md 5.5.4.3.5). Ayrıca acil durum sonrası hakem
 "ne oldu" diye sorduğunda elde log kalmaz.
 
-### Kontaktör seçimi
+### ✅ KONTAKTÖR TEMİN EDİLDİ — GRDNER HEV50-A12NS (2026-08-06)
+
+| | Etiket değeri |
+|---|---|
+| Marka / P/N | **GRDNER HEV50-A12NS** (Rev. A) |
+| Yük | **50 A**, 12–900 VDC |
+| Bobin | **12 VDC** |
+
+> Datasheet internette bulunamadı (GRDNER yaygın indekslenmiş bir marka değil).
+> En yakın muadil aile: Altran Magnetics ALEV50. Bu yüzden aşağıdaki açık
+> maddeler **deneyle** doğrulanacak, veri sayfasına güvenilmeyecek.
+
+**🔴 BAĞLANTI DÜZELTİLDİ (2026-08-06).** İlk kurulumda kontaktör *"bataryadan
+gelen TÜM gücü, güç dağıtım kartından"* kesiyordu — yani Pixhawk ve Jetson da
+ölüyordu. Bu, yukarıdaki "röle hattının nereye konulacağı" kuralının ihlaliydi
+ve tam da acil durumda Dosya-1/2/3'ü kaybettirirdi (15 ceza puanı riski).
+Donanım ekibiyle konuşuldu: **Pixhawk ve Jetson kontaktör hattından
+ayrılıyor**, kontaktör yalnız ESC kolunda kalıyor.
+
+**⏳ Kapanmadan önce doğrulanacak ÜÇ şey:**
+
+| # | Açık | Nasıl doğrulanır | Neden kritik |
+|---|---|---|---|
+| 1 | **50 A yetiyor mu?** | Suda tam gazda iki motorun **toplam tepe akımını** ölç (`olcum_formu.md §4`, o satır hâlâ boş). ESC etiketi "çekilen" değil "dayanılan" akımdır — gerçek çekiş çok daha az olabilir | Görev sırasında 50 A aşılırsa kontaktör yanar → motor kontrolü kaybedilir |
+| 2 | **Bobin sürücüsü var mı?** | Pixhawk röle pini 3.3 V / birkaç mA verir; bobin **12 V** ister. Araya MOSFET veya küçük röle modülü ŞART | Doğrudan bağlanırsa çalışmaz, FC pini zarar görebilir |
+| 3 | **NO mu NC mi?** | Kontaktörü çıkar, ana uçlara multimetre (süreklilik). **Bobinde gerilim yokken süreklilik OLMAMALI** = NO ✅ | NC çıkarsa bobin kablosu koptuğunda motorlar **çalışmaya devam eder** — acil durdurmanın tersi |
+
+### Kontaktör seçimi (ölçüt — yukarıdaki ürün buna göre değerlendirilecek)
 
 | Özellik | Gereklilik | Neden |
 |---|---|---|
