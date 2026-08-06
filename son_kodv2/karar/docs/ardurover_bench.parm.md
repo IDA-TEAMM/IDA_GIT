@@ -84,7 +84,12 @@ yüklenir). Suya inerken bazı parametreler değişecek — **⚠️ işaretlile
 
 ---
 
-## ESC KALİBRASYONU (kısmen — 6 adımın 4'ü kapandı, bkz. aşağıda)
+## ESC KALİBRASYONU — ✅ KAPANDI (2026-08-06)
+
+> **Özet:** Kalibrasyon **yapılmayacak** (gerekçe adım 3) · FC parametreleri
+> simetrik ✅ · ESC başlama eşikleri eşit ✅ · PWM aralığı ölçüldü, iki kanalda
+> **0 fark** ✅ (runbook ADIM 5). Kalan tek belirsizlik ESC'lerin **iç** trim'i,
+> o da yalnız suda görülür (aşağıda "KALAN RİSK").
 
 **Neden önemli:** İki ESC farklı kalibre edilirse **aynı PWM farklı itki**
 üretir. Sonuç: `angular.z=0` verilirken tekne bir tarafa kayar; navigasyon

@@ -148,20 +148,73 @@ ros2 topic echo /mavros/state --once      # armed: true görmeli
 
 ---
 
-## ADIM 5 — cmd_vel → Motor Sinyali
+## ADIM 5 — Motor Sinyali / PWM aralığı
 
-Araç **ARMED** ve **GUIDED** modda. İleri hız setpoint'i bas:
+> ## 🔴 GUIDED + `cmd_vel` BENCH'TE KULLANILAMAZ (2026-08-06'da öğrenildi)
+>
+> Bu adımın önceki hâli *"ARMED + GUIDED, `cmd_vel` 0.1 m/s bas, ~1600 gör"*
+> diyordu. **Denendi ve motorlar anında %100 gaza gitti** (`ch1out=1994`,
+> `ch3out=2000`).
+>
+> **Neden:** GUIDED'da ArduRover **kapalı döngü hız kontrolü** yapar. Tekne
+> masada olduğu için ölçülen hız **daima 0**; kontrolcü hatayı kapatmaya
+> çalışıp **integralini doyurur** → tam gaz. Arıza değil, kontrolcünün doğal
+> davranışı. Hangi hızı istersen iste (0.1 m/s de olsa) sonuç aynı.
+>
+> ⚠️ Yani **"~1600 göreceksin" beklentisi bench'te fiziksel olarak imkânsız.**
+> Suda geçerli, karada değil.
+>
+> **Doğru bench yöntemi: MANUAL mod.** Gaz orada açık döngü — çubuk ne kadar
+> itilirse çıkış o kadar olur, doyum yok.
+
+**Yöntem (MANUAL):**
 
 ```bash
-ros2 topic pub /mavros/setpoint_velocity/cmd_vel_unstamped \
-  geometry_msgs/msg/Twist "{linear: {x: 0.1}}" -r 10
+# 1) Mod MANUAL (kumanda gaz çubuğu NÖTRDE olmalı — geçişte çıkış çubuğa atlar)
+ros2 service call /mavros/set_mode mavros_msgs/srv/SetMode \
+  "{base_mode: 0, custom_mode: \"MANUAL\"}"
+
+# 2) Çıkışları kaydet (kumandadan gaz verirken)
+ros2 topic echo /mavros/rc/out --field channels   # channels[0]=SERVO1, channels[2]=SERVO3
+ros2 topic echo /mavros/rc/in  --field channels   # karşılaştırma için
 ```
 
-**Beklenen:** Sağ + sol thruster çıkışında PWM ~**1600** (ileri).
-Doğrulama: multimetre (servo sinyali) **veya** ESC LED/ses.
+Kumandadan gazı yavaşça ileri it, birkaç saniye tut, nötre bırak.
+
+**Beklenen:** iki çıkış da nötrden (`SERVOn_TRIM`) **birlikte** yükselir,
+aralarındaki fark ~0 kalır, ileri komutta 1600'ü geçer.
 
 > 🔴 **DİKKAT:** Pervaneler **sökük** olmalı, motor mount sağlam sabitlenmiş
 > olmalı. Motor dönebilir; ani tork için hazır ol.
+
+### ✅ ÖLÇÜLDÜ — 2026-08-06, GEÇTİ
+
+MAVROS `/dev/ttyACM0` (Pixhawk USB) üzerinden bağlıyken, Mission Planner
+telemetri radyosunda (`ttyUSB0`) kalarak. İki ayrı kayıt, toplam 125 örnek:
+
+| Kayıt | `ch1out` (SAĞ) | `ch3out` (SOL) | RC gaz |
+|---|---|---|---|
+| 1 (kısmi gaz) | 1430 → 1552 | 1430 → 1552 | 1438 → 1520 |
+| 2 (yüksek gaz) | 1556 → **1976** | 1556 → **1976** | 1523 → 1884 |
+
+```
+|ch1out − ch3out|  =  0      125 örneğin HEPSİNDE
+1600 üstü          :  30/48 örnek (2. kayıt)
+tepe               :  1976  (maks 2000)
+```
+
+**Doğrulananlar:**
+- ✅ **Simetri mükemmel** — 1430 (geri) → 1487 (nötr) → 1976 (ileri) aralığının
+  tamamında tek µs ayrışma yok. "Aynı PWM farklı itki" riski FC tarafında YOK.
+- ✅ **Mixing doğru** — düz gaz komutunda iki kanal birlikte hareket ediyor.
+- ✅ **Yön doğru** — ileri çubuk → nötrün ÜSTÜ, geri çubuk → nötrün ALTI.
+- ✅ **Çift yönlü çalışma** — hem ileri hem geri sinyal üretiliyor, simetrik.
+- ✅ Belgenin (`Document 11.pdf` A-1) istediği **"≈1600"** aşıldı.
+
+**⏳ Hâlâ açık (bu adımın kapsamı DIŞINDA):** `cmd_vel` → yaw işaret sözleşmesi.
+Bu ADIM **5B-2**'nin işi ve suda/hareket halinde ölçülmeli — bench'te yukarıdaki
+doyum sorunu yüzünden ölçülemez. MAVROS→FC komut yolunun **çalıştığı** ayrıca
+kanıtlandı (MAVROS'tan verilen mod değişimlerine FC anında yanıt verdi).
 
 > ⚠️ Bu adım yalnız **düz ileri**yi doğrular. Sol/sağ kanallar ters bağlıysa
 > düz gidişte HİÇBİR fark görünmez — dönüş yönü test edilmeden mixing
@@ -462,7 +515,7 @@ node'ları yeniden başlat veya araç güç döngüsü).
 | 2. EKF / extended_state | ☐ | GPS yoksa healthy=false normal |
 | 3. hardware.launch (7 node) | ☐ | |
 | 4. Manuel arm (success=true) | ☐ | |
-| 5. cmd_vel → PWM ~1600 | ☐ | pervane sökük |
+| 5. Motor sinyali / PWM aralığı | ✅ | 2026-08-06 GEÇTİ — MANUAL modda 1430→1976, iki kanalda **125 örnekte 0 fark**. ⚠️ GUIDED+cmd_vel bench'te KULLANILAMAZ (integral doyumu → %100 gaz) |
 | 5B-1. **Mixing / kanal + yön** | ✅ | 2026-08-05 GEÇTİ — MP Motor Test C=sol/saat yönü, D=sağ/saat tersi, pervaneler ayna → zıt dönüş DOĞRU (FC'de ters çevirme yok, ikisi de `REVERSED=0`) |
 | 5B-2. **cmd_vel işaret sözleşmesi** | ☐ | 5B-1 geçtikten sonra; ters çıkarsa düzeltme KODDA |
 | 6. Kill switch + RC failsafe | ☐ | PWM→1000, armed=false |
