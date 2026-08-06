@@ -467,3 +467,44 @@ def test_yarisma_overlayi_mppi_sabitlerini_sessizce_ezemez() -> None:
                 f"yarisma.yaml λ={lam}, σ/T={oran:.3f} için emniyetli tavan "
                 f"{13.1*oran/2:.1f} — softmax ortalamaya kayar"
             )
+
+
+def test_hicbir_URETIM_modulu_sigma_u_yu_ELLE_yazmiyor() -> None:
+    """🔴 5. YOL: demo/viz/script'lerde elle yazılmış σ_u.
+
+    Bu test gerçek bir sızıntıdan doğdu: σ_u dört "resmî" yerde (MPPIConfig,
+    launch, iki yaml) 0.364'e çekildikten SONRA bile `mppi.py` demo bloğunda
+    ve `deniz_durumu_karsilastirma.py`'de **`sigma_u=5.0`** duruyordu — yani
+    Deniz Durumu karşılaştırma grafikleri hâlâ 30 N/motor'luk HAYALİ tekneyi
+    gösteriyordu ve ona bakan yanlış sonuç çıkarırdı. Drift testi bu yolu
+    görmüyordu (yalnız config üçlüsünü bağlıyor).
+
+    Kural: üretim/demo/görselleştirme kodu σ_u'yu ELLE YAZMAZ — varsayılanı
+    kullanır ya da ROS parametresinden alır. (Testler hariç: onlar bilerek
+    uç değerler enjekte eder.)
+    """
+    import re
+
+    kok = Path(__file__).resolve().parents[1]          # prototype/
+    hedefler = list((kok / "planning").rglob("*.py"))
+    hedefler += list((kok / "viz").rglob("*.py"))
+    hedefler += list((kok.parent / "scripts").rglob("*.py"))
+    desen = re.compile(r"sigma_u\s*=\s*([0-9]+\.?[0-9]*)")
+
+    ihlal = []
+    for yol in hedefler:
+        metin = yol.read_text(encoding="utf-8")
+        for satir_no, satir in enumerate(metin.splitlines(), 1):
+            if satir.lstrip().startswith("#"):
+                continue
+            m = desen.search(satir)
+            if not m:
+                continue
+            # MPPIConfig alan TANIMI (varsayılanın kendisi) serbest.
+            if "sigma_u: float" in satir:
+                continue
+            if float(m.group(1)) != MPPIConfig().sigma_u:
+                ihlal.append(f"{yol.name}:{satir_no} → {satir.strip()}")
+    assert not ihlal, (
+        "σ_u elle yazılmış (ölçülen varsayılandan kopuk):\n  " + "\n  ".join(ihlal)
+    )

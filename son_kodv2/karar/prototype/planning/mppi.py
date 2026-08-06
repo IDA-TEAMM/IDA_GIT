@@ -978,7 +978,10 @@ def _demo() -> None:
     # 2) MPPI'yi kur
     dyn = CatamaranDynamics()
     # Demoda K'yı 1000'de tutuyoruz (CLAUDE.md spec); kapalı döngü ~15-25 s
-    cfg = MPPIConfig(K=1000, T=50, dt=0.05, lambda_=1.0, sigma_u=5.0, seed=0)
+    # ⚠ σ_u/λ BİLEREK VERİLMİYOR — ölçülen varsayılanlar (σ=0.364 N,
+    # λ=1.0) kullanılsın. Demoda elle 5.0 yazılıydı; o değer 30 N/motor'luk
+    # hayali tekneye aitti ve demo gerçek davranışı YANLIŞ gösteriyordu.
+    cfg = MPPIConfig(K=1000, T=50, dt=0.05, seed=0)
     ctrl = MPPIController(dyn, bounds, obstacles, cfg)
     ctrl.set_reference(ref_path, spacing=0.5)
 

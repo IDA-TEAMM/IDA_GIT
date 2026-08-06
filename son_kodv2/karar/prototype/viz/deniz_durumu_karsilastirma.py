@@ -268,7 +268,10 @@ def main() -> None:
     )
 
     # 2) MPPI hiperparametreleri (mppi.py demosuyla aynı)
-    cfg = MPPIConfig(K=1000, T=50, dt=0.05, lambda_=1.0, sigma_u=5.0, seed=0)
+    # ⚠ σ_u/λ BİLEREK VERİLMİYOR — Deniz Durumu karşılaştırması ölçülen
+    # ayarla koşmalı (elle 5.0 yazılıysa grafikler eski/hayali tekneyi
+    # gösterir ve dalga dayanıklılığı yorumu yanlış çıkar).
+    cfg = MPPIConfig(K=1000, T=50, dt=0.05, seed=0)
 
     # 3) Senaryo A: sakin su
     wave_calm = WaveDisturbance(enabled=False)
