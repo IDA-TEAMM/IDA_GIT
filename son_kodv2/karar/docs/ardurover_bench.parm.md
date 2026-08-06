@@ -69,7 +69,7 @@ yüklenir). Suya inerken bazı parametreler değişecek — **⚠️ işaretlile
 
 ---
 
-## ESC KALİBRASYONU (yapılmadı — bench ön koşulu)
+## ESC KALİBRASYONU (kısmen — 6 adımın 4'ü kapandı, bkz. aşağıda)
 
 **Neden önemli:** İki ESC farklı kalibre edilirse **aynı PWM farklı itki**
 üretir. Sonuç: `angular.z=0` verilirken tekne bir tarafa kayar; navigasyon
@@ -79,7 +79,8 @@ kaynağı donanımda olan, teşhisi en zor hatalardan biridir.
 
 **Sıra:**
 
-1. 🔴 **Pervaneler sökülü**, tekne sabit, batarya bağlı, RC verici açık.
+1. 🔴 **Pervaneler sökülü**, tekne sabit, batarya bağlı.
+   (~~RC verici açık~~ — RC iptal edildi, kaptan kararı 2026-08-04.)
 2. **ESC: çift yönlü (bidirectional), 50 A** ✅ (2026-08-04 teyidi).
    → Nötr **1500**, ileri 1500→1900, geri 1500→1100.
    → İyi haber: **geri gidiş var**, MPPI'nin negatif itki komutları
@@ -94,15 +95,29 @@ kaynağı donanımda olan, teşhisi en zor hatalardan biridir.
      yap. Birini yapıp diğerini atlama — asimetri buradan doğar.
    - Kalibrasyon **gerekmiyorsa**: adım 4-5 yine de yapılacak (asıl simetri
      orada sağlanıyor).
-4. **FC parametreleriyle tutarlılık:**
-   - `SERVO1_TRIM` = `SERVO3_TRIM` = **1500** ← nötr/duruş, en kritik satır
-   - `SERVO1_MIN` = `SERVO3_MIN` = 1100 · `SERVO1_MAX` = `SERVO3_MAX` = 1900
-   - `MOT_PWM_MIN/MAX` bu aralıkla eşleşmeli
-5. **İki kanalın altı değeri de BİREBİR aynı olmalı** — MP → Full Parameter
-   List'te yan yana oku. Farklıysa eşitle: aynı komut farklı itki üretirse
-   tekne düz gitmez, navigasyon bunu sürekli düzeltmeye çalışır.
-6. **Write Params + reboot**, ardından Runbook **ADIM 5B-1** (RC ile mixing,
-   ROS gerekmez) ve **ADIM 6** (disarm'da 1100 çıkmadığını gör).
+4. ~~**FC parametreleriyle tutarlılık**~~ **✅ 2026-08-06 — DOĞRULANDI**
+5. ~~**İki kanalın değerleri BİREBİR aynı olmalı**~~ **✅ 2026-08-06 — DOĞRULANDI**
+
+   Kaynak: `docs/fc_mevcut_parametreler_2026-08-04.param` (canlı FC dökümü):
+
+   | | SERVO1 | SERVO3 | |
+   |---|---|---|---|
+   | `MIN` | 1100 | 1100 | ✅ aynı |
+   | `MAX` | 1900 | 1900 | ✅ aynı |
+   | `TRIM` | **1500** | **1500** | ✅ aynı — çift yönlü ESC'nin NÖTR'ü, en kritik satır |
+   | `FUNCTION` | 73 (sağ) | 74 (sol) | ✅ farklı olmalı |
+   | `REVERSED` | 1 | 0 | ✅ farklı olmalı — aynalı pervane (05.08 motor testi) |
+
+   Simetriyi belirleyen üç değer (`MIN`/`MAX`/`TRIM`) birebir aynı → "aynı PWM
+   farklı itki" riski FC tarafında YOK. Kalan asimetri kaynağı yalnız ESC'nin
+   kendi iç kalibrasyonu (adım 3).
+
+   > ⚠️ **`MOT_PWM_MIN`/`MOT_PWM_MAX` ArduRover'da YOKTUR** (Copter parametresi;
+   > dökümde de yok). Rover'ın karşılığı `SERVOn_MIN`/`MAX` — yukarıda doğru.
+   > Belgedeki "MOT_PWM_MIN=1100 yaz" talimatı bu isimle aranmamalı.
+
+6. **Write Params + reboot**, ardından Runbook **ADIM 5B-1** ✅ (koşuldu,
+   2026-08-05) ve **ADIM 6** ⏳ (disarm'da 1100 çıkmadığını gör — koşulmadı).
 
 ---
 
