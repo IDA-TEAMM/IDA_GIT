@@ -359,9 +359,39 @@ Araç **ARMED**, cmd_vel akıyor (ADIM 5 tekrar).
 
 > Ayrıntı: [`ardurover_bench.parm.md`](ardurover_bench.parm.md) → "ÇİFT YÖNLÜ ESC".
 
+### 🟡 Kısmi ölçüm — 2026-08-06 (ARM'da OK, DISARM ölçülemedi)
+
+Tekneye bağlıyken MP → `Durum` sekmesi → `ch1out`/`ch3out` okundu:
+
+| Durum | `ch1out` (SAĞ) | `ch3out` (SOL) | Sonuç |
+|---|---|---|---|
+| **ARMED**, sıfır komut | **1487** | **1487** | ✅ ikisi de `SERVOn_TRIM`'de, **1000 DEĞİL** → tam geri komutu yok |
+| DISARM | — | — | ⏳ **ölçülemedi** |
+
+**Neden ölçülemedi:** Normal disarm **reddedildi** — FC aracı hareketli sanıyordu
+(`GS 2,2 m/s`, tekne masada duruyorken). Force Disarm da kabul etmedi. Sonunda
+**güç kesilerek** durduruldu, o da disarm değil.
+
+> ⚠️ **Güç kesmek ≠ disarm.** Güç kesilince FC hiç sinyal üretmez (ESC'ler kendi
+> failsafe'iyle durur — güvenli), ama bu adımın asıl sorusu *"FC disarm ettiğinde
+> servo çıkışına NE koyuyor"* hâlâ cevapsız. `MOT_SAFE_DISARM=0` olduğu için
+> çıkışın kesilmeyip 1487'de kalması bekleniyor — **doğrulanmalı**.
+
+🔴 **Ölçüm sırasında bulunan üç anomali** (suya inmeden çözülmeli):
+1. **`GS 2,2 m/s`** tekne dururken → sahte hız tahmini. Disarm'ı engelledi;
+   suda MPPI'yi de yanıltır (araç "ilerliyorum" sanıp yanlış düzeltir).
+   GPS suçlu değil: 21-25 uydu, 3D dgps, `prearmstatus True`.
+2. **`Kotu AHRS`** kalıcı (açılış artığı değil — 1.5 saat sonra hâlâ duruyordu),
+   oysa EKF Status penceresinde beş varyans da sıfıra yakın ve bayraklar temiz
+   (`const pos mode Off`). Çelişki çözülmedi.
+3. **`Bat1 57,7 V / 115,4 A`** — paket 4S (dolu 16.8 V), motorlar dururken 115 A
+   çekilmiyor. `BATT_VOLT_MULT`/`BATT_AMP_PERVLT` kalibrasyonu şüpheli.
+   Gerilim failsafe'i (13.2/12.4 V) bu okumayla **hiç tetiklenmez**.
+
 **Ayrıca — RC failsafe:**
 - Eylem: RC vericiyi **kapat**
 - Beklenen: `FS_THR_ENABLE=1` / `FS_ACTION=2` (Hold) tetiklenir, motorlar durur
+- ⚠️ Canlı FC'de **`FS_THR_ENABLE=0`** → bu test şu an **geçersiz**, önce 1 yapılmalı
 
 > ⚠️ Bu adım yalnız **sinyal** kesmeyi doğrular. Şartname md 4.2 ayrıca gücün
 > kesilmesini şart koşuyor → ADIM 6B.

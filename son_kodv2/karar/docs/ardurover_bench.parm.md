@@ -165,8 +165,16 @@ kaynağı donanımda olan, teşhisi en zor hatalardan biridir.
    > `1000/2000` ile çalışıyor ve bu su testinden geçmiş.
 
 6. **Write Params + reboot** — ⚠️ **şu an yazılacak bir şey YOK**, mevcut
-   değerler doğru ve kanıtlı. Runbook **ADIM 5B-1** ✅ (koşuldu, 2026-08-05) ve
-   **ADIM 6** ⏳ (disarm'da 1000 = tam geri ÇIKMADIĞINI gör — koşulmadı).
+   değerler doğru ve kanıtlı. Runbook **ADIM 5B-1** ✅ (koşuldu, 2026-08-05),
+   **ADIM 6** 🟡 (2026-08-06: ARM'da `ch1out=ch3out=1487` ✅ **1000 değil**;
+   DISARM ölçülemedi — normal disarm da Force Disarm da reddedildi, güç
+   kesilerek durduruldu).
+
+7. ~~**Başlama eşiği simetrisi**~~ **✅ 2026-08-06 — GEÇTİ.** MP Motor Test'te
+   güç %1'den yukarı: **Motor C %1'de başladı, Motor D de %1'de başladı.**
+   İki ESC'nin ölü bandı ve nötr noktası eşleşiyor → kaba asimetri YOK.
+   (Testin çözünürlüğü %1; altındaki fark suda zaten görünmez.)
+   ⚠️ `MOT_THR_MIN=10` Motor Test yolunu kırpmıyor — bu test o yüzden çalıştı.
 
 ---
 
