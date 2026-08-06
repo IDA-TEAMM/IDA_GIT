@@ -665,6 +665,68 @@ def test_cmd_vel_tavani_OLCULEN_tam_gaz_hiziyla_uyumlu(ros_context) -> None:  # 
         node.destroy_node()
 
 
+def test_cmd_vel_angular_z_DENGE_yaw_hizini_komut_eder(ros_context) -> None:  # noqa: ANN001
+    """angular.z = (u₁−u₀)·(B/2)/|Nr| — linear.x'teki denge mantığının ikizi.
+
+    🔴 2026-08-06 (§0.9e): eski formül `(u₁−u₀)/inertia_z` iki yerden yanlıştı:
+    tork/atalet = açısal İVME (boyut) ve moment kolu B/2 EKSİK. Kapalı döngüde
+    ölçüldü: eski formül fiili yaw hızının **2,01×**'ini komut ediyordu; denge
+    formülü 1,00×. Bu test o düzeltmeyi dondurur.
+    """
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    node = pn.PlanningNode()
+    try:
+        p = node._pipe._dyn.p
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+
+        # Saf dönüş: sol geri, sağ ileri (net ileri itki sıfır).
+        node._publish_cmd_vel(np.array([-p.max_thrust, p.max_thrust]))
+
+        du = 2.0 * p.max_thrust
+        beklenen = du * (p.thruster_spacing / 2.0) / abs(p.Nr)
+        assert yakalanan[-1].angular.z == pytest.approx(beklenen, rel=1e-6)
+        # Saf dönüşte ileri hız komutu sıfır olmalı (itkiler birbirini götürür).
+        assert yakalanan[-1].linear.x == pytest.approx(0.0, abs=1e-9)
+        # Eski formül (du/inertia_z) burada 2× büyük çıkardı — geri dönülürse kırmızı.
+        eski = du / p.inertia_z
+        assert abs(eski - beklenen) > 0.3 * beklenen, (
+            "test kurulumu bozuk: eski ve yeni formül ayırt edilemiyor"
+        )
+        assert yakalanan[-1].angular.z < 0.75 * eski
+    finally:
+        node.destroy_node()
+
+
+def test_cmd_vel_iki_ekseni_de_AYNI_denge_mantigini_kullanir(ros_context) -> None:  # noqa: ANN001
+    """Tasarım kuralı: her iki eksen de "itki = sönümleme" dengesinden türer.
+
+    Sayıları değil İLİŞKİYİ dondurur — dinamik yeniden tanılanırsa (Xu, Nr)
+    komutlar onunla birlikte taşınmak zorunda; biri elle sabitlenirse kırmızı.
+    """
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    node = pn.PlanningNode()
+    try:
+        p = node._pipe._dyn.p
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+
+        node._publish_cmd_vel(np.array([0.3 * p.max_thrust, 0.9 * p.max_thrust]))
+        tw = yakalanan[-1]
+        toplam = 1.2 * p.max_thrust
+        fark = 0.6 * p.max_thrust
+        assert tw.linear.x == pytest.approx(toplam / abs(p.Xu), rel=1e-6)
+        assert tw.angular.z == pytest.approx(
+            fark * (p.thruster_spacing / 2.0) / abs(p.Nr), rel=1e-6
+        )
+    finally:
+        node.destroy_node()
+
+
 # --------------------------------------------------------------------------- #
 # B3 — GEÇİŞ SAYACI teşhis kanalı (2026-08-06). Çekirdek sayıyordu ama sayı
 # hiçbir yere çıkmıyordu: ne operatör görüyordu ne de md 5.5.2.4'ün "en az iki

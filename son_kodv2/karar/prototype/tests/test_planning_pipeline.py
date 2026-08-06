@@ -25,7 +25,7 @@ from prototype.planning.pipeline import (
     PlanningPipeline,
     PlanningPipelineConfig,
 )
-from prototype.planning.rrt_star import Bounds, CircleObstacle
+from prototype.planning.rrt_star import Bounds, CircleObstacle, RRTStarConfig
 
 
 # Testlerde hız için küçük MPPI (matematik aynı, rollout sayısı düşük)
@@ -553,3 +553,85 @@ def test_pid_modu_waypoint_yoksa_none(bounds: Bounds) -> None:
     pipe = PlanningPipeline(bounds, _pid_cfg())
     pipe.set_mission_state("PARKUR1")
     assert pipe.compute_control() is None
+
+
+# --------------------------------------------------------------------------- #
+# A3 — RRT* ÇAĞRI YÜKÜ (2026-08-06, GIRDAP_DURUM §0.9f)
+#
+# planning_node `/girdap/mission/waypoints` kadansında (5 Hz) set_waypoints,
+# algı kadansında (10 Hz) set_obstacles çağırıyor ve İKİSİ DE koşulsuz RRT*
+# tetikleyebiliyordu. Ölçüm (P2 sahnesi, 40 s): 201 çağrı = 5,0 çağrı/sn,
+# ort 427 ms → tek çekirdeğin %215'i (laptop), Orin Nano'da %640-1070; üstelik
+# planning_node tek-thread executor kullandığı için 20 Hz kontrol timer'ını
+# bloke ediyordu. Aşağıdaki testler "gereksiz planlama yapılmaz"ı DONDURUR.
+# --------------------------------------------------------------------------- #
+
+
+def test_A3_ayni_hedef_TEK_KEZ_planlanir(bounds: Bounds) -> None:
+    """5 Hz'te değişmeyen hedef gelse de RRT* bir kez koşmalı."""
+    pipe = PlanningPipeline(bounds, _fast_cfg())
+    pipe.set_state(np.array([5.0, 5.0, 0.0, 0.0, 0.0, 0.0]))
+    for _ in range(25):                       # 5 saniyelik 5 Hz akış
+        pipe.set_waypoints([(40.0, 40.0)])
+    kosan, atlanan = pipe.replan_sayaclari
+    assert kosan == 1, f"aynı hedef {kosan} kez planlandı"
+    assert atlanan == 24
+
+
+def test_A3_hedef_gercekten_kayinca_YENIDEN_planlanir(bounds: Bounds) -> None:
+    """Ölçüt RRT*'ın KENDİ goal_tolerance'ı — altı gürültü, üstü yeni hedef."""
+    rrt_cfg = RRTStarConfig(use_informed=True)
+    pipe = PlanningPipeline(bounds, _fast_cfg(), rrt_cfg=rrt_cfg)
+    pipe.set_state(np.array([5.0, 5.0, 0.0, 0.0, 0.0, 0.0]))
+    pipe.set_waypoints([(40.0, 40.0)])
+    assert pipe.replan_sayaclari[0] == 1
+
+    # Tolerans içi kayma (kapı nişanı drift'i) → planlama YOK
+    pipe.set_waypoints([(40.0 + 0.5 * rrt_cfg.goal_tolerance, 40.0)])
+    assert pipe.replan_sayaclari[0] == 1
+
+    # Toleransın dışına çıkan kayma → yeniden planlanır
+    pipe.set_waypoints([(40.0 + 3.0 * rrt_cfg.goal_tolerance, 40.0)])
+    assert pipe.replan_sayaclari[0] == 2
+
+
+def test_A3_kayma_SON_PLANA_gore_olculur_birikerek_kacamaz(bounds: Bounds) -> None:
+    """Küçük adımlarla kayan hedef sonunda replan tetiklemeli.
+
+    Karşılaştırma bir önceki İSTEĞE göre yapılsaydı, 5 Hz'te 0,2 m'lik
+    adımlarla hedef 20 m kayar ve HİÇ yeniden planlanmazdı.
+    """
+    rrt_cfg = RRTStarConfig(use_informed=True)
+    pipe = PlanningPipeline(bounds, _fast_cfg(), rrt_cfg=rrt_cfg)
+    pipe.set_state(np.array([5.0, 5.0, 0.0, 0.0, 0.0, 0.0]))
+    pipe.set_waypoints([(40.0, 40.0)])
+    for i in range(1, 16):                    # 15 × 0,2 m = 3,0 m
+        pipe.set_waypoints([(40.0 + 0.2 * i, 40.0)])
+    assert pipe.replan_sayaclari[0] >= 2, "birikerek kayan hedef yakalanmadı"
+
+
+def test_A3_DEGISMEYEN_engel_kumesi_replan_TETIKLEMEZ(bounds: Bounds) -> None:
+    """Algı 10 Hz'te aynı engelleri yeniden yayınlar — bu planlama işi değildir."""
+    pipe = PlanningPipeline(bounds, _fast_cfg())
+    pipe.set_state(np.array([5.0, 5.0, 0.0, 0.0, 0.0, 0.0]))
+    pipe.set_waypoints([(45.0, 45.0)])
+    engeller = [CircleObstacle(25.0, 25.0, 1.0)]      # köşegenin ÜSTÜNDE
+    pipe.set_obstacles(engeller)
+    kosan_ilk = pipe.replan_sayaclari[0]
+
+    for _ in range(20):                                # 2 saniyelik 10 Hz akış
+        pipe.set_obstacles([CircleObstacle(25.0, 25.0, 1.0)])
+    assert pipe.replan_sayaclari[0] == kosan_ilk, "aynı engel kümesi replan tetikledi"
+
+
+def test_A3_DEGISEN_engel_rotaya_yakinsa_replan_tetikler(bounds: Bounds) -> None:
+    """Koruma zayıflamadı: gerçekten yeni bir engel hâlâ yeniden planlatır."""
+    pipe = PlanningPipeline(bounds, _fast_cfg())
+    pipe.set_state(np.array([5.0, 5.0, 0.0, 0.0, 0.0, 0.0]))
+    pipe.set_waypoints([(45.0, 45.0)])
+    pipe.set_obstacles([CircleObstacle(25.0, 25.0, 1.0)])
+    kosan = pipe.replan_sayaclari[0]
+    pipe.set_obstacles([                              # rotanın üstünde YENİ engel
+        CircleObstacle(25.0, 25.0, 1.0), CircleObstacle(15.0, 15.0, 1.5),
+    ])
+    assert pipe.replan_sayaclari[0] > kosan

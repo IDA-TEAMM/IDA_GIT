@@ -24,6 +24,7 @@ Akış:
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, replace
 from typing import Dict, List, Optional, Tuple
 
@@ -223,6 +224,11 @@ class PlanningPipeline:
         self._mission_state = "BOOT"
 
         self._mppi: Optional[MPPIController] = None   # referans gelince kurulur
+        # A3 — gereksiz RRT* koşumunu kesen durum (bkz. set_waypoints/set_obstacles)
+        self._planlanan_goal: Optional[Tuple[float, float]] = None
+        self._engel_imzasi_son: Optional[Tuple] = None
+        self._replan_sayisi = 0          # fiilen koşan RRT* sayısı
+        self._replan_atlandi = 0         # gereksiz olduğu için atlanan çağrı
         # F-S.10: PID yedek kontrolcü — cfg.control_mode="pid" iken kullanılır.
         self._pid = CascadeHeadingPidController(self.cfg.pid_cfg)
 
@@ -233,15 +239,43 @@ class PlanningPipeline:
         self._state[:] = state
 
     def set_waypoints(self, waypoints: List[Tuple[float, float]]) -> None:
-        """Görev hedeflerini ayarla ve global yörüngeyi (yeniden) planla.
+        """Görev hedeflerini ayarla ve GEREKİYORSA global yörüngeyi yeniden planla.
 
         F-S.10: control_mode="pid" iken RRT*/MPPI hiç kurulmaz — PID hedefe
         doğrudan seyir eder, global path'e ihtiyaç duymaz (gereksiz CPU
         harcanmaz).
+
+        🔴 **A3 (2026-08-06) — KOŞULSUZ REPLAN KALDIRILDI.** `planning_node`
+        bu metodu `/girdap/mission/waypoints` kadansında (**5 Hz**) çağırıyor;
+        her çağrıda RRT* koşuyordu. Ölçüm (P2 sahnesi, 40 s):
+            **201 çağrı / 40 s = 5,0 çağrı/sn · ort 427 ms · p95 466 ms**
+            → tek çekirdeğin **%215'i** (laptop), Orin Nano'da (3-5×) %640-1070.
+        Üstüne `planning_node` tek-thread executor kullandığı için bu, 20 Hz
+        kontrol timer'ını doğrudan bloke ediyordu.
+
+        Yeni kural: hedef, **RRT*'ın kendi `goal_tolerance`'ı** kadar bile
+        kaymadıysa mevcut plan zaten o hedefe gidiyordur (planlayıcı çözümü
+        o toleransla kabul ediyor) → yeniden planlamaya GEREK YOK. Yeni bir
+        eşik uydurulmadı; ölçüt planlayıcının kendi kabul yarıçapı.
+        ⚠ Karşılaştırma **en son PLANLANAN** hedefe göre yapılır, bir önceki
+        isteğe göre değil — yoksa 5 Hz'te birikerek kayan bir hedef (kapı
+        nişanı drift'i) hiçbir zaman replan tetiklemezdi.
         """
-        self._waypoints = list(waypoints)
-        if self._waypoints and self.cfg.control_mode != "pid":
-            self._global_replan()
+        yeni = list(waypoints)
+        if not yeni or self.cfg.control_mode == "pid":
+            self._waypoints = yeni
+            return
+        self._waypoints = yeni
+        hedef = yeni[-1]
+        if self._ref_path is not None and self._planlanan_goal is not None:
+            kayma = math.hypot(
+                hedef[0] - self._planlanan_goal[0],
+                hedef[1] - self._planlanan_goal[1],
+            )
+            if kayma <= self._rrt_cfg.goal_tolerance:
+                self._replan_atlandi += 1
+                return
+        self._global_replan()
 
     def set_reference_direct(self, target_x: float, target_y: float) -> None:
         """RRT* bypass (video modu) — mevcut konumdan hedefe düz çizgi referansı.
@@ -252,6 +286,9 @@ class PlanningPipeline:
         sx, sy = float(self._state[0]), float(self._state[1])
         self._waypoints = [(float(target_x), float(target_y))]
         self._ref_path = [(sx, sy), (float(target_x), float(target_y))]
+        # A3: bu yol da bir "plan"dır — set_waypoints'in kayma ölçütü buna göre
+        # çalışsın, yoksa bypass'tan RRT* koluna dönüldüğünde bayat hedefe bakar.
+        self._planlanan_goal = (float(target_x), float(target_y))
         if self.cfg.control_mode != "pid":       # F-S.10: PID path'e ihtiyaç duymaz
             self._rebuild_mppi()
 
@@ -260,7 +297,20 @@ class PlanningPipeline:
         Perception engel listesini güncelle.
         Yeni engel mevcut ref_path'e < replan_proximity ise RRT* yeniden koşar;
         aksi halde sadece MPPI engel listesi tazelenir.
+
+        🔴 **A3 (2026-08-06):** algı 10 Hz'te AYNI engel kümesini yeniden
+        yayınlıyor. `_needs_replan` yalnız "rotaya yakın mı" diye baktığı için
+        Parkur-2'de (engeller tanım gereği rotanın yanında) bu her karede
+        DOĞRU dönüyor ve 10 Hz'te RRT* tetikleyebiliyordu. Artık önce
+        **içerik değişti mi** bakılıyor; değişmediyse ne replan ne de MPPI
+        yeniden kurulumu gerekir (ikisi de aynı veriyle aynı sonucu üretirdi).
         """
+        imza = self._engel_imzasi(obstacles)
+        if imza == self._engel_imzasi_son:
+            self._obstacles = obstacles          # aynı içerik, nesneyi tazele
+            self._replan_atlandi += 1
+            return
+        self._engel_imzasi_son = imza
         if self._ref_path is not None and self._needs_replan(obstacles):
             self._obstacles = obstacles
             self._global_replan()
@@ -268,6 +318,18 @@ class PlanningPipeline:
             self._obstacles = obstacles
             if self._mppi is not None:
                 self._rebuild_mppi()
+
+    @staticmethod
+    def _engel_imzasi(obstacles: List[CircleObstacle]) -> Tuple:
+        """Engel kümesinin içerik imzası (sıra bağımsız, cm çözünürlüğünde).
+
+        cm altı fark planlamayı değiştirmez (RRT* `safety_margin`=0.5 m,
+        MPPI `obstacle_margin`=1.0 m); yuvarlama, algı gürültüsünün her
+        karede sahte "değişti" üretmesini engeller.
+        """
+        return tuple(sorted(
+            (round(o.cx, 2), round(o.cy, 2), round(o.r, 2)) for o in obstacles
+        ))
 
     def set_mission_state(self, state: str) -> None:
         """
@@ -324,6 +386,7 @@ class PlanningPipeline:
             max(b.y_max, start[1] + pay, goal[1] + pay),
         )
         rrt = RRTStar(bounds, self._obstacles, self._rrt_cfg)
+        self._replan_sayisi += 1
         try:
             path = rrt.plan(start, goal)
         except ValueError as exc:
@@ -335,6 +398,7 @@ class PlanningPipeline:
             _log.warning("RRT* çözüm bulamadı — eski referans korunuyor")
             return False
         self._ref_path = path
+        self._planlanan_goal = (float(goal[0]), float(goal[1]))   # A3 ölçütü
         self._rebuild_mppi()
         return True
 
@@ -422,6 +486,15 @@ class PlanningPipeline:
     @property
     def global_path(self) -> Optional[List[Tuple[float, float]]]:
         return self._ref_path
+
+    @property
+    def replan_sayaclari(self) -> Tuple[int, int]:
+        """A3 teşhisi: (fiilen koşan RRT* sayısı, atlanan gereksiz çağrı).
+
+        Sahada oran önemlidir: atlanan/koşan yükseldikçe planlayıcı boşa
+        çalışmıyor demektir. Ölçüm (P2, 40 s): düzeltme öncesi 201/0.
+        """
+        return self._replan_sayisi, self._replan_atlandi
 
     @property
     def mission_state(self) -> str:

@@ -88,6 +88,50 @@ class RRTStarConfig:
     collision_step: float = 0.2       # m, segment çarpışma örnekleme adımı
     seed: int = 0
     use_informed: bool = True
+    # A3 (2026-08-07) — DURGUNLUK İLE ERKEN ÇIKIŞ.
+    # Sorun: `planning_node` tek-thread executor kullanıyor; `plan()` ne kadar
+    # bloklarsa 20 Hz kontrol timer'ı o kadar susuyor (ölçüm: p95 591 ms ≈ 12
+    # kontrol adımı, 1 m/s'te ~0,6 m kör yol) — üstelik tam yeni hedefe/kapıya
+    # geçilen anda.
+    #
+    # Neden sabit tavan DEĞİL: 60 seed × 4 sahne taraması (07.08), max_iter'ı
+    # 1500'den düşürmenin optimalliği değil FİZİBİLİTEYİ satın aldığını
+    # gösterdi — 400'de "yoğun" sahnede 8/60, "dar kapı"da 12/60 çözüm
+    # BULUNAMIYOR. `plan()`→None ise pipeline eski referansı korur, yani
+    # sessiz donma: kesmeye çalıştığımız arızadan kötü.
+    #
+    # Neden duvar saati DEĞİL: `time.perf_counter()` ile kesmek planlayıcıyı
+    # belirlenimsiz yapar — aynı seed + aynı sahne, CPU yüküne göre farklı yol.
+    # Bu hem log tekrar-oynatmayı (yarış sonrası hata ayıklama) hem de laptop
+    # ölçümünün Orin davranışını tahmin etmesini bitirir.
+    #
+    # Gerçek israf: RRT*'ın erken çıkışı yok. Kolay sahnede çözümü ~150.
+    # iterasyonda buluyor, kalan ~1350'yi %3'lük iyileştirmeye harcıyor; zor
+    # sahnede ise 1500'ün hepsi gerekiyor. Kural bu yüzden ADAPTİF:
+    # ilk çözümden sonra maliyet `durgunluk_penceresi` iterasyon boyunca
+    # `iyilesme_esigi` kadar bile düşmediyse dur.
+    # Yalnız seed + sahneye bağlıdır → BELİRLENİMLİ; max_iter fizibilite
+    # garantisi olarak 1500'de kalır. 0 → erken çıkış kapalı (eski davranış).
+    #
+    # Pencere seçimi (60 seed × 4 sahne, 07.08 — P2 sahnesi süre rakamları):
+    #     kapalı → ort 548 ms / p95 602 ms │ maliyet: taban
+    #     150    → ort  67 ms / p95 137 ms │ ort +2,3% · p95 +4,5% · maks +9,1%
+    #     250    → ort 175 ms / p95 304 ms │ ort +1,1% · p95 +2,8% · maks +8,0%
+    # Her pencerede başarısız plan sayısı `kapalı` ile BİREBİR aynı kaldı
+    # (0/60, 0/60, 1/60, 0/60) → fizibilite garantisi ölçümle doğrulandı.
+    #
+    # 250 seçildi. Önce 150 seçilmişti; maliyet ORTALAMASI (+%2,3) masum
+    # görünüyordu ama kuyruk öyle değil (p95 +%4,5, maks +%9,1). Kuyruğun
+    # kaynağı pencere değil: ilk çözümün düştüğü HOMOTOPİ SINIFI. Ek iterasyon
+    # sınıfın içinde cilalar, sınıfı değiştirmez — bu yüzden pencere 400'de bile
+    # P2'de %8'lik aykırı değer duruyor. Yani pencereyi büyütmek kuyruğu satın
+    # almıyor; 250 kuyruğu ucuza yarıya indirdiği nokta.
+    #
+    # ⚠ Bunun asıl çözüm OLMADIĞINI not et: doğru yapısal düzeltme `plan()`ı
+    # kontrol timer'ının thread'inden çıkarmak (ayrı callback group / worker).
+    # O yapılırsa bu pencere tamamen gevşetilebilir. Bkz. GIRDAP_DURUM §0.9f.
+    durgunluk_penceresi: int = 250
+    iyilesme_esigi: float = 0.005     # bağıl (%0,5); bunun altı gürültü sayılır
 
 
 class _Node:
@@ -175,7 +219,18 @@ class RRTStar:
         angle = math.atan2(goal[1] - start[1], goal[0] - start[0])
         cos_a, sin_a = math.cos(angle), math.sin(angle)
 
-        for _ in range(self.cfg.max_iter):
+        pencere = int(self.cfg.durgunluk_penceresi)
+        esik = float(self.cfg.iyilesme_esigi)
+        son_iyilesme = 0          # son anlamlı maliyet düşüşünün iterasyonu
+        c_isaret = math.inf       # o düşüşteki maliyet
+        self.iterasyon = 0        # teşhis: erken çıkış ne kadarını kesti
+        for i in range(self.cfg.max_iter):
+            # A3: erken çıkış YALNIZ ilk çözümden sonra devreye girer — çözüm
+            # yokken kesmek None dönmek, yani sessiz donma olurdu.
+            if (pencere > 0 and self._best_goal is not None
+                    and i - son_iyilesme >= pencere):
+                break
+            self.iterasyon = i + 1
             x_rand = self._sample(goal, c_min, center, cos_a, sin_a)
             i_near = self._nearest_idx(x_rand)
             nearest = self.nodes[i_near]
@@ -232,6 +287,11 @@ class RRTStar:
                 self._c_best = self._best_goal.cost + math.hypot(
                     self._best_goal.x - goal[0], self._best_goal.y - goal[1]
                 )
+                # A3: anlamlı iyileşme sayacı. c_isaret=inf başladığı için ilk
+                # çözüm de bir "iyileşme" sayılır ve pencereyi oradan başlatır.
+                if self._c_best < c_isaret * (1.0 - esik):
+                    c_isaret = self._c_best
+                    son_iyilesme = i
 
         if self._best_goal is None:
             return None

@@ -840,14 +840,35 @@ class PlanningNode(Node):
         # Bu, dinamiğin kendi parametresinden türer (dynamics.yaml Xu, log
         # 58'den tanılandı) — ayarlanabilir sabit DEĞİL.
         #
-        # ⚠ angular.z'ye DOKUNULMADI: yaw ekseni (Nr, inertia_z) sudan
-        # KİMLİKLENDİRİLEMEDİ (CFD değerinde; log 58 modelin ~1,9× az
-        # döndüğünü gösteriyor). Açık-çevrim diferansiyel step testi
-        # yapılmadan buraya benzer bir düzeltme yazmak TAHMİN olur.
+        # 🔴 2026-08-06 (gece) — angular.z DE DÜZELTİLDİ (ÖLÇÜLDÜ, §0.9e).
+        # Eski formül `(u₁−u₀)/inertia_z` iki ayrı yerden yanlıştı:
+        #   (a) BOYUT: tork/atalet = açısal İVME, hız değil (linear.x'teki
+        #       hatanın birebir yaw ikizi);
+        #   (b) MOMENT KOLU EKSİK: diferansiyel itkinin torku (u₁−u₀)·B/2'dir,
+        #       (u₁−u₀) değil.
+        # Doğrusu, linear.x ile AYNI mantık — DENGE yaw hızı: tork = |Nr|·r →
+        #   r = (u₁−u₀)·(B/2)/|Nr|
+        # Kapalı döngü ölçümü (slalom, ~2100 yaw-aktif adım, 2 tohum):
+        #   koddaki eski formül / fiili r : 1.995 · 2.013   (2× fazla komut)
+        #   denge formülü      / fiili r : 0.991 · 1.000   ✅
+        # Analitik oran da birebir: (1/I_z)/((B/2)/|Nr|) = 0.2/0.0993 = 2.013.
+        #
+        # ⚠ ÖNCEKİ KARARIN DÜZELTİLMESİ: "Nr doğrulanmadı, dokunma" notu iki
+        # ayrı şeyi karıştırıyordu. Formülün BİÇİMİ parametre değerlerinden
+        # bağımsız olarak yanlıştı (boyut + moment kolu) ve şimdi düzeltildi;
+        # SAYININ doğruluğu hâlâ `Nr`/`inertia_z`'ye bağlı ve açık-çevrim
+        # diferansiyel step testiyle teyit edilecek (GIRDAP_DURUM §18 DİĞER-4).
+        # angular.z bir SETPOINT'tir — döngüyü FC kapatır; bize düşen, MPPI'nin
+        # kendi modelindeki NİYETİNİ doğru çevirmek. Denge formülü tam odur.
+        # ⚠ Tesadüf notu: log 58 gerçek teknenin modelden ~1,9× fazla döndüğünü
+        # söylüyor; eski 2,0× hata bunu kısmen sönümlüyordu. Yani sahada fark
+        # küçük görünebilir — ama iki hatanın birbirini götürmesine güvenilmez.
         p = self._pipe._dyn.p
         twist = Twist()
         twist.linear.x = float((u[0] + u[1]) / max(1e-6, abs(p.Xu)))
-        twist.angular.z = float((u[1] - u[0]) / max(1e-6, p.inertia_z))
+        twist.angular.z = float(
+            (u[1] - u[0]) * (p.thruster_spacing / 2.0) / max(1e-6, abs(p.Nr))
+        )
         self._pub_cmd_vel.publish(twist)
 
     def _safe_stop(self) -> None:
