@@ -381,7 +381,30 @@ class FSMNode(Node):
             self._emit_parkur_transition()
 
     def _on_gate_passed(self, msg: Bool) -> None:
-        """Perception duba ikilisi geçiş tespiti → PARKUR2→PARKUR3 tetiği."""
+        """Perception duba ikilisi geçiş tespiti → PARKUR2→PARKUR3 tetiği.
+
+        🔴 **AÇIK TUZAK — bir yayıncı eklenmeden ÖNCE çözülmeli.**
+        Burası gelen HERHANGİ bir `True`'yu "Parkur-2'nin SON ikilisi geçildi"
+        sayıp `MissionFSM`'i doğrudan PARKUR3'e (kamikaze) atar → **ilk kapıda**
+        Parkur-2 yarıda kesilir; md 5.5.2.4'ün *"en az iki duba ikilisi"* şartı
+        sağlanmaz ve md 657 gereği Parkur-3'ün **145 puanı hiç açılmaz**.
+
+        ⚠ Bugün **canlı bir arıza DEĞİL**: `/perception/gate_passed`'i üreten
+        gerçek bir yayıncı yok — algı katmanı bunu tam bu yüzden bilerek kapalı
+        tutuyor (`GATE_PASSED_YAYINLA=False`) ve `yarisma_simulasyonu.py`
+        sahtedir. Ama "yayıncıyı açalım" diyen ilk kişi Parkur-2'yi kırar.
+        `GateFollower.passed_gate_count` (B3) bağlanmadan önce sıra bunda.
+
+        İki yol var, seçim yapılmadı:
+          **A)** Tetiği bırak ama **şartname sayısını** şart koş: geçiş ancak
+             sayaç ≥ 2 iken kabul edilsin. Basit; ama P3'ü kendi kapı
+             sayacımıza bağlar → algı zinciri suda doğrulanmamışken (B0 açık,
+             YOLO modeli yok) tek bir yanlış negatif 145 puanı götürür.
+          **B)** Geçişi **waypoint ilerlemesinden** sür (§14.8: *"P2→P3 = son P2
+             noktası VE büyük duba görüldü"*), sayacı yalnız **kanıt/telemetri**
+             olarak kullan. Şartnameye daha yakın; `ParkurTransitionLogic`
+             zaten waypoint-index tabanlı, yani altyapı var.
+        """
         if msg.data:
             self._obs.last_gate_passed_p2 = True
 

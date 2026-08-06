@@ -55,6 +55,22 @@ BUOY_RADIUS_M = 0.15
 # Adım gövde genişliğinden türer, bu yalnız üst sınır.
 _AIM_MAX_ADIM = 64
 
+# B5 — kilitlenmeden ÖNCE aynı kapının kaç tick üst üste görülmesi gerektiği.
+#
+# 🔑 **Neden 2, ve neden bu bir "ayar" değil:** 2, "anlık" ile "kalıcı" arasındaki
+# EN KÜÇÜK ayrımdır — bir kez görülen şey tek karelik olabilir, iki kez görülen
+# olamaz. 3/5/10 seçmek ise tahmin olurdu (modülün tasarım kuralı: tahmine dayalı
+# sayı yok). Bu yüzden sayı, gecikmeyi de en aza indiren kategorik alt sınırda
+# bırakıldı: 20 Hz'lik bir kontrol çevriminde bedeli **50 ms**.
+#
+# 🔴 **Neden gerekli:** kilitlenme tek karelik bir yanlış tespiti KALICI hâle
+# getiriyordu. `update()` kilitli kapıyı oklüzyona karşı korur (taze algı
+# görmüyorsa eskisini saklar) — bu doğru bir davranıştır, ama onaysız kilitle
+# birleşince bir karelik hayalet kapı, aracın onun düzlemini fiilen geçmesine
+# kadar hedef olarak KALIYORDU. Onay kapısı bu iki doğru davranışın kesişimindeki
+# arızayı kapatır. (Kilitlendikten sonraki oklüzyon koruması aynen sürer.)
+ONAY_TICK = 2
+
 
 @dataclass(frozen=True)
 class GateFollowerConfig:
@@ -242,6 +258,10 @@ class GateDiagnostics:
     # ağzında bir şey var" demektir; operatör buna bakarak duba mı hayalet mi
     # ayırt eder.
     aim_kaymasi_m: float = 0.0
+    # B5 onay sayacı: aday kapı üst üste kaç tick görüldü (0 → aday yok).
+    # `ONAY_TICK`'e ulaşmadan kilitlenilmez; bu arada hedef ham GN'dir.
+    # Sahada "kapıyı görüyor ama kilitlenmiyor" hâlini ayırt etmeye yarar.
+    aday_onay_sayaci: int = 0
 
     def __post_init__(self) -> None:
         if self.reddedilen_genislik is None:
@@ -258,16 +278,22 @@ class GateResult:
 
 
 def _forward_left_axes(
-    vehicle: Point, coarse_target: Point
+    vehicle: Point, hedef: Point
 ) -> Optional[Tuple[float, float, float, float]]:
-    """Araçtan ham GN'ye "ileri" birim vektörü + "sol" dik birim vektörü.
+    """Araçtan `hedef`e "ileri" birim vektörü + "sol" dik birim vektörü.
 
-    Kurs yönü = araçtan görev noktasına doğru (aracın anlık heading'i değil —
-    GN kursun gittiği yönü verir, momentary heading sapmalarına dayanıklı).
-    Araç GN'nin üstündeyse (yön tanımsız) None döner.
+    İki ayrı yerde kullanılır ve **hedefi bilerek farklıdır**:
+      · `hedef = ham GN` → **kurs ekseni**. Yalnız (1) dubanın önümüzde olup
+        olmadığı kaba süzgeci ve (2) eşitlikte sıralama için. Aracın anlık
+        heading'i değil GN kullanılır: kursun gittiği yönü verir ve momentary
+        heading sapmalarına dayanıklıdır.
+      · `hedef = çiftin orta noktası` → **radyal çerçeve**. Bir çiftin "kapı mı
+        yoksa ardışık kapıların dubaları mı" testi bunda yapılır; böylece test
+        GN'nin nerede olduğundan TAMAMEN bağımsızdır (bkz. `select_gate` (b)).
+    Araç hedefin üstündeyse (yön tanımsız) None döner.
     """
-    dx = coarse_target[0] - vehicle[0]
-    dy = coarse_target[1] - vehicle[1]
+    dx = hedef[0] - vehicle[0]
+    dy = hedef[1] - vehicle[1]
     norm = math.hypot(dx, dy)
     if norm < 1e-6:
         return None
@@ -400,13 +426,32 @@ def select_gate(
          katmanı belirler).
       3. Çiftleri değerlendir: (a) merkez mesafesi ≥ `min_passable_width`
          (= gövde + 2r, gövde fiilen sığıyor mu) ve (b) `|Δileri| < |Δyanal|`
-         (kursa dik mi, yani kapı mı yoksa ardışık kapıların dubaları mı).
-      4. Geçerli çiftlerden orta noktası EN ÖNDE (en yakın) olanı seç; eşitlikte
-         orta noktası kurs çizgisine en yakın olan (küçük |lateral|).
+         — **çiftin KENDİ radyal çerçevesinde** (araç → o çiftin orta noktası).
+      4. Geçerli çiftlerden orta noktası EN YAKIN olanı seç; eşitlikte orta
+         noktası kurs çizgisine en yakın olan (küçük |lateral|).
       5. Kazanan kapı için `aim_point` ile engellerden en açık nişanı hesapla.
 
+    🔑 **(b) neden ÇİFTİN KENDİ çerçevesinde ölçülür (seçim ekseni kalıntısı,
+    2026-08-06).** Test eskiden kurs ekseninde (araç→GN) yapılıyordu; oysa
+    şartname *"görev noktası doğrudan iki kenar dubasının arasında bir nokta
+    OLMAYABİLİR"* diyor. GN yana kaçıkken kurs ekseni dönüyor, kapı kirişi o
+    eksene göre "dik" olmaktan çıkıyor ve **gerçek bir kapı sessizce
+    reddediliyordu** (ölçülen kırılma noktası: GN yönü kapı yönünden **45°**
+    saptığında). Araç→orta-nokta ekseni ise kapının kendi geometrisinden gelir:
+    "bu çift bakış hattıma DİK mi (kapı) yoksa BOYUNCA mı dizili (ardışık
+    kapılar)" — GN'nin nerede olduğu sonucu değiştirmez. Ayrım noktası yine tam
+    45°, yine ölçek-bağımsız; yalnız ölçüldüğü çerçeve doğrusuna taşındı.
+
+    ⚠ **Kalan GN bağımlılığı bilinçli:** (2)'deki "önümüzde mi" süzgeci ve
+    (4)'teki eşitlik bozucu hâlâ kurs eksenini kullanır. Bunlar kaba: bir duba
+    ancak GN yönüne göre **neredeyse tam kenarda/arkada** kalırsa elenir
+    (10 m'deki bir duba için ~87°). Yani sessiz-ret penceresi 45°'den ~87°'ye
+    daraldı. Tamamen kaldırmak "önde" kavramını gerektirir; onsuz araç geçtiği
+    kapıya geri dönebilir. Aracın heading'i de çözmez: kapı seçilmediği için
+    araç zaten GN'ye doğru yönelmiş olur (aynı yön, aynı sonuç).
+
     Dönüş: Gate ya da geçerli kapı yoksa None. Kenar dubaları frame'i = girdi
-    frame'i (dünya ENU); left/right kursa göre etiketlenir (+lateral = sol).
+    frame'i (dünya ENU); left/right yaklaşma yönüne göre etiketlenir.
     """
     if diag is not None:
         diag.n_edge_buoys = len(edge_buoys)
@@ -436,12 +481,12 @@ def select_gate(
     if len(projected) < 2:
         return None
 
-    best: Optional[Tuple[float, float, Gate]] = None   # (mid_fwd, |mid_lat|, Gate)
+    best: Optional[Tuple[float, float, Gate]] = None   # (menzil, |mid_lat|, Gate)
     n = len(projected)
     for i in range(n):
-        pi, fi, li = projected[i]
+        pi, _fi, li = projected[i]
         for j in range(i + 1, n):
-            pj, fj, lj = projected[j]
+            pj, _fj, lj = projected[j]
             if diag is not None:
                 diag.n_pairs_checked += 1
             sep = math.hypot(pi[0] - pj[0], pi[1] - pj[1])
@@ -454,24 +499,37 @@ def select_gate(
                 if diag is not None:
                     diag.reddedilen_genislik.append(sep)
                 continue
-            # (b) KURSA DİK Mİ — bir kapı kursa dik duran çifttir; ardışık
-            # kapıların dubaları ise kurs boyunca dizilir. |Δileri| < |Δyanal|
-            # tam olarak "paralel olmaktan çok dike yakın" demek (ayrım noktası
-            # 45°: ayarlanan eşik değil, iki hâl arasındaki geometrik sınır).
-            # Ölçek-bağımsız → kapı genişliğini bilmeyi GEREKTİRMEZ.
-            if abs(fi - fj) >= abs(li - lj):
+            midpoint = (0.5 * (pi[0] + pj[0]), 0.5 * (pi[1] + pj[1]))
+            # (b) BAKIŞ HATTINA DİK Mİ — bir kapı, ona bakan hatta dik duran
+            # çifttir; ardışık kapıların dubaları ise o hat BOYUNCA dizilir.
+            # |Δileri| < |Δyanal| tam olarak "paralel olmaktan çok dike yakın"
+            # demek (ayrım noktası 45°: ayarlanan eşik değil, iki hâl
+            # arasındaki geometrik sınır). Ölçek-bağımsız → kapı genişliğini
+            # bilmeyi GEREKTİRMEZ. Çerçeve ÇİFTİN KENDİSİNDEN gelir (araç →
+            # o çiftin orta noktası), kurs ekseninden DEĞİL: GN yana kaçıkken
+            # gerçek kapının sessizce reddedilmesi böyle kapanır (docstring).
+            pair_axes = _forward_left_axes(vehicle, midpoint)
+            if pair_axes is None:
+                continue                       # kapı tam aracın üstünde: dejenere
+            pfx, pfy, plx, ply = pair_axes
+            ddx, ddy = pi[0] - pj[0], pi[1] - pj[1]
+            d_fwd = ddx * pfx + ddy * pfy
+            d_lat = ddx * plx + ddy * ply
+            if abs(d_fwd) >= abs(d_lat):
                 if diag is not None:
                     diag.reddedilen_derinlik += 1
                 continue
-            mid_fwd = 0.5 * (fi + fj)
-            mid_lat = 0.5 * (li + lj)
-            # +lateral = sol; büyük lateral olan SOL dubadır.
-            left, right = (pi, pj) if li >= lj else (pj, pi)
-            midpoint = (0.5 * (pi[0] + pj[0]), 0.5 * (pi[1] + pj[1]))
+            # +lateral = sol; Δyanal'ın işareti hangi dubanın solda olduğunu
+            # doğrudan verir (yaklaşma yönüne göre, kurs eksenine göre değil).
+            left, right = (pi, pj) if d_lat >= 0.0 else (pj, pi)
             gate = Gate(left=left, right=right, midpoint=midpoint)
-            key = (mid_fwd, abs(mid_lat))
+            # Sıralama: birincil ölçüt EN YAKIN kapı (menzil — eksen-bağımsız),
+            # eşitlikte kurs çizgisine en yakın olan ("yolumun üstündeki").
+            menzil = math.hypot(midpoint[0] - vx, midpoint[1] - vy)
+            mid_lat = 0.5 * (li + lj)
+            key = (menzil, abs(mid_lat))
             if best is None or key < (best[0], best[1]):
-                best = (mid_fwd, abs(mid_lat), gate)
+                best = (menzil, abs(mid_lat), gate)
 
     if best is None:
         return None
@@ -485,12 +543,18 @@ def select_gate(
     circles: List[Circle] = [(bx, by, BUOY_RADIUS_M) for bx, by in edge_buoys]
     circles.extend(obstacles)
     aim = aim_point(gate.left, gate.right, circles, cfg)
-    # Kapının KENDİ ileri normali: kirişe dik iki adaydan gidiş yönüyle aynı
+    # Kapının KENDİ ileri normali: kirişe dik iki adaydan YAKLAŞMA yönüyle aynı
     # tarafta olanı. İşaret BİR KEZ burada belirlenir; sonrasında "geçildi"
     # testi kurstan da GN'nin yerinden de bağımsızdır (B4/B6).
-    # Adayın işareti kesin: çift (b) testini geçtiği için kiriş kursa
+    # İşaret kaynağı araç→orta nokta (GN değil): kapıya fiilen hangi taraftan
+    # yaklaştığımız budur, ve (b) testiyle aynı çerçeve olduğu için tutarlı.
+    # Adayın işareti kesin: çift (b) testini geçtiği için kiriş bakış hattına
     # PARALEL olmaktan çok DİK — yani n·f sıfıra yakın olamaz.
-    normal = _gate_normal(gate.left, gate.right, (fx, fy))
+    yaklasma = _forward_left_axes(vehicle, gate.midpoint)
+    normal = (
+        None if yaklasma is None
+        else _gate_normal(gate.left, gate.right, (yaklasma[0], yaklasma[1]))
+    )
     gate = Gate(
         left=gate.left, right=gate.right, midpoint=gate.midpoint,
         aim=aim, normal=normal,
@@ -510,13 +574,25 @@ class GateFollower:
     kapıya KİLİTLENİR, taze algıyla günceller, ancak orta noktasını GEÇİNCE
     serbest bırakıp sonraki kapıyı seçer. Kapı hiç yoksa ham GN'ye düşer.
 
-    Durum minimaldir (tek bir kilitli kapı); MPPI'nin warm-start'ı + FSM
+    **B5 — kilitlenmeden önce onay (2026-08-06):** kilitlenme, aynı kapı
+    `ONAY_TICK` kez üst üste görülene kadar ERTELENİR; o ana kadar hedef ham
+    GN'dir (kapısız davranışın birebir aynısı). Sebep: oklüzyon koruması ile
+    onaysız kilit birleşince **tek karelik bir yanlış tespit kalıcı hedef**
+    oluyordu (bkz. `ONAY_TICK`). Kilitlendikten sonraki koruma değişmedi.
+
+    Durum minimaldir (bir kilitli kapı + bir aday); MPPI'nin warm-start'ı + FSM
     güvenlik çatısı zaten üstte — burada aşırı mühendislik yok.
     """
 
     def __init__(self, cfg: Optional[GateFollowerConfig] = None) -> None:
         self._cfg = cfg or GateFollowerConfig()
         self._committed: Optional[Gate] = None
+        # B5 — kilitlenme ÖNCESİ onay penceresi: aday kapı + üst üste görülme
+        # sayısı. `ONAY_TICK`'e ulaşmadan kilitlenilmez (bkz. sabit).
+        self._aday: Optional[Gate] = None
+        self._aday_sayaci: int = 0
+        # Onayı en son ilerleten algı karesinin kimliği (bkz. update/gozlem_no).
+        self._son_onay_gozlemi: Optional[int] = None
         # Son update()'in teşhis sayaçları — node bunu loglar (sessiz ret kapanı).
         self.last_diagnostics = GateDiagnostics()
         # Şartname G1/G2 = "FARKLI karşılıklı kenar dubaları arasından geçiş
@@ -531,6 +607,11 @@ class GateFollower:
         sıfırlanmaz. Yeniden başlama için `reset_passed_gates()` kullan.
         """
         self._committed = None
+        # Onay penceresi de sıfırlanır: parkur değişince yarım kalmış bir aday
+        # yeni parkurun ilk kapısıymış gibi sayılmamalı.
+        self._aday = None
+        self._aday_sayaci = 0
+        self._son_onay_gozlemi = None
 
     def reset_passed_gates(self) -> None:
         """Geçiş sayacını sıfırla — YALNIZ yeniden başlamada.
@@ -571,11 +652,22 @@ class GateFollower:
         coarse_target: Point,
         edge_buoys: Sequence[Point],
         obstacles: Sequence[Circle] = (),
+        gozlem_no: Optional[int] = None,
     ) -> GateResult:
         """Bir kontrol tick'i: rafine hedefi (kapı nişanı ya da ham GN) üret.
 
         `obstacles`: dünya ENU dairesel engeller (sarı duba, UNKNOWN küme…).
         Verilmezse nişan geometrik ortaya düşer — eski davranış birebir.
+
+        `gozlem_no`: **algı karesinin kimliği** — B5 onay sayacı yalnız bu
+        değer DEĞİŞTİĞİNDE ilerler.
+        🔑 **Neden gerekli:** kontrol tick'i ile algı karesi aynı hızda DEĞİL.
+        `planning_node` hedefi 5 Hz tazeler; algı ise 10 Hz de olabilir, kapalı
+        alanda ölçüldüğü gibi ~1 Hz de (§11.3, kümeleme 1-3,3 s/kare). Sayaç
+        çağrı başına ilerleseydi, algı yavaşladığında AYNI karenin iki kez
+        sayılmasıyla onay boşa çıkardı — yani B5 tam da en çok gerektiği
+        (algının zorlandığı) durumda susardı. `None` verilirse her çağrı ayrı
+        gözlem sayılır (çekirdeği doğrudan çağıran testler/simülasyon için).
         """
         self.last_diagnostics = GateDiagnostics()
         fresh = select_gate(
@@ -625,13 +717,38 @@ class GateFollower:
             # Geçildi → serbest bırak, aşağıda yeniden seç.
             self._committed = None
 
-        # Kilitli kapı yok: taze kapı varsa kilitlen, yoksa ham GN'ye düş.
-        if fresh is not None:
-            self._committed = fresh
-            return GateResult(
-                target=fresh.drive_target, gate=fresh, used_fallback=False
-            )
-        return GateResult(target=coarse_target, gate=None, used_fallback=True)
+        # Kilitli kapı yok. B5 ONAY KAPISI: aynı kapı `ONAY_TICK` kez üst üste
+        # görülmeden kilitlenilmez; o ana kadar hedef ham GN'dir (kapısız
+        # davranışın birebir aynısı, yani onay beklemek hiçbir şey bozmaz).
+        if fresh is None:
+            self._aday = None
+            self._aday_sayaci = 0
+            return GateResult(target=coarse_target, gate=None, used_fallback=True)
+
+        # Sayaç yalnız YENİ bir algı karesinde ilerler (bkz. `gozlem_no`);
+        # aynı kareden gelen ikinci bir kontrol tick'i onayı ilerletemez.
+        if gozlem_no is None or gozlem_no != self._son_onay_gozlemi:
+            # "Aynı aday mı" ölçütü kilitli kapıdaki drift testiyle AYNI:
+            # kapının kendi yarı genişliği (öz-ölçekli, dış eşik gerekmez).
+            if self._aday is not None and _dist(
+                fresh.midpoint, self._aday.midpoint
+            ) <= self._aday.width / 2.0:
+                self._aday_sayaci += 1
+            else:
+                self._aday_sayaci = 1
+            self._aday = fresh          # aday hep taze geometriyle taşınır
+            self._son_onay_gozlemi = gozlem_no
+        self.last_diagnostics.aday_onay_sayaci = self._aday_sayaci
+
+        if self._aday_sayaci < ONAY_TICK:
+            return GateResult(target=coarse_target, gate=None, used_fallback=True)
+
+        self._committed = fresh
+        self._aday = None
+        self._aday_sayaci = 0
+        return GateResult(
+            target=fresh.drive_target, gate=fresh, used_fallback=False
+        )
 
 
 def _dist(a: Point, b: Point) -> float:

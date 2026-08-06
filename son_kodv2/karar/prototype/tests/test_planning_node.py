@@ -27,6 +27,8 @@ pn = pytest.importorskip(
     reason="girdap_decision source'lanmamış (ros2_ws/install/setup.bash)",
 )
 
+from prototype.mission.gate_follower import ONAY_TICK       # noqa: E402
+
 
 @pytest.fixture(scope="module")
 def ros_context():                                      # noqa: ANN201
@@ -444,19 +446,52 @@ def test_kapi_ortasi_ham_gorev_noktasini_ezer(ros_context) -> None:  # noqa: ANN
     try:
         node._on_odom(_odom_poz(0.0, 0.0, 0.0))
         # Kapı x=10'da, ortası y=0. Ham GN ise y=+3'te (kapı ortasında DEĞİL).
-        node._on_classified(_classified([
-            (10.0, +2.0, 0.15, 0),
-            (10.0, -2.0, 0.15, 0),
-        ]))
+        dubalar = [(10.0, +2.0, 0.15, 0), (10.0, -2.0, 0.15, 0)]
         target = PoseStamped()
         target.pose.position.x = 20.0
         target.pose.position.y = 3.0
+        # B5: kapı, `ONAY_TICK` AYRI ALGI KARESİNDE görülmeden kilitlenmez.
+        # Onay boyunca referans ham GN'de kalır (kapısız davranışla birebir).
+        for _ in range(ONAY_TICK - 1):
+            node._on_classified(_classified(dubalar))    # yeni algı karesi
+            node._on_target(target)
+            assert node._pipe._ref_path[-1][1] == pytest.approx(3.0, abs=1e-6)
+        node._on_classified(_classified(dubalar))
         node._on_target(target)
         # Referansın son noktası kapı ortası (10, 0) olmalı — ham GN (20, 3) değil.
         ref = node._pipe._ref_path
         assert ref is not None
         assert ref[-1][0] == pytest.approx(10.0, abs=1e-6)
         assert ref[-1][1] == pytest.approx(0.0, abs=1e-6)
+    finally:
+        node.destroy_node()
+
+
+def test_B5_ayni_algi_karesinde_tekrar_hedef_ONAYI_ILERLETMEZ(ros_context) -> None:  # noqa: ANN001
+    """🔑 Kontrol tick'i ≠ algı karesi — B5'in gerçekten çalıştığı yer burası.
+
+    `current_target` 5 Hz akar; algı ise kapalı alanda ~1 Hz'e kadar
+    düşebiliyor (§11.3: kümeleme 1-3,3 s/kare ölçüldü). Onay ÇAĞRI başına
+    ilerleseydi aynı algı karesi defalarca sayılır ve B5 tam da algının
+    zorlandığı — yani yanlış tespitin en olası olduğu — durumda susardı.
+    Bu yüzden sayaç `gozlem_no` değişmeden ilerlemez.
+    """
+    node = pn.PlanningNode(
+        parameter_overrides=[Parameter("use_rrt", Parameter.Type.BOOL, False)]
+    )
+    try:
+        node._on_odom(_odom_poz(0.0, 0.0, 0.0))
+        node._on_classified(_classified([        # TEK algı karesi
+            (10.0, +2.0, 0.15, 0),
+            (10.0, -2.0, 0.15, 0),
+        ]))
+        target = PoseStamped()
+        target.pose.position.x = 20.0
+        target.pose.position.y = 3.0
+        for _ in range(5 * ONAY_TICK):           # ama çok sayıda hedef tick'i
+            node._on_target(target)
+        assert node._gate.committed_gate is None            # kilitlenmedi
+        assert node._pipe._ref_path[-1][1] == pytest.approx(3.0, abs=1e-6)
     finally:
         node.destroy_node()
 
@@ -515,11 +550,10 @@ def test_parkur_degisince_kilitli_kapi_birakilir(ros_context) -> None:  # noqa: 
     node = pn.PlanningNode()
     try:
         node._on_odom(_odom_poz(0.0, 0.0, 0.0))
-        node._on_classified(_classified([
-            (10.0, +2.0, 0.15, 0),
-            (10.0, -2.0, 0.15, 0),
-        ]))
-        node._refine_target((20.0, 3.0))
+        dubalar = [(10.0, +2.0, 0.15, 0), (10.0, -2.0, 0.15, 0)]
+        for _ in range(ONAY_TICK):            # B5 onay penceresi (ayrı kareler)
+            node._on_classified(_classified(dubalar))
+            node._refine_target((20.0, 3.0))
         assert node._gate.committed_gate is not None
 
         msg = String()

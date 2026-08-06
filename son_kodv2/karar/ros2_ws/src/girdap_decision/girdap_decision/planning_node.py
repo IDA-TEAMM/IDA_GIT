@@ -277,6 +277,11 @@ class PlanningNode(Node):
         self._classified_seen = False
         self._gate_log_t = 0.0
         self._last_gate_used_fallback = True
+        # Algı karesi sayacı — her `classified_obstacles` mesajında artar.
+        # `GateFollower`'ın B5 onay sayacı buna bakar: hedef 5 Hz tazelenirken
+        # algı 1 Hz'e düşebilir (§11.3 kümeleme ölçümü), o zaman AYNI kare iki
+        # kez sayılıp onay boşa çıkardı. Kimliği vermek bunu imkânsız kılar.
+        self._algi_no = 0
 
         # MAVROS mod/arm geçidi — mavros_bridge ile aynı karar çekirdeği (DRY).
         # Hedef mod (mode_name) değilse cmd_vel yayınlanmaz; armed değilse thrust
@@ -349,6 +354,12 @@ class PlanningNode(Node):
         self._pub_gate = self.create_publisher(
             PoseStamped, "/girdap/planning/gate", 10
         )
+        # ⏳ GEÇİŞ SAYACI (B3) — `GateFollower.passed_gate_count` çekirdekte
+        # HAZIR ama hâlâ hiçbir yere yayınlanmıyor: ne operatör görüyor ne de
+        # md 5.5.2.4'ün "en az 2 duba ikilisi" şartı için G1/G2 kanıtı üretiliyor.
+        # Kanalı açmak KAPI işinin dışında bırakıldı (kapsam kararı 06.08) ve
+        # fsm_node'daki PARKUR2→PARKUR3 tuzağıyla birlikte karara bağlanacak
+        # (bkz. fsm_node._on_gate_passed, A/B yolları + GIRDAP_DURUM §18/4).
 
         # --- Kontrol döngüsü ---
         rate = float(self.get_parameter("control_rate_hz").value)
@@ -497,6 +508,7 @@ class PlanningNode(Node):
         self._edge_buoys = edges
         self._obstacles_world = [(o.cx, o.cy, o.r) for o in obstacles]
         self._pipe.set_obstacles(obstacles)
+        self._algi_no += 1                # B5 onayı: yeni algı karesi geldi
 
     def _obstacles_stale(self) -> bool:
         """F-P.2: son obstacle_map `obstacle_timeout_s`'ten eski mi?
@@ -542,7 +554,8 @@ class PlanningNode(Node):
         if not self._gate_enabled or self._last_xy is None:
             return coarse
         result = self._gate.update(
-            self._last_xy, coarse, self._edge_buoys, self._obstacles_world
+            self._last_xy, coarse, self._edge_buoys, self._obstacles_world,
+            gozlem_no=self._algi_no,
         )
         # Kapı bulundu/kaybedildi geçişini bir kez logla (10 Hz'te spam yok).
         if result.used_fallback != self._last_gate_used_fallback:

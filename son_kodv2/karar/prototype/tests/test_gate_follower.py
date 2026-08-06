@@ -16,6 +16,7 @@ import math
 import pytest
 
 from prototype.mission.gate_follower import (
+    ONAY_TICK,
     Gate,
     GateDiagnostics,
     GateFollower,
@@ -30,6 +31,21 @@ _CFG = GateFollowerConfig()
 
 def _approx(a: tuple[float, float], b: tuple[float, float], tol: float = 1e-6) -> bool:
     return math.hypot(a[0] - b[0], a[1] - b[1]) <= tol
+
+
+def _kilitlen(gf, arac, gn, dubalar, engeller=()):
+    """Kapıya KİLİTLENENE kadar `update()` çağır; son sonucu döndür.
+
+    B5 (2026-08-06): kilitlenme, aynı kapı `ONAY_TICK` kez üst üste görülene
+    kadar ertelenir. Konusu onay penceresi OLMAYAN testler o pencereyi bu
+    yardımcıyla geçer — böylece onay sayısı tek yerde yaşar ve testler
+    kilitlenme sonrası davranışı ölçmeye devam eder.
+    """
+    res = None
+    for _ in range(ONAY_TICK):
+        res = gf.update(arac, gn, dubalar, engeller)
+    assert gf.committed_gate is not None, "onay penceresi geçilemedi"
+    return res
 
 
 # ------------------------------------------------------------ select_gate: temel
@@ -174,7 +190,7 @@ def test_follower_kapi_yoksa_ham_gn() -> None:
 
 def test_follower_kapi_varsa_orta_nokta() -> None:
     gf = GateFollower(_CFG)
-    res = gf.update((0.0, 0.0), (0.0, 20.0), [(-2.0, 10.0), (2.0, 10.0)])
+    res = _kilitlen(gf, (0.0, 0.0), (0.0, 20.0), [(-2.0, 10.0), (2.0, 10.0)])
     assert res.used_fallback is False
     assert _approx(res.target, (0.0, 10.0))
     assert gf.committed_gate is not None
@@ -185,7 +201,7 @@ def test_follower_kapi_varsa_orta_nokta() -> None:
 def test_follower_gecince_serbest_birakir() -> None:
     gf = GateFollower(_CFG)
     buoys = [(-2.0, 10.0), (2.0, 10.0)]
-    gf.update((0.0, 0.0), (0.0, 20.0), buoys)          # kapıya kilitlen
+    _kilitlen(gf, (0.0, 0.0), (0.0, 20.0), buoys)      # kapıya kilitlen
     assert gf.committed_gate is not None
     # Araç kapının ötesine geçti (y=10.5 > 10) → serbest bırakılmalı.
     gf.update((0.0, 10.5), (0.0, 20.0), [])            # kapı artık arkada + görünmüyor
@@ -197,7 +213,7 @@ def test_follower_okluzyonda_kapiyi_korur() -> None:
     # ve araç henüz geçmediyse hedef zıplamamalı — kilitli kapı korunur.
     gf = GateFollower(_CFG)
     buoys = [(-2.0, 10.0), (2.0, 10.0)]
-    gf.update((0.0, 0.0), (0.0, 20.0), buoys)
+    _kilitlen(gf, (0.0, 0.0), (0.0, 20.0), buoys)
     res = gf.update((0.0, 3.0), (0.0, 20.0), [])       # duba görünmüyor, henüz geçmedi
     assert res.used_fallback is False
     assert _approx(res.target, (0.0, 10.0))            # ham GN'ye düşmedi
@@ -217,7 +233,7 @@ def test_follower_taze_algiyla_drift_gunceller() -> None:
 
 def test_follower_reset_kilidi_temizler() -> None:
     gf = GateFollower(_CFG)
-    gf.update((0.0, 0.0), (0.0, 20.0), [(-2.0, 10.0), (2.0, 10.0)])
+    _kilitlen(gf, (0.0, 0.0), (0.0, 20.0), [(-2.0, 10.0), (2.0, 10.0)])
     assert gf.committed_gate is not None
     gf.reset()
     assert gf.committed_gate is None
@@ -359,14 +375,14 @@ def test_follower_engelleri_gecirir_ve_kimlik_bozulmaz() -> None:
     """
     gf = GateFollower(_CFG)
     buoys = [(-2.0, 10.0), (2.0, 10.0)]
-    res = gf.update((0.0, 0.0), (0.0, 20.0), buoys, [(-1.0, 10.0, 0.3)])
+    res = _kilitlen(gf, (0.0, 0.0), (0.0, 20.0), buoys, [(-1.0, 10.0, 0.3)])
     assert res.used_fallback is False
     assert res.gate is not None
     assert res.target[0] > 0.3                        # sürülen nokta kaydı
     assert _approx(res.gate.midpoint, (0.0, 10.0))    # kimlik sabit
     # Engel listesi verilmezse eski davranış birebir geri gelir.
     gf2 = GateFollower(_CFG)
-    res2 = gf2.update((0.0, 0.0), (0.0, 20.0), buoys)
+    res2 = _kilitlen(gf2, (0.0, 0.0), (0.0, 20.0), buoys)
     assert _approx(res2.target, (0.0, 10.0))
 
 
@@ -402,7 +418,7 @@ def test_GN_YANA_KACIKKEN_kilit_COZULUR() -> None:
     gn = (8.0, 9.0)                        # GN kapının 8 m sağında, 1 m berisinde
     buoys = [(-2.0, 10.0), (2.0, 10.0)]
     gf = GateFollower(_CFG)
-    gf.update((0.0, 0.0), gn, buoys)
+    _kilitlen(gf, (0.0, 0.0), gn, buoys)
     assert gf.committed_gate is not None
 
     arac = (0.0, 11.0)                     # kapı düzleminin 1 m ÖTESİNDE
@@ -423,7 +439,7 @@ def test_yandan_DOLASILAN_kapi_sayilmaz_ama_kilit_birakilir() -> None:
     """Düzlemi aşmak yetmez: direklerin ARASINDAN geçilmiş olmalı (G1/G2)."""
     buoys = [(-2.0, 10.0), (2.0, 10.0)]
     gf = GateFollower(_CFG)
-    gf.update((0.0, 0.0), (0.0, 20.0), buoys)
+    _kilitlen(gf, (0.0, 0.0), (0.0, 20.0), buoys)
     # Kapının 9 m sağından dolaşarak düzlemi geç (yanal 9 > yarı genişlik 2).
     gf.update((9.0, 11.0), (0.0, 20.0), [])
     assert gf.committed_gate is None            # kilit bırakıldı (arkada kaldı)
@@ -434,10 +450,10 @@ def test_ayni_kapidan_tekrar_gecis_SAYILMAZ() -> None:
     """Manevra/geri dönüş aynı kapıyı ikinci kez saydırmamalı."""
     buoys = [(-2.0, 10.0), (2.0, 10.0)]
     gf = GateFollower(_CFG)
-    gf.update((0.0, 0.0), (0.0, 20.0), buoys)
+    _kilitlen(gf, (0.0, 0.0), (0.0, 20.0), buoys)
     gf.update((0.0, 11.0), (0.0, 20.0), buoys)      # geçti → 1
     assert gf.passed_gate_count == 1
-    gf.update((0.0, 5.0), (0.0, 20.0), buoys)       # geri döndü, yeniden kilitlendi
+    _kilitlen(gf, (0.0, 5.0), (0.0, 20.0), buoys)   # geri döndü, yeniden kilitlendi
     gf.update((0.0, 11.0), (0.0, 20.0), buoys)      # tekrar geçti
     assert gf.passed_gate_count == 1                # hâlâ 1 — aynı kapı
 
@@ -447,9 +463,9 @@ def test_ardisik_IKI_kapi_ayri_sayilir() -> None:
     k1 = [(-2.0, 10.0), (2.0, 10.0)]
     k2 = [(-2.0, 25.0), (2.0, 25.0)]
     gf = GateFollower(_CFG)
-    gf.update((0.0, 0.0), (0.0, 40.0), k1)
+    _kilitlen(gf, (0.0, 0.0), (0.0, 40.0), k1)
     gf.update((0.0, 11.0), (0.0, 40.0), k1)         # 1. kapı geçildi
-    gf.update((0.0, 20.0), (0.0, 40.0), k2)         # 2. kapıya kilitlen
+    _kilitlen(gf, (0.0, 20.0), (0.0, 40.0), k2)     # 2. kapıya kilitlen
     gf.update((0.0, 26.0), (0.0, 40.0), k2)         # 2. kapı geçildi
     assert gf.passed_gate_count == 2
 
@@ -458,10 +474,119 @@ def test_yeniden_baslama_sayaci_sifirlar_reset_ETMEZ() -> None:
     """reset() kilidi temizler, sayacı DEĞİL (puan kanıtı parkur geçişinde durur)."""
     buoys = [(-2.0, 10.0), (2.0, 10.0)]
     gf = GateFollower(_CFG)
-    gf.update((0.0, 0.0), (0.0, 20.0), buoys)
+    _kilitlen(gf, (0.0, 0.0), (0.0, 20.0), buoys)
     gf.update((0.0, 11.0), (0.0, 20.0), buoys)
     assert gf.passed_gate_count == 1
     gf.reset()
     assert gf.passed_gate_count == 1                # parkur geçişi sayacı bozmaz
     gf.reset_passed_gates()                          # md 5.5.3.1 yeniden başlama
     assert gf.passed_gate_count == 0
+
+
+# --------------------------------- B5: kilitlenmeden önce onay (2026-08-06)
+
+def test_B5_tek_karelik_hayalet_kapi_KILITLENMEZ() -> None:
+    """🔴 B5'in asıl gerekçesi: bir karelik yanlış tespit KALICI hedef olmasın.
+
+    Onay kapısı yokken hayalet kapı ANINDA kilitleniyordu; sonraki tick'te algı
+    onu görmese bile **oklüzyon koruması** (kendisi doğru bir davranış) kilitli
+    kapıyı saklıyordu → araç, hiç var olmayan bir kapının düzlemini fiilen
+    geçene kadar oraya sürüyordu. İki doğru davranışın kesişimindeki arıza.
+    """
+    gf = GateFollower(_CFG)
+    hayalet = [(-2.0, 10.0), (2.0, 10.0)]
+    res = gf.update((0.0, 0.0), (0.0, 20.0), hayalet)   # tek kare göründü
+    assert gf.committed_gate is None                    # kilitlenmedi
+    assert res.used_fallback is True
+    assert _approx(res.target, (0.0, 20.0))             # hedef hâlâ ham GN
+    res = gf.update((0.0, 1.0), (0.0, 20.0), [])        # hayalet kayboldu
+    assert gf.committed_gate is None                    # hiç kilitlenmedi
+    assert res.used_fallback is True
+
+
+def test_B5_kapi_ONAY_TICK_kez_gorulunce_kilitlenir() -> None:
+    """Kalıcı kapı tam `ONAY_TICK`'inci tick'te kilitlenir — ne erken ne geç."""
+    gf = GateFollower(_CFG)
+    buoys = [(-2.0, 10.0), (2.0, 10.0)]
+    for tick in range(1, ONAY_TICK):
+        gf.update((0.0, 0.0), (0.0, 20.0), buoys)
+        assert gf.committed_gate is None, f"{tick}. tick'te ERKEN kilitlendi"
+    res = gf.update((0.0, 0.0), (0.0, 20.0), buoys)     # ONAY_TICK'inci tick
+    assert gf.committed_gate is not None
+    assert res.used_fallback is False
+    assert _approx(res.target, (0.0, 10.0))
+
+
+def test_B5_aday_degisirse_sayac_SIFIRLANIR() -> None:
+    """Dönüşümlü iki farklı kapı: hiçbiri ÜST ÜSTE onaylanmaz → kilit yok.
+
+    Onay 'toplam kaç kez görüldü' değil 'kaç kez ÜST ÜSTE aynı kapı görüldü'
+    olmalı; yoksa iki ayrı titrek tespit birbirini onaylardı.
+    """
+    gf = GateFollower(_CFG)
+    a = [(-2.0, 10.0), (2.0, 10.0)]
+    b = [(-2.0, 30.0), (2.0, 30.0)]        # 20 m ötede: yarı genişlikten uzak
+    for _ in range(3 * ONAY_TICK):
+        gf.update((0.0, 0.0), (0.0, 40.0), a)
+        gf.update((0.0, 0.0), (0.0, 40.0), b)
+    assert gf.committed_gate is None
+
+
+def test_B5_teshis_onay_sayacini_raporlar() -> None:
+    """Node 'kapıyı görüyor ama kilitlenmiyor' hâlini bu alandan ayırt eder."""
+    gf = GateFollower(_CFG)
+    gf.update((0.0, 0.0), (0.0, 20.0), [(-2.0, 10.0), (2.0, 10.0)])
+    assert gf.last_diagnostics.aday_onay_sayaci == 1
+
+
+def test_B5_reset_aday_penceresini_de_temizler() -> None:
+    """Parkur geçişinde yarım kalmış aday yeni parkura TAŞINMAMALI."""
+    gf = GateFollower(_CFG)
+    buoys = [(-2.0, 10.0), (2.0, 10.0)]
+    gf.update((0.0, 0.0), (0.0, 20.0), buoys)          # aday sayacı 1
+    gf.reset()
+    gf.update((0.0, 0.0), (0.0, 20.0), buoys)          # yeniden 1'den başlar
+    assert gf.committed_gate is None
+    assert gf.last_diagnostics.aday_onay_sayaci == 1
+
+
+# ------------------------- seçim ekseni: çiftin kendi çerçevesi (2026-08-06)
+
+def test_GN_YANA_KACIKKEN_gercek_kapi_REDDEDILMEZ() -> None:
+    """🔴 Seçim ekseni kalıntısı — kurs ekseninde ölçülen 45° sınırının kırdığı yer.
+
+    Şartname md 5.5.2.2: *"görev noktası doğrudan iki kenar dubasının arasında
+    bir nokta OLMAYABİLİR."* GN yana kaçınca kurs ekseni döner ve gerçek kapı
+    "kursa dik değil" diye **sessizce** reddedilirdi (hata basılmaz, araç ham
+    GN'ye gider, geçiş puanı kaybedilir). Yeni ölçüm çerçevesi çiftin kendi
+    bakış hattıdır → GN'nin nerede olduğu sonucu değiştirmez.
+    """
+    arac, gn = (0.0, 0.0), (12.0, 10.0)      # GN, kapı yönünden ~50° sapmış
+    buoys = [(-2.0, 10.0), (2.0, 10.0)]      # gerçek kapı, orta (0,10)
+
+    # Önce ESKİ ölçütün bu geometride elediğini göster (kurs ekseninde):
+    n = math.hypot(gn[0], gn[1])
+    fx, fy = gn[0] / n, gn[1] / n
+    lx, ly = -fy, fx
+    dx, dy = buoys[0][0] - buoys[1][0], buoys[0][1] - buoys[1][1]
+    assert abs(dx * fx + dy * fy) >= abs(dx * lx + dy * ly), (
+        "eski kurs-ekseni ölçütünün kırıldığı durum kurulamadı"
+    )
+
+    gate = select_gate(arac, gn, buoys, _CFG)
+    assert gate is not None                              # artık REDDEDİLMİYOR
+    assert _approx(gate.midpoint, (0.0, 10.0))
+
+
+def test_GN_YANDAYKEN_de_ardisik_kapi_dubalari_HALA_ELENIR() -> None:
+    """Yeni çerçeve korumayı ZAYIFLATMADI: aynı taraftaki iki duba eşleşmemeli.
+
+    A-sol + B-sol tuzağı (tek dubası görünmeyen kapının komşusuyla eşleşmesi)
+    GN yana kaçıkken de elenmeli — yoksa orta nokta yana kayar ve tekne A-sol
+    dubasının üstüne sürer.
+    """
+    diag = GateDiagnostics()
+    assert select_gate(
+        (0.0, 0.0), (12.0, 10.0), [(-2.0, 10.0), (-2.0, 20.0)], _CFG, diag
+    ) is None
+    assert diag.reddedilen_derinlik == 1                 # bakış hattı BOYUNCA
