@@ -1,0 +1,28 @@
+# Girdap İDA — MASA TESTİ: geminin TAM DOĞRULTUSUNDA tek nokta (07.08.2026).
+#
+# Amaç: "Parkur-1'deki gibi bir nokta koy, o noktaya gitmeye çalışacak mı?"
+# sorusunu gerçek FC + gerçek GPS + gerçek algı ile masada sınamak.
+#
+# ⚠ SAHADA KULLANMA — koordinatlar 07.08.2026'da masada ölçülen duruşa göre
+# üretildi, başka bir yerde/açıda anlamsızdır.
+#
+# FC'den okunan gerçek duruş (pymavlink, /dev/ttyACM0 @115200, 210 örnek):
+#     yaw   = -88.02°  (VFR_HUD pusula 271-272° = batı), R = 1.0000 → kararlı
+#     konum = 40.7159762, 31.5247564   (DGPS · 21 uydu · HDOP 0.59)
+#     roll  = -25.89°, pitch = +5.82°  (tekne masada yatık — akılda tut)
+#
+# 20 m ileri = kuzey +0.69 m, doğu -19.99 m (düz-dikdörtgensel projeksiyon;
+# bu ölçekte hata cm mertebesinde).
+#
+# Mesafe neden 20 m: MPPI `terminal_lookahead_m` = 15 m. Hedef bunun ötesinde
+# olmalı ki terminal terim doygun kalsın ve araç SEYİR hızı komutu üretsin —
+# 15 m'nin içinde frenleme rejimine girer ve niyet zayıf görünür.
+
+home_ref: {lat: 40.7159762, lon: 31.5247564}
+
+waypoints:
+  - {lat: 40.7159824, lon: 31.5245195, parkur: 1, name: "ILERI_20M"}
+
+arrival_radius_m: 3.0
+dwell_time_s: 1.0
+cruise_velocity_mps: 1.0
