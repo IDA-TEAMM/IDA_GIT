@@ -1,27 +1,33 @@
 # Girdap İDA — MASA TESTİ: geminin TAM DOĞRULTUSUNDA tek nokta (07.08.2026).
 #
 # Amaç: "Parkur-1'deki gibi bir nokta koy, o noktaya gitmeye çalışacak mı?"
-# sorusunu gerçek FC + gerçek GPS + gerçek algı ile masada sınamak.
+# sorusunu gerçek FC + gerçek GPS ile masada sınamak.
 #
 # ⚠ SAHADA KULLANMA — koordinatlar 07.08.2026'da masada ölçülen duruşa göre
 # üretildi, başka bir yerde/açıda anlamsızdır.
 #
-# FC'den okunan gerçek duruş (pymavlink, /dev/ttyACM0 @115200, 210 örnek):
-#     yaw   = -88.02°  (VFR_HUD pusula 271-272° = batı), R = 1.0000 → kararlı
-#     konum = 40.7159762, 31.5247564   (DGPS · 21 uydu · HDOP 0.59)
-#     roll  = -25.89°, pitch = +5.82°  (tekne masada yatık — akılda tut)
+# 2. koşum (15 m, HAYALET ENGELSİZ). 141 GPS örneğinin ortalaması:
+#     ψ_ENU = +177.92°  →  yaw_NED = -87.92°  (batı)
+#     konum = 40.7159723, 31.5248170
+#     15 m ileri = kuzey +0.54 m, doğu -14.99 m
 #
-# 20 m ileri = kuzey +0.69 m, doğu -19.99 m (düz-dikdörtgensel projeksiyon;
-# bu ölçekte hata cm mertebesinde).
+# Neden 1. koşumdaki 20 m değil de 15 m: kaptan isteği. Not — MPPI
+# `terminal_lookahead_m` = 15 m, yani hedef tam çapa mesafesinde. Bu, aracın
+# frenleme rejimine girme sınırıdır; 20 m'de terminal terim doygundu ve seyir
+# hızı komutu daha net görünüyordu. 15 m'de ileri komutun bir miktar daha
+# düşük çıkması BEKLENEN davranıştır, arıza değildir.
 #
-# Mesafe neden 20 m: MPPI `terminal_lookahead_m` = 15 m. Hedef bunun ötesinde
-# olmalı ki terminal terim doygun kalsın ve araç SEYİR hızı komutu üretsin —
-# 15 m'nin içinde frenleme rejimine girer ve niyet zayıf görünür.
+# ⚠ Bu koşumda algı node'ları BİLEREK durduruldu ve yerlerine BOŞ engel
+# listesi yayınlandı (scratchpad/bos_engel.py). Sebep: kapalı mekânda LiDAR
+# odanın duvarlarını 117 "engel" olarak görüyordu ve PARKUR1 profili
+# w_obstacle=50 ile onlardan kaçmaya çalışıyordu — direksiyon salınımının
+# masaya özgü kaynağı buydu. Suda kenar dubaları zaten engel torbasından
+# çıkarılıyor (class_id=0 → kapı takibi), yani torba doğal olarak boş.
 
-home_ref: {lat: 40.7159762, lon: 31.5247564}
+home_ref: {lat: 40.7159896, lon: 31.5247495}
 
 waypoints:
-  - {lat: 40.7159824, lon: 31.5245195, parkur: 1, name: "ILERI_20M"}
+  - {lat: 40.7159943, lon: 31.5245719, parkur: 1, name: "ILERI_15M"}
 
 arrival_radius_m: 3.0
 dwell_time_s: 1.0
