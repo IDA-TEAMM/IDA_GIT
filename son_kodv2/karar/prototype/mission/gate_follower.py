@@ -209,6 +209,21 @@ class Gate:
             vehicle[1] - self.midpoint[1]
         ) * ny
 
+    def lateral_offset(self, vehicle: Point) -> Optional[float]:
+        """Aracın kapı ORTASINDAN kiriş boyunca yanal uzaklığı (m, işaretsiz).
+
+        Normal yoksa None. `passed_between` (puan) ve K1 "bu kapının yanından
+        mı geçtim" (geometri) testlerinin ORTAK ölçüsü.
+        """
+        if self.normal is None:
+            return None
+        nx, ny = self.normal
+        tx, ty = -ny, nx                         # kiriş boyunca birim
+        return abs(
+            (vehicle[0] - self.midpoint[0]) * tx
+            + (vehicle[1] - self.midpoint[1]) * ty
+        )
+
     def passed_between(self, vehicle: Point) -> bool:
         """Araç kapının ARASINDAN mı geçti? (düzlemi aşmak YETMEZ)
 
@@ -223,13 +238,8 @@ class Gate:
         d = self.signed_distance(vehicle)
         if d is None or d <= 0.0:
             return False
-        nx, ny = self.normal                     # type: ignore[misc]
-        tx, ty = -ny, nx                         # kiriş boyunca birim
-        yanal = abs(
-            (vehicle[0] - self.midpoint[0]) * tx
-            + (vehicle[1] - self.midpoint[1]) * ty
-        )
-        return yanal <= self.width / 2.0
+        yanal = self.lateral_offset(vehicle)
+        return yanal is not None and yanal <= self.width / 2.0
 
 
 @dataclass
@@ -252,6 +262,10 @@ class GateDiagnostics:
     # "Yan yana değil" (kursa dik değil) diye elenen çift sayısı — bunlar
     # neredeyse hep ardışık kapıların dubalarıdır, normal ve beklenen.
     reddedilen_derinlik: int = 0
+    # K1: "bu kapının düzlemini zaten geçtim" diye elenen çift sayısı. Sahada
+    # 0'dan büyük olması NORMALDİR (arkada bıraktığımız kapıları görmeye devam
+    # ederiz); asıl anlamı, K1 salınımının kapalı olduğunun kanıtı olmasıdır.
+    reddedilen_gecilmis: int = 0
     secilen_genislik: Optional[float] = None
     # Nişan noktasının geometrik ortadan kayması (m). 0.0 → engel kirişe
     # dokunmuyor, tam ortadan geçiliyor. Büyük değer sahada "kapının içinde/
@@ -416,6 +430,7 @@ def select_gate(
     cfg: GateFollowerConfig,
     diag: Optional[GateDiagnostics] = None,
     obstacles: Sequence[Circle] = (),
+    gecilmis: Sequence[Circle] = (),
 ) -> Optional[Gate]:
     """Öndeki en yakın geçerli kapıyı seç (durumsuz, saf fonksiyon).
 
@@ -450,8 +465,32 @@ def select_gate(
     kapıya geri dönebilir. Aracın heading'i de çözmez: kapı seçilmediği için
     araç zaten GN'ye doğru yönelmiş olur (aynı yön, aynı sonuç).
 
+    🔴 **K1 — `gecilmis` parametresi tam O "önde" kavramıdır (2026-08-06).**
+    Yukarıdaki *"araç geçtiği kapıya geri dönebilir"* riski kapalı döngüde
+    ÖLÇÜLDÜ ve sonsuz salınım çıktı (GIRDAP_DURUM §0.9b): P1'de engel bile
+    yokken araç 199 s boyunca kapı-1 ↔ kapı-2 arasında gidip geldi, P2'de
+    300 s'de 4 waypoint'in 1'ini bitirdi (88 m GERİ gidiş). Zincir:
+      ① araç kapıya **eğik** yaklaşınca (dönüş savrulması / engelden kaçış)
+         öndeki gerçek kapı (b) testine takılır — o açıdan kiriş bakış hattı
+         BOYUNCA durur, "kapı değil" sayılır;
+      ② geriye tek geçerli aday olarak ARKADAKİ kapı kalır ve kurs ekseni GN'ye
+         doğru ~90° dönmüş olduğu için "önde" görünür;
+      ③ geçilmiş kapılar hiçbir yerde elenmediği için yeniden seçilir → araç
+         geri döner → yaklaşma düzelir → ileri kapı yine geçerli olur → ...
+    Düzeltme ③'ü kapatır: **yanından geçtiğim bir kapı bir daha aday olamaz.**
+    Ayırt etme ölçüsü GEÇİLEN kapının kendi yarı genişliğidir (öz-ölçekli, dış
+    eşik yok). ①-② dokunulmadan bırakıldı: onlar sessiz ret üretir, ③ ise aracı
+    geriye sürüyordu; ③ kapalıyken ①'in sonucu "bir tick ham GN'ye düş, açı
+    düzelince kilitlen" gibi kendi kendini düzelten bir davranışa iniyor.
+    ⚠ "Geçtim" kaydı YANAL KOŞULLUdur (bkz. `GateFollower._kaydet_gecilmis`):
+    kapının bir genişliği kadar yanından geçmek gerekir. Kapı düzlemini çok
+    uzaktan kesen araç için kapı HÂLÂ ADAYDIR — yoksa henüz yaklaşmakta olduğu
+    kapıyı, düzlemine teğet geçer geçmez kalıcı olarak kaybederdi (ölçüldü).
+
     Dönüş: Gate ya da geçerli kapı yoksa None. Kenar dubaları frame'i = girdi
     frame'i (dünya ENU); left/right yaklaşma yönüne göre etiketlenir.
+    `gecilmis`: arkada bırakılmış kapılar — `(orta_x, orta_y, yarı_genişlik)`
+    üçlüleri (dünya ENU); yarıçap eşleştirme penceresidir.
     """
     if diag is not None:
         diag.n_edge_buoys = len(edge_buoys)
@@ -500,6 +539,21 @@ def select_gate(
                     diag.reddedilen_genislik.append(sep)
                 continue
             midpoint = (0.5 * (pi[0] + pj[0]), 0.5 * (pi[1] + pj[1]))
+            # (a2) K1 — DÜZLEMİ ZATEN GEÇİLMİŞ Mİ? Geçtiğimiz bir kapı bir daha
+            # hedef olamaz; bu, "önde" kavramının kurs ekseninden bağımsız tek
+            # güvenilir hâlidir (docstring K1).
+            # 🔑 Ölçü GEÇİLEN kapının kendi yarı genişliğidir, adayınki DEĞİL:
+            # aday, iki AYRI kapının dubasından kurulmuş sahte bir çift olabilir
+            # (20 m açıklık → 10 m yarıçap) ve o kadar geniş bir pencere, 10 m
+            # ötedeki geçilmiş bir kapıyla yanlış eşleşir. Ölçümde tam bu oldu:
+            # tek gerçek eşleşme yerine 3 çift eleniyordu.
+            if gecilmis and any(
+                math.hypot(midpoint[0] - gx, midpoint[1] - gy) <= g_yari
+                for gx, gy, g_yari in gecilmis
+            ):
+                if diag is not None:
+                    diag.reddedilen_gecilmis += 1
+                continue
             # (b) BAKIŞ HATTINA DİK Mİ — bir kapı, ona bakan hatta dik duran
             # çifttir; ardışık kapıların dubaları ise o hat BOYUNCA dizilir.
             # |Δileri| < |Δyanal| tam olarak "paralel olmaktan çok dike yakın"
@@ -580,8 +634,15 @@ class GateFollower:
     onaysız kilit birleşince **tek karelik bir yanlış tespit kalıcı hedef**
     oluyordu (bkz. `ONAY_TICK`). Kilitlendikten sonraki koruma değişmedi.
 
-    Durum minimaldir (bir kilitli kapı + bir aday); MPPI'nin warm-start'ı + FSM
-    güvenlik çatısı zaten üstte — burada aşırı mühendislik yok.
+    **K1 — geçilen kapı bir daha aday olamaz (2026-08-06).** Kilit bırakılırken
+    kapının orta noktası `_gecilen_kapilar`'a yazılır ve `select_gate` onu eler.
+    Olmadığında kapalı döngüde ÖLÇÜLEN davranış: araç kapıya eğik yaklaşınca
+    öndeki kapı geometrik testte elenir, arkadaki kapı "önde" görünüp yeniden
+    seçilir ve tekne iki kapı arasında SONSUZ salınır (P1'de 199 s, P2'de 88 m
+    geri gidiş — GIRDAP_DURUM §0.9b). Ayrıntılı gerekçe `select_gate` docstring'i.
+
+    Durum minimaldir (bir kilitli kapı + bir aday + arkadakilerin listesi);
+    MPPI'nin warm-start'ı + FSM güvenlik çatısı zaten üstte — aşırı mühendislik yok.
     """
 
     def __init__(self, cfg: Optional[GateFollowerConfig] = None) -> None:
@@ -599,12 +660,22 @@ class GateFollower:
         # sayısı". Düzlem-kesişimi testi (B4/B6) bu sayacı bedavaya veriyor:
         # aynı hesap hem kilidi bırakıyor hem geçişi sayıyor.
         self._passed_midpoints: List[Point] = []
+        # K1 — ARKADA BIRAKILAN kapılar: YANINDAN geçilmiş (bir kapı genişliği
+        # içinde) her kapı — aradan geçilmiş (sayıldı) ya da geçilmemiş olsun.
+        # `_passed_midpoints` PUAN kanıtıdır (yalnız aradan geçilenler);
+        # bu liste GEOMETRİdir (arkada ne kaldı) — ikisi bilerek ayrı.
+        # Eleman: (orta_x, orta_y, YARI GENİŞLİK) — eşleştirme yarıçapı kapının
+        # KENDİ ölçüsüdür (bkz. select_gate K1 notu).
+        self._gecilen_kapilar: List[Circle] = []
 
     def reset(self) -> None:
         """Kilitli kapıyı temizle (parkur geçişi / yeniden başlama).
 
         ⚠ Geçiş SAYACINA dokunmaz: sayaç puan kanıtıdır, parkur geçişinde
         sıfırlanmaz. Yeniden başlama için `reset_passed_gates()` kullan.
+        ⚠ K1 listesine (`_gecilen_kapilar`) de dokunmaz: parkur değişse de o
+        kapılar FİZİKSEL olarak hâlâ arkadadır; temizlemek salınımı geri
+        getirirdi. Yalnız yeniden başlama (araç fiilen başa döner) temizler.
         """
         self._committed = None
         # Onay penceresi de sıfırlanır: parkur değişince yarım kalmış bir aday
@@ -620,8 +691,13 @@ class GateFollower:
         topladığı puanlar SIFIRLANACAKTIR."* İkinci turda aynı geçitlerden
         yeniden geçilir; hafıza temizlenmezse hepsi "zaten geçildi" sayılır
         ve HİÇBİRİ sayılmaz.
+
+        K1 listesi de burada temizlenir — aynı gerekçe: araç fiilen başa
+        döndüğü için o kapılar artık ARKADA değil, ÖNDEDİR. (Temizlenmezse
+        ikinci turda hiçbir kapı aday olamaz ve araç ham GN'lere sürer.)
         """
         self._passed_midpoints.clear()
+        self._gecilen_kapilar.clear()
 
     @property
     def committed_gate(self) -> Optional[Gate]:
@@ -631,6 +707,15 @@ class GateFollower:
     def passed_gate_count(self) -> int:
         """Geçilen FARKLI kapı sayısı (şartname G1/G2 tanımı)."""
         return len(self._passed_midpoints)
+
+    @property
+    def gecilen_kapilar(self) -> List[Circle]:
+        """K1 — arkada bırakılanlar: (orta_x, orta_y, yarı genişlik) kopyası.
+
+        Puan kanıtı DEĞİLDİR (`passed_gate_count` odur): aradan geçilmeden
+        yanından geçilen kapılar da buradadır. Teşhis/test için açıldı.
+        """
+        return list(self._gecilen_kapilar)
 
     def _say_gecis(self, gate: Gate) -> None:
         """Geçilen kapıyı say — daha önce sayılanlardan FARKLIYSA.
@@ -645,6 +730,31 @@ class GateFollower:
             if math.hypot(gate.midpoint[0] - px, gate.midpoint[1] - py) <= yari:
                 return                      # aynı kapı — tekrar sayma
         self._passed_midpoints.append(gate.midpoint)
+
+    def _kaydet_gecilmis(self, gate: Gate, vehicle: Point) -> None:
+        """K1 — kapıyı "arkada" olarak işaretle (yeniden aday olmasın).
+
+        `_say_gecis`'ten AYRI: orada yalnız ARADAN geçilenler (puan kanıtı)
+        birikir; burada kapının YANINDAN geçilenler de birikir, çünkü soru
+        "sayıldı mı" değil **"arkamda mı"**dır.
+
+        🔑 **Yanal koşul ŞART — kapı düzlemi SONSUZDUR.** Bu koşul olmadan,
+        kapıya hâlâ 3 m yandan yaklaşmakta olan araç düzlemi teğet geçer
+        geçmez kapı "arkada" yazılıyor ve **kalıcı olarak kaybediliyordu**
+        (ölçüm: kapı-2 bu yüzden hiç geçilemedi). Ölçü kapının KENDİ
+        genişliği — yarı genişlik "aradan geçtim" (puan) ölçüsüdür; bir tam
+        genişlik "o kapının yanındaydım" demektir. Öz-ölçekli, dış eşik yok.
+        Daha uzaktan düzlemi kesen araç için kapı hâlâ ADAYDIR: açı düzelince
+        yeniden kilitlenip usulünce geçilir.
+        """
+        yanal = gate.lateral_offset(vehicle)
+        if yanal is not None and yanal > gate.width:
+            return                       # kapının yanından değil, uzağından geçtik
+        yari = gate.width / 2.0
+        for px, py, p_yari in self._gecilen_kapilar:
+            if math.hypot(gate.midpoint[0] - px, gate.midpoint[1] - py) <= p_yari:
+                return
+        self._gecilen_kapilar.append((gate.midpoint[0], gate.midpoint[1], yari))
 
     def update(
         self,
@@ -673,6 +783,7 @@ class GateFollower:
         fresh = select_gate(
             vehicle, coarse_target, edge_buoys, self._cfg,
             self.last_diagnostics, obstacles,
+            gecilmis=self._gecilen_kapilar,          # K1: arkadakiler aday değil
         )
 
         if self._committed is not None:
@@ -715,6 +826,9 @@ class GateFollower:
                     used_fallback=False,
                 )
             # Geçildi → serbest bırak, aşağıda yeniden seç.
+            # K1: bırakmadan ÖNCE "arkada" olarak işaretle — yoksa bir sonraki
+            # tick'te aynı kapı yeniden aday olur (ölçülen sonsuz salınım).
+            self._kaydet_gecilmis(self._committed, vehicle)
             self._committed = None
 
         # Kilitli kapı yok. B5 ONAY KAPISI: aynı kapı `ONAY_TICK` kez üst üste

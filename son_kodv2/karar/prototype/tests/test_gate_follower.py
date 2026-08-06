@@ -447,14 +447,22 @@ def test_yandan_DOLASILAN_kapi_sayilmaz_ama_kilit_birakilir() -> None:
 
 
 def test_ayni_kapidan_tekrar_gecis_SAYILMAZ() -> None:
-    """Manevra/geri dönüş aynı kapıyı ikinci kez saydırmamalı."""
+    """Manevra/geri dönüş aynı kapıyı ikinci kez saydırmamalı.
+
+    ⚠ K1 (2026-08-06) bu senaryoyu bir adım ÖNCEDEN kapatıyor: geçilen kapı
+    artık yeniden aday bile olmuyor, dolayısıyla "geri dön + tekrar kilitlen"
+    yolu hiç açılmıyor. Sayaç güvencesi (aynı kapı = 1) aynen korunuyor;
+    burada ikisi birden donduruluyor.
+    """
     buoys = [(-2.0, 10.0), (2.0, 10.0)]
     gf = GateFollower(_CFG)
     _kilitlen(gf, (0.0, 0.0), (0.0, 20.0), buoys)
     gf.update((0.0, 11.0), (0.0, 20.0), buoys)      # geçti → 1
     assert gf.passed_gate_count == 1
-    _kilitlen(gf, (0.0, 5.0), (0.0, 20.0), buoys)   # geri döndü, yeniden kilitlendi
-    gf.update((0.0, 11.0), (0.0, 20.0), buoys)      # tekrar geçti
+    for _ in range(ONAY_TICK + 1):                  # geri döndü, kapı görünüyor
+        gf.update((0.0, 5.0), (0.0, 20.0), buoys)
+    assert gf.committed_gate is None                # K1: yeniden KİLİTLENMEZ
+    gf.update((0.0, 11.0), (0.0, 20.0), buoys)      # düzlemi tekrar geçse bile
     assert gf.passed_gate_count == 1                # hâlâ 1 — aynı kapı
 
 
@@ -590,3 +598,159 @@ def test_GN_YANDAYKEN_de_ardisik_kapi_dubalari_HALA_ELENIR() -> None:
         (0.0, 0.0), (12.0, 10.0), [(-2.0, 10.0), (-2.0, 20.0)], _CFG, diag
     ) is None
     assert diag.reddedilen_derinlik == 1                 # bakış hattı BOYUNCA
+
+
+# --------------------------------- K1: geçilen kapı bir daha aday olamaz (2026-08-06)
+#
+# Ölçülen arıza (GIRDAP_DURUM §0.9b): araç kapıya EĞİK yaklaşınca öndeki gerçek
+# kapı (b) testine takılıyor, geriye tek geçerli aday olarak ARKADAKİ kapı
+# kalıyor ("önde mi" süzgeci kurs eksenini kullanıyor ve o eksen GN'ye doğru
+# ~90° dönmüş oluyor) → araç geri dönüyor → sonsuz salınım. Aşağıdaki geometri
+# kapalı-döngü koşumundan BİREBİR alındı (t=55 s anı).
+
+_K1_ARAC = (40.81, 0.76)          # kapı-2'nin yanında, ona eğik bakıyor
+_K1_GN = (40.0, 5.0)              # ham görev noktası (kapı ortasında DEĞİL)
+_K1_KAPI1 = [(20.0, 2.0), (20.0, -2.0)]       # GEÇİLMİŞ kapı (arkada)
+_K1_KAPI2 = [(40.0, 5.25), (40.0, 2.75)]      # asıl hedef (yanımızda)
+
+
+def test_K1_ESKI_TUZAK_gecilmis_liste_YOKKEN_arkadaki_kapi_secilir() -> None:
+    """Düzeltmenin gerekçesini donduran test: liste verilmezse tuzak geri gelir.
+
+    Bu, düzeltilen davranışın BELGESİDİR — `gecilmis` boşken seçim, araç
+    kapı-2'nin yanındayken 20 m GERİDEKİ kapı-1'i veriyor.
+    """
+    diag = GateDiagnostics()
+    gate = select_gate(_K1_ARAC, _K1_GN, _K1_KAPI1 + _K1_KAPI2, _CFG, diag)
+    assert gate is not None
+    assert _approx(gate.midpoint, (20.0, 0.0)), "tuzak kurulamadı"
+    assert diag.reddedilen_derinlik >= 1, "kapı-2 diklik testinde elenmeliydi"
+
+
+def test_K1_gecilmis_kapi_YENIDEN_SECILMEZ() -> None:
+    """Aynı geometri + 'kapı-1 zaten geçildi' bilgisi → geri dönüş YOK."""
+    diag = GateDiagnostics()
+    gate = select_gate(
+        _K1_ARAC, _K1_GN, _K1_KAPI1 + _K1_KAPI2, _CFG, diag,
+        gecilmis=[(20.0, 0.0, 2.0)],
+    )
+    assert gate is None                       # ham GN'ye düşülür (kendini düzeltir)
+    assert diag.reddedilen_gecilmis == 1
+
+
+def test_K1_ILERIDEKI_kapi_ETKILENMEZ() -> None:
+    """Eleme yalnız ARKADAKİNİ vurmalı; öndeki kapı hâlâ seçilebilir olmalı."""
+    ileri = [(0.0, 30.0), (4.0, 30.0)]
+    gate = select_gate(
+        (2.0, 0.0), (2.0, 40.0), ileri, _CFG, gecilmis=[(2.0, 10.0, 2.0)]
+    )
+    assert gate is not None
+    assert _approx(gate.midpoint, (2.0, 30.0))
+
+
+def test_K1_follower_gecince_kapiyi_ARKAYA_yazar_ve_yeniden_kilitlenmez() -> None:
+    """Uçtan uca: kilitlen → geç → aynı dubalar hâlâ görünüyor → tekrar KİLİTLENME."""
+    buoys = [(-2.0, 10.0), (2.0, 10.0)]
+    gf = GateFollower(_CFG)
+    _kilitlen(gf, (0.0, 0.0), (0.0, 20.0), buoys)
+    gf.update((0.0, 11.0), (0.0, 20.0), buoys)          # geçti
+    assert gf.passed_gate_count == 1
+    assert len(gf.gecilen_kapilar) == 1
+
+    # Araç geri savruldu ve kapı hâlâ görünüyor: ESKİDEN buraya kilitlenip
+    # geri sürüyordu. Artık ham GN'ye düşer.
+    for _ in range(ONAY_TICK + 1):
+        res = gf.update((0.0, 5.0), (0.0, 20.0), buoys)
+    assert gf.committed_gate is None
+    assert res.used_fallback is True
+    assert _approx(res.target, (0.0, 20.0))
+
+
+def test_K1_kapinin_YANINDAN_gecmek_arkada_sayilir_UZAGINDAN_gecmek_SAYILMAZ() -> None:
+    """Kapı düzlemi SONSUZDUR — "arkada" kararı yanal mesafeye bağlı olmalı.
+
+    Bu koşul olmadan, kapıya hâlâ 3 m yandan yaklaşan araç düzlemi teğet
+    geçer geçmez kapıyı "arkada" yazıp KALICI kaybediyordu (ölçümde kapı-2
+    hiç geçilemedi). Ölçü kapının kendi genişliği: yarı genişlik "aradan
+    geçtim" (puan), bir tam genişlik "o kapının yanındaydım" (geometri).
+    """
+    buoys = [(-2.0, 10.0), (2.0, 10.0)]            # genişlik 4.0 m
+
+    # (a) 3 m yandan geçiş: aradan geçilmedi (puan yok) ama kapının YANINDA
+    #     → arkada sayılır, yeniden hedef olmaz.
+    gf = GateFollower(_CFG)
+    _kilitlen(gf, (0.0, 0.0), (0.0, 20.0), buoys)
+    gf.update((3.0, 11.0), (0.0, 20.0), [])
+    assert gf.passed_gate_count == 0
+    assert len(gf.gecilen_kapilar) == 1
+
+    # (b) 9 m uzaktan geçiş: kapıyla ilgimiz yok → arkada SAYILMAZ, açı
+    #     düzelirse yeniden denenebilir (kaçırılan kapı kalıcı kaybolmasın).
+    gf2 = GateFollower(_CFG)
+    _kilitlen(gf2, (0.0, 0.0), (0.0, 20.0), buoys)
+    gf2.update((9.0, 11.0), (0.0, 20.0), [])
+    assert gf2.passed_gate_count == 0
+    assert gf2.gecilen_kapilar == []
+
+
+def test_K1_reset_ARKADAKILERI_KORUR_yeniden_baslama_TEMIZLER() -> None:
+    """Parkur geçişinde kapılar hâlâ arkadadır; yeniden başlamada değildir."""
+    buoys = [(-2.0, 10.0), (2.0, 10.0)]
+    gf = GateFollower(_CFG)
+    _kilitlen(gf, (0.0, 0.0), (0.0, 20.0), buoys)
+    gf.update((0.0, 11.0), (0.0, 20.0), buoys)
+    assert len(gf.gecilen_kapilar) == 1
+
+    gf.reset()                                          # parkur geçişi
+    assert len(gf.gecilen_kapilar) == 1, "parkur geçişi arkadakileri unutamaz"
+
+    gf.reset_passed_gates()                             # md 5.5.3.1 yeniden başlama
+    assert gf.gecilen_kapilar == []
+    # Temizlendiğine göre aynı kapıya yeniden kilitlenebilmeli (2. tur).
+    _kilitlen(gf, (0.0, 0.0), (0.0, 20.0), buoys)
+    assert gf.committed_gate is not None
+
+
+def test_K1_ardisik_parkurda_hedef_GERIYE_gitmez() -> None:
+    """Salınımın kendisini donduran regresyon: hedef bir daha geriye düşmesin.
+
+    Üç kapılı kurs; araç her kapıdan sonra bir sonrakine EĞİK yaklaşıyor
+    (ölçümde salınımı tetikleyen durum). Hedefin x'i asla azalmamalı.
+    """
+    k1 = [(20.0, 2.0), (20.0, -2.0)]
+    k2 = [(40.0, 5.25), (40.0, 2.75)]
+    k3 = [(60.0, -1.0), (60.0, -5.0)]
+    hepsi = k1 + k2 + k3
+    gf = GateFollower(_CFG)
+
+    izlence = [                    # (araç, ham GN) — kursun kabaca gidişi
+        ((0.0, 0.0), (20.0, 1.3)), ((10.0, 0.5), (20.0, 1.3)),
+        ((19.0, 0.4), (20.0, 1.3)), ((21.0, -0.6), (40.0, 4.2)),
+        ((30.0, -3.2), (40.0, 4.2)), ((38.1, -1.8), (40.0, 4.2)),
+        ((40.81, 0.76), (40.0, 4.2)),          # ← salınımın tetiklendiği an
+        # Açı düzeliyor: kapı-2 yeniden geçerli oluyor, kilitleniyor, geçiliyor
+        ((36.0, 2.0), (40.0, 4.2)), ((38.5, 3.5), (40.0, 4.2)),
+        ((39.5, 3.9), (40.0, 4.2)), ((40.5, 4.0), (60.0, -3.1)),
+        ((50.0, -1.0), (60.0, -3.1)), ((59.0, -2.9), (60.0, -3.1)),
+    ]
+    en_ileri_hedef_x = -math.inf
+    for arac, gn in izlence:
+        res = gf.update(arac, gn, hepsi)
+        # Hedef ya kapı nişanıdır ya ham GN — ikisi de geriye gitmemeli.
+        assert res.target[0] >= en_ileri_hedef_x - 1.0, (
+            f"hedef GERİYE düştü: {res.target} (araç {arac})"
+        )
+        # Kapı-1 ARKADA kaldıktan SONRA ona yeniden kilitlenilmemeli
+        # (salınımın kendisi). Öncesinde kilitlenmesi zaten doğru davranış.
+        kapi1_arkada = any(
+            _approx((g[0], g[1]), (20.0, 0.0), tol=0.5)
+            for g in gf.gecilen_kapilar
+        )
+        if kapi1_arkada and res.gate is not None:
+            assert not _approx(res.gate.midpoint, (20.0, 0.0), tol=0.5), (
+                f"geçilmiş kapı-1'e yeniden kilitlendi (araç {arac})"
+            )
+        en_ileri_hedef_x = max(en_ileri_hedef_x, res.target[0])
+    # ①'in kendi kendini düzelttiğinin kanıtı: eğik yaklaşmada elenen kapı-2,
+    # açı düzelince kilitlenip GEÇİLİYOR (yani eleme kalıcı puan kaybı değil).
+    assert gf.passed_gate_count >= 2, "kurs boyunca en az 2 kapı geçilmeliydi"

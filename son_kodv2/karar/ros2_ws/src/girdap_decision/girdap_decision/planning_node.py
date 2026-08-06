@@ -648,6 +648,15 @@ class PlanningNode(Node):
                 f"{d.reddedilen_derinlik} çift kursa DİK DEĞİL (ardışık "
                 "kapıların dubaları — normal)"
             )
+        if d.reddedilen_gecilmis:
+            # K1: bunlar ARKADA bıraktığımız kapılar. Görülmeleri normaldir;
+            # elenmeleri de öyle — eskiden elenmedikleri için araç geri dönüp
+            # sonsuz salınıyordu (§0.9b). Sahada "neden o kapıya gitmiyoruz"
+            # sorusunun cevabı burada görünsün.
+            sebep.append(
+                f"{d.reddedilen_gecilmis} çift ZATEN GEÇİLDİ (arkada kaldı — "
+                f"toplam {len(self._gate.gecilen_kapilar)} kapı geride)"
+            )
         self.get_logger().warn(
             f"KAPI SEÇİLEMEDİ: {d.n_edge_buoys} turuncu duba görülüyor "
             f"({d.n_in_range} burun hattının önünde), {d.n_pairs_checked} çift "
