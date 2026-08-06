@@ -102,6 +102,72 @@ def test_sonraki_index_alakasiz_dosyalari_saymaz(tmp_path):
     assert ov.sonraki_index(images, "kare") == 4
 
 
+# ------------------------------------------- v2 sensör modu (v3'ten taşıma)
+def test_v2_cozunurluk_varsayilan_12mp_ispscale_tam_43():
+    """ÖLÇÜLDÜ (05.08): THE_1440X1080 enum'da VAR ama bu cihazda 0 kare üretiyor
+    (sessizce). Çalışan 4:3 yolu: THE_12_MP + ispScale 1/3 = 1352×1014 @ 9,9 FPS,
+    tam FOV. Enum'da olmak ≠ çalışmak — bu test seçimi kilitler."""
+    import depthai as dai
+    mod, isp, gercek = ov.v2_sensor_cozunurlugu(1352, 1014)
+    assert mod is dai.ColorCameraProperties.SensorResolution.THE_12_MP
+    assert isp == (1, 3)
+    assert gercek == (1352, 1014)
+
+
+def test_v2_cozunurluk_eski_istek_1440x1080_calisan_moda_duser():
+    """Eski servis/komut satırları --res 1440x1080 diyor; bunlar kırılmamalı.
+    O sensör modu bu cihazda kare üretmediği için en yakın 4:3'e eşlenir —
+    çağıran gerçek boyutu manifest'e yazar."""
+    _, isp, gercek = ov.v2_sensor_cozunurlugu(1440, 1080)
+    assert isp == (1, 3)
+    assert gercek == (1352, 1014)          # istenen DEĞİL, üretilebilen
+
+
+def test_v2_cozunurluk_desteklenmeyen_deger_net_hata_verir():
+    """v2'de keyfi çözünürlük YOK (v3'teki requestOutput esnekliği kayboldu).
+    Sahada okunacak hata: desteklenen liste + önerilen mod."""
+    with pytest.raises(ValueError) as e:
+        ov.v2_sensor_cozunurlugu(1000, 700)
+    assert "1352x1014" in str(e.value)
+
+
+# --------------------------------- indeks çakışması (2026-08-05'te YAŞANDI)
+def test_sonraki_index_kareler_silinse_bile_manifestten_devam_eder(tmp_path):
+    """🔴 Gerçek olay: kareler kopyalanıp images/ temizlendi → sayaç 1'e
+    sıfırlandı → yeni kareler eski manifest satırlarının adlarını aldı →
+    146 dosya adı iki farklı oturum/zamanla manifest'te. O kareler için
+    "hangi ışıkta çekildi" cevapsız kalır. Manifest silinenlerin izini
+    tuttuğu için sayaç ondan da beslenmeli."""
+    images, _ = ov.klasor_hazirla(tmp_path, "kare")
+    manifest = tmp_path / ov.MANIFEST_ADI
+    fh = ov.manifest_ac(tmp_path)
+    for n in (1, 2, 146):
+        fh.write(ov.manifest_satiri(f"kare_{n:05d}.jpg", "20260805_140134",
+                                    1_754_400_000.0, 1440, 1080, 10))
+    fh.close()
+    # images/ BOŞ (kareler taşındı) — eskiden 1 dönerdi, üzerine yazardı
+    assert ov.sonraki_index(images, "kare", manifest) == 147
+
+
+def test_sonraki_index_disk_manifestten_ileriyse_diski_kullanir(tmp_path):
+    """Manifest yarım yazılmış olabilir (güç kesintisi) — büyük olan kazanır."""
+    images, _ = ov.klasor_hazirla(tmp_path, "kare")
+    (images / "kare_00200.jpg").write_bytes(b"x")
+    fh = ov.manifest_ac(tmp_path)
+    fh.write(ov.manifest_satiri("kare_00005.jpg", "s", 1_754_400_000.0, 1440, 1080, 10))
+    fh.close()
+    assert ov.sonraki_index(images, "kare", tmp_path / ov.MANIFEST_ADI) == 201
+
+
+def test_sonraki_index_manifest_yoksa_veya_bozuksa_cokmez(tmp_path):
+    """Denizde müdahale yok: bozuk manifest toplamayı DURDURMAMALI."""
+    images, _ = ov.klasor_hazirla(tmp_path, "kare")
+    (images / "kare_00007.jpg").write_bytes(b"x")
+    assert ov.sonraki_index(images, "kare", tmp_path / "yok.csv") == 8
+    (tmp_path / "bozuk.csv").write_bytes(b"\xff\xfe yarim satir\nkare_00050.jpg,")
+    assert ov.sonraki_index(images, "kare", tmp_path / "bozuk.csv") == 51
+
+
 # ------------------------------------------------ cihaz bekleme (saha kritik)
 def test_cihaz_zaten_varsa_hemen_doner():
     assert ov.cihaz_bekle(lambda: ["oak"], timeout_s=30, uyku_s=0, log=lambda *a: None) is True
@@ -126,7 +192,7 @@ def test_timeout_sifir_beklemeden_doner():
 
 # --------------------------------------------------- oran (deploy geometrisi)
 def test_43_cozunurlukler_uyumlu():
-    """Deploy 4:3 çalışıyor (640x480 → 416x416 letterbox, _LB_PAY=0.125)."""
+    """Deploy 4:3 çalışıyor (1352x1014 → 416x416 SIKIŞTIRMA, letterbox payı 0)."""
     assert ov.oran_uyumlu(1440, 1080) is True
     assert ov.oran_uyumlu(640, 480) is True
     assert ov.oran_uyumlu(1920, 1440) is True

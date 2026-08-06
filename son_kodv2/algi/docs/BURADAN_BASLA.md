@@ -123,7 +123,7 @@ OAK takılıyken (udev kuralı yeni yazıldıysa bir kez ÇIKAR-TAK):
 ```bash
 python3 ~/ros2_ws/src/girdap-ida-algi/scripts/kamera_goruntu_test.py
 ```
-Pencerede canlı görüntü + ~12 FPS görmelisin; `q` ile çık. (Bu script
+Pencerede canlı görüntü + ~11 FPS görmelisin; `q` ile çık. (Bu script
 geçici — model gelince silinecek; tespitli asıl test o gün `duba_kamera_test.py`.)
 
 ### 2.7 Ana yazılımı çalıştırmak
@@ -150,14 +150,13 @@ Başlatma sırası da önemli değil — ROS2'de kanallar birbirini bekler.
   eski HSV kamera düğümü bilerek kapalı — denetim F3.1 düzeltmesi `eb9ff58`).
   Pixhawk ayrı USB'de, RFD Pixhawk'ta — herkes kendi kapısında.
 - **Konuşma anlaşmalı:** kamera `/perception/buoys` + `/perception/gate_passed`
-  yayınlar, karar dinler; bbox boyutu (640×480) ve sınıf kimlikleri iki tarafta
-  birebir doğrulandı (F4.6).
+  yayınlar, karar dinler; bbox uzayı (**1280×720** — 04.08'de 640×480'den
+  çıkarıldı, E-1) ve sınıf kimlikleri iki tarafta birebir doğrulandı (F4.6).
 - **Biri çökerse öbürü yaşar:** ayrı süreçler. Kamera düğümü çökerse launch
   onu 3 sn'de kendisi yeniden başlatır (respawn); karar yığını etkilenmez.
 - **Video gününde kamera yığını HİÇ açılmaz** (videoda algı yok) — çakışma
   ihtimali sıfır.
-- Açık kalan 2 masa/saha teyidi (kod değil): bbox dikey hizası (letterbox,
-  `duba_kamera_test.py`'de gözle) ve kamera-LiDAR zaman damgası hizası
+- Açık kalan masa/saha teyidi (kod değil): kamera-LiDAR zaman damgası hizası
   (bozuksa yazılım kendisi WARN basar — F7.1 bekçisi). Model sonrası dönemin işi.
 - Yarışma günü otomatik başlatma: kamera için systemd hazır
   (`jetson_kur.sh --servis`); karar yığınına benzer servis masa testlerinden

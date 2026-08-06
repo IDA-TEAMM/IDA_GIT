@@ -6,9 +6,15 @@ duba algılama ve geçit görev mantığı. YOLOv11n, OAK-D Lite kameranın
 sayar ve seçilen moda göre çıkış üretir.
 
 **Algı gerçekleri (saha ölçümü):**
-- Model: YOLOv11n @ **416×416** (NN Archive içinde tanımlı, RVC2, 6 shave)
-- Tespit hızı: **10–14 FPS bandı, tipik ~11.6** (YOLO + stereo birlikte, VPU sınırı)
-- API: **DepthAI v3** (3.7.1'e karşı doğrulandı; v2 kodu bu repoda ÇALIŞMAZ)
+- Model: YOLO11n @ **416×416** — düz `.blob` + yanında `config.json`, RVC2,
+  **4 shave** (deploy boru hattında NN'e ancak bu kadarı kalıyor; 6-shave blob
+  cihazda yüklenmedi). Mimari 06.08.2026'da ölçülerek seçildi: v8n 21,6 /
+  v11n 19,9 FPS (fark %8) → v11n'in +2,2 mAP'i tercih edildi
+- Tespit hızı: **deploy 11 FPS** — boru hattı tavanı **12,2 ÖLÇÜLDÜ** (05.08.2026;
+  YOLO 416×416 + stereo birlikte, VPU sınırı). 11 = tavanın %10 altı
+- API: **DepthAI v2 (2.30.0.0)** — 05.08.2026'da v3'ten taşındı, çünkü v3
+  firmware'i bu cihazda mono/stereo'yu açamıyor (stereo %0; v2'de 29,7 FPS).
+  ⚠️ v3'e dönmek hem algı node'unu hem veri seti toplayıcısını kırar
 - Node çalışırken ölçülen FPS loglanır, 8'in altında uyarı basılır
 
 ## Mimari
@@ -19,7 +25,7 @@ Karar/sürüş tarafı takım arkadaşının
 perception sözleşmesini besler.
 
 ```
-OAK-D Lite (VPU: YOLO11n 416x416 + StereoDepth, 10-14 FPS)
+OAK-D Lite (VPU: YOLO11n 416x416 + StereoDepth, 11 FPS — tavan 12,2)
         │  tespitler (sınıf + bbox + X/Y/Z)
         ▼
 duba_gecis_navigator ─► MOD="algi_yayin" (PLAN A, varsayılan):
@@ -121,7 +127,9 @@ ros2 service call /mavros/cmd/arming mavros_msgs/srv/CommandBool "{value: true}"
 - [ ] Plan B ilk denemede `YAW_ISARET` yönü doğrulandı
 - [ ] Plan A için: girdap-decision stack'i açık, `/girdap/fusion/odom` yayında,
       `ros2 topic echo /perception/buoys --once` sözleşmeye uygun
-- [ ] Letterbox dikey düzeltmesi masa testinde doğrulandı (`_LB_PAY`, bkz. not §2)
+- [x] ~~Letterbox dikey düzeltmesi masa testi~~ — **DÜŞTÜ**: deploy ön işlemesi
+      SIKIŞTIRMA (stretch), şerit oluşmuyor ⇒ pay 0. Yerine geçen açık iş:
+      **eğitim de stretch olmalı** (`docs/hubai_model_rehberi.md`)
 
 ## Araç
 

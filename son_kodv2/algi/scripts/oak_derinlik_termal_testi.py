@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ARAÇ 5 — DERİNLİK + YOLO, 15 FPS SABİT DAYANIKLILIK TESTİ (depthai 2.x).
+"""ARAÇ 5 — DERİNLİK + YOLO, 11 FPS SABİT DAYANIKLILIK TESTİ (depthai 2.x).
 
 Neden bu araç var
 -----------------
@@ -138,7 +138,7 @@ def pipeline_kur(a):
     cam.setPreviewSize(416, 416)
     cam.setInterleaved(False)
     cam.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
-    cam.setPreviewKeepAspectRatio(False)         # letterbox davranışı (deploy ile aynı)
+    cam.setPreviewKeepAspectRatio(False)         # SIKIŞTIRMA, letterbox DEĞİL (deploy ile aynı)
     cam.setFps(a.fps)
 
     sol = p.create(dai.node.MonoCamera)
@@ -199,7 +199,9 @@ def pipeline_kur(a):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sure", type=float, default=300, help="test süresi (sn)")
-    ap.add_argument("--fps", type=float, default=15.0)
+    ap.add_argument("--fps", type=float, default=11.0,
+                    help="Varsayılan 11 = DEPLOY değeri (duba_gecis_navigator.FPS). "
+                         "Ölçüm deploy'u temsil etsin diye buraya bağlandı; tavan 12,2.")
     ap.add_argument("--pencere", type=float, default=15.0, help="ölçüm penceresi (sn)")
     ap.add_argument("--preset", default="ROBOTICS",
                     choices=["ROBOTICS", "HIGH_DENSITY", "HIGH_ACCURACY", "DEFAULT", "FACE"])

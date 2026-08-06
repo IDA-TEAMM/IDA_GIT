@@ -107,7 +107,7 @@ uzaklığına duyarlı (dönme ivmesi kolu). Parkur-3 işi, ertelendi.
 | Beklenen | Gerçek |
 |---|---|
 | `models/yolo11n_duba_rvc2.tar.xz` | `models/` **boş** (yalnız `.gitkeep` + README) |
-| Kod: `MODEL_NNARCHIVE = "/home/girdap/models/yolo11n_duba_rvc2.tar.xz"` | Bu bir **Jetson** yolu (`/home/girdap`) — bu makinede yok. Jetson'da var mı: **DOĞRULANMADI** |
+| Kod: `MODEL_BLOB = "/home/girdap/models/yolo11n_duba_rvc2.blob"` (05.08 v2 geçişi: tar.xz değil blob+config.json) | Jetson'da `~/models` dizini YOK (04.08 + 05.08 doğrulaması) — **A-1 açık** |
 | `models/README.md`: HubAI `ida-buoy-yolo11n` | Bu isimde yerel dosya **yok** |
 
 **Desktop'ta bulunan tek NN Archive duba modeli DEĞİL:**
@@ -127,13 +127,17 @@ verisiyle mi eğitildiğini düşündürüyor — **gerçek saha görüntüsüyl
 eğitilmediği belirsiz.**
 
 **Yapılacak:**
-1. **ŞİMDİ:** `Gazebonew.pt`'yi iki ayrı yere yedekle (harici disk + bulut).
-2. **Jetson'a bağlanınca:** `/home/girdap/models/yolo11n_duba_rvc2.tar.xz` var mı?
-   Varsa `tar -xJf … -O config.json` ile `classes` sırasını oku ve buraya yaz.
-3. Yoksa: `Gazebonew.pt` → HubAI ile RVC2 NN Archive üret (416×416, 6 shave) —
-   **adım adım rehber: [`hubai_model_rehberi.md`](hubai_model_rehberi.md)**;
-   SHA256'yı `models/README.md`'ye işle. (Üretim VİDEO SONRASINA planlı.)
-4. `Gazebonew.pt`'nin eğitim verisini tespit et (Gazebo mu, saha mı?).
+⚠️ **BAYAT (2026-08-06):** aşağıdaki maddeler `Gazebonew.pt` dönemine aitti.
+Eyüp kararı: o model bizim değil, **kendi veri setimizle kendi modelimizi
+eğitiyoruz** (`Gazebonew.pt` ve kopyaları 06.08'de silindi). Güncel akış:
+veri seti → etiketleme → eğitim → **düz `.blob`, 4 shave, superblob KAPALI**.
+1. ~~`Gazebonew.pt`'yi yedekle~~ — model artık kullanılmıyor.
+2. **Jetson'da:** `/home/girdap/models/` içinde `yolo11n_duba_rvc2.blob`
+   **+ `config.json`** olmalı (⚠️ `.tar.xz`/NN Archive **DEĞİL** — depthai
+   2.30 onu açamaz). `config.json`'daki `classes` sırasını buraya yaz.
+3. Üretim: **adım adım rehber [`hubai_model_rehberi.md`](hubai_model_rehberi.md)**
+   (416×416, **4 shave**, `superblob=False`); SHA256'yı `models/README.md`'ye işle.
+4. ~~`Gazebonew.pt`'nin eğitim verisi~~ — konu kapandı.
 5. 🗑️ **Model Jetson'a konduğu gün `scripts/kamera_goruntu_test.py`'yi SİL** —
    modelsiz dönem için GEÇİCİ kamera testi (başlığında da yazıyor); asıl test
    `duba_kamera_test.py`. Karışıklık olmasın diye buraya işlendi (Eyüp istedi).
@@ -223,24 +227,26 @@ bağımlılıklar), F4.1 (Dosya-2 göreli yol).
 
 ## D. Ölçüm / kalibrasyon (bizde, donanım gerektirir)
 
-### 🟠 D1. Letterbox `_LB_PAY = 0.125` masa testi
+### ✅ D1. Letterbox payı masa testi — **DÜŞTÜ (05.08 v2 taşımasıyla)**
 
-**Neden:** 640×480 kare → 416×416 NN girişine LETTERBOX ile oturuyor; dikey
-siyah şeritlerin payı varsayım. Yanlışsa tüm bbox'lar dikey kayar → Dosya-1
-overlay videosunda kutular dubaların üstüne oturmaz.
+**Neden düştü:** soru *"letterbox şerit payı 0,125 mi, 0 mı?"* idi. v2 deploy'u
+`setPreviewKeepAspectRatio(False)` kullanıyor = **SIKIŞTIRMA**: 4:3 kare
+416×416'ya eziliyor, **şerit hiç oluşmuyor** ⇒ pay tanımı gereği **0**.
+Ölçülecek bir varsayım kalmadı; kodda `self._lb_pay = 0.0` sabit ve ölü
+`_LB_PAY = 0.125` hesabı 06.08'de silindi.
 
-**Nasıl:** `scripts/duba_kamera_test.py` — bbox'ları `sdn.passthrough` karesine
-ham normalize koordinatla çizer. Kutular şeritlerle tam oturuyorsa `0.125`
-doğru; dikey kaymışsa `_LB_PAY = 0.0`.
-
-**Daha iyisi (varsayımı tamamen kaldırır):** DepthAI 3.6.1'de
-`ImgDetections.getTransformation().remapPointTo()` var — elle formül yerine
-kesin remap. Donanımsız yazılabilir.
+⚠️ **Yerine geçen ve HÂLÂ AÇIK olan iş:** eğitim ön işlemesi de stretch olmalı
+(Ultralytics varsayılanı letterbox). Roboflow'da `Stretch to` 416×416 —
+`Fit within` DEĞİL. Ayrışırsa model eğitimde yuvarlak, sahada ~1,33× dikey
+uzamış duba görür; **belirti vermez**, sadece tespit zayıflar.
+→ `docs/hubai_model_rehberi.md` §ön işleme.
 
 ### 🟠 D2. Dosya-1 kaydedicinin FPS etkisi
 
-Passthrough frame + `cv2.VideoWriter` ekstra USB bandı yer. Şu an 10–14 FPS
-(tipik ~11.6) bandındayız, `FPS_UYARI_ESIK = 8`. Kaydedici açıkken ölç.
+Passthrough frame + `cv2.VideoWriter` ekstra USB bandı yer. Deploy **11 FPS**
+(boru hattı tavanı ölçüldü: **12,2** — YOLO 416×416 + stereo birlikte, 05.08),
+`FPS_UYARI_ESIK = 8`. Pay yalnız %10 olduğu için kaydedicinin maliyeti
+kritik: **kaydedici açıkken ölç.**
 
 ### 🟡 D3. MPPI gerçek süresi (Jetson, CPU)
 
@@ -269,8 +275,9 @@ Saha ölçümüyle güncelle.
 
 1. **B1 — `Gazebonew.pt` yedeği. Bugün.** Tek kopya; kaybolursa yeniden eğitim
    günler alır ve elimizde başka duba modeli yok.
-2. **D1'in yazılım kısmı** — `getTransformation().remapPointTo()` ile kesin
-   letterbox remap; masa testi belirsizliğini koddan siler.
+2. ~~**D1'in yazılım kısmı** — `getTransformation().remapPointTo()`~~ — **DÜŞTÜ**:
+   (a) ön işleme stretch olduğu için remap edilecek şerit yok, (b) o API
+   **v3'e ait**, kurulu depthai 2.30.0.0'da yok.
 3. **C2** — denetimin kalan fazları (6→18).
 4. Karar deposunda **A1'den bağımsız** düzeltmeler: F2.1 `package.xml`,
    F4.1 Dosya-2 yolu, F2.2 numpy pini.

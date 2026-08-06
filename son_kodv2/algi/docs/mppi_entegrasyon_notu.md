@@ -15,7 +15,7 @@
 ┌──────────────────────────┐         ┌─────────────────────────────────┐
 │ OAK-D Lite               │         │ perception_fusion_node          │
 │  VPU: YOLO11n 416x416    │ buoys   │  (kamera+LiDAR bearing füzyonu) │
-│  + StereoDepth 10-14 FPS │────────►│         │                       │
+│  + StereoDepth   11 FPS  │────────►│         │                       │
 │                          │         │         ▼                       │
 │ duba_gecis_navigator     │ gate_   │ planning_node (RRT* + MPPI)     │
 │  MOD="algi_yayin"        │ passed  │ fsm_node / mission_manager      │
@@ -44,17 +44,19 @@ node'umuz o mock'un **gerçek karşılığıdır**. Aynı anda ikisi birden
 Onun `perception_camera_node` şemasıyla birebir:
 
 - `header.frame_id = "oak_rgb"`, stamp = yayın anı
-- `bbox.center.position.{x,y}`, `bbox.size_{x,y}` — **640×480 piksel uzayı**
-  (füzyon node'u `camera_image_width_px=640` varsayıyor — değiştirme)
+- `bbox.center.position.{x,y}`, `bbox.size_{x,y}` — 🔴 **1280×720 piksel uzayı**
+  (04.08'de 640×480'den ÇIKARILDI — E-1: füzyon `camera_image_width_px=1280`
+  okuyor; 640 yayınlamak bearing'i sessizce ~17° kaydırıyor ve P1+P2'yi
+  sıfırlıyordu. `IDA_GIT@d7c5b56`. İki taraf **birlikte** değişir.)
 - `results[0].hypothesis.class_id` **string**: `"0"`=parkur kenarı (turuncu),
   `"1"`=engel (sarı); `results[0].hypothesis.score` = güven
 - Boş dizi de yayınlanır (taze kare + tespit yok bilgisi, füzyon senkronu için)
 
-**Letterbox notu:** YOLO girişi 416×416 letterbox. Yatay normalize koordinat
-tam FOV'a birebir oturur (füzyonun bearing hesabı zaten yalnız yatayı
-kullanır). Dikey için üst/alt şerit payı (`_LB_PAY = 0.125`) çıkarılıyor —
-DepthAI v3'ün bbox'ı hangi çerçevede normalize verdiği **masa testinde
-`duba_kamera_test.py` ile doğrulanacak**; ters çıkarsa kodda `_LB_PAY = 0.0`.
+**Ön işleme notu (letterbox DEĞİL, SIKIŞTIRMA):** deploy `setPreviewKeepAspect
+Ratio(False)` ile 4:3 kareyi (1352×1014) 416×416'ya **eziyor** → üst/alt şerit
+oluşmuyor → çıkarılacak pay YOK, kodda `self._lb_pay = 0.0`. Normalize bbox
+her iki eksende doğrudan ölçekleniyor. ⚠️ Eğitim de **aynı** ön işlemeyle
+(stretch) yapılmalı — Ultralytics varsayılanı letterbox'tır.
 
 ### `/perception/gate_passed` — `std_msgs/Bool`
 
@@ -110,10 +112,10 @@ ros2 run girdap_ida_algi duba_gecis_navigator
 ## 5. Test merdiveni
 
 1. **Masa (ROS'suz):** `python3 scripts/duba_kamera_test.py` — kutular doğru
-   yerde mi, letterbox dikey düzeltmesi tutuyor mu (madde 2 notu).
+   yerde mi (ön işleme stretch; dikey şerit düzeltmesi YOK, pay 0).
 2. **Topic doğrulama:** node açıkken
    `ros2 topic echo /perception/buoys --once` — class_id `"0"/"1"` string mi,
-   bbox 0-640/0-480 aralığında mı.
+   bbox **0-1280 / 0-720** aralığında mı (E-1 sonrası uzay).
 3. **Füzyon smoke:** onun `perception_fusion_node` + bizim buoys →
    `/perception/classified_obstacles`'da sınıflı engel çıkıyor mu
    (LiDAR yoksa onun `mock_sensors`'ü kullanılabilir).
@@ -137,7 +139,7 @@ ros2 run girdap_ida_algi duba_gecis_navigator
 | Belirti | Muhtemel neden |
 |---|---|
 | Füzyon hiç eşleşme bulmuyor | bearing işareti ters (onun `bearing_from_camera` docstring'i) veya bizim bbox x ölçeği yanlış |
-| bbox'lar dikeyde kaymış | letterbox varsayımı ters — `_LB_PAY = 0.0` dene |
+| bbox'lar dikeyde kaymış | ön işleme ayrışmış: deploy stretch ama blob letterbox'la eğitilmiş (ya da tersi) — ikisi birlikte değişmeli |
 | `gate_passed` hiç gelmiyor | `/girdap/fusion/odom` yayında değil (zaman aşımı logda "poz yok" der) |
 | `vision_msgs` import hatası | `ros-humble-vision-msgs` kurulu değil |
 | İki kamera tespiti kaynağı | onun mock kamera node'u da açık — kapat |

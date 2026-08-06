@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-GİRDAP İDA — OAK-D Lite (DepthAI v3) YOLO VERİ SETİ TOPLAYICI
+GİRDAP İDA — OAK-D Lite (DepthAI v2) YOLO VERİ SETİ TOPLAYICI
 =============================================================
 Canlı RGB akışından YOLO eğitimi için ETİKETLENMEYE HAZIR .jpg kareler kaydeder.
 Video dosyası DEĞİL — doğrudan kareler.
@@ -33,11 +33,13 @@ başlar — bkz. scripts/girdap-veriseti.service ve docs/veriseti_deniz_oturumu.
    alt dizgisini arar). İsim/sıra bozulursa model sessizce yanlış sınıf yayınlar.
    Aynı sıra: data.yaml + eğitim + NN Archive export'u (416x416).
 
-🔴 ÇÖZÜNÜRLÜK 4:3 OLMALI (varsayılan 1440x1080):
-   OAK-D Lite CAM_A = IMX214, native 4:3. Deploy node'u 640x480 (4:3) kare üretip
-   416x416 NN'e LETTERBOX ile veriyor (_LB_PAY=0.125 = 4:3→1:1 payı). 16:9 istersen
-   depthai varsayılanı CROP olduğu için sensörün altı/üstü kesilir → veri seti
-   deploy'dan DAR dikey FOV'la toplanır, model sahada görmediği açıları görür.
+🔴 ÇÖZÜNÜRLÜK 4:3 OLMALI (varsayılan 1352x1014):
+   OAK-D Lite CAM_A = IMX214, native 4:3. Deploy node'u 12MP + ispScale(1,3) =
+   1352x1014 (tam 4:3) kare üretip 416x416 NN'e **SIKIŞTIRARAK** veriyor
+   (setPreviewKeepAspectRatio(False) → letterbox şeridi YOK, letterbox payı 0).
+   16:9 istersen depthai varsayılanı CROP olduğu için sensörün altı/üstü kesilir
+   → veri seti deploy'dan DAR dikey FOV'la toplanır, model sahada görmediği
+   açıları görür.
 
 Kullanım:
   python3 oak_veriseti_topla.py                                   # önizlemeli
@@ -48,8 +50,12 @@ Kontroller (önizleme penceresi açıkken):
   SPACE / S : kareyi kaydet         A : otomatik toplamayı aç/kapa
   Q / ESC   : çık
 
-DepthAI v3 (3.7.x) API'si — ekipteki çalışan scriptlerle aynı idiom. Sadece RGB
-(YOLO 2D için derinlik gerekmez → stereo açılmaz, daha az yük).
+DepthAI **v2 (2.30.0.0)** API'si — 2026-08-05'te v3'ten taşındı. Sistem tek
+sürümde: v3 firmware'inde mono kameralar açılmıyor (stereo %0 ÖLÇÜLDÜ), algı
+node'u derinliğe muhtaç. Bu toplayıcı yalnız RGB kullandığı için v3'te de
+koşuyordu; iki sürümü yan yana yaşatmamak için o da v2'ye alındı.
+🔴 Bu dosya v3'te ÇALIŞMAZ (ColorCamera/XLinkOut/getOutputQueue = v2 idiomu).
+Sadece RGB (YOLO 2D için derinlik gerekmez → stereo açılmaz, daha az yük).
 """
 import argparse
 import re
@@ -77,9 +83,10 @@ KUCUK_EN = 160
 
 # 🔴 EN/BOY ORANI = 4:3 — pazarlıksız. Gerekçe (2026-08-04 doğrulaması):
 #   • OAK-D Lite CAM_A = IMX214, native 4208x3120 = 4:3 (HFOV 69°).
-#   • Deploy node'u (duba_gecis_navigator.py) 640x480 = 4:3 kare üretir,
-#     NN'e 416x416 LETTERBOX ile girer; _LB_PAY=0.125 tam da 4:3→1:1 letterbox
-#     payıdır ((1-0.75)/2). Yani model DEPLOY'da 4:3 sahne görüyor.
+#   • Deploy node'u (duba_gecis_navigator.py) 12MP + ispScale(1,3) = 1352x1014
+#     = 4:3 kare üretir, NN'e 416x416 **SIKIŞTIRARAK** girer
+#     (setPreviewKeepAspectRatio(False)). Yani model DEPLOY'da 4:3 sahnenin
+#     1:1'e ezilmiş halini görüyor — eğitim de aynı ön işlemeyle yapılmalı.
 #   • 16:9 (1920x1080) istersek depthai varsayılanı CROP (resizeMode=0) olduğu için
 #     sensörün ALTINI/ÜSTÜNÜ keser → veri seti dar dikey FOV'la toplanır, deploy'da
 #     karenin altında beliren yakın dubalar eğitimde HİÇ görülmemiş olur.
@@ -207,16 +214,91 @@ def manifest_ac(out: Path):
     return fh
 
 
-def sonraki_index(images_dir: Path, prefix: str) -> int:
-    """images/ içindeki en büyük {prefix}_NNNNN.jpg indeksinin bir fazlası
-    (yeniden çalıştırınca kaldığı yerden devam et, üzerine yazma)."""
+def sonraki_index(images_dir: Path, prefix: str, manifest_yolu: Path = None) -> int:
+    """images/ VE manifest.csv'deki en büyük {prefix}_NNNNN indeksinin bir fazlası
+    (yeniden çalıştırınca kaldığı yerden devam et, üzerine yazma).
+
+    🔴 NEDEN MANIFEST DE OKUNUYOR (2026-08-05'te sahada yaşandı):
+    Eskiden yalnız images/ taranıyordu. Kareler diske kopyalanıp images/
+    temizlenince sayaç 1'e SIFIRLANDI ve yeni kareler eski manifest
+    satırlarının adlarını aldı → 146 dosya adı manifest'te İKİ kez, iki farklı
+    oturum/zaman ile. Sonuç: o kareler için "hangi saatte/ışıkta çekildi"
+    sorusunun iki cevabı var → ışık/saat çeşitliliği analizi (veri setinin
+    asıl değeri) o kareler için yapılamaz. Manifest EKLEMELİ yazıldığı için
+    silinen karelerin izi orada durur; sayacı ondan da beslemek çakışmayı
+    kökten keser. Kare atmak beklenen bir işlem ("bol topla, fazlasını at").
+    """
     en_buyuk = 0
     desen = re.compile(rf"{re.escape(prefix)}_(\d+)\.jpg$")
     for p in images_dir.glob(f"{prefix}_*.jpg"):
         m = desen.search(p.name)
         if m:
             en_buyuk = max(en_buyuk, int(m.group(1)))
+
+    # Manifest bozuk/yarım olsa bile toplama DURMAMALI (denizde müdahale yok).
+    if manifest_yolu is not None and manifest_yolu.exists():
+        try:
+            with manifest_yolu.open("r", encoding="utf-8", errors="replace") as fh:
+                for satir in fh:
+                    m = desen.search(satir.split(",", 1)[0].strip())
+                    if m:
+                        en_buyuk = max(en_buyuk, int(m.group(1)))
+        except OSError:
+            pass
     return en_buyuk + 1
+
+
+# ─────────────── v2 sensör modları — ÖLÇÜLDÜ, tahmin DEĞİL (2026-08-05) ───────
+# depthai v2'de ColorCamera keyfi çözünürlük ALMAZ (v3'teki `requestOutput((w,h))`
+# esnekliği yok): sensör modu sabit listeden seçilir, sonra ISP ile ölçeklenir.
+#
+# 🔴 BU CİHAZDA (OAK-D Lite / IMX214) HANGİ MOD GERÇEKTEN KARE ÜRETİYOR —
+#    enum'da olması çalıştığı anlamına GELMİYOR. 8 sn'lik tarama sonucu:
+#      THE_1440X1080  → 0 kare (SESSİZ; hata bile vermiyor)   🔴
+#      THE_1352X1012  → 0 kare                                 🔴
+#      THE_2024X1520  → RuntimeError                           🔴
+#      THE_1080_P / 1200_P / 800_P / 720_P → hepsi 1920×1080 (16:9)
+#      THE_12_MP → 4056×3040 (4:3) · THE_13_MP → 4208×3120 · THE_4_K → 3840×2160
+#    Luxonis `depthai-core#712` aynı sınıf sorun: desteklenmeyen sensör
+#    çözünürlüğü OAK-D-Lite'ta fatal/sessiz hata veriyor.
+#
+# 🔑 SEÇİM: THE_12_MP + ispScale 1/3 → **1352×1014, TAM 4:3, 9,9 FPS** (ölçüldü;
+#    istenen 10 birebir geliyor, 30 istenirse 18,6). Tam sensör okunup ISP'de
+#    küçültüldüğü için **KIRPMA YOK → tam FOV**. Ham 12MP'yi USB'den göndermek
+#    2 FPS'e düşürüyordu; darboğaz sensör değil USB'ydi, ispScale onu çözüyor.
+#    Akış 1352×1014×1,5×10 = 20,6 MB/s (eski 1440×1080'in 23,3'ünden AZ).
+# ⚠️ 16:9 modları (1920×1080) sensörü DİKEY KIRPAR → veri seti deploy'dan dar
+#    FOV'la toplanır, model sahada öğrendiği ölçeği bulamaz. Veri seti için ❌.
+#
+# Değerler: (istenen_w, istenen_h) → (sensör_modu, ispScale veya None, gerçek_boyut)
+V2_COZUNURLUKLER = {
+    (1352, 1014): ("THE_12_MP", (1, 3), (1352, 1014)),   # ← VARSAYILAN: 4:3, tam FOV
+    (1440, 1080): ("THE_12_MP", (1, 3), (1352, 1014)),   # eski istek → en yakın 4:3
+    (1403, 1040): ("THE_13_MP", (1, 3), (1403, 1040)),   # 4:3 DEĞİL (1,349)
+    (4056, 3040): ("THE_12_MP", None,   (4056, 3040)),   # ham 12MP — USB2'de ~2 FPS
+    (1920, 1080): ("THE_1080_P", None,  (1920, 1080)),   # 16:9 — veri seti için ❌
+    (3840, 2160): ("THE_4_K",   None,   (3840, 2160)),
+}
+
+
+def v2_sensor_cozunurlugu(w: int, h: int):
+    """(w,h) → (sensör_modu_enum, ispScale|None, gerçek_boyut).
+
+    ⚠️ Dönen `gerçek_boyut` istenenden FARKLI olabilir (ISP ölçekleme) — çağıran
+    manifest'e GERÇEK boyutu yazmalı, istenen değil.
+    Desteklenmeyen değerde ValueError; mesaj sahada okunacak şekilde yazıldı.
+    """
+    import depthai as _dai
+    kayit = V2_COZUNURLUKLER.get((int(w), int(h)))
+    if kayit is None:
+        secenek = ", ".join(f"{a}x{b}" for a, b in sorted(V2_COZUNURLUKLER))
+        raise ValueError(
+            f"{w}x{h} bu cihazda v2 ile ÜRETİLEMİYOR. Desteklenen: {secenek}. "
+            f"Veri seti için önerilen: 1352x1014 (12MP + ispScale 1/3 = tam 4:3, "
+            f"tam FOV, ölçülen 9,9 FPS)."
+        )
+    ad, isp, gercek = kayit
+    return getattr(_dai.ColorCameraProperties.SensorResolution, ad), isp, gercek
 
 
 def klasor_hazirla(out: Path, prefix: str):
@@ -270,10 +352,23 @@ def klasor_hazirla(out: Path, prefix: str):
             "İyi veri seti ipuçları:\n"
             "  • Çeşitlilik: farklı mesafe/açı/ışık/arka plan.\n"
             "  • Toplayıcı benzer kareleri --min-fark eşiğiyle zaten eler.\n"
-            "  • Sınıf başına dengeli sayı.\n"
-            "  • Eğitim: yolo detect train data=data.yaml model=yolo11n.pt imgsz=640\n"
-            "    (eğitim imgsz serbest; DEPLOY export'u 416x416 olmalı — kodun letterbox\n"
-            "     varsayımı _LB_PAY=0.125 buna bağlı.)\n",
+            "  • Sınıf başına dengeli sayı.\n\n"
+            "🔴 ÖN İŞLEME = SIKIŞTIRMA (stretch), LETTERBOX DEĞİL — pazarlıksız:\n"
+            "  Deploy 4:3 kareyi (1352x1014) 416x416'ya EZİYOR\n"
+            "  (setPreviewKeepAspectRatio(False)). Ultralytics'in eğitim varsayılanı\n"
+            "  ise LETTERBOX'tır (en-boy korur, gri şerit ekler). İkisi ayrışırsa\n"
+            "  model eğitimde YUVARLAK, sahada ~1,33x DİKEY UZAMIŞ duba görür →\n"
+            "  sistematik geometri kayması, uzak/küçük dubada belirgin. BELİRTİ VERMEZ.\n\n"
+            "  Çözüm (en temiz): kareleri eğitimden ÖNCE 416x416'ya EZ. Kare girdide\n"
+            "  Ultralytics'in letterbox'ı hiçbir şey yapmaz (r=1.000, dolgu YOK).\n"
+            "  YOLO etiketleri normalize (0-1) olduğu için yeniden boyutlandırma\n"
+            "  etiket değerlerini DEĞİŞTİRMEZ.\n"
+            "  • Roboflow kullanıyorsan: Preprocessing > Resize > 'Stretch to' 416x416\n"
+            "    ('Fit within' DEĞİL — o dolgu ekler = letterbox).\n"
+            "  • Eğitim: yolo detect train data=data.yaml model=yolo11n.pt imgsz=416\n"
+            "    (mimari 06.08.2026'da ölçülerek seçildi: v8n 21,6 / v11n 19,9 FPS,\n"
+            "     fark %8; v11n'in +2,2 mAP'i tercih edildi — darboğaz menzil.)\n"
+            "  • Export: 416x416, düz .blob, 4 SHAVE, superblob KAPALI.\n",
             encoding="utf-8",
         )
     return images, labels
@@ -292,15 +387,18 @@ def hud_yaz(frame, satirlar, org=(10, 26)):
 # ------------------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser(
-        description="OAK-D Lite (DepthAI v3) ile YOLO veri seti (kare) toplayıcı.",
+        description="OAK-D Lite (DepthAI v2) ile YOLO veri seti (kare) toplayıcı.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     ap.add_argument("--out", type=str, default="~/girdap_veriseti",
                     help="Çıktı klasörü (images/ + labels/ + data.yaml burada oluşur)")
-    ap.add_argument("--res", type=res_ayristir, default="1440x1080",
-                    help="Kayıt çözünürlüğü (GENİŞxYÜKSEK). 4:3 OLMALI — deploy "
-                         "(640x480 → 416x416 letterbox) ile aynı FOV. 16:9 verirsen "
-                         "sensörün altı/üstü kırpılır, veri seti deploy'a uymaz.")
+    ap.add_argument("--res", type=res_ayristir, default="1352x1014",
+                    help="Kayıt çözünürlüğü (GENİŞxYÜKSEK). Varsayılan 1352x1014 = "
+                         "12MP + ispScale 1/3: TAM 4:3, KIRPMA YOK (tam FOV), "
+                         "ölçülen 9,9 FPS. 4:3 OLMALI — deploy (416x416'ya "
+                         "SIKIŞTIRMA) ile aynı FOV. 16:9 verirsen sensörün altı/üstü kırpılır, "
+                         "veri seti deploy'a uymaz. 1440x1080 istenirse otomatik "
+                         "1352x1014'e düşer (o sensör modu bu cihazda kare üretmiyor).")
     ap.add_argument("--fps", type=int, default=10,
                     help="Kamera sensör FPS'i. Varsayılan 10 = 23,3 MB/s @1440x1080; "
                          "20 (46,7 MB/s) USB2'de ÇÖKTÜĞÜ ölçüldü — yükseltme.")
@@ -332,7 +430,7 @@ def main():
     out = Path(args.out).expanduser().resolve()
     w, h = args.res
     images_dir, _ = klasor_hazirla(out, args.prefix)
-    idx = sonraki_index(images_dir, args.prefix)
+    idx = sonraki_index(images_dir, args.prefix, out / MANIFEST_ADI)
     headless = args.no_preview
     auto = headless or args.auto_start   # ekransızsa otomatik şart (klavye yok)
 
@@ -369,7 +467,14 @@ def main():
         print("       • Başka bir program (algı node'u) kamerayı tutuyor olabilir.")
         sys.exit(1)
 
-    # --- DepthAI v3 pipeline (RGB-only) ---
+    # --- DepthAI v2 pipeline (RGB-only) ---
+    # 🔴 SÜRÜM KARARI (2026-08-05, Eyüp: "depthai v2'ye yükselt"): sistem tek
+    # sürümde — **depthai 2.30.0.0**. Sebep v3'ün firmware hatası: v3.7.1/3.8.0'da
+    # mono kameralar açılmıyor → STEREO %0 (ölçüldü). v3'te RGB çalıştığı için bu
+    # toplayıcı v3'te de koşuyordu, ama algı node'u derinliğe muhtaç ve v2'de her
+    # şey çalışıyor (stereo 29,7 FPS). İki sürümü yan yana yaşatmak yerine tek
+    # sürüme inildi. ⇒ BU DOSYA ARTIK v3'TE ÇALIŞMAZ (v3'e dönülürse geri taşı).
+    #
     # 🔴 USB2'ye ZORLANIYOR (2026-08-05 ölçümü): bu Jetson'da SuperSpeed linki
     # `tegra-xusb`ın U1/U2 pazarlığında çöküyor → cihaz bootlanıp ROM'a düşüyor
     # (`X_LINK_DEVICE_NOT_FOUND`). HIGH'a zorlanınca 5/5 açılış; otomatik
@@ -377,27 +482,40 @@ def main():
     # Kilit gelirse `dayanikli_ac` sudo'suz USB reset atıp yeniden dener —
     # denizde fişe kimse uzanamayacağı için bu ZORUNLU.
     try:
+        cozunurluk, isp_scale, gercek = v2_sensor_cozunurlugu(w, h)
+        if (gercek[0], gercek[1]) != (w, h):
+            print(f"[!] {w}x{h} bu cihazda doğrudan YOK → en yakın 4:3 mod "
+                  f"kullanılıyor: {gercek[0]}x{gercek[1]} (tam FOV, kırpma yok).")
+            w, h = gercek                     # manifest ve akış hesabı GERÇEĞİ göstersin
+        pipeline = dai.Pipeline()
+        cam = pipeline.create(dai.node.ColorCamera)
+        cam.setBoardSocket(dai.CameraBoardSocket.CAM_A)
+        cam.setResolution(cozunurluk)
+        if isp_scale:
+            # Tam sensör okunur, ISP'de küçültülür → KIRPMA YOK, tam FOV korunur.
+            # Ham 12MP'yi USB'den göndermek FPS'i 2'ye düşürüyordu (ölçüldü).
+            cam.setIspScale(*isp_scale)
+        cam.setFps(args.fps)
+        xout = pipeline.create(dai.node.XLinkOut)
+        xout.setStreamName("rgb")
+        # `isp` çıkışı = setIspScale sonrası boyut (ÖLÇÜLDÜ: 1352×1014 @ 9,9 FPS).
+        # ⚠️ Kare gelmemesi durumunda ilk şüpheli çıkış portu DEĞİL, SENSÖR MODUdur:
+        # 05.08'de `isp` de `video` de `preview` de 0 kare verdi — üçünün de altında
+        # THE_1440X1080 vardı ve o mod bu cihazda hiç kare üretmiyor (sessizce).
+        cam.isp.link(xout.input)
+        # v2'de cihaz pipeline ile birlikte açılır (v3'teki pipeline.start() YOK).
         dev = ob.dayanikli_ac(
-            lambda: dai.Device(dai.UsbSpeed.HIGH),
+            lambda: dai.Device(pipeline, dai.UsbSpeed.HIGH),
             kaydet=lambda m: print(f"[!] {m}", flush=True),
         )
-        pipeline = dai.Pipeline(dev)
-        cam = pipeline.create(dai.node.Camera).build(
-            dai.CameraBoardSocket.CAM_A, sensorFps=args.fps
-        )
-        # resizeMode AÇIKÇA veriliyor: depthai varsayılanı CROP(0) — deploy node'u
-        # LETTERBOX kullanıyor ("tam yatay FOV korunur, CROP kenardaki dubaları keser").
-        # 4:3 istekte fark yok; yanlışlıkla 4:3 dışı verilirse FOV'u kesmek yerine korur.
-        rgb_q = cam.requestOutput(
-            (w, h), resizeMode=dai.ImgResizeMode.LETTERBOX
-        ).createOutputQueue(maxSize=4, blocking=False)
-        pipeline.start()
+        rgb_q = dev.getOutputQueue("rgb", maxSize=4, blocking=False)
     except Exception as e:                                  # cihaz yok / çözünürlük hatası
         print("\n[HATA] Kamera pipeline başlatılamadı.")
         print(f"       Sebep: {type(e).__name__}: {e}")
         print("       • OAK-D Lite USB'ye takılı ve enerji alıyor mu?  (lsusb'de 03e7 görünmeli)")
         print("       • Başka bir program (algı node'u) kamerayı tutuyor olabilir.")
-        print(f"       • Bu çözünürlük ({w}x{h}) desteklenmiyorsa dene: --res 1280x720")
+        print(f"       • depthai sürümü v2 mi? (bu dosya v2 API'si kullanır: "
+              f"{getattr(dai, '__version__', '?')})")
         sys.exit(1)
 
     # --- USB link hızı: sessiz çökme tuzağı (2026-08-05'te bu Jetson'da ölçüldü) ---
@@ -409,7 +527,7 @@ def main():
     # bu yüzden hesap journal'a yazılır: kıyı kontrolünde tek bakışta görülsün.
     USB2_GUVENLI_MBS = 30.0        # 35-40 tavanına pay bırakan eşik
     try:
-        usb_hiz = pipeline.getDefaultDevice().getUsbSpeed()
+        usb_hiz = dev.getUsbSpeed()          # v2: cihazın kendisinden (v3'te pipeline'dan)
         ad = str(usb_hiz).rsplit(".", 1)[-1]
         akis_mbs = w * h * 1.5 * args.fps / 1e6           # NV12 = 1,5 bayt/piksel
         print(f"[i] USB link      : {ad}  (akış ≈ {akis_mbs:.1f} MB/s)  [HIGH istendi]")
@@ -431,7 +549,7 @@ def main():
     # sürebilir → sıcaklık periyodik loglanır, eşik aşılırsa uyarı basılır.
     _sicaklik_dev = None
     try:
-        _sicaklik_dev = pipeline.getDefaultDevice()
+        _sicaklik_dev = dev              # v2: cihaz zaten elimizde
         _c0 = ob.vpu_sicakligi(_sicaklik_dev)
         if _c0 is not None:
             print(f"[i] VPU sıcaklık  : {_c0:.1f} °C  "
@@ -451,7 +569,11 @@ def main():
         cv2.imwrite(str(yol), frame, [cv2.IMWRITE_JPEG_QUALITY, int(args.jpg_quality)])
         # Manifest HER karede flush'lanır: denizde güç kesilirse en fazla son
         # satır kaybolur, o ana kadarki oturum kaydı sağlam kalır.
-        manifest.write(manifest_satiri(yol.name, oturum, time.time(), w, h, args.fps))
+        # 🔴 GERÇEK kare boyutu yazılır, istenen değil: ISP ölçekleme yüzünden ikisi
+        # ayrışabiliyor (1440x1080 istenip 1352x1014 alınması gibi). Manifest
+        # veri setinin tek doğrusu — istenen değeri yazmak sessiz yalan olurdu.
+        _h, _w = frame.shape[:2]
+        manifest.write(manifest_satiri(yol.name, oturum, time.time(), _w, _h, args.fps))
         manifest.flush()
         idx += 1
         return yol
@@ -471,7 +593,10 @@ def main():
                                  # Eşikler oak_baglanti.py: uyarı 85, kritik 95 °C.
 
     try:
-        while pipeline.isRunning():
+        # v2: cihaz kapanana kadar dön (v3'teki `pipeline.isRunning()` YOK —
+        # 2026-08-05 taşımasında bu satır atlandı ve servis tam burada çöktü:
+        # AttributeError, cihaz açılmış/USB HIGH/sıcaklık okunmuş haldeyken).
+        while not dev.isClosed():
             msg = rgb_q.tryGet()
             if msg is None:
                 if not headless and cv2.waitKey(1) & 0xFF in (ord("q"), 27):
@@ -590,7 +715,12 @@ def main():
     except KeyboardInterrupt:
         print("\n[i] Ctrl+C — kapatılıyor.")
     finally:
-        pipeline.stop()
+        # v2: cihazı kapat (v3'teki pipeline.stop() karşılığı). Cihaz teardown'da
+        # çökebiliyor (3/3 gözlendi) → manifest'i HER HÂLDE kapat, son satır gitmesin.
+        try:
+            dev.close()
+        except Exception:
+            pass
         manifest.close()
         if not headless:
             cv2.destroyAllWindows()

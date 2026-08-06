@@ -33,9 +33,10 @@ HFOV_RAD = math.radians(69.0)
 def odak_px(genislik_px: float, hfov_rad: float = HFOV_RAD) -> float:
     """Pinhole odak uzaklığı (piksel): f = (W/2) / tan(HFOV/2).
 
-    NN çerçevesi LETTERBOX olduğu için YATAY eksen tam FOV'u korur → yatay
-    piksel ölçeği doğrudan HFOV'a bağlanır (dikeyde şerit payı vardır, bu
-    yüzden menzil dikeyden DEĞİL yataydan hesaplanır).
+    YATAY eksen her iki ön işlemede de tam FOV'u korur (deploy'daki SIKIŞTIRMA
+    yatayda sadece ölçekler; letterbox'a dönülse şerit yalnız dikeye eklenir)
+    → yatay piksel ölçeği doğrudan HFOV'a bağlanır. Menzil bu yüzden dikeyden
+    DEĞİL yataydan hesaplanır: dikey, ön işleme değişirse kayan eksendir.
     """
     return (genislik_px / 2.0) / math.tan(hfov_rad / 2.0)
 

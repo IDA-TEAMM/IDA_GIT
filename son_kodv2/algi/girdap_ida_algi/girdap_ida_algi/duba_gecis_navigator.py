@@ -74,8 +74,14 @@ import rclpy
 
 try:                                  # paket içi saf mantık (kamerasız testli)
     from girdap_ida_algi import gecit_mantik as gm
+    from girdap_ida_algi import oak_baglanti as ob
 except ImportError:                   # dosya doğrudan çalıştırılırsa
     import gecit_mantik as gm
+    import oak_baglanti as ob
+# ⚠️ `ob` import'u 05.08 smoke testinde eklendi — daha önce YOKTU ama kod
+# ob.dayanikli_ac çağırıyordu. Fark edilmedi çünkü node model dosyası
+# olmadan ilk satırda çöküyor, bu satıra hiç ulaşılamıyordu. Ders:
+# "import atlanmış mı" ancak modül GERÇEKTEN çalıştırılınca görülür.
 from rclpy.node import Node
 from rclpy.time import Time as RclTime
 from geometry_msgs.msg import TwistStamped, PoseStamped
@@ -95,11 +101,22 @@ elif MOD == "algi_yayin":
         Detection2D, Detection2DArray, ObjectHypothesisWithPose)
 
 # ================== AYARLAR ==================
-# ---- Model: YOLOv11n @ 416x416 ----
-# HubAI'den çevrilen NN Archive (RVC2, 6 shave, IR 2022.3.0). 416x416 giriş
-# boyutu arşivin İÇİNDE tanımlı, kodda ayrıca ayarlanmaz — model değişirse
-# boyut arşivle birlikte gelir. FPS bandı bu boyutla ölçüldü.
-MODEL_NNARCHIVE = "/home/girdap/models/yolo11n_duba_rvc2.tar.xz"
+# ---- Model: YOLOv11n @ 416x416 (depthai v2: .blob + yanında config.json) ----
+# 🔴 v2'de NNArchive YOK (2.30.0.0'dan introspection ile doğrulandı) → model
+# .blob olarak verilir (HubAI/modelconverter çıktısı NNArchive tar.xz ise
+# içinden blob + config.json ÇIKARILIR — arşivde ikisi de var, tar -xf yeter).
+# Sınıf isimleri blob'un YANINDAKİ config.json'dan okunur (NNArchive config
+# formatı: model.heads[0].metadata.classes) → isimden sınıf çözümü (A-7)
+# v2'de de yaşar. config.json yoksa yedek sabitlere düşülür.
+# 🔴 Blob ≤4 SHAVE derlenmiş olmalı (05.08 kamerada ölçüldü): 12MP RGB modu
+# (tam 4:3 FOV) 6 CMX dilimi yiyor → NN'e 4 shave + 4 CMX kalıyor; 6-shave
+# blob "compiled for 6 shaves, only 4 available" ile YÜKLENMEDİ. 4-shave'le
+# ölçüm: 10,9 FPS @ 11 istendi, tavan 19,8 — 11 hedefi rahat. (Eski "≤7"
+# bütçesi v3 + küçük RGB çıkışı dönemindendi.) FOV eşitliği (veri seti ↔
+# deploy) shave sayısından kritik: 16:9'a inmek dikey FOV'u kırpar, model
+# geçide 2 m kala alt bölgedeki dubayı kaybeder.
+MODEL_BLOB = "/home/girdap/models/yolo11n_duba_rvc2.blob"
+NN_GIRIS = 416          # NN giriş boyutu; blob bu boyutla derlenir, İKİSİ BİRLİKTE değişir
 
 # Sınıf indeksleri — YALNIZCA YEDEK. Gerçek indeksler çalışma anında NN
 # Archive'ın sınıf İSİMLERİNDEN çözülür (_sinif_indeksleri_coz).
@@ -110,10 +127,15 @@ MODEL_NNARCHIVE = "/home/girdap/models/yolo11n_duba_rvc2.tar.xz"
 KENAR_CLASS = 0        # turuncu duba (RAL 2003) - parkur kenarı  [yedek]
 ENGEL_CLASS = 1        # sarı duba   (RAL 1026) - engel           [yedek]
 CONF_ESIK = 0.5
-FPS = 12               # sensorFps üst sınırı. Saha ölçümü: 10-14 FPS bandı, tipik
-                       # ~11.6 (YOLO 416x416 + stereo birlikte = VPU sınırı).
-                       # 14'e çıkarmak kâğıt üstünde cazip ama VPU zaten doymuş:
-                       # kuyrukta bayat kare birikir, gecikme artar. 12'de bırak.
+FPS = 11               # sensorFps üst sınırı. ÖLÇÜLDÜ (2026-08-05, bu cihaz):
+                       # YOLO 416x416 + stereo birlikte boru hattı TAVANI = 12,2
+                       # FPS (akış eklemek etkilemiyor: yalnız tespit / +derinlik
+                       # / +RGB → üçü de 12,10). 11 = tavanın %10 altı, gerçek pay.
+                       # 12'ye çıkarmak tavana yapışmak demek: kuyrukta bayat kare
+                       # birikir, gecikme artar. 20 dk kesintisiz 11,00 FPS sapmasız,
+                       # VPU platosu 68-69 °C (tepe 69,3) — termal kısma yok.
+                       # ⚠️ Cihazda otomatik kısma YOK (çökme 125 °C); güneş altında
+                       # gölgelik FPS'ten ~10 kat etkili kaldıraç (11→10 sadece 1-2 °C).
 FPS_UYARI_ESIK = 8.0   # ölçülen NN FPS bunun altına düşerse logda uyar
 
 # OAK-D Lite RGB'si iki varyant: AF (otofokus) | FF (sabit odak). AF varyantı
@@ -186,8 +208,12 @@ KAMERA_FRAME = "oak_rgb"
 # devreye girer.
 SINIF_ESLEME = {KENAR_CLASS: "0", ENGEL_CLASS: "1"}
 
-# ---- GERÇEK kamera karesi (letterbox oranı + kayıt overlay'i buna dayanır) ----
-IMG_W, IMG_H = 640, 480
+# ---- GERÇEK kamera karesi ----
+# 🔴 SABİT YOK — bilerek. Deploy zinciri: 12MP → ispScale(1,3) = 1352×1014 (ISP)
+# → preview 416×416 (NN). Kayıt overlay'i kare boyutunu `frame.shape`'ten
+# OKUR (kayit_adimi), sabitten değil — eskiden burada duran `IMG_W/IMG_H =
+# 640, 480` çifti 05.08'deki 12MP taşımasından sonra GERÇEĞİ YANSITMIYORDU
+# ve yalnız ölü letterbox hesabını besliyordu (aşağıya bkz.).
 
 # ---- YAYINLANAN bbox piksel uzayı (Detection2D piksel uzayı) ----
 # 🔴 BU İKİSİ, TÜKETİCİNİN PARAMETRESİYLE AYNI OLMAK ZORUNDA:
@@ -199,16 +225,19 @@ IMG_W, IMG_H = 640, 480
 # (640 yayınlayıp 1280'e bölmek → kare ortasındaki duba +17°'de görünür,
 # tolerans 8,6° → kamera tespiti hiçbir LiDAR kümesine eşleşmez → sınıf
 # düşer → geçit bulunamaz: P1 G1/KD1≥0,5 ve P2 ≥2 ikili sağlanmaz).
-# GERÇEK kare boyutundan (IMG_W/IMG_H) BAĞIMSIZDIR — bilinçli: yatayda
-# letterbox tam FOV koruduğu için ölçek yeterli, HFOV değişmez.
+# GERÇEK kare boyutundan BAĞIMSIZDIR — bilinçli: tüketici yalnız bbox
+# merkezini bu sayıya böldüğü için ölçek yeterli, HFOV değişmez.
 BBOX_W, BBOX_H = 1280, 720
-# LETTERBOX dikey düzeltme: 4:3 kare (640x480) kare NN girişine (416x416)
-# sığdırılırken üst/alt şerit eklenir. YATAY normalizasyon değişmez (bearing
-# füzyonu zaten yalnız yatayı kullanır); dikey için şerit payı çıkarılır.
-# NOT: DepthAI v3'ün bbox'ı NN çerçevesinde mi orijinalde mi normalize verdiğini
-# masa testinde duba_kamera_test.py ile DOĞRULA; ters çıkarsa _LB_PAY = 0.0 yap.
-_LB_ICERIK = IMG_H / IMG_W               # 0.75 — kare çerçevede içerik oranı
-_LB_PAY = (1.0 - _LB_ICERIK) / 2.0       # 0.125 — üst şerit (normalize)
+
+# ---- LETTERBOX PAYI = 0 (sabit değil, ön işlemenin SONUCU) ----
+# 🔴 Deploy ön işlemesi SIKIŞTIRMA (stretch): setPreviewKeepAspectRatio(False)
+# 4:3 kareyi 416×416'ya EZER → üst/alt gri şerit OLUŞMAZ → çıkarılacak pay YOK.
+# Bu yüzden __init__'te `self._lb_pay = 0.0` sabitlenir (bkz. tespitleri_oku).
+# Eskiden burada `_LB_ICERIK/_LB_PAY = 0.125` hesabı vardı; ölüydü (hiçbir yerde
+# okunmuyordu) ama "deploy letterbox yapıyor" izlenimi veriyordu — SİLİNDİ.
+# ⚠️ Letterbox'a DÖNÜLÜRSE: keepAspectRatio(True) + `gm.letterbox_payi()`
+# (saf, testli katman) birlikte devreye girer ve EĞİTİM ön işlemesi de
+# aynı anda letterbox'a çevrilmelidir — ikisi ASLA ayrı değişmez.
 
 # ---- dogrudan_surus (PLAN B) ayarları ----
 CRUISE_HIZ = 1.0       # m/s - görev hızı
@@ -285,7 +314,9 @@ if KAYIT_AKTIF:
     import cv2            # overlay çizimi + mp4 yazımı (yalnız kayıt aktifken)
 
 KONTROL_HZ = 15.0
-HEDEF_KAYIP_SN = 1.0   # s - tespit tazeliği; 10-14 FPS bandında 10+ kareye denk
+HEDEF_KAYIP_SN = 1.0   # s - tespit tazeliği; 11 FPS'te 11 kareye denk (tam sınırda
+                       # değil: 10 FPS'e düşerse 10 kare kalır, kare düşünce
+                       # tazelik filtresi tetiklenebilir — 11 bu yüzden 10'a yeğlendi)
 ARAMA_TIMEOUT_SN = 25.0
 # =============================================
 
@@ -303,54 +334,107 @@ class Duba:
     h: float = 0.0
 
 
+def _model_siniflarini_oku(blob_yolu: str):
+    """Blob'un yanındaki config.json'dan (NNArchive formatı) sınıf isimleri.
+
+    v2'de NNArchive/getClasses() yok → isimler sidecar dosyadan okunur ki
+    isimden sınıf çözümü (A-7: yeniden eğitimde sıra değişse bile turuncu/sarı
+    karışmaz) v2'de de çalışsın. Okunamazsa [] döner → yedek sabitler.
+    Aranan yerler: <blob_dizini>/config.json, sonra <blob_adı>.json.
+    """
+    import json
+    dizin = os.path.dirname(blob_yolu)
+    adaylar = (os.path.join(dizin, "config.json"),
+               os.path.splitext(blob_yolu)[0] + ".json")
+    for yol in adaylar:
+        try:
+            with open(yol, encoding="utf-8") as f:
+                cfg = json.load(f)
+            heads = cfg.get("model", {}).get("heads", [])
+            siniflar = heads[0].get("metadata", {}).get("classes", []) if heads else []
+            if siniflar:
+                return [str(s) for s in siniflar]
+        except (OSError, ValueError, KeyError, IndexError):
+            continue
+    return []
+
+
 def pipeline_kur():
-    """OAK-D Lite üzerinde çalışan pipeline: RGB + Stereo + YOLO (VPU'da)."""
-    nn_archive = dai.NNArchive(MODEL_NNARCHIVE)
+    """OAK-D Lite üzerinde çalışan pipeline: RGB + Stereo + YOLO (VPU'da).
 
-    # 🔴 USB2'ye ZORLANIYOR (2026-08-05 ölçümü, bu Jetson'da):
-    # SuperSpeed linki `tegra-xusb`ın U1/U2 güç durumu pazarlığında çöküyor —
-    # cihaz bootlanıp SuperSpeed'e geçiyor, link dağılıyor, ROM'a düşüyor
-    # (`X_LINK_DEVICE_NOT_FOUND`). Kernel logu 2 saatte 100× "Disable of
-    # device-initiated U1/U2 failed" + error -71; hataların TAMAMI SuperSpeed
-    # yolunda, high-speed yolunda sıfır. HIGH'a zorlanınca **5/5** açılış.
-    # Bant genişliği kaybı YOK: bu pipeline ~15 MB/s, USB2 tavanı ~35-40 MB/s.
-    # Kilit gelirse dayanikli_ac() sudo'suz USB reset atıp yeniden dener —
-    # teknede kameraya fiziksel erişim olmayacağı için bu ZORUNLU.
-    # Ayrıntı: girdap_ida_algi/oak_baglanti.py
-    dev = ob.dayanikli_ac(lambda: dai.Device(dai.UsbSpeed.HIGH))
-    pipeline = dai.Pipeline(dev)
+    depthai v2 (2.30.0.0) API'si — 2026-08-05'te v3'ten taşındı (v3 firmware'i
+    mono kameraları açamıyor → stereo %0; v2'de stereo 29,7 FPS ölçüldü).
+    Desen, bu cihazda 20 dk kesintisiz koşan ölçüm aracıyla
+    (scripts/oak_derinlik_termal_testi.py) birebir aynı; tek bilinçli fark
+    RGB sensör modu (aşağıda).
+    """
+    siniflar = _model_siniflarini_oku(MODEL_BLOB)
 
-    # depthai 3.7.1'e karşı doğrulandı — Tem 2026 itibarıyla EN GÜNCEL sürüm
-    # (resmi SpatialDetectionNetwork örneğiyle aynı desen)
-    cam_rgb = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_A, sensorFps=FPS)
+    pipeline = dai.Pipeline()
+
+    cam_rgb = pipeline.create(dai.node.ColorCamera)
+    cam_rgb.setBoardSocket(dai.CameraBoardSocket.CAM_A)
+    # 🔴 THE_12_MP + ispScale(1,3) = 1352×1014, TAM 4:3, KIRPMASIZ tam FOV.
+    # Ölçüm aracı THE_1080_P (16:9) kullanıyordu — o mod sensörü DİKEY KIRPAR.
+    # Veri seti 05.08'den beri tam 4:3 (1352×1014) toplanıyor; deploy aynı
+    # çerçeveyi görmeli, yoksa model sahada öğrendiğinden farklı FOV görür.
+    # (THE_1440X1080 enum'da var ama bu cihazda SESSİZCE 0 kare üretiyor —
+    # 05.08 mod taraması; 12MP+ispScale ölçüldü: RGB-only 18,6 FPS tavan.)
+    # ⚠️ FPS/termal referans ölçümleri 1080P ile alındı → 11 FPS bandı bu modla
+    # masa testinde YENİDEN doğrulanmalı (duba_kamera_test.py).
+    cam_rgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_12_MP)
+    cam_rgb.setIspScale(1, 3)
+    cam_rgb.setPreviewSize(NN_GIRIS, NN_GIRIS)
+    cam_rgb.setInterleaved(False)
+    cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
+    # False = tam kare 416×416'ya SIKIŞTIRILIR (letterbox şeridi YOK) —
+    # Luxonis'in resmî YOLO örnekleriyle ve bu cihazdaki ölçülü desenle aynı.
+    # Sonuçları: (a) tam FOV korunur, (b) bbox normalize koordinatları kaynak
+    # kareye DOĞRUDAN ölçeklenir → letterbox payı 0 (bkz. tespitleri_oku),
+    # (c) eğitim de AYNI ön işlemeyle yapılmalı (models/README'ye işlendi).
+    cam_rgb.setPreviewKeepAspectRatio(False)
+    cam_rgb.setFps(FPS)
     if RGB_SABIT_FOKUS is not None:
         cam_rgb.initialControl.setManualFocus(RGB_SABIT_FOKUS)
-    mono_sol = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B, sensorFps=FPS)
-    mono_sag = pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C, sensorFps=FPS)
+
+    mono_sol = pipeline.create(dai.node.MonoCamera)
+    mono_sag = pipeline.create(dai.node.MonoCamera)
+    mono_sol.setBoardSocket(dai.CameraBoardSocket.CAM_B)
+    mono_sag.setBoardSocket(dai.CameraBoardSocket.CAM_C)
+    for m in (mono_sol, mono_sag):
+        # THE_480_P = mono sensörün (OV7251) TAM karesi. 2026-08-04 düzeltmesi
+        # v2'de de geçerli: 400P üstten/alttan kırpar, dikey FOV ~%17 daralır;
+        # geçide 2 m kala duba karenin ALT bölgesinde → derinlik kaybı →
+        # tespit z<=0.05 filtresine takılıp tam tetikleme anında düşer.
+        m.setResolution(dai.MonoCameraProperties.SensorResolution.THE_480_P)
+        m.setFps(FPS)
 
     stereo = pipeline.create(dai.node.StereoDepth)
     # ROBOTICS preseti (Luxonis dokümanı, 2026-08-04 araştırması): "navigasyon,
     # engel tespiti", çalışma aralığı **0-10 m**; DEFAULT 0-15 m'ye yayılır.
-    # Bizim geçit bandımız ≤8 m (piksel + baseline hesabı) → menzili dar tutmak
-    # aynı VPU bütçesinde daha temiz derinlik verir. İkisi de HIGH_DENSITY +
-    # 7x7 medyan + 3-bit subpixel; fark aralık ayarında.
+    # 🟠 05.08 ölçümü: iç mekânda DEFAULT %53 geçerli piksel, ROBOTICS %43-44,
+    # hız aynı — SUDA tekrar kıyaslanacak, şimdilik ROBOTICS kalıyor.
     stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.ROBOTICS)
-    stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)  # resmi örnekte yok (build hallediyor), açıkça yazmak zararsız
+    stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
+    # 🔴 ZORUNLU (05.08 ölçümü): setDepthAlign tek başına derinliği RGB
+    # çözünürlüğüne ölçekler (4,1 MB/kare) → USB dolar → 8,1 FPS.
+    # setOutputSize(640,400) ile 14,7 FPS.
+    stereo.setOutputSize(640, 400)
+    # LRC bedava (12,19 vs 12,20 FPS — 05.08) ve yanlış eşleşmeleri eler.
+    stereo.setLeftRightCheck(True)
+    mono_sol.out.link(stereo.left)
+    mono_sag.out.link(stereo.right)
 
-    # 🔴 DÜZELTİLDİ (2026-08-04): eskiden (640,400) isteniyordu — mono sensör
-    # 640x480 olduğu için bu istek üstten/alttan KIRPIYOR (requestOutput
-    # varsayılanı CROP), dikey FOV ~%17 daralıyordu. "Ufka bakan kamerada sorun
-    # değil" gerekçesi YANLIŞTI: geçide 2 m kala duba karenin ALT bölgesinde
-    # görünür — kırpılan bölge tam orası. Derinlik gelmezse tespit `z<=0.05`
-    # filtresine takılıp DÜŞER, yani geçidi tam tetikleme anında kaybederiz.
-    # Tam sensör çözünürlüğü isteniyor; FPS etkisi masa testinde ölçülecek.
-    mono_sol.requestOutput((640, 480)).link(stereo.left)
-    mono_sag.requestOutput((640, 480)).link(stereo.right)
-
-    sdn = pipeline.create(dai.node.SpatialDetectionNetwork).build(
-        cam_rgb, stereo, nn_archive,
-        resizeMode=dai.ImgResizeMode.LETTERBOX  # tam yatay FOV korunur (CROP kenarlardaki dubaları keser)
-    )
+    sdn = pipeline.create(dai.node.YoloSpatialDetectionNetwork)
+    sdn.setBlobPath(MODEL_BLOB)
+    sdn.setConfidenceThreshold(CONF_ESIK)
+    # numClasses blob'a gömülü DEĞİL (v2) → config.json'dan; okunamazsa 2
+    # (bizim duba modeli 2 sınıf). YANLIŞ sayı sessiz bozuk decode demektir.
+    sdn.setNumClasses(len(siniflar) if siniflar else 2)
+    sdn.setCoordinateSize(4)
+    sdn.setIouThreshold(0.5)
+    # ⚠️ YOLOv11 anchor-FREE: setAnchors/setAnchorMasks ÇAĞRILMAZ (05.08'de bu
+    # cihazda anchor'sız doğru tespit ölçüldü: person conf=0.79).
     sdn.input.setBlocking(False)
     sdn.setBoundingBoxScaleFactor(0.5)
     sdn.setDepthLowerThreshold(300)      # mm
@@ -358,17 +442,34 @@ def pipeline_kur():
     # (baseline 7,5 cm); uzak "derinlik" çöpü hayalet duba konumu üretir ve
     # geçit çiftini bozar. ROBOTICS presetinin 0-10 m aralığıyla da uyumlu.
     sdn.setDepthUpperThreshold(10000)    # mm
-    sdn.setConfidenceThreshold(CONF_ESIK)
+    cam_rgb.preview.link(sdn.input)
+    stereo.depth.link(sdn.inputDepth)
 
-    det_q = sdn.out.createOutputQueue(maxSize=4, blocking=False)
-    rgb_q = None
+    xout_det = pipeline.create(dai.node.XLinkOut)
+    xout_det.setStreamName("tespit")
+    sdn.out.link(xout_det.input)
     if KAYIT_AKTIF:
-        # Dosya-1 için NN giriş karesi (letterbox). VPU'ya EK YÜK YOK — kare
-        # zaten üretiliyor, sadece USB'den kopyası çekilir. FPS'e etkisini
-        # yine de masa testinde doğrula (duba_kamera_test.py aynı akışı çeker).
-        rgb_q = sdn.passthrough.createOutputQueue(maxSize=2, blocking=False)
-    siniflar = sdn.getClasses()          # NN Archive'daki sınıf isimleri (data.yaml sırası)
-    return pipeline, det_q, rgb_q, siniflar
+        # Dosya-1 için NN giriş karesi. VPU'ya EK YÜK YOK — kare zaten
+        # üretiliyor, sadece USB'den kopyası çekilir.
+        xout_rgb = pipeline.create(dai.node.XLinkOut)
+        xout_rgb.setStreamName("rgb")
+        xout_rgb.input.setBlocking(False)
+        xout_rgb.input.setQueueSize(2)
+        sdn.passthrough.link(xout_rgb.input)
+
+    # 🔴 USB2'ye ZORLANIYOR (2026-08-05 ölçümü, bu Jetson'da):
+    # SuperSpeed linki `tegra-xusb`ın U1/U2 güç durumu pazarlığında çöküyor —
+    # cihaz bootlanıp SuperSpeed'e geçiyor, link dağılıyor, ROM'a düşüyor
+    # (`X_LINK_DEVICE_NOT_FOUND`). HIGH'a zorlanınca **5/5** açılış.
+    # Bant genişliği kaybı YOK: bu pipeline ~15 MB/s, USB2 tavanı ~35-40 MB/s.
+    # Kilit gelirse dayanikli_ac() sudo'suz USB reset atıp yeniden dener —
+    # teknede kameraya fiziksel erişim olmayacağı için bu ZORUNLU.
+    # v2'de cihaz pipeline İLE açılır (v3'teki pipeline.start() yok).
+    dev = ob.dayanikli_ac(lambda: dai.Device(pipeline, dai.UsbSpeed.HIGH))
+
+    det_q = dev.getOutputQueue("tespit", maxSize=4, blocking=False)
+    rgb_q = dev.getOutputQueue("rgb", maxSize=2, blocking=False) if KAYIT_AKTIF else None
+    return dev, det_q, rgb_q, siniflar
 
 
 def _sinif_indeksleri_coz(siniflar):
@@ -429,7 +530,7 @@ class DubaNavigator(Node):
         else:
             raise ValueError(f"Geçersiz MOD: {MOD}")
 
-        self.pipeline, self.det_q, self.rgb_q, siniflar = pipeline_kur()
+        self.dev, self.det_q, self.rgb_q, siniflar = pipeline_kur()
         self._siniflar = siniflar or []
         # Dosya-1 kayıt durumu (şartname 4.2)
         self._kayit_bozuk = not KAYIT_AKTIF
@@ -445,8 +546,14 @@ class DubaNavigator(Node):
             except OSError as e:
                 self._kayit_bozuk = True
                 self.get_logger().error(f"Dosya-1 dizini açılamadı: {e}")
-        self.pipeline.start()
-        self.get_logger().info(f"OAK-D Lite hazır — YOLO VPU'da. MOD = {MOD}")
+        # v2: cihaz pipeline_kur() içinde pipeline'la birlikte açıldı; ayrıca
+        # start() yok. USB link hızı journal'a yazılır (kıyı kontrolü).
+        try:
+            self.get_logger().info(
+                f"OAK-D Lite hazır — YOLO VPU'da. MOD = {MOD}, "
+                f"USB = {str(self.dev.getUsbSpeed()).rsplit('.', 1)[-1]} [HIGH istendi]")
+        except Exception:
+            self.get_logger().info(f"OAK-D Lite hazır — YOLO VPU'da. MOD = {MOD}")
         self.kenar_cls, self.engel_cls, isimle = _sinif_indeksleri_coz(self._siniflar)
         self.sinif_esleme = {self.kenar_cls: "0", self.engel_cls: "1"}
         if isimle:
@@ -489,9 +596,12 @@ class DubaNavigator(Node):
         self.gecilen_gecitler = []
         # Pinhole odak (normalize bbox için): D = f·W/w_norm
         self._f_norm = gm.odak_px(1.0)
-        # Letterbox payı: başlangıçta sabit yedek, ilk tespit mesajında
-        # cihazın kendi dönüşüm bilgisiyle DEĞİŞTİRİLİR (varsayım yok).
-        self._lb_pay = _LB_PAY
+        # Letterbox payı = 0: v2'de preview keepAspectRatio(False) tam kareyi
+        # 416×416'ya SIKIŞTIRIR — şerit yok, bbox normalize koordinatları kaynak
+        # kareye her iki eksende DOĞRUDAN ölçeklenir. (gm.letterbox_payi saf
+        # katmanı testli duruyor; letterbox'a dönülürse hazır — ama o gün
+        # EĞİTİM ön işlemesi de birlikte değişmeli.)
+        self._lb_pay = 0.0
         # S2: Dosya-1 (md 4.2) "her frame zaman etiketli" olmak zorunda. Jetson'da
         # RTC pili yoksa saat boot'ta geride açılır (ölçüldü: ~2 ay) → etiketler
         # yanlış olur, teslimde 5 ceza riski. Kod saati düzeltemez; SESSİZ KALMASIN.
@@ -501,7 +611,7 @@ class DubaNavigator(Node):
                 "Dosya-1 zaman etiketleri geçersiz olur (md 4.2). "
                 "Koşudan ÖNCE: sudo date -s '...' → sonra bu node'u yeniden başlat.")
         self._son_log = 0.0
-        self._fps_n = 0            # ölçülen NN FPS (beklenen bant: 10-14)
+        self._fps_n = 0            # ölçülen NN FPS (beklenen: ~11, tavan 12,2)
         self._fps_t0 = time.time()
         self.olculen_fps = 0.0
 
@@ -522,7 +632,7 @@ class DubaNavigator(Node):
             self._fps_n, self._fps_t0 = 0, t
             if self.olculen_fps < FPS_UYARI_ESIK:
                 self.get_logger().warn(
-                    f"NN FPS düşük: {self.olculen_fps:.1f} (beklenen bant 10-14) — "
+                    f"NN FPS düşük: {self.olculen_fps:.1f} (beklenen ~11, tavan 12,2) — "
                     "USB bağlantısı / VPU ısınması / kablo kontrol")
         if msg is None:
             return
@@ -538,23 +648,10 @@ class DubaNavigator(Node):
                 int(d.label), x, z, float(d.confidence),
                 cx=(d.xmin + d.xmax) / 2.0, cy=(d.ymin + d.ymax) / 2.0,
                 w=(d.xmax - d.xmin), h=(d.ymax - d.ymin)))
-        # Letterbox payını CİHAZDAN öğren (varsayım yerine ölçü). Dönüşüm
-        # bilgisi yoksa dosya başındaki sabit yedeğe düşülür.
-        try:
-            tr = msg.getTransformation()
-            if tr is not None:
-                nn_w, nn_h = tr.getSize()
-                src_w, src_h = tr.getSourceSize()
-                pay = gm.letterbox_payi(nn_w, nn_h, src_w, src_h)
-                if pay is not None and abs(pay - self._lb_pay) > 1e-6:
-                    self.get_logger().info(
-                        f"LETTERBOX payı cihazdan: {pay:.4f} "
-                        f"(NN {nn_w}x{nn_h} ← kaynak {src_w}x{src_h}); "
-                        f"önceki {self._lb_pay:.4f}")
-                    self._lb_pay = pay
-        except Exception as e:      # eski firmware / alan yok → yedek pay
-            self.get_logger().warn(f"Dönüşüm bilgisi okunamadı, sabit pay: {e}",
-                                   throttle_duration_sec=30.0)
+        # v2 notu: v3'teki msg.getTransformation() yok — gerek de yok. Preview
+        # keepAspectRatio(False) tam kareyi sıkıştırdığı için şerit oluşmuyor;
+        # _lb_pay __init__'te 0 sabitlendi (letterbox'a dönülürse gm.letterbox_payi
+        # saf katmanı hazır, 78+ testli).
         self.dubalar = dets
         self.son_tespit_t = time.time()
         if MOD == "algi_yayin":
@@ -1123,7 +1220,7 @@ def main():
         except Exception:
             pass
         try:
-            node.pipeline.stop()
+            node.dev.close()      # v2 (cihaz teardown'da çökebilir — yut, kayıt zaten kapandı)
         except Exception:
             pass
         node.destroy_node()

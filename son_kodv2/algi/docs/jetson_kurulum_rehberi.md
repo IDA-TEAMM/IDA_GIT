@@ -119,9 +119,10 @@ olduğu gibi gönder. Model satırı hariç her şey YEŞİL olmalı (model §6)
 
 ### Bugünkü gerçek: model dosyası olmadan YOLO düğümü AÇILMAZ
 
-Kod `MODEL_NNARCHIVE = /home/girdap/models/yolo11n_duba_rvc2.tar.xz` bekler;
-bu dosya git'te YOK (bilinçli) ve **henüz üretilmedi** — `Gazebonew.pt`'den
-RVC2 arşivi üretimi video SONRASINA planlandı; adım adım:
+Kod `MODEL_BLOB = /home/girdap/models/yolo11n_duba_rvc2.blob` bekler
+(🔴 05.08.2026 v2 geçişi: NNArchive değil **blob + yanında config.json**;
+NNArchive tar.xz'den `tar -xJf` ile çıkarılır — `models/README.md`);
+bu dosya git'te YOK (bilinçli) ve **henüz üretilmedi** — adım adım:
 `docs/hubai_model_rehberi.md`. Video için algıya gerek yok.
 
 **Modelsiz dönemde kamerayı YİNE DE test edebilirsin (GEÇİCİ script):**
@@ -132,11 +133,18 @@ Yalnız görüntü + FPS (YOLO yok) — kamera/USB/udev zincirini bugün doğrul
 🗑️ Model geldiği gün bu script SİLİNECEK (bekleyen_girdiler §B/5) —
 yarışma yazılımının parçası DEĞİL, başlığında da yazıyor.
 
-Model tar.xz elinde olduğunda:
+Model elinde olduğunda:
 ```bash
 mkdir -p /home/girdap/models
-# tar.xz'yi USB bellekle taşı → /home/girdap/models/yolo11n_duba_rvc2.tar.xz
+# USB bellekle İKİ dosyayı taşı (WiFi yok):
+#   /home/girdap/models/yolo11n_duba_rvc2.blob
+#   /home/girdap/models/config.json          <- sınıf isimleri buradan okunuyor
 ```
+🔴 **`.tar.xz` (NN Archive) taşıma** — Jetson'daki depthai **2.30.0.0** NN Archive
+ve superblob **okuyamaz**. Arşiv geldiyse PC'de aç, içinden düz `.blob` +
+`config.json` çıkar. Blob **4 shave**'e derlenmiş olmalı; taşımadan önce
+PC'de doğrula: `dai.OpenVINO.Blob(yol).numShaves` → **4**.
+Ayrıntı: [`hubai_model_rehberi.md`](hubai_model_rehberi.md) §4.
 
 ### 6a. Masa testi (ROS'suz, görüntülü) — İLK BUNU KOŞ
 
@@ -158,7 +166,7 @@ ros2 launch girdap_ida_algi algi.launch.py     # respawn'lı, önerilen
 ```
 Varsayılan `MOD="algi_yayin"`: hedef/hız komutu BASMAZ, yalnız yayınlar:
 ```bash
-ros2 topic echo /perception/buoys --once       # tespitler (640×480 bbox)
+ros2 topic echo /perception/buoys --once       # tespitler (1280×720 bbox uzayı)
 ros2 topic echo /perception/gate_passed        # geçit sayacı
 ros2 topic hz   /perception/buoys              # ~10-14 Hz beklenir
 ```

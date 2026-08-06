@@ -142,7 +142,7 @@ Bearing işaret hatası için akla gelen kestirme yol, bizim yayınladığımız
 `bbox_cx`'i baştan aynalamak (`640 - cx`) — böylece onun hatalı formülü doğru
 bearing üretirdi. **Bu aktif olarak zararlı:**
 
-1. Bizim `bbox`'ımız **piksel uzayında** (`640×480`) ve **Dosya-1 zorunlu
+1. Bizim `bbox`'ımız **piksel uzayında** (`1280×720`, E-1 sonrası) ve **Dosya-1 zorunlu
    overlay videosunu** besliyor. Aynalanmış kutular görüntüdeki dubaların
    üstüne oturmaz → şartname md 4.2'ye aykırı çıktı, eksik dosya başına
    **5 ceza puanı**.

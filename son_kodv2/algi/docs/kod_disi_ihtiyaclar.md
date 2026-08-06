@@ -8,7 +8,7 @@
 
 | Ne | Neden | Durum |
 |---|---|---|
-| 🟠 NN Archive (`yolo11n_duba_rvc2.tar.xz`) | YOLO'nun VPU'da koşan hali — kamera tespiti onsuz YOK | Üretilecek: [`hubai_model_rehberi.md`](hubai_model_rehberi.md) (video sonrası) |
+| 🟠 Model: `yolo11n_duba_rvc2.blob` **+ `config.json`** (⚠️ NN Archive `.tar.xz` DEĞİL — depthai 2.30 açamaz) | YOLO'nun VPU'da koşan hali — kamera tespiti onsuz YOK | Üretilecek: [`hubai_model_rehberi.md`](hubai_model_rehberi.md) — 416×416, **4 shave**, `superblob=False` |
 | 🟠 `Gazebonew.pt` YEDEĞİ (harici disk + bulut) | Tek eğitilmiş model, tek kopya — kaybı telafisiz | ⚠️ hâlâ aynı diskte |
 | 🔴 GitHub erişimi Jetson'da | Repolar private | `gh auth login` (kurulum rehberi §1) |
 | 🟠 HubAI hesabı + API key | Model çevirme | 5 dk, ücretsiz |

@@ -116,6 +116,6 @@ sessizce yanlış sınıf yayınlar.
   Şimdilik bilerek BOL toplama tarafına ayarlı.
 - Toplayıcı ile algı node'u **aynı anda çalışamaz** (tek OAK). Servis dosyasında
   `Conflicts=` var ama asıl güvence yukarıdaki devir sırası.
-- Toplanan kareler **4:3** (1440×1080), deploy da 4:3 (640×480 → 416×416
-  letterbox). 16:9 istenirse sensör kırpılır ve veri seti deploy'a uymaz —
-  `--res` değiştirilmemeli.
+- Toplanan kareler **4:3** (1352×1014; 05.08 öncesi kareler 1440×1080 — aynı
+  FOV), deploy da 4:3 (1352×1014 → 416×416 **SIKIŞTIRMA**). 16:9 istenirse
+  sensör kırpılır ve veri seti deploy'a uymaz — `--res` değiştirilmemeli.
