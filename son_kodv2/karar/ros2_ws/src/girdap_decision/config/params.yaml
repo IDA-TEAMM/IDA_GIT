@@ -131,7 +131,11 @@ planning_node:
 fsm_node:
   ros__parameters:
     tick_rate_hz: 10.0       # görev yönetimi düşük frekans yeter
-    shock_threshold_g: 5.0   # |a|/g, kamikaze çarpma algılama
+    # 5.0 → 3.0 (06.08): log 58'in gerçek IMU'sunda 270 s boyunca 1.5 g
+    # üstü TEK örnek yok (otonom görevde maks 1.067 g). 3.0 = ölçülen
+    # maksimumun 2 katı → manevra/dalga sahte tetik veremez, sert çarpışma
+    # hâlâ erişebilir. ⚠ |a| YERÇEKİMİ DAHİL (durağanda 1.0 g).
+    shock_threshold_g: 3.0   # |a|/g, kamikaze çarpma algılama
     last_waypoint_xy: [0.0, 0.0]  # [0,0]=DEVRE DIŞI (F12.1: kimse override
                              # etmiyordu; gerçek P1→P2 tetiği artık
                              # waypoint_reached index'i — bkz. fsm_node).

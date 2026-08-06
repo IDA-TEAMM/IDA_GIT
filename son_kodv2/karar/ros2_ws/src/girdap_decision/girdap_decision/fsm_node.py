@@ -92,7 +92,23 @@ class FSMNode(Node):
 
         # --- Parametreler ---
         self.declare_parameter("tick_rate_hz", 10.0)
-        self.declare_parameter("shock_threshold_g", 5.0)    # |a|/g eşiği
+        # 🔴 5.0 → 3.0 (2026-08-06, LOG 58'DEN ÖLÇÜLDÜ — GIRDAP_DURUM §0.8l).
+        # 5.0 hiçbir ölçüme dayanmıyordu. Log 58'in gerçek IMU'su (50 Hz,
+        # 270 s, suya indirme + elle taşıma + manevralar dahil):
+        #     otonom görev  p99.9 = 1.048 g   MAKS = 1.067 g
+        #     TÜM log       p99.9 = 1.254 g   MAKS = 1.474 g
+        #     1.5 g üstü tek bir örnek YOK.
+        # Eşik iki koşulu birden sağlamalı:
+        #   ALT: gerçek işletme gürültüsünün ÜSTÜ → 3.0 = ölçülen maksimumun
+        #        2.0 katı (yarışmadaki deniz hâli göldekinden hareketli olacak)
+        #   ÜST: sert bir çarpışmanın ulaşabileceği yerde kalmalı (1 m/s'lik
+        #        temas 50 ms'de dururken ~2 g) → 3.0 hâlâ erişilebilir, 5.0 değil
+        # ⚠ ASİMETRİ (eşiği seçen şey bu): sahte tetik = P3 hedefe varmadan
+        # "tamamlandı" der ve motorlar durur → 145 puan gider. Kaçırılan darbe
+        # ise görevi ÖLDÜRMEZ: tüm waypoint'ler bitince MissionFSM zaten
+        # TAMAMLANDI'ya geçiyor (mission_fsm.py "görev tamamlandı"). Yani
+        # yüksek eşiğin bedeli yalnız parkur-durumu raporu.
+        self.declare_parameter("shock_threshold_g", 3.0)    # |a|/g eşiği
         self.declare_parameter("last_waypoint_xy", [0.0, 0.0])
         self.declare_parameter("p1_to_p2_dist", 1.5)        # CLAUDE.md
         # Sprint 4: parkur katmanı görev dosyası (waypoint parkur etiketleri).

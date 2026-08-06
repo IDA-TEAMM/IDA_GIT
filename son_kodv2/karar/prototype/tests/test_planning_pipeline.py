@@ -138,7 +138,7 @@ def test_parkur_profili_lambdayi_mppi_configine_gecirir(bounds: Bounds) -> None:
     (405 koşumluk ızgara + 162 koşumluk bozucu taraması):
       · λ=10, P1/P2: bozucu altında **6/9 sahnede hedefe varılamadı**
       · λ=50, P3: temas 3/3 ama **temas hızı 0.60 → 0.14 m/s** — görev sonu
-        IMU şokuyla algılandığı için (shock_threshold_g=5.0) risk.
+        IMU şokuyla algılandığı için (shock_threshold_g=3.0) risk.
     Değer/gerekçe kapısı: test_planning_config_drift.py.
     """
     from prototype.planning.pipeline import _PARKUR_PROFILES

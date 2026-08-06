@@ -19,6 +19,7 @@ from __future__ import annotations
 import textwrap
 
 import pytest
+from pathlib import Path
 
 rclpy = pytest.importorskip("rclpy", reason="rclpy yok (.venv) — ROS ortamında koş")
 
@@ -511,5 +512,79 @@ def test_fa4_kapatilabilir(ros_context, tmp_path) -> None:  # noqa: ANN001
     try:
         assert node._pub_statustext is None
         node._on_tick()                                  # çökmemeli
+    finally:
+        node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# ŞOK EŞİĞİ — 2026-08-06, log 58'in GERÇEK IMU'sundan atandı (§0.8l).
+# Eski 5.0 hiçbir ölçüme dayanmıyordu.
+# --------------------------------------------------------------------------- #
+
+#: Log 58 (50 Hz, 270 s) ölçülen |a|/g — yerçekimi DAHİL.
+_LOG58_OTONOM_MAKS = 1.067      # AUTO görevi boyunca en yüksek
+_LOG58_TUM_MAKS = 1.474         # suya indirme + elle taşıma + manevra dahil
+
+
+def test_sok_esigi_gercek_isletme_gurultusunun_USTUNDE() -> None:
+    """Sahte tetik = koşu ölür → eşik ölçülen maksimumun en az 2 katı olmalı.
+
+    Asimetri: sahte tetik P3'ü hedefe varmadan "tamamlandı" yapar, motorlar
+    durur ve 145 puan gider. Kaçırılan darbe ise görevi öldürmez — tüm
+    waypoint'ler bitince MissionFSM zaten TAMAMLANDI'ya geçiyor. Bu yüzden
+    eşik CÖMERT tarafta olmalı.
+    """
+    import yaml
+
+    yol = (
+        Path(__file__).resolve().parents[2]
+        / "ros2_ws" / "src" / "girdap_decision" / "config" / "params.yaml"
+    )
+    with open(yol, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+    esik = float(cfg["fsm_node"]["ros__parameters"]["shock_threshold_g"])
+    assert esik >= 2.0 * _LOG58_TUM_MAKS - 0.05, (
+        f"şok eşiği {esik} g — log 58'de ölçülen maksimum {_LOG58_TUM_MAKS} g'nin "
+        "2 katının altında; manevra/dalga SAHTE TETİK verebilir"
+    )
+
+
+def test_sok_esigi_SERT_carpismanin_erisebilecegi_yerde() -> None:
+    """Eşik yalnız yüksek olmasın: gerçek bir sert çarpışma da geçebilmeli.
+
+    1 m/s'lik temas 50 ms'de dururken ~2 g üretir; 100 ms'de ~1 g. Eşik
+    4 g'nin üstüne çıkarsa hiçbir gerçekçi temas onu tetikleyemez ve kanal
+    tamamen ölü olur (eski 5.0'ın durumu).
+    ⚠ Yüzen dubaya çarpmanın kendisi zaten bu eşiğe ulaşmayabilir — duba
+    yana savrulur, Δv küçük kalır. Kanal "sert çarpışma dedektörü"dür,
+    P3 tamamlanma mekanizması DEĞİL (o waypoint'lerden sürülüyor).
+    """
+    import yaml
+
+    yol = (
+        Path(__file__).resolve().parents[2]
+        / "ros2_ws" / "src" / "girdap_decision" / "config" / "params.yaml"
+    )
+    with open(yol, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+    esik = float(cfg["fsm_node"]["ros__parameters"]["shock_threshold_g"])
+    assert esik <= 4.0, f"şok eşiği {esik} g — gerçekçi hiçbir temas ulaşamaz"
+
+
+def test_sok_esigi_node_varsayilani_yaml_ile_AYNI(ros_context) -> None:  # noqa: ANN001
+    """Drift kapısı: yaml silinse bile node aynı değere düşmeli."""
+    import yaml
+
+    yol = (
+        Path(__file__).resolve().parents[2]
+        / "ros2_ws" / "src" / "girdap_decision" / "config" / "params.yaml"
+    )
+    with open(yol, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+    node = girdap.FSMNode()
+    try:
+        assert float(node.get_parameter("shock_threshold_g").value) == float(
+            cfg["fsm_node"]["ros__parameters"]["shock_threshold_g"]
+        )
     finally:
         node.destroy_node()

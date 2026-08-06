@@ -80,7 +80,7 @@ class ParkurProfile:
 # PARKUR3 λ=50 (ayrı ölçüldü): kamikaze çekicisi maliyet yayılımını büyüttüğü
 # için λ=10'da ESS p5 hâlâ 1.9 (dejenere). λ=50 → p5 112, |Δu₀| 4.52 → 2.87 N
 # ve en önemlisi **temas hızı 1.18 → 1.81 m/s (+%53)**: parkur-3'ün bitişi IMU
-# şok eşiğiyle (shock_threshold_g=5.0) algılandığı için çarpma enerjisi görev
+# şok eşiğiyle (shock_threshold_g=3.0, log 58'den ölçüldü) algılandığı için çarpma enerjisi görev
 # tamamlama güvenilirliğidir. Bedel: yaklaşma %13 daha uzun (230 → 260 adım).
 #
 # 🔴 λ YENİDEN ÖLÇÜLDÜ (2026-08-06, GIRDAP_DURUM §0.8): P1/P2 10.0 → **1.0**,
@@ -98,7 +98,9 @@ class ParkurProfile:
 # ⚠ P3'te büyük λ'nın hâlâ küçük λ'dan İYİ olması tesadüf değil: kamikaze
 # çekicisi maliyet ölçeğini büyütür → λ maliyet ölçeğiyle birlikte seçilir.
 # 🔴 Temas hızı P3'ün BİTİŞ ŞARTI: görev sonu IMU şokuyla algılanıyor
-# (fsm_node shock_threshold_g=5.0) — 0.14 m/s'lik temas şok üretmeyebilir.
+# (fsm_node shock_threshold_g=3.0) — 0.14 m/s'lik temas şok ÜRETMEZ.
+# ⚠ Görev sonu buna BAĞLI DEĞİL: tüm waypoint'ler bitince MissionFSM
+# zaten TAMAMLANDI'ya geçiyor; şok kanalı sert-çarpışma dedektörü.
 _PARKUR_PROFILES: Dict[str, ParkurProfile] = {
     "PARKUR1": ParkurProfile(w_track=5.0, w_obstacle=50.0, w_terminal=50.0,
                              lambda_=1.0),
