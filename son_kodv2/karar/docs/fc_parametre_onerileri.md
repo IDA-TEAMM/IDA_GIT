@@ -257,12 +257,25 @@ için **5'er ceza puanı** (md 5.5.4.3.5). Ayrıca acil durum sonrası hakem
 > En yakın muadil aile: Altran Magnetics ALEV50. Bu yüzden aşağıdaki açık
 > maddeler **deneyle** doğrulanacak, veri sayfasına güvenilmeyecek.
 
-**🔴 BAĞLANTI DÜZELTİLDİ (2026-08-06).** İlk kurulumda kontaktör *"bataryadan
-gelen TÜM gücü, güç dağıtım kartından"* kesiyordu — yani Pixhawk ve Jetson da
-ölüyordu. Bu, yukarıdaki "röle hattının nereye konulacağı" kuralının ihlaliydi
-ve tam da acil durumda Dosya-1/2/3'ü kaybettirirdi (15 ceza puanı riski).
-Donanım ekibiyle konuşuldu: **Pixhawk ve Jetson kontaktör hattından
-ayrılıyor**, kontaktör yalnız ESC kolunda kalıyor.
+**🔴 BAĞLANTI HATASI — ÖLÇÜMLE KANITLANDI (2026-08-06), DÜZELTME BEKLİYOR.**
+
+Kontaktör *"bataryadan gelen TÜM gücü, güç dağıtım kartından"* kesiyor — yani
+Pixhawk ve Jetson da ölüyor. Bu, yukarıdaki "röle hattının nereye konulacağı"
+kuralının ihlali.
+
+> **Kanıt (2026-08-06 22:07, Mission Planner):** kill switch'e basıldığında
+> ekranda **`WARNING No Data for 3 Seconds`** çıktı — yani **FC'nin kendisi
+> güçsüz kaldı**, telemetri kesildi. Tahmin değil, gözlem.
+
+Yarışmadaki karşılığı: acil durdurmaya basıldığı anda Jetson ölür →
+Dosya-1/2/3 yarım kalır (md 4.2, **15 ceza puanı**) ve hakem "ne oldu"
+dediğinde elde log kalmaz.
+
+**Donanım ekibiyle konuşuldu, karar verildi:** Pixhawk ve Jetson kontaktör
+hattından **ayrılacak**, kontaktör yalnız ESC kolunda kalacak.
+⏳ **HENÜZ UYGULANMADI** — yukarıdaki ölçüm düzeltmeden önce alındı. Ayrım
+yapıldıktan sonra aynı test tekrarlanmalı: kill switch'e basıldığında telemetri
+**kesilmemeli**, yalnız motorlar durmalı.
 
 **⏳ Kapanmadan önce doğrulanacak ÜÇ şey:**
 
