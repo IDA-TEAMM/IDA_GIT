@@ -265,3 +265,89 @@ def test_kapi_seciminde_ayarlanabilir_esik_KALMADI() -> None:
     # Launch/yaml tarafında da hiçbir eşik kalmamalı.
     launch = set(_sabit("_GATE_DEFAULTS"))
     assert not (yasak & {k.replace("gate_", "") for k in launch})
+
+
+# --------------------------------------------------------------------------- #
+# 2026-08-06 — MPPI sabitleri AKTÜATÖRE bağlandı (GIRDAP_DURUM §0.8).
+# Bu iki test bir SAYIYI değil bir İLİŞKİYİ donduruyor: dinamik yeniden
+# tanılanırsa (max_thrust/Xu değişirse) MPPI ayarları da onunla birlikte
+# taşınmak zorunda. Eski σ=5.0 / λ=10 tam olarak bu bağın kopmasıydı —
+# dinamik 30 N'dan 1.455 N'a inerken ayarlar eski teknede kaldı ve
+# hiçbir test bunu yakalamadı.
+# --------------------------------------------------------------------------- #
+
+
+def _dinamik():
+    from prototype.dynamics.catamaran import CatamaranParams
+    return CatamaranParams.from_yaml()
+
+
+# ÖLÇÜLEN ÇALIŞMA ARALIĞI (2026-08-06, 3 koşul × 2 sahne × taze tohumlar;
+# koşullar: temiz · bozucu %30 · plant yaw 1.9× çevik — GIRDAP_DURUM §0.8g):
+#   σ/T_max ∈ [0.25, 0.41]  → σ_u ∈ [0.364, 0.597] N   (hepsi %100 başarı)
+#   σ/T ≤ 0.10 ve ≥ 0.69 KESİN başarısız (alt: keşif yetersiz · üst: doygunluk)
+_ORAN_ALT, _ORAN_UST = 0.25, 0.41
+
+
+def test_mppi_sigma_u_olculen_calisma_araliginda() -> None:
+    """σ_u, ölçülen aralığın İÇİNDE olmalı — tek nokta değil, bant.
+
+    ALT sınır (0.25·T): altında MPPI kaçış manevrasını yeterince
+    örnekleyemiyor → dar koridor/slalom sahnelerinde takılıyor.
+    ÜST sınır (0.41·T doğrulandı; 0.69'da kesin çöküyor): örnekler ±T_max'a
+    kırpılıyor, ETKİN gürültü σ'dan kopuyor (σ/T=0.33'te %82 → 3.44'te %33)
+    ve tek yönlü kırpma TEPE HIZI yiyor (ölçüm: %89 → %63'e düşüyor).
+    """
+    p = _dinamik()
+    oran = MPPIConfig().sigma_u / p.max_thrust
+    assert _ORAN_ALT <= oran <= _ORAN_UST, (
+        f"σ_u/T = {oran:.3f} ölçülen [{_ORAN_ALT}, {_ORAN_UST}] aralığının "
+        f"dışında (σ_u={MPPIConfig().sigma_u} N, T={p.max_thrust} N). "
+        "İtki yeniden tanılandıysa σ_u'yu ORANI koruyacak şekilde taşı."
+    )
+
+
+def test_lambda_sigmaya_bagli_argmin_rejiminde_kalir() -> None:
+    """🔑 λ ile σ BAĞLI — λ tek başına seçilemez.
+
+    λ, rollout maliyetlerinin yayılımının biriminde bir sayı. Yayılım σ ile
+    büyüyor; MPPI'nin içi ölçüldü: **S_p10 − S_min ≈ 131·(σ/T)**. Softmax'ın
+    bu teknede işe yarayan rejimi 'argmin' (ESS≈1) — 1.455 N'lik aktüatörde
+    ağırlıklı ortalama kontrolü nominale çekiyor ve tekne sürüklenmeyi
+    yenemiyor (ölçüm §0.7c). Argmin rejiminde kalmak için λ ≲ yayılım/10:
+        λ_maks ≈ 13 · (σ/T)
+    Bu yasa 405 koşumluk BAĞIMSIZ ızgarada %80, taze taramada birebir
+    tutuyor (σ/T=0.15 → λ=3 düşüyor · 0.25 → λ=3 geçiyor).
+    Emniyet payı: yürürlükteki λ, tavanın en fazla YARISI olsun.
+    """
+    from prototype.planning.pipeline import _PARKUR_PROFILES
+
+    p = _dinamik()
+    oran = MPPIConfig().sigma_u / p.max_thrust
+    lambda_tavan = 13.1 * oran
+    for parkur in ("PARKUR1", "PARKUR2"):
+        lam = _PARKUR_PROFILES[parkur].lambda_
+        assert lam <= lambda_tavan / 2.0, (
+            f"{parkur} λ={lam}, σ/T={oran:.3f} için tavan {lambda_tavan:.1f} "
+            f"(emniyetli {lambda_tavan/2:.1f}) — softmax ortalamaya kayıyor"
+        )
+
+
+def test_parkur_lambdalari_olculen_degerlerde_donduruldu() -> None:
+    """λ profilleri 06.08 kapalı-döngü ölçümünün sonucunda.
+
+    P1/P2 = 1.0 · P3 = 10.0. Değiştiren, ÖLÇÜMLE değiştirsin:
+      · λ=10 (P1/P2) → bozucu altında 6/9 sahnede hedefe varılamadı
+      · λ=50 (P3)    → temas hızı 0.60 → 0.14 m/s (IMU şok eşiği riski)
+    """
+    from prototype.planning.pipeline import _PARKUR_PROFILES
+
+    assert _PARKUR_PROFILES["PARKUR1"].lambda_ == 1.0
+    assert _PARKUR_PROFILES["PARKUR2"].lambda_ == 1.0
+    assert _PARKUR_PROFILES["PARKUR3"].lambda_ == 10.0
+    # P3'ün λ'sı P1/P2'den BÜYÜK olmalı: kamikaze çekicisi maliyet ölçeğini
+    # büyütür, λ maliyet ölçeğiyle birlikte seçilir.
+    assert (
+        _PARKUR_PROFILES["PARKUR3"].lambda_
+        > _PARKUR_PROFILES["PARKUR2"].lambda_
+    )

@@ -785,11 +785,27 @@ class PlanningNode(Node):
         self._pub_thrust.publish(msg)
 
     def _publish_cmd_vel(self, u: np.ndarray) -> None:
-        # Diferansiyel thruster → ileri sürat + yaw rate (kaba yaklaşım;
-        # gerçek dönüşüm Cascade PID iç döngüsünde yapılır).
+        # Diferansiyel thruster → ileri sürat + yaw rate.
+        #
+        # 🔴 2026-08-06 (ÖLÇÜLDÜ, GIRDAP_DURUM §0.7d): eski formül
+        # `(u₀+u₁)/(2·m)` YANLIŞ boyuttaydı — kuvvet/kütle = İVME, hız değil.
+        # Kapalı döngüde teknenin fiilen yaptığı hızın **onda birini** komut
+        # ediyordu (σ=5/λ=10'da 0,042 ↔ 0,436 m/s = 0,10×; σ=0,36/λ=1'de
+        # 0,09×). MAVROS bunu setpoint olarak FC'ye taşıdığı için araç
+        # MPPI'nin istediğinden ~10× yavaş sürülüyordu.
+        #
+        # Doğrusu DENGE hızı: itki = sürükleme → (u₀+u₁) = |Xu|·v, yani
+        # v = (u₀+u₁)/|Xu|. Aynı iki koşuda 0,93× ve 0,88× isabet.
+        # Bu, dinamiğin kendi parametresinden türer (dynamics.yaml Xu, log
+        # 58'den tanılandı) — ayarlanabilir sabit DEĞİL.
+        #
+        # ⚠ angular.z'ye DOKUNULMADI: yaw ekseni (Nr, inertia_z) sudan
+        # KİMLİKLENDİRİLEMEDİ (CFD değerinde; log 58 modelin ~1,9× az
+        # döndüğünü gösteriyor). Açık-çevrim diferansiyel step testi
+        # yapılmadan buraya benzer bir düzeltme yazmak TAHMİN olur.
         p = self._pipe._dyn.p
         twist = Twist()
-        twist.linear.x = float((u[0] + u[1]) / max(1.0, 2.0 * p.mass))
+        twist.linear.x = float((u[0] + u[1]) / max(1e-6, abs(p.Xu)))
         twist.angular.z = float((u[1] - u[0]) / max(1e-6, p.inertia_z))
         self._pub_cmd_vel.publish(twist)
 

@@ -605,3 +605,61 @@ def test_fp26_kontrol_adimi_hatasi_motorlari_durdurur(ros_context) -> None:  # n
         )
     finally:
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# cmd_vel ÖLÇEĞİ (2026-08-06, GIRDAP_DURUM §0.7d) — kapalı döngüde ÖLÇÜLDÜ.
+# Eski formül (u₀+u₁)/(2·m) kuvvet/kütle = İVME veriyordu ve teknenin fiilen
+# yaptığı hızın 0,10×'ini komut ediyordu. Doğrusu denge hızı (u₀+u₁)/|Xu|.
+# Aşağıdaki iki test o düzeltmeyi DONDURUR — eski formüle dönülürse kırmızı.
+# --------------------------------------------------------------------------- #
+
+
+def test_cmd_vel_tam_itkide_modelin_DENGE_hizini_komut_eder(ros_context) -> None:  # noqa: ANN001
+    """Tam itkide linear.x = 2·max_thrust/|Xu| (modelin terminal hızı)."""
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    node = pn.PlanningNode()
+    try:
+        p = node._pipe._dyn.p
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+
+        node._publish_cmd_vel(np.array([p.max_thrust, p.max_thrust]))
+
+        beklenen = 2.0 * p.max_thrust / abs(p.Xu)
+        assert yakalanan[-1].linear.x == pytest.approx(beklenen, rel=1e-6)
+        # Eski formül (2·m paydası) burada 0,12 m/s verirdi — 10× düşük.
+        assert yakalanan[-1].linear.x > 4.0 * (
+            2.0 * p.max_thrust / (2.0 * p.mass)
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_cmd_vel_tavani_OLCULEN_tam_gaz_hiziyla_uyumlu(ros_context) -> None:  # noqa: ANN001
+    """Komut tavanı, log 58'de ölçülen 1,26 m/s ile aynı büyüklük sırasında.
+
+    Bu bir tuning eşiği değil TUTARLILIK kapısı: cmd_vel tavanı ile teknenin
+    fiziksel tavanı arasında 2×'ten fazla açıklık varsa ya dinamik modeli ya
+    formülü bozmuşuzdur (ikisinden biri kesinlikle yanlıştır).
+    """
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    OLCULEN_TAM_GAZ = 1.26        # m/s — log 58 (GIRDAP_DURUM §7)
+
+    node = pn.PlanningNode()
+    try:
+        p = node._pipe._dyn.p
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+        node._publish_cmd_vel(np.array([p.max_thrust, p.max_thrust]))
+        tavan = yakalanan[-1].linear.x
+        assert 0.5 * OLCULEN_TAM_GAZ <= tavan <= 2.0 * OLCULEN_TAM_GAZ, (
+            f"cmd_vel tavanı {tavan:.3f} m/s, ölçülen tam gaz "
+            f"{OLCULEN_TAM_GAZ} m/s ile uyumsuz"
+        )
+    finally:
+        node.destroy_node()

@@ -194,7 +194,15 @@ class MPPIConfig:
     T: int = 50                      # horizon adımı (2.5 s @ dt=0.05)
     dt: float = 0.05                 # entegrasyon adımı (s)
     lambda_: float = 1.0             # softmax sıcaklığı
-    sigma_u: float = 5.0             # N, kontrol gürültüsü σ (her thruster)
+    # σ_u 5.0 → 0.485 (2026-08-06, 405 koşumluk kapalı-döngü ızgarası +
+    # 162 koşumluk bozucu taraması — GIRDAP_DURUM §0.8). 5.0 N, itkisi
+    # 30 N/motor sanılan HAYALİ tekneye aitti; ölçülen aktüatör ±1.455 N
+    # (log 58 tanılaması) olduğu için örneklerin ~%77'si doygunluğa kırpılıyor,
+    # yani gürültü fiilen "rastgele tam gaz" oluyordu. Ölçülen bedel: slalom
+    # sahnesi medyan 98 s (σ=5) ↔ 62 s (σ=0.485), engel yüzeyine gövde payı
+    # +0.152 m ↔ +0.209 m, |Δu₀| 1.38 ↔ 0.83. Kural: σ_u ≲ max_thrust/2
+    # (test_mppi_sigma_u_aktuatore_gore_olcekli donduruyor).
+    sigma_u: float = 0.485           # N, kontrol gürültüsü σ (her thruster)
 
     # Maliyet ağırlıkları (CLAUDE.md MPPI bölümü ile uyumlu)
     w_track: float = 5.0             # yörünge sapması (m²)

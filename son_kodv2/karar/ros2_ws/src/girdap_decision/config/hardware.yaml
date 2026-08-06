@@ -96,8 +96,8 @@ planning:
   #   ros2 launch girdap_decision hardware.launch.py planning.mppi_lambda:=50.0
   # Buradan silinen anahtarda kod varsayılanı (λ'da parkur profili) kazanır.
   # Ölçüm tabloları ve üst sınırlar: CLAUDE.md MPPI bölümleri.
-  mppi_lambda: 0.0                 # 0 = parkur profili kazansın (P1/P2=10, P3=50)
-  mppi_sigma_u: 5.0                # N, kontrol gürültüsü σ
+  mppi_lambda: 0.0                 # 0 = parkur profili kazansın (P1/P2=1, P3=10)
+  mppi_sigma_u: 0.485              # N, σ (06.08 ölçümü; ≲ max_thrust/2)
   mppi_obstacle_margin: 1.0        # m, SOFT emniyet payı (⚠ 1.5 geçidi kapatır)
   mppi_terminal_mode: "lookahead"  # lookahead | global (eski davranış)
   mppi_terminal_lookahead_m: 15.0  # m, terminal hedef yay uzaklığı
@@ -177,6 +177,10 @@ fusion:
 # (CLI override: perception.lidar.z_min:=0.2 vb.). Saha kalibrasyonunda tune.
 perception:
   lidar:
+    # 🔑 B0/F5.1 (06.08): z_min/z_max **base_link** çerçevesindedir. Node ham
+    # bulutu önce base_link'e taşır; taşıma miktarı BU BLOKTAN DEĞİL aşağıdaki
+    # `tf.livox_frame` bloğundan gelir (static TF yayıncısıyla tek kaynak).
+    # Buraya `mount_*` yazma — launch onu `tf:`ten geçiriyor ve EZER.
     z_min: 0.1              # base_link'e göre su üstü kesim (m)
     z_max: 3.0              # yüksek yansımaları at (m)
     cluster_tolerance: 0.5  # aynı cluster'da olma mesafesi (m)

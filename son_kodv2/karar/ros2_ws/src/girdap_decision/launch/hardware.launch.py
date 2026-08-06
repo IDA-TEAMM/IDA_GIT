@@ -160,7 +160,7 @@ _GPS_SIGMA_STATUS_KEYS = {
 # (ROS'suz, ast ile okur) yakalar. λ nöbetçisi 0.0 = "parkur profili kazansın".
 _MPPI_DEFAULTS: dict[str, tuple[object, type]] = {
     "mppi_lambda": (0.0, float),
-    "mppi_sigma_u": (5.0, float),
+    "mppi_sigma_u": (0.485, float),   # 06.08 ölçümü (bkz. MPPIConfig)
     "mppi_obstacle_margin": (1.0, float),
     "mppi_terminal_mode": ("lookahead", str),
     "mppi_terminal_lookahead_m": (15.0, float),
@@ -372,6 +372,24 @@ def _load_hardware_config() -> dict:
             file=sys.stderr,
         )
     return cfg
+
+
+def _mount_params(child: str, tf_cfg: dict | None = None) -> dict:
+    """`tf:` bloğundaki montaj offset'ini node parametresi sözlüğüne çevirir.
+
+    B0/F5.1: perception_lidar_node ham bulutu KENDİ dönüştürüyor (tf2 lookup
+    yok — başlangıçta TF hazır değilken sessizce 0 dönüşüm uygulamak, tam da
+    kapatmaya çalıştığımız sessiz arızanın kendisi olurdu). Değer yine de
+    static TF yayıncısıyla AYNI bloktan okunur → iki kopya yok, drift yok
+    (guard: test_hardware_launch_config).
+    """
+    v = (tf_cfg or {}).get(child) or {}
+    return {
+        "mount_x": float(v.get("x", 0.0)),
+        "mount_y": float(v.get("y", 0.0)),
+        "mount_z": float(v.get("z", 0.0)),
+        "mount_yaw": float(v.get("yaw", 0.0)),
+    }
 
 
 def _static_tf(parent: str, child: str, tf_cfg: dict | None = None) -> Node:
@@ -879,7 +897,11 @@ def generate_launch_description() -> LaunchDescription:
         # planning engel listesini hazır bulsun).
         Node(package=_PKG, executable="perception_lidar_node",
              name="perception_lidar_node",
-             parameters=_perception_params("lidar", _LIDAR_DEFAULTS),
+             # B0/F5.1: montaj offset'i EN SONDA — ROS parametre listesinde
+             # sonraki sözlük öncekini ezer, yani `tf:` bloğu params.yaml'daki
+             # olası bir kopyayı da bastırır (tek kaynak `tf:`).
+             parameters=_perception_params("lidar", _LIDAR_DEFAULTS)
+             + [_mount_params("livox_frame", hw["tf"])],
              output="screen"),
         # Sprint 2 — F3.1: VARSAYILAN KAPALI. /perception/buoys'un asıl
         # üreticisi algı ekibinin OAK node'u (girdap-ida-algi, DepthAI

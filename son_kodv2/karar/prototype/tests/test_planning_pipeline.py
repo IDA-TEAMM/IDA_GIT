@@ -75,9 +75,15 @@ def test_parkur_gecisi_sicak_durumu_tasir(bounds: Bounds) -> None:
     pipe.set_waypoints([(5.0, 5.0), (45.0, 45.0)])
     pipe.set_mission_state("PARKUR1")
 
-    # Çapa ilerlesin: bir süre PARKUR1'de koş
+    # Çapa ilerlesin: bir süre PARKUR1'de koş.
+    # ⏱ 40 → 400 adım (2 s → 20 s, 2026-08-06): 40 adım, dinamik log 58'den
+    # tanılanmadan ÖNCEKİ hayali tekneye (30 N itki) göre yeterliydi. Gerçek
+    # tekne duruştan 2 s'de yalnız ~0.18 m gidiyor (ölçülen ivme 0.094 m/s²)
+    # → ref_spacing 0.5 m'lik çapa hiç ilerlemiyor ve test KENDİ KURULUM
+    # assert'inde düşüyordu (davranış hatası değil, bütçe eskimesi — §0.5d⑧'in
+    # aynı dersi). 20 s'de ~10 m yol → çapa güvenle ilerler.
     state = np.array([5.0, 5.0, math.radians(45.0), 0.0, 0.0, 0.0])
-    for _ in range(40):
+    for _ in range(400):
         pipe.set_state(state)
         u = pipe.compute_control()
         state = dyn.step_rk4(state, u, 0.05)
@@ -85,7 +91,10 @@ def test_parkur_gecisi_sicak_durumu_tasir(bounds: Bounds) -> None:
     onceki = pipe._mppi
     assert onceki is not None
     capa_once = onceki._ref_anchor_idx
-    u_nominal_once = np.asarray(onceki.U_nominal).copy()
+    # ⚠ cupy backend'inde U_nominal GPU dizisi — np.asarray implicit dönüşümü
+    # TypeError verir (bu makineye cupy kurulunca ortaya çıktı, 06.08;
+    # Jetson'da da cupy planlı). Sınırı kontrolcünün kendi yardımcısı geçer.
+    u_nominal_once = np.array(onceki._as_numpy(onceki.U_nominal), copy=True)
     fallback_once = onceki._ref_window_fallbacks
     assert capa_once > 0, "test kurulumu: çapa ilerlemeliydi"
     assert np.any(u_nominal_once != 0.0), "test kurulumu: warm-start dolmalıydı"
@@ -93,7 +102,7 @@ def test_parkur_gecisi_sicak_durumu_tasir(bounds: Bounds) -> None:
     pipe.set_mission_state("PARKUR2")            # ağırlık profili değişir
     yeni = pipe._mppi
     assert yeni is not onceki, "test kurulumu: yeni kontrolcü kurulmalıydı"
-    np.testing.assert_array_equal(np.asarray(yeni.U_nominal), u_nominal_once)
+    np.testing.assert_array_equal(yeni._as_numpy(yeni.U_nominal), u_nominal_once)
     assert yeni._ref_anchor_idx == capa_once, "çapa taşınmadı → tam tarama"
 
     # Geçişten sonraki ilk adım kenar-fallback'e DÜŞMEMELİ
@@ -116,21 +125,27 @@ def test_referans_degisirse_capa_tasinmaz(bounds: Bounds) -> None:
     ctrl_yeni.carry_state_from(ctrl_eski)
 
     assert ctrl_yeni._ref_anchor_idx == 0
-    np.testing.assert_allclose(np.asarray(ctrl_yeni.U_nominal), 3.0)
+    np.testing.assert_allclose(ctrl_yeni._as_numpy(ctrl_yeni.U_nominal), 3.0)
 
 
 def test_parkur_profili_lambdayi_mppi_configine_gecirir(bounds: Bounds) -> None:
     """λ parkur profilinde (eskiden yalnız global MPPIConfig'teydi).
 
-    Benimsenen değerler donduruldu: PARKUR1/2 = 10 (λ=1 softmax'ı dejenere
-    ediyordu, ESS 2.6/1000), PARKUR3 = 50 (kamikaze maliyet yayılımı daha
-    büyük; temas hızı 1.18 → 1.81 m/s — IMU şok eşiği için kritik).
+    🔴 DEĞERLER 2026-08-06'DA YENİDEN ÖLÇÜLDÜ (GIRDAP_DURUM §0.8):
+    PARKUR1/2 = **1.0**, PARKUR3 = **10.0**. Eski 10/50 değerleri 02.08'de
+    ölçülmüştü ama o ölçüm 30 N/motor'luk HAYALİ tekneyeydi; log 58
+    tanılamasıyla aktüatör 1.455 N'a inince sıralama tersine döndü
+    (405 koşumluk ızgara + 162 koşumluk bozucu taraması):
+      · λ=10, P1/P2: bozucu altında **6/9 sahnede hedefe varılamadı**
+      · λ=50, P3: temas 3/3 ama **temas hızı 0.60 → 0.14 m/s** — görev sonu
+        IMU şokuyla algılandığı için (shock_threshold_g=5.0) risk.
+    Değer/gerekçe kapısı: test_planning_config_drift.py.
     """
     from prototype.planning.pipeline import _PARKUR_PROFILES
 
-    assert _PARKUR_PROFILES["PARKUR1"].lambda_ == 10.0
-    assert _PARKUR_PROFILES["PARKUR2"].lambda_ == 10.0
-    assert _PARKUR_PROFILES["PARKUR3"].lambda_ == 50.0
+    assert _PARKUR_PROFILES["PARKUR1"].lambda_ == 1.0
+    assert _PARKUR_PROFILES["PARKUR2"].lambda_ == 1.0
+    assert _PARKUR_PROFILES["PARKUR3"].lambda_ == 10.0
 
     pipe = PlanningPipeline(bounds, _fast_cfg())
     pipe.set_waypoints([(5.0, 5.0), (45.0, 45.0)])

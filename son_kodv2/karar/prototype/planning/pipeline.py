@@ -82,14 +82,31 @@ class ParkurProfile:
 # ve en önemlisi **temas hızı 1.18 → 1.81 m/s (+%53)**: parkur-3'ün bitişi IMU
 # şok eşiğiyle (shock_threshold_g=5.0) algılandığı için çarpma enerjisi görev
 # tamamlama güvenilirliğidir. Bedel: yaklaşma %13 daha uzun (230 → 260 adım).
+#
+# 🔴 λ YENİDEN ÖLÇÜLDÜ (2026-08-06, GIRDAP_DURUM §0.8): P1/P2 10.0 → **1.0**,
+# P3 50.0 → **10.0**. Yukarıdaki 02.08 gerekçesi 30 N/motor'luk HAYALİ tekneye
+# aitti; log 58 tanılamasıyla aktüatör 1.455 N'a inince tablo tersine döndü —
+# ağırlıklı ortalama (büyük λ) kontrolü nominale çekiyor ve tekne sürüklenmeyi
+# yenemiyor. Ölçüm: 405 koşumluk σ×λ ızgarası + 162 koşumluk bozucu taraması
+# (bozucu = ölçülen itkinin %30 ve %50'si), 3 sahne × 3 tohum.
+#   P1/P2 (σ_u=0.485): λ=1 → 9/9 · slalom 62.5 s · bozucu %50'de 64.9 s
+#                      λ=3 → 9/9 ama bozucuda 94-178 s (2-3× yavaş)
+#                      λ=10 → bozucuda **6/9 VARAMADI**
+#   P3 kamikaze: λ=50 → 3/3 ama TEMAS HIZI 0.134-0.154 m/s (47 s)
+#                λ=10 → 3/3, temas 0.556-0.604 m/s (**4×**), 30.6 s
+#                λ=1/3 → 2/3 (bir tohumda araç 0.13 m/s'e takılıyor)
+# ⚠ P3'te büyük λ'nın hâlâ küçük λ'dan İYİ olması tesadüf değil: kamikaze
+# çekicisi maliyet ölçeğini büyütür → λ maliyet ölçeğiyle birlikte seçilir.
+# 🔴 Temas hızı P3'ün BİTİŞ ŞARTI: görev sonu IMU şokuyla algılanıyor
+# (fsm_node shock_threshold_g=5.0) — 0.14 m/s'lik temas şok üretmeyebilir.
 _PARKUR_PROFILES: Dict[str, ParkurProfile] = {
     "PARKUR1": ParkurProfile(w_track=5.0, w_obstacle=50.0, w_terminal=50.0,
-                             lambda_=10.0),
+                             lambda_=1.0),
     "PARKUR2": ParkurProfile(w_track=3.0, w_obstacle=200.0, w_terminal=50.0,
-                             lambda_=10.0),
+                             lambda_=1.0),
     "PARKUR3": ParkurProfile(
         w_track=1.0, w_obstacle=50.0, w_terminal=50.0,
-        kamikaze_mode=True, w_kamikaze=50.0, lambda_=50.0,
+        kamikaze_mode=True, w_kamikaze=50.0, lambda_=10.0,
     ),
 }
 
