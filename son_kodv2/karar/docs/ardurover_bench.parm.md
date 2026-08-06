@@ -21,10 +21,11 @@ yüklenir). Suya inerken bazı parametreler değişecek — **⚠️ işaretlile
 | Parametre | Değer | Neden |
 |---|---|---|
 | `FRAME_CLASS` | `2` | Boat sınıfı — su aracı dinamiği + skid steering karışımı. |
-| `SERVO1_FUNCTION` | `73` | ThrottleLeft — sol thruster çıkışı (diferansiyel tahrik sol). |
-| `SERVO3_FUNCTION` | `74` | ThrottleRight — sağ thruster çıkışı (diferansiyel tahrik sağ). |
-| `MOT_PWM_MIN` | `1100` | Çıkış aralığının alt ucu = **tam GERİ** (aşağıdaki uyarıya bak). |
-| `MOT_PWM_MAX` | `1900` | Çıkış aralığının üst ucu = tam ileri; ESC aralığıyla eşleşmeli. |
+| `SERVO1_FUNCTION` | `74` | Throttle**Right** — SAĞ thruster çıkışı. |
+| `SERVO3_FUNCTION` | `73` | Throttle**Left** — SOL thruster çıkışı. |
+| `SERVO1_MIN` / `SERVO3_MIN` | `1000` | Çıkış aralığının alt ucu = **tam GERİ** (aşağıdaki uyarıya bak). |
+| `SERVO1_MAX` / `SERVO3_MAX` | `2000` | Çıkış aralığının üst ucu = tam ileri. |
+| `SERVO1_TRIM` / `SERVO3_TRIM` | `1487` | Sıfır itki noktası. ⚠️ Nötr 1500'den 13 µs sapık — bkz. aşağıdaki not. |
 | `MOT_SAFE_DISARM` | `1` | Disarm'da motor çıkışı kesilir. ⚠️ Ne ürettiği **ölçülecek** (bkz. uyarı). |
 
 > ## 🔴 ÇİFT YÖNLÜ (BIDIRECTIONAL) ESC — 1100 "DUR" DEĞİL, "TAM GERİ"
@@ -34,24 +35,38 @@ yüklenir). Suya inerken bazı parametreler değişecek — **⚠️ işaretlile
 >
 > | PWM | Tek yönlü ESC'de | **Bizim çift yönlü ESC'de** |
 > |---|---|---|
-> | 1100 | dur | **TAM GERİ** |
+> | 1000 | dur | **TAM GERİ** |
 > | 1500 | orta hız | **DUR (nötr)** |
-> | 1900 | tam ileri | tam ileri |
+> | 2000 | tam ileri | tam ileri |
 >
-> **Bu dokümanın önceki hâli yanlıştı:** `MOT_PWM_MIN=1100` "motorun güvenli
-> durur PWM'i" diye açıklanmıştı ve runbook ADIM 6 disarm'da "PWM 1000"
-> bekliyordu. Çift yönlü ESC'de o değer **tam geri** demektir — yani "güvenli
-> duruş" sandığımız şey tam ters yönde tam gaz olurdu.
+> **Bu dokümanın önceki hâli yanlıştı:** alt uç "motorun güvenli durur PWM'i"
+> diye açıklanmıştı ve runbook ADIM 6 disarm'da "PWM 1000" bekliyordu. Çift
+> yönlü ESC'de o değer **tam geri** demektir — yani "güvenli duruş" sandığımız
+> şey tam ters yönde tam gaz olurdu.
 >
-> **Gereken ayarlar:**
-> - `SERVO1_TRIM` = `SERVO3_TRIM` = **1500** (nötr = duruş)
-> - `SERVO1_MIN`/`SERVO3_MIN` = 1100, `..._MAX` = 1900, **ikisi birebir aynı**
+> **🔴 GERÇEK DEĞERLER (2026-08-06 canlı döküm):**
+> ```
+> SERVO1_MIN = SERVO3_MIN = 1000     SERVO1_MAX = SERVO3_MAX = 2000
+> SERVO1_TRIM = SERVO3_TRIM = 1487   SERVO1_REVERSED = SERVO3_REVERSED = 0
+> ```
+> Bu değerler **otonomi kabiliyeti videosunda gerçek suda çalıştı** —
+> dokunulmayacak. (Dokümanın önceki hâlindeki `1100/1900/1500` üçlüsü ÖLÇÜM
+> DEĞİL VARSAYIMDI ve `parametrelerDefMP.param` adlı, bu tekneyi hiç tarif
+> etmeyen bir dosyadan doğrulanmış sanılmıştı — bkz. `hata_defteri.md`.)
+>
+> ⚠️ **`TRIM=1487`, nötr 1500 değil.** Sıfır itki komutunda FC 13 µs geri
+> yönde sinyal üretiyor. Videoda sorun çıkarmamış → ESC'nin ölü bandının
+> içinde kalıyor. **Değiştirilmedi**; ilk su testinde sıfır komutta sürüklenme
+> görülürse ilk şüpheli budur.
+>
+> ⚠️ **`MOT_PWM_MIN`/`MOT_PWM_MAX` ArduRover'da YOKTUR** (Copter parametresi,
+> canlı dökümde de yok). Rover'ın karşılığı `SERVOn_MIN`/`MAX`.
 >
 > **🔴 ÖLÇÜLMEDEN VARSAYMA — ADIM 6'da şunu gör:** disarm anında servo
 > çıkışında ne var?
 > - **Sinyal yok** (pals kesilmiş) → ESC kendi failsafe'iyle durur ✅ beklenen
-> - **1500** → nötr, motor durur ✅
-> - **1100** → 🔴 **TAM GERİ** — bu çıkarsa `MOT_SAFE_DISARM` /
+> - **1487-1500** → nötr, motor durur ✅
+> - **1000** → 🔴 **TAM GERİ** — bu çıkarsa `MOT_SAFE_DISARM` /
 >   `SERVOx_TRIM` yapılandırması yanlış, suya İNİLMEZ
 >
 > Not: uzaktan güç kesme kontaktörü (§4.5) bu riskin üstünde ayrı bir katman —
@@ -84,7 +99,7 @@ kaynağı donanımda olan, teşhisi en zor hatalardan biridir.
 2. ~~**ESC: çift yönlü (bidirectional), 50 A**~~ **✅ MODEL TESPİT EDİLDİ 2026-08-06**
    → **Markasız jenerik "Bidirectional ESC 50A"** (motorobit.com, *"Su Altı
      Motoru ile Uyumlu"*). Etiket: `50A` · `BEC 2A 5V` · `LIPO 2S-4S`.
-   → Nötr **1500**, ileri 1500→1900, geri 1500→1100.
+   → Nötr **1500**, ileri 1500→2000, geri 1500→1000.
    → **Geri gidiş var** → MPPI'nin negatif itki komutları kullanılabilir
      (tek yönlü olsaydı boşa giderdi).
 3. ~~**Kalibrasyon gerekli mi?**~~ **✅ KARAR: KALİBRASYON YAPILMAYACAK
@@ -98,7 +113,7 @@ kaynağı donanımda olan, teşhisi en zor hatalardan biridir.
    | # | Gerekçe |
    |---|---|
    | 1 | Klasik gaz kalibrasyonu (**tam gaz → min gaz** öğretme) **TEK YÖNLÜ** ESC prosedürüdür. Çift yönlüde "tam gaz"/"min gaz" = **tam ileri/tam geri**; prosedür ESC'ye yeni uçlar öğretir ve **nötr noktasını kaydırabilir**. |
-   | 2 | Nötrümüz şu anda **kanıtlanmış doğru**: `SERVO1_TRIM = SERVO3_TRIM = 1500`, iki kanalda birebir (adım 4-5). Doğrulanmış bir durumu, **belgesi olmayan** bir prosedürle riske atmak yanlış takas. |
+   | 2 | Mevcut ayarlar **gerçek suda kanıtlanmış**: `SERVO1/3` değerleri otonomi kabiliyeti videosunda çalıştı, iki kanalda birebir aynı. Kanıtlanmış bir durumu, **belgesi olmayan** bir prosedürle riske atmak yanlış takas. |
    | 3 | Ampirik: 2026-08-05'te güç verildiğinde **ESC'ler öttü** (normal arming) ve Motor Test'te ikisi de %20 güçte düzgün döndü. Bu sınıfta kalibrasyonsuz/bozuk ESC genelde ya hiç arm olmaz ya sinyali tanımaz. |
 
    ⚠️ **KALAN RİSK ve nerede görünür.** İki ESC'nin fabrika iç trim'i birbirinden
@@ -117,15 +132,27 @@ kaynağı donanımda olan, teşhisi en zor hatalardan biridir.
 4. ~~**FC parametreleriyle tutarlılık**~~ **✅ 2026-08-06 — DOĞRULANDI**
 5. ~~**İki kanalın değerleri BİREBİR aynı olmalı**~~ **✅ 2026-08-06 — DOĞRULANDI**
 
-   Kaynak: `docs/fc_mevcut_parametreler_2026-08-04.param` (canlı FC dökümü):
+   Kaynak: `docs/fc_mevcut_parametreler_2026-08-06.param` — **tekneye bağlıyken
+   alınmış canlı döküm** (Pixhawk6C, ArduRover 4.6.3, ttyUSB0):
 
    | | SERVO1 | SERVO3 | |
    |---|---|---|---|
-   | `MIN` | 1100 | 1100 | ✅ aynı |
-   | `MAX` | 1900 | 1900 | ✅ aynı |
-   | `TRIM` | **1500** | **1500** | ✅ aynı — çift yönlü ESC'nin NÖTR'ü, en kritik satır |
-   | `FUNCTION` | 73 (sağ) | 74 (sol) | ✅ farklı olmalı |
-   | `REVERSED` | 1 | 0 | ✅ farklı olmalı — aynalı pervane (05.08 motor testi) |
+   | `MIN` | 1000 | 1000 | ✅ aynı |
+   | `MAX` | 2000 | 2000 | ✅ aynı |
+   | `TRIM` | **1487** | **1487** | ✅ aynı — sıfır itki noktası (nötr 1500'den 13 µs sapık, bilinçli bırakıldı) |
+   | `FUNCTION` | 74 (**sağ**) | 73 (**sol**) | ✅ farklı olmalı |
+   | `REVERSED` | 0 | 0 | ✅ ikisi de 0 — 05.08 motor testinde yönler DOĞRU çıktı |
+
+   > 🔴 **2026-08-06 DÜZELTMESİ.** Bu tablo aynı gün daha önce `1100/1900/1500`
+   > ve `REVERSED 1/0` diye yazılmıştı. **YANLIŞTI** — kaynak alınan
+   > `parametrelerDefMP.param` bu tekneden alınmış bir döküm DEĞİLDİ (146
+   > parametrede canlıdan farklı; şablon/varsayılan dosyası). Tekneye bağlanıp
+   > taze döküm alınınca gerçek değerler çıktı. **Ders: "FC'de şu var" demeden
+   > önce dökümün gerçekten O ARAÇTAN ve GÜNCEL olduğunu doğrula.**
+   >
+   > Ayrıca fonksiyon numaralandırması kesinleşti: **73 = ThrottleLeft**,
+   > **74 = ThrottleRight** (canlı `SERVO1=74` ve MP Servo Output ekranında
+   > `SERVO1 = ThrottleRight` yazıyordu).
 
    Simetriyi belirleyen üç değer (`MIN`/`MAX`/`TRIM`) birebir aynı → "aynı PWM
    farklı itki" riski FC tarafında YOK. Kalan asimetri kaynağı yalnız ESC'nin
@@ -133,10 +160,13 @@ kaynağı donanımda olan, teşhisi en zor hatalardan biridir.
 
    > ⚠️ **`MOT_PWM_MIN`/`MOT_PWM_MAX` ArduRover'da YOKTUR** (Copter parametresi;
    > dökümde de yok). Rover'ın karşılığı `SERVOn_MIN`/`MAX` — yukarıda doğru.
-   > Belgedeki "MOT_PWM_MIN=1100 yaz" talimatı bu isimle aranmamalı.
+   > `Document 11.pdf` A-1 satırındaki "MOT_PWM_MIN=1100 / MAX=1900 yaz"
+   > talimatı bu isimle aranmamalı **ve değerleri de geçersiz**: canlı sistem
+   > `1000/2000` ile çalışıyor ve bu su testinden geçmiş.
 
-6. **Write Params + reboot**, ardından Runbook **ADIM 5B-1** ✅ (koşuldu,
-   2026-08-05) ve **ADIM 6** ⏳ (disarm'da 1100 çıkmadığını gör — koşulmadı).
+6. **Write Params + reboot** — ⚠️ **şu an yazılacak bir şey YOK**, mevcut
+   değerler doğru ve kanıtlı. Runbook **ADIM 5B-1** ✅ (koşuldu, 2026-08-05) ve
+   **ADIM 6** ⏳ (disarm'da 1000 = tam geri ÇIKMADIĞINI gör — koşulmadı).
 
 ---
 

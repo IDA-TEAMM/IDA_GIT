@@ -224,8 +224,19 @@ Pervaneler        → AYNA ÇİFT (counter-rotating)
 ```
 
 **Yorum:** Ayna pervanede zıt dönüş **doğrudur** — ikisi de ileri iter.
-Dolayısıyla `SERVO1_REVERSED=1` / `SERVO3_REVERSED=0` asimetrisi bilinçli ve
-yerindedir, **dokunulmayacak**.
+
+> 🔴 **2026-08-06 DÜZELTMESİ.** Buraya önce *"`SERVO1_REVERSED=1` /
+> `SERVO3_REVERSED=0` asimetrisi bilinçli"* yazılmıştı — **YANLIŞ**. Canlı FC'de
+> **ikisi de `REVERSED=0`**. O iddia `parametrelerDefMP.param` adlı, bu tekneden
+> alınmamış bir dosyadan geliyordu (146 parametrede canlıdan farklı). Yani
+> testin geçmesini "asimetri telafi ediyor" diye açıklamak gereksizdi: zıt
+> dönüş **doğrudan aynalı pervaneden** geliyor, FC tarafında ters çevirme yok.
+> Gerçek değerler: `docs/fc_mevcut_parametreler_2026-08-06.param`.
+>
+> Ayrıca kanal eşlemesi: **`SERVO1` = fn 74 = SAĞ**, **`SERVO3` = fn 73 = SOL**.
+
+Sonuç değişmiyor — mixing, kanal eşlemesi ve dönüş yönü **doğru**,
+**dokunulmayacak**.
 
 **Elenen iki tehlikeli arıza:**
 - sol/sağ kanal takası (tekne kapıda ters tarafa kırardı) → **YOK**
@@ -247,15 +258,13 @@ değil. Asıl tehlikeli olan iki mod (takas / yerinde dönme) yukarıda elendi.
 1. Mod: **MANUAL** · araç **ARM** edilmiş
 2. Sağ çubuğu (steering) **sola** it, MP'de Servo Output'u izle
 
-> 🔴 **ÖNCE ŞUNU BİL — `SERVO1_REVERSED=1`, `SERVO3_REVERSED=0`** (2026-08-04
-> param dökümü). Kanallardan biri ters çevrilmiş, yani **ekrandaki PWM'lere
-> bakarak mixing'i yorumlayamazsın.** Ters çevrilmiş kanalda "ileri" komutu
-> ekranda 1500'ün ALTINDA görünür.
->
-> Bu asimetri **fiziksel motor yönü farkını telafi ediyor olabilir** (doğru) ya
-> da hata olabilir. **Bu testin asıl amacı bunu ayırt etmek.**
+> 🔴 **2026-08-06'da geçersiz kılındı.** Buradaki `SERVO1_REVERSED=1` varsayımı
+> yanlış kaynaktan geliyordu; canlı FC'de **ikisi de 0** ve kanallar
+> `SERVO1`=SAĞ(74) / `SERVO3`=SOL(73). Ters çevirme olmadığı için aşağıdaki
+> "ters kanal" uyarısı ve tablo **artık geçerli değil** — ileri komutta iki
+> çıkış da 1500'ün ÜSTÜNDE görünür.
 
-**Beklenen (mevcut REVERSED ayarlarına göre):**
+**~~Beklenen (mevcut REVERSED ayarlarına göre)~~ — ARŞİV, güncel değil:**
 
 | Komut | `SERVO1` (Sol, fn 73, **ters**) | `SERVO3` (Sağ, fn 74, düz) |
 |---|---|---|
@@ -339,14 +348,14 @@ Araç **ARMED**, cmd_vel akıyor (ADIM 5 tekrar).
 
 **Beklenen:**
 - `/mavros/state` → `armed: false`
-- Motor durur. 🔴 **ESC'ler ÇİFT YÖNLÜ** → "PWM min (1100)" duruş DEĞİL,
+- Motor durur. 🔴 **ESC'ler ÇİFT YÖNLÜ** → "PWM min (1000)" duruş DEĞİL,
   **tam geri** demektir. Servo çıkışında kabul edilebilir tek iki sonuç:
 
 | Gözlenen | Anlamı |
 |---|---|
 | Sinyal yok (pals kesik) | ESC failsafe'iyle durur ✅ |
-| **1500** | nötr = duruş ✅ |
-| **1100** | 🔴 **TAM GERİ** — `MOT_SAFE_DISARM`/`SERVOx_TRIM` yanlış, **suya inilmez** |
+| **1487-1500** | nötr = duruş ✅ (canlı `SERVOn_TRIM=1487`) |
+| **1000** | 🔴 **TAM GERİ** — `MOT_SAFE_DISARM`/`SERVOx_TRIM` yanlış, **suya inilmez** |
 
 > Ayrıntı: [`ardurover_bench.parm.md`](ardurover_bench.parm.md) → "ÇİFT YÖNLÜ ESC".
 
@@ -424,7 +433,7 @@ node'ları yeniden başlat veya araç güç döngüsü).
 | 3. hardware.launch (7 node) | ☐ | |
 | 4. Manuel arm (success=true) | ☐ | |
 | 5. cmd_vel → PWM ~1600 | ☐ | pervane sökük |
-| 5B-1. **Mixing / kanal + yön** | ✅ | 2026-08-05 GEÇTİ — MP Motor Test C=sol/saat yönü, D=sağ/saat tersi, pervaneler ayna → REVERSED asimetrisi DOĞRU |
+| 5B-1. **Mixing / kanal + yön** | ✅ | 2026-08-05 GEÇTİ — MP Motor Test C=sol/saat yönü, D=sağ/saat tersi, pervaneler ayna → zıt dönüş DOĞRU (FC'de ters çevirme yok, ikisi de `REVERSED=0`) |
 | 5B-2. **cmd_vel işaret sözleşmesi** | ☐ | 5B-1 geçtikten sonra; ters çıkarsa düzeltme KODDA |
 | 6. Kill switch + RC failsafe | ☐ | PWM→1000, armed=false |
 | 6B. **Uzaktan GÜÇ kesme** | ☐ | 🔴 ESC ucunda **0 V** + CSV yazmaya devam ediyor — md 4.2 minimum gereksinimi |
