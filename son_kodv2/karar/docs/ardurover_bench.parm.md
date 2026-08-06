@@ -81,20 +81,39 @@ kaynağı donanımda olan, teşhisi en zor hatalardan biridir.
 
 1. 🔴 **Pervaneler sökülü**, tekne sabit, batarya bağlı.
    (~~RC verici açık~~ — RC iptal edildi, kaptan kararı 2026-08-04.)
-2. **ESC: çift yönlü (bidirectional), 50 A** ✅ (2026-08-04 teyidi).
+2. ~~**ESC: çift yönlü (bidirectional), 50 A**~~ **✅ MODEL TESPİT EDİLDİ 2026-08-06**
+   → **Markasız jenerik "Bidirectional ESC 50A"** (motorobit.com, *"Su Altı
+     Motoru ile Uyumlu"*). Etiket: `50A` · `BEC 2A 5V` · `LIPO 2S-4S`.
    → Nötr **1500**, ileri 1500→1900, geri 1500→1100.
-   → İyi haber: **geri gidiş var**, MPPI'nin negatif itki komutları
-     kullanılabilir (tek yönlü olsaydı boşa giderdi).
-   → Marka/model hâlâ kayıtlı değil: `____________` (`olcum_formu.md` §4).
-3. **Çift yönlü ESC'de "throttle kalibrasyonu" çoğu modelde YOKTUR** — nötr
-   noktası fabrikada sabittir ya da programlama kartı/uygulamasıyla ayarlanır.
-   Önce **üreticinin kendi dokümanına bak**; "stick-max → stick-min" tipi
-   klasik kalibrasyon çift yönlü modda genelde geçersizdir, hatta yanlış
-   uygulanırsa nötr noktasını kaydırır.
-   - Kalibrasyon **gerekiyorsa**: iki ESC'yi **AYNI prosedürle, ardışık**
-     yap. Birini yapıp diğerini atlama — asimetri buradan doğar.
-   - Kalibrasyon **gerekmiyorsa**: adım 4-5 yine de yapılacak (asıl simetri
-     orada sağlanıyor).
+   → **Geri gidiş var** → MPPI'nin negatif itki komutları kullanılabilir
+     (tek yönlü olsaydı boşa giderdi).
+3. ~~**Kalibrasyon gerekli mi?**~~ **✅ KARAR: KALİBRASYON YAPILMAYACAK
+   (2026-08-06)**
+
+   **🔎 Bulgu — danışılacak belge YOK.** Prosedürün önceki hâli *"önce
+   üreticinin kendi dokümanına bak"* diyordu. ESC **markasız**; satıcı
+   sayfasında teknik döküm yok, üretici manuali mevcut değil. Yani bu talimatın
+   cevabı yok — karar kanıta dayandırıldı:
+
+   | # | Gerekçe |
+   |---|---|
+   | 1 | Klasik gaz kalibrasyonu (**tam gaz → min gaz** öğretme) **TEK YÖNLÜ** ESC prosedürüdür. Çift yönlüde "tam gaz"/"min gaz" = **tam ileri/tam geri**; prosedür ESC'ye yeni uçlar öğretir ve **nötr noktasını kaydırabilir**. |
+   | 2 | Nötrümüz şu anda **kanıtlanmış doğru**: `SERVO1_TRIM = SERVO3_TRIM = 1500`, iki kanalda birebir (adım 4-5). Doğrulanmış bir durumu, **belgesi olmayan** bir prosedürle riske atmak yanlış takas. |
+   | 3 | Ampirik: 2026-08-05'te güç verildiğinde **ESC'ler öttü** (normal arming) ve Motor Test'te ikisi de %20 güçte düzgün döndü. Bu sınıfta kalibrasyonsuz/bozuk ESC genelde ya hiç arm olmaz ya sinyali tanımaz. |
+
+   ⚠️ **KALAN RİSK ve nerede görünür.** İki ESC'nin fabrika iç trim'i birbirinden
+   biraz farklıysa **aynı PWM farklı itki** üretir → sıfır dönüş komutunda tekne
+   bir yana kayar.
+   - 🔴 **ADIM 5 bunu YAKALAYAMAZ.** İki kanalın FC parametreleri birebir aynı
+     olduğu için Servo Output'ta zaten `1600/1600` okunur — bu, ESC'lerin *iç*
+     simetrisi hakkında **hiçbir şey söylemez**. ADIM 5 yalnız **FC → ESC sinyal**
+     yolunu doğrular, **ESC → itki** eşleşmesini değil. (Runbook'taki "simetri
+     kontrolü (ESC kalibrasyonunu sınar)" ifadesi bu yüzden fazla iddialı.)
+   - ✅ **Nerede görünür:** ilk **su testinde**, düz gitme komutunda sabit yön
+     kayması olarak. Ölçüm: `angular.z=0` ver, heading sürüklenmesini izle.
+   - ✅ **Neden ölümcül değil:** ArduPilot'un yaw kontrolcüsü kapalı döngü —
+     küçük itki asimetrisini soğurur. Büyükse `SERVOn_TRIM`'de ±birkaç µs
+     farkla telafi edilir (kalibrasyon değil, tek parametre).
 4. ~~**FC parametreleriyle tutarlılık**~~ **✅ 2026-08-06 — DOĞRULANDI**
 5. ~~**İki kanalın değerleri BİREBİR aynı olmalı**~~ **✅ 2026-08-06 — DOĞRULANDI**
 

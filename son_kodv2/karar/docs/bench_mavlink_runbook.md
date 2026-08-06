@@ -263,13 +263,23 @@ değil. Asıl tehlikeli olan iki mod (takas / yerinde dönme) yukarıda elendi.
 | Sola dönüş | 1500'e yaklaşır/geçer | **> 1500**, artar |
 | Sağa dönüş | **daha da < 1500** | 1500'e yaklaşır/geçer |
 
-**Simetri kontrolü (ESC kalibrasyonunu sınar):** düz ileri komutta iki çıkışın
+**Simetri kontrolü (FC KARIŞTIRMASINI sınar):** düz ileri komutta iki çıkışın
 **1500'e uzaklıkları eşit** olmalı:
 ```
 |SERVO1 − 1500|  ≈  |SERVO3 − 1500|
 örn. SERVO1=1400, SERVO3=1600  → ikisi de 100 → simetrik ✅
      SERVO1=1400, SERVO3=1560  → 100 vs 60   → asimetrik ❌ tekne düz gitmez
 ```
+
+> 🔴 **BU KONTROL ESC KALİBRASYONUNU *SINAMAZ*** (2026-08-06 düzeltmesi — eski
+> başlık "ESC kalibrasyonunu sınar" diyordu, YANLIŞ). Okunan PWM **FC'nin
+> ürettiği sinyaldir**. `SERVO1/3_MIN/MAX/TRIM` iki kanalda birebir aynıysa
+> (bizde öyle) bu değerler **tanım gereği** simetrik çıkar — ESC'lerin *iç*
+> davranışı hakkında hiçbir şey söylemez. Yani buradaki ✅ yalnız
+> **FC → ESC sinyal yolunu** doğrular, **ESC → itki** eşleşmesini DEĞİL.
+>
+> ESC iç asimetrisi ancak **suda** görünür: `angular.z=0` verilirken sabit
+> heading kayması. Bkz. `ardurover_bench.parm.md` → ESC adım 3 "KALAN RİSK".
 
 > ⚠️ **PWM yeterli değil — motor yönünü GÖZLE doğrula.** ESC'lere güç verip
 > (pervaneler SÖKÜK) düz ileri komutunda **iki motorun da aynı yöne, ileri
@@ -284,7 +294,8 @@ değil. Asıl tehlikeli olan iki mod (takas / yerinde dönme) yukarıda elendi.
 | Sol/sağ **tam ters** | `SERVO1`/`SERVO3` fonksiyonları veya motor kabloları yer değişmiş | `SERVO1_FUNCTION=73` / `SERVO3_FUNCTION=74` teyit et; doğruysa fiziksel ESC çıkışlarını takas et |
 | Bir taraf hiç değişmiyor | O kanal atanmamış / ESC ölü | `SERVOx_FUNCTION` ve besleme kontrol |
 | İkisi de aynı yöne gidiyor | Skid mixing devre dışı | `FRAME_CLASS=2` teyit + reboot |
-| İleri komutta iki PWM farklı | ESC'ler farklı kalibre | ESC kalibrasyonunu ikisine birden tekrarla |
+| İleri komutta iki PWM farklı | **FC parametreleri** farklı (ESC değil — PWM'i FC üretir) | `SERVO1/3_MIN`, `_MAX`, `_TRIM` altı değerini yan yana oku, eşitle |
+| Suda düz komutta tekne bir yana kayıyor | ESC'lerin **iç** trim'i farklı (bench'te görünmez) | `SERVOn_TRIM`'de ±birkaç µs telafi; kalibrasyon DEĞİL |
 
 ---
 

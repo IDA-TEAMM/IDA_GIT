@@ -310,12 +310,12 @@ Tekne **2 motorlu** (sol/sağ). Her iki ESC de aynı model olmalı.
 
 | | Değer |
 |---|---|
-| Marka / model | `________________` ⏳ |
+| Marka / model | **markasız jenerik "Bidirectional ESC 50A"** (motorobit.com, su altı motoru uyumlu) ✅ 2026-08-06. Etiket: `50A` · `BEC 2A 5V` · `LIPO 2S-4S`. **Üretici manuali YOK** — bkz. `ardurover_bench.parm.md` ESC adım 3 |
 | **Tek yönlü mü, çift yönlü (reversible) mi?** | ☑ **ÇİFT YÖNLÜ** ✅ (2026-08-04) |
 | Akım değeri | **50 A** ✅ |
 | PWM aralığı | min **1100** / nötr **1500** / max **1900** µs |
 | **FC tarafı simetri** (`SERVOn_MIN/MAX/TRIM` iki kanalda aynı mı?) | ☑ **EVET** ✅ (2026-08-06, canlı param dökümünden) |
-| Kalibrasyon yapıldı mı (ikisi de, aynı prosedürle)? | ☐ — **önce marka/model gerekli**: çift yönlü ESC'lerin çoğunda kalibrasyon YOKTUR (nötr fabrikada sabit) |
+| Kalibrasyon yapıldı mı (ikisi de, aynı prosedürle)? | ☑ **YAPILMAYACAK** — bilinçli karar ✅ 2026-08-06. Çift yönlü ESC'de klasik gaz kalibrasyonu nötrü kaydırabilir; nötrümüz zaten doğru ve simetrik. Gerekçe + kalan risk: `ardurover_bench.parm.md` ESC adım 3 |
 | **Thruster tepe akımı (tek motor)** | `____` A |
 | **2 motor toplam tepe akım** | `____` A |
 
