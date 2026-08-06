@@ -44,8 +44,11 @@ from prototype.perception.lidar_obstacles import (
 class PerceptionLidarNode(Node):
     """PointCloud2 → filter/cluster → PoseArray daire engel listesi."""
 
-    def __init__(self) -> None:
-        super().__init__("perception_lidar_node")
+    def __init__(self, **node_kwargs) -> None:
+        # **node_kwargs: fsm_node/planning_node ile aynı sözleşme —
+        # parameter_overrides ile test/launch'tan parametre enjekte edilebilir
+        # (cfg __init__'te kurulduğu için sonradan set_parameters yetmez).
+        super().__init__("perception_lidar_node", **node_kwargs)
 
         # --- Parametreler (config/hardware.yaml perception.lidar bloğu) ---
         self.declare_parameter("z_min", 0.1)
@@ -57,6 +60,14 @@ class PerceptionLidarNode(Node):
         self.declare_parameter("max_range", 25.0)
         self.declare_parameter("voxel_size", 0.1)   # F5.3; 0 = kapalı
         self.declare_parameter("log_period_s", 5.0)
+        # B0/F5.1 — montaj ofseti = livox_frame'in base_link İÇİNDEKİ konumu
+        # (nokta dönüşümü ters yönde: p_base = R(yaw)·p_livox + t).
+        # Değerleri hardware.launch `tf.livox_frame` bloğundan geçirir; bu
+        # blok static TF yayıncısını da besliyor → TEK kaynak.
+        self.declare_parameter("mount_x", 0.0)
+        self.declare_parameter("mount_y", 0.0)
+        self.declare_parameter("mount_z", 0.0)
+        self.declare_parameter("mount_yaw", 0.0)
 
         p = self.get_parameter
         self._cfg = LidarObstacleConfig(
@@ -68,6 +79,10 @@ class PerceptionLidarNode(Node):
             split_cell_m=float(p("split_cell_m").value),
             max_range=float(p("max_range").value),
             voxel_size=float(p("voxel_size").value),
+            mount_x=float(p("mount_x").value),
+            mount_y=float(p("mount_y").value),
+            mount_z=float(p("mount_z").value),
+            mount_yaw=float(p("mount_yaw").value),
         )
         self._log_period_s = float(p("log_period_s").value)
         self._last_log_t: Optional[float] = None
@@ -86,11 +101,27 @@ class PerceptionLidarNode(Node):
         self.get_logger().info(
             "perception_lidar_node aktif: /livox/lidar → "
             "/perception/obstacle_map "
-            f"(z=[{self._cfg.z_min},{self._cfg.z_max}] m, "
+            f"(montaj xyz=[{self._cfg.mount_x:.3f},{self._cfg.mount_y:.3f},"
+            f"{self._cfg.mount_z:.3f}] m yaw={self._cfg.mount_yaw:.3f} rad, "
+            f"z=[{self._cfg.z_min},{self._cfg.z_max}] m base_link'e göre, "
             f"tol={self._cfg.cluster_tolerance} m, "
             f"size=[{self._cfg.min_cluster_size},{self._cfg.max_cluster_size}], "
             f"menzil={self._cfg.max_range} m)"
         )
+        # B0/F5.1 SESSİZ ARIZA KAPANI: montaj z'si girilmemişse z filtresi
+        # fiilen ham LiDAR çerçevesinde uygulanır ve dubalar (LiDAR'ın
+        # ALTINDA kaldıkları için) TAMAMEN elenir — hiçbir hata basılmadan
+        # obstacle_map boş gelir. Bu tam olarak 04.08'de atölyede yaşanan
+        # arızadır; bir daha sessiz olmasın.
+        if self._cfg.mount_z == 0.0 and self._cfg.z_min > 0.0:
+            self.get_logger().error(
+                "MONTAJ Z'Sİ SIFIR — z_min=%.2f m ham LiDAR çerçevesinde "
+                "uygulanacak. LiDAR gövde tabanından yukarıdaysa dubalar "
+                "eşiğin ALTINDA kalır ve obstacle_map BOŞ döner (B0/F5.1). "
+                "Düzeltme: hardware.yaml tf.livox_frame.z ölçülü değeri "
+                "(0.41 m) içermeli — launch bu değeri buraya geçirir."
+                % self._cfg.z_min
+            )
 
     # ------------------------------------------------------------- callback
 
@@ -133,7 +164,9 @@ class PerceptionLidarNode(Node):
         """CircleObstacle listesi → placeholder PoseArray (docstring'e bak)."""
         out = PoseArray()
         out.header.stamp = msg.header.stamp          # kaynak damgasını koru
-        out.header.frame_id = "base_link"            # LiDAR → base_link static TF
+        # B0: artık yalnız ETİKET değil — noktalar sensor_to_base() ile
+        # fiilen base_link'e taşındıktan sonra kümelendi.
+        out.header.frame_id = "base_link"
         for obs in obstacles:
             pose = Pose()
             pose.position.x = obs.center_x

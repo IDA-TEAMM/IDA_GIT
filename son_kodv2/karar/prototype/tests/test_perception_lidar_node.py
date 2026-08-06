@@ -209,3 +209,60 @@ def test_malformed_cloud_does_not_kill_node(node) -> None:  # noqa: ANN001
         assert len(received[0].poses) == 3
     finally:
         helper.destroy_node()
+
+
+# -------------------------------------------------- B0/F5.1 montaj ötelemesi
+
+def _duba_ham_livox(mount_z: float = 0.41) -> np.ndarray:
+    """50 cm'lik duba, LiDAR gövde tabanından `mount_z` yukarıdayken ham bulut.
+
+    generate_buoy_points dubayı base_link semantiğinde (z ∈ [0, 0.5]) üretir;
+    sensörün gördüğü bulut bunun mount_z kadar aşağı kaymış hali.
+    """
+    from prototype.perception.synthetic_lidar import BuoySpec, generate_buoy_points
+
+    duba = generate_buoy_points(
+        BuoySpec(x=6.0, y=0.0, radius=0.15, height=0.5, points_per_buoy=60),
+        np.random.default_rng(7),
+    )
+    duba[:, 2] -= mount_z
+    return duba
+
+
+def test_B0_montaj_ofseti_yokken_duba_SESSIZCE_kayboluyor(ros_context) -> None:  # noqa: ANN001
+    """🔴 B0'ın kendisi: mount_z=0 iken z_min ham çerçevede uygulanır.
+
+    Dubanın TEPESİ bile sensörün altında kaldığı için (z ≤ +0.09) z_min=0.1
+    tüm noktaları eler → obstacle_map BOŞ, hiçbir hata basılmaz. 04.08
+    atölyesinde gözlenen "üretim config'de 0 engel" arızası budur.
+    """
+    node = girdap.PerceptionLidarNode()
+    try:
+        assert node._cfg.mount_z == 0.0
+        assert len(_exchange(node, _make_cloud(_duba_ham_livox())).poses) == 0
+    finally:
+        node.destroy_node()
+
+
+def test_B0_montaj_ofseti_verilince_ayni_duba_base_linkte_cikiyor(
+    ros_context,
+) -> None:  # noqa: ANN001
+    """Düzeltme: aynı ham bulut + ölçülmüş montaj → duba görünür ve yeri doğru."""
+    from rclpy.parameter import Parameter
+
+    node = girdap.PerceptionLidarNode(
+        parameter_overrides=[
+            Parameter("mount_x", Parameter.Type.DOUBLE, 0.015),
+            Parameter("mount_z", Parameter.Type.DOUBLE, 0.41),
+        ]
+    )
+    try:
+        assert node._cfg.mount_z == pytest.approx(0.41)
+        sonuc = _exchange(node, _make_cloud(_duba_ham_livox()))
+        assert len(sonuc.poses) == 1
+        # base_link'te merkez = ham x + montaj ötelemesi
+        assert sonuc.poses[0].position.x == pytest.approx(6.015, abs=0.15)
+        assert abs(sonuc.poses[0].position.y) < 0.15
+        assert sonuc.header.frame_id == "base_link"
+    finally:
+        node.destroy_node()

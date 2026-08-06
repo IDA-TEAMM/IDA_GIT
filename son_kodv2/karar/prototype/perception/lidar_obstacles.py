@@ -60,6 +60,48 @@ class LidarObstacleConfig:
                                     # (F5.3). 0 = kapalı. Duba r=0.15 için
                                     # 0.1 m güvenli (merkez hatası ≤ voxel).
 
+    # --- B0/F5.1: sensör montaj ötelemesi (livox_frame → base_link) ---
+    # 🔴 BU BLOK OLMADAN z_min YANLIŞ ÇERÇEVEDE UYGULANIYORDU. Ham bulut
+    # livox_frame'de gelir; z_min ise TANIMI GEREĞİ base_link'e göre "su üstü
+    # kesim"tir. LiDAR gövde tabanından 0.41 m yukarıda (hardware.yaml
+    # tf.livox_frame, ölçüldü 04.08) → 50 cm'lik duba base_link'te z≈[0, 0.5],
+    # livox_frame'de z≈[−0.41, +0.09]. z_min=0.1 filtresi DUBANIN TAMAMINI
+    # eliyordu → obstacle_map BOŞ (atölyede "0 engel" gözlemiyle birebir,
+    # GIRDAP_DURUM §0.3b). Öteleme filtreden ÖNCE uygulanır.
+    # Varsayılan 0.0 = eski davranış (geriye uyum); gerçek değerleri launch
+    # hardware.yaml `tf:` bloğundan geçirir — static TF yayıncısıyla AYNI
+    # kaynak, iki kopya yok.
+    mount_x: float = 0.0            # m, base_link → livox_frame (ileri +)
+    mount_y: float = 0.0            # m, iskele +
+    mount_z: float = 0.0            # m, yukarı + (gövde tabanından)
+    mount_yaw: float = 0.0          # rad; ⏳ ampirik kalibre edilecek
+
+
+def sensor_to_base(
+    points: np.ndarray, cfg: LidarObstacleConfig
+) -> np.ndarray:
+    """Nx3 ham LiDAR noktası (livox_frame) → base_link koordinatları.
+
+    Sıra: yaw dönmesi, sonra öteleme (standart katı cisim dönüşümü —
+    `p_base = R(yaw)·p_livox + t`). Roll/pitch YOK: LiDAR gövdeye düz
+    monte (hardware.yaml tf.livox_frame roll=pitch=0); ölçülürse buraya
+    eklenecek.
+
+    Tüm offset'ler 0 iken giriş birebir döner (eski davranış).
+    """
+    if points.size == 0:
+        return points.reshape(0, 3)
+    out = np.array(points, dtype=np.float64, copy=True)
+    if cfg.mount_yaw != 0.0:
+        c, s = np.cos(cfg.mount_yaw), np.sin(cfg.mount_yaw)
+        x, y = out[:, 0].copy(), out[:, 1].copy()
+        out[:, 0] = c * x - s * y
+        out[:, 1] = s * x + c * y
+    out[:, 0] += cfg.mount_x
+    out[:, 1] += cfg.mount_y
+    out[:, 2] += cfg.mount_z
+    return out
+
 
 def filter_water_surface(
     points: np.ndarray, cfg: LidarObstacleConfig
@@ -175,13 +217,18 @@ def cluster_to_obstacle(cluster: np.ndarray) -> CircleObstacle:
 def detect_obstacles(
     points: np.ndarray, cfg: LidarObstacleConfig
 ) -> list[CircleObstacle]:
-    """Tam pipeline: filter → (voxel) → cluster → convert. Boş girişte boş liste.
+    """Tam pipeline: base'e taşı → filter → (voxel) → cluster → convert.
 
+    Boş girişte boş liste.
+
+    ⚠ İLK ADIM SENSÖR→GÖVDE DÖNÜŞÜMÜ (B0): giriş livox_frame'de, geri kalan
+    her şey (z_min/z_max eşikleri, max_range, çıktı frame'i) base_link'te.
     Not: voxel_size>0 iken point_count VOXEL sayısıdır (ham nokta değil);
     min/max_cluster_size eşikleri de voxel sayısına uygulanır.
     """
     if points is None or points.size == 0:
         return []
-    filtered = filter_water_surface(np.asarray(points, dtype=np.float64), cfg)
+    based = sensor_to_base(np.asarray(points, dtype=np.float64), cfg)
+    filtered = filter_water_surface(based, cfg)
     filtered = voxel_downsample(filtered, cfg.voxel_size)
     return [cluster_to_obstacle(c) for c in cluster_points(filtered, cfg)]

@@ -24,6 +24,23 @@ _LAUNCH_FILE = (
 )
 
 
+
+def _kaynak_yaml() -> dict:
+    """Kaynak ağaçtaki hardware.yaml — share dizini kurulu olmasa da okunur.
+
+    `_load_hardware_config()` share'i bulamazsa varsayılanlara düşer ve
+    `tf` bloğu BOŞ gelir; drift denetimi o yolda sessizce anlamsızlaşırdı.
+    Denetlenen şey zaten kaynak dosya (install onun kopyası).
+    """
+    import yaml
+    yol = (
+        Path(__file__).resolve().parents[2]
+        / "ros2_ws" / "src" / "girdap_decision" / "config" / "hardware.yaml"
+    )
+    with open(yol, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
 def _load_module():
     spec = importlib.util.spec_from_file_location("hw_launch_test", _LAUNCH_FILE)
     mod = importlib.util.module_from_spec(spec)
@@ -292,3 +309,61 @@ def test_gorev_kaynagi_fc_varsayilani() -> None:
     except Exception:
         pytest.skip("girdap_decision share dizini yok — install edilmemiş ortam")
     assert mod._load_hardware_config()["mission_source"] == "fc"
+
+
+# ----- B0/F5.1: LiDAR montaj ofseti `tf:` bloğundan node'a geçmeli -----
+
+
+def test_B0_lidar_montaj_ofseti_tf_blogundan_okunur() -> None:
+    """`tf.livox_frame` → perception_lidar_node mount_* parametreleri.
+
+    B0: node ham bulutu kendisi base_link'e taşıyor; taşıma sayısı static TF
+    yayıncısıyla AYNI bloktan gelmeli. İkinci bir kopya (params.yaml'a elle
+    yazılmış offset) sessizce ayrışırsa engel haritası kayar.
+    """
+    mod = _load_module()
+    beklenen = _kaynak_yaml()["tf"]["livox_frame"]
+
+    params = mod._mount_params("livox_frame", _kaynak_yaml()["tf"])
+    assert params["mount_x"] == float(beklenen["x"])
+    assert params["mount_y"] == float(beklenen["y"])
+    assert params["mount_z"] == float(beklenen["z"])
+    assert params["mount_yaw"] == float(beklenen.get("yaw", 0.0))
+
+
+def test_B0_lidar_montaj_z_ölçülmüş_değeri_tasiyor() -> None:
+    """🔴 SESSİZ ARIZA KAPANI: `tf.livox_frame.z` SIFIR OLAMAZ.
+
+    Sıfır olursa z_min ham LiDAR çerçevesinde uygulanır, 50 cm'lik duba
+    (sensörün ALTINDA kaldığı için) tamamen elenir ve `obstacle_map` hiçbir
+    hata basmadan boş döner — 04.08 atölye arızasının tam kendisi.
+    Ölçülen değer 0.41 m (docs/olcum_formu.md §2).
+    """
+    z = float(_kaynak_yaml()["tf"]["livox_frame"]["z"])
+    assert z > 0.05, (
+        f"tf.livox_frame.z = {z} — LiDAR gövde tabanında olamaz; "
+        "ölçülmüş montaj yüksekliği girilmeli (B0/F5.1)"
+    )
+
+
+def test_B0_montaj_parametreleri_lidar_nodeun_EN_SONUNDA() -> None:
+    """Parametre sırası sözleşmesi: mount_* sözlüğü params_file'dan SONRA.
+
+    ROS aynı adlı parametrede son değeri alır. Sıra bozulursa params.yaml'da
+    unutulmuş bir `mount_z: 0.0` `tf:` bloğunu sessizce ezer.
+    """
+    mod = _load_module()
+    try:
+        mod.get_package_share_directory(mod._PKG)
+    except Exception:
+        pytest.skip("girdap_decision share dizini yok — install edilmemiş ortam")
+
+    ld = mod.generate_launch_description()
+    lidar = [
+        e for e in ld.entities
+        if type(e).__name__ == "Node"
+        and getattr(e, "_Node__node_executable", None) == "perception_lidar_node"
+    ]
+    assert len(lidar) == 1
+    params = getattr(lidar[0], "_Node__parameters")
+    assert isinstance(params[-1], dict) and "mount_z" in params[-1]

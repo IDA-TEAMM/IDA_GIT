@@ -22,6 +22,7 @@ try:
         cluster_to_obstacle,
         detect_obstacles,
         filter_water_surface,
+        sensor_to_base,
         voxel_downsample,
     )
 except Exception as exc:  # ImportError VEYA ABI ValueError
@@ -335,3 +336,73 @@ def test_uzak_seyrek_duba_min_sinirinin_altinda(
     obstacles = detect_obstacles(pts, cfg_gevsek)
     assert len(obstacles) == 1
     assert abs(obstacles[0].center_x - 24.0) < 0.3
+
+
+# --------------------------------------------------------------------------- #
+# B0 / F5.1 — sensör montaj ötelemesi (livox_frame → base_link)
+# --------------------------------------------------------------------------- #
+
+
+def _ham_livox_dubasi(rng: np.random.Generator, mount_z: float) -> np.ndarray:
+    """Gerçek geometri: 50 cm duba, LiDAR gövde tabanından `mount_z` yukarıda.
+
+    `generate_buoy_points` dubayı base_link semantiğinde (z ∈ [0, 0.5])
+    üretir; ham LiDAR bulutu bunun sensöre göre halidir → z − mount_z.
+    """
+    duba = generate_buoy_points(
+        BuoySpec(x=6.0, y=0.0, radius=0.15, height=0.5, points_per_buoy=60),
+        rng,
+    )
+    duba[:, 2] -= mount_z
+    return duba
+
+
+def test_B0_montaj_otelemesi_olmadan_duba_TAMAMEN_eleniyor(
+    rng: np.random.Generator,
+) -> None:
+    """🔴 B0'ın kendisi: offset girilmezse z_min ham çerçevede uygulanır.
+
+    LiDAR 0.41 m yukarıdayken 50 cm'lik dubanın TEPESİ bile sensörün
+    altında (z ≤ +0.09) → z_min=0.1 hepsini eler → obstacle_map BOŞ.
+    04.08 atölye gözlemi ("üretim config'de 0 engel") bu.
+    """
+    pts = _ham_livox_dubasi(rng, mount_z=0.41)
+    assert detect_obstacles(pts, LidarObstacleConfig()) == []
+
+
+def test_B0_montaj_otelemesiyle_ayni_duba_GORULUYOR(
+    rng: np.random.Generator,
+) -> None:
+    """Düzeltme: aynı ham bulut, yalnız mount_z girilmiş → duba çıkıyor."""
+    pts = _ham_livox_dubasi(rng, mount_z=0.41)
+    cfg = LidarObstacleConfig(mount_x=0.015, mount_z=0.41)
+    obstacles = detect_obstacles(pts, cfg)
+
+    assert len(obstacles) == 1
+    o = obstacles[0]
+    # base_link'te duba merkezi: ham x=6.0 + montaj ötelemesi 0.015
+    assert abs(o.center_x - 6.015) < 0.15
+    assert abs(o.center_y) < 0.15
+    assert o.radius < 0.4
+
+
+def test_sensor_to_base_oteleme_ve_yaw_katı_cisim_donusumu() -> None:
+    """p_base = R(yaw)·p_livox + t — sıra ve işaret sözleşmesi."""
+    pts = np.array([[1.0, 0.0, 0.0]])
+
+    duz = sensor_to_base(pts, LidarObstacleConfig(mount_x=0.5, mount_z=0.41))
+    assert np.allclose(duz, [[1.5, 0.0, 0.41]])
+
+    # +90° yaw: sensörün +x'i gövdenin +y'si olur; öteleme DÖNMEDEN eklenir.
+    donmus = sensor_to_base(
+        pts, LidarObstacleConfig(mount_x=0.5, mount_yaw=np.pi / 2)
+    )
+    assert np.allclose(donmus, [[0.5, 1.0, 0.0]], atol=1e-9)
+
+
+def test_sensor_to_base_sifir_offsette_girisi_DEGISTIRMEZ(
+    rng: np.random.Generator,
+) -> None:
+    """Geriye uyum: tüm offset'ler 0 → eski davranış birebir."""
+    pts = scene_minimum(rng)
+    assert np.array_equal(sensor_to_base(pts, LidarObstacleConfig()), pts)

@@ -47,7 +47,7 @@ değişmez**, ve araç üzerinde fiziksel olarak işaretlenir (bant/kalem).
 
 > **Neden Pixhawk değil?** İlk öneri Pixhawk'tı; gerekçe "ArduPilot IMU'yu araç
 > orijini sayar" idi. **Bu eksikti:** mutlak konumu **GPS çiviliyor** ve
-> `GPS_POS1_*` sıfırken EKF, anten ölçümünü olduğu gibi kabul eder — yani
+> `GPS1_POS_*` sıfırken EKF, anten ölçümünü olduğu gibi kabul eder — yani
 > raporlanan konum pratikte **GPS anteninin** konumudur, Pixhawk'ın değil.
 > Bu teknede GPS anteni sancakta bir kol üzerinde, yani orijin daha da kayık.
 >
@@ -62,10 +62,16 @@ değişmez**, ve araç üzerinde fiziksel olarak işaretlenir (bant/kalem).
 **⏳ FC'ye girilecek parametreler — hesaplandı, girilmeyi bekliyor:**
 
 ```
-INS_POS1_X   -0.055     GPS_POS1_X   -0.035
-INS_POS1_Y   -0.1375    GPS_POS1_Y   -0.16
-INS_POS1_Z   -0.155     GPS_POS1_Z   -0.365
+INS_POS1_X   -0.055     GPS1_POS_X   -0.035
+INS_POS1_Y   -0.1375    GPS1_POS_Y   -0.16
+INS_POS1_Z   -0.155     GPS1_POS_Z   -0.365
 ```
+
+> 🔴 **PARAMETRE ADI (2026-08-06 düzeltmesi):** GPS ofsetleri bu firmware'de
+> **`GPS1_POS_X/Y/Z`** — bu form önceden **`GPS_POS1_*`** yazıyordu ve
+> **öyle bir parametre YOK** (04.08 tarihli 941 satırlık FC dökümünde
+> bulunmuyor). Yanlış adı Mission Planner'a yazan kişi parametreyi bulamaz,
+> ofset **hiç uygulanmaz** ve herkes yapıldı sanır. `INS_POS1_*` doğruydu.
 
 Türetildiği fiziksel gerçek (gövde merkezine göre):
 
@@ -187,22 +193,39 @@ yazıyor (kaynak: GIRDAP_DURUM §1). **Teyit edin:**
 
 ## §2 — 🔴 LiDAR (Livox Mid-360) — EN KRİTİK ÖLÇÜM
 
-> **Neden kritik:** `perception_lidar_node` şu an **hiçbir TF dönüşümü
-> uygulamıyor** — çıktının `frame_id`'sini `base_link` diye etiketliyor, o
-> kadar. Oysa `z_min=0.1` filtresi "base_link'e göre su üstü kesim" diye
-> tanımlı. LiDAR `base_link`'in ÜSTÜNDEYSE dubalar LiDAR çerçevesinde
-> **negatif z**'de kalır ve `z_min=0.1` filtresi **hepsini eler** → LiDAR
-> hiçbir engel görmez. `h` ölçülmeden bu doğrulanamaz.
+> ✅ **B0/F5.1 KAPANDI (2026-08-06).** `perception_lidar_node` artık ham
+> bulutu **base_link'e taşıyor** (`sensor_to_base`), sonra filtreliyor.
+> Taşıma miktarı `hardware.yaml` **`tf.livox_frame`** bloğundan gelir (static
+> TF yayıncısıyla tek kaynak) — bu formdaki sayılar oraya girildiği sürece
+> doğru çalışır.
+>
+> *Neydi:* node hiçbir TF uygulamıyor, çıktının `frame_id`'sini `base_link`
+> diye **etiketliyordu**. `z_min=0.1` "base_link'e göre su üstü kesim" diye
+> tanımlı olduğu için LiDAR gövdenin üstündeyken dubalar LiDAR çerçevesinde
+> **negatif z**'de kalıyor ve filtre **hepsini eliyordu** → `obstacle_map` boş.
+>
+> ⚠️ **Sıradaki eksik `yaw`.** Öteleme girildi; dönüklük hâlâ `____`. Yaw
+> yanlışsa engeller açı kadar KAYAR (10 m'de 5° → 0.87 m) — kapı ortası
+> hesabını doğrudan bozar. Ampirik ölçüm §0.5'te.
 
 | Ölçü | Değer | Nasıl ölçülür |
 |---|---|---|
-| `x` — `base_link`'ten ileri (+) / geri (−) | **+0.07 m** ✅ | LiDAR, Pixhawk'tan 6.5-7 cm pruva tarafında |
-| `y` — iskeleye (+) / sancağa (−) | **−0.1375 m** ✅ | LiDAR gövde merkezinde, Pixhawk 13.5-14 cm iskelede → LiDAR sancakta kalıyor |
-| **`z` — `base_link`'ten yukarı (h)** | **+0.255 m** ✅ | 🔴 F5.1'i çözen sayı — aşağıdaki hesap |
+| `x` — `base_link`'ten ileri (+) / geri (−) | **+0.015 m** ✅ | gövde boy ortasından 1.5 cm pruvada |
+| `y` — iskeleye (+) / sancağa (−) | **0.0 m** ✅ | LiDAR gövde merkez hattında |
+| **`z` — `base_link`'ten yukarı (h)** | **+0.41 m** ✅ | 🔴 B0'ı çözen sayı — gövde TABANINDAN, aşağıdaki hesap |
 | `yaw` — pruvaya göre dönüklük | `____` ° ⏳ | **Ampirik ölç** (§0.5) — iletkiyle uğraşma |
 | `pitch` / `roll` — eğik monte edildi mi? | 0 / 0 | Düz monte |
 | **Su hattından yükseklik** (yüklü tekne, sakin su) | `____` m ⏳ | İlk suya inişte; `z_min`'in doğru değerini bu belirler |
 | Gövdenin LiDAR görüş alanına giren kısmı var mı? | ☐ var ☐ yok | Varsa `min_range` filtresi gerekir (F5.1 ile birlikte) |
+
+> 🔴 **ÇERÇEVE DÜZELTMESİ (2026-08-06):** yukarıdaki satırlar 05.08'e kadar
+> **eski `base_link`'e (= Pixhawk)** göre yazılıydı (x +0.07 · y −0.1375 ·
+> z +0.255). `base_link` §0'da **gövde merkezine** taşındığı için o sayılar
+> artık yanlış referanstaydı; formu okuyup doğrudan giren kişi **yanlış ofset
+> yazardı**. Yürürlükteki doğru değerler `hardware.yaml tf.livox_frame` ile
+> birebir: `{x: 0.015, y: 0.0, z: 0.41}`. Aşağıdaki masa hesabı Pixhawk'a
+> göreli ara adımdır — sonucu gövde tabanına çevirmek gerekir (41.0 cm ölçümü
+> zaten masadan, yani gövde tabanından).
 
 **`z` nasıl bulundu (2026-08-04, tekne masada):**
 ```
@@ -215,7 +238,7 @@ Pixhawk tekne tabanından (3D platform) 6.0 cm
 → z = 41.0 − 15.5                  = 25.5 cm
 ```
 
-> **F5.1 bu sayıyla kesinleşti:** `z_min=0.10 m` ham LiDAR çerçevesinde
+> **F5.1 bu sayıyla kesinleşti (ve 06.08'de kodda kapatıldı):** `z_min=0.10 m` ham LiDAR çerçevesinde
 > uygulanıyor (node TF dönüşümü yapmıyor) → "LiDAR'ın 10 cm ÜSTÜ" demek.
 > Duba suyun üstünde ~30 cm; LiDAR ise su hattından ~40 cm+ yukarıda. Yani
 > dubanın **tepesi bile** LiDAR'ın altında kalıyor → tüm noktalar negatif
@@ -232,7 +255,7 @@ Pixhawk tekne tabanından (3D platform) 6.0 cm
 | Merkez hattından | **16 cm iskelede** (Pixhawk ile aynı taraf) |
 | Masadan (gövde tabanından) yükseklik | **36.5 cm** |
 
-> `GPS_POS1_*`'e girilecek → §0'daki parametre bloğu.
+> `GPS1_POS_*`'e girilecek → §0'daki parametre bloğu.
 
 ---
 
