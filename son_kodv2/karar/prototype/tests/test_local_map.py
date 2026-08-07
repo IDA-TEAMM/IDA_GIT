@@ -132,10 +132,19 @@ def test_write_frame_disk_dolu_none_doner_exception_yok(tmp_path, monkeypatch) -
 
 
 def test_local_cost_grid_obstacle_free_unknown() -> None:
-    """local_cost_grid: engel merkezi ~100, uzak hücre 0, arena dışı -1."""
+    """local_cost_grid: engel merkezi ~100, uzak hücre 0.
+
+    🔴 **2026-08-07'de DEĞİŞTİ (Dosya-3 teslim denetimi):** eskiden bu test
+    `bounds` DIŞI hücrelerin -1 (bilinmiyor) olmasını bekliyordu. O davranış
+    kaldırıldı, çünkü `bounds` yarışma alanı değil **RRT*'ın örnekleme
+    kutusudur** (üstelik `_global_replan` onu her planda ±30 m genişletiyor) —
+    planlayıcının arama kutusunu "bilinen dünya" saymak kategori hatasıydı.
+    Ölçülen bedel: varsayılan `[0,200]²` ve araç odom origin'inde iken teslim
+    edilen haritanın **%75'i** gri çıkıyordu. Bkz. `pipeline.local_cost_grid`.
+    """
     bounds = Bounds(0.0, 200.0, 0.0, 200.0)
     pipe = PlanningPipeline(bounds, PlanningPipelineConfig())
-    # Aracı arena köşesine yakın koy → pencerenin bir kısmı arena dışı (-1).
+    # Araç arena köşesinde: eskiden pencerenin çoğu -1 olurdu, artık OLMAMALI.
     pipe.set_state(np.array([10.0, 10.0, 0.0, 0.0, 0.0, 0.0]))
     pipe.set_obstacles([CircleObstacle(10.0, 10.0, 3.0)])   # araç konumunda engel
 
@@ -145,6 +154,21 @@ def test_local_cost_grid_obstacle_free_unknown() -> None:
     assert cg.width == 100 and cg.height == 100
     assert grid.max() == 100                 # engel merkezi doygun
     assert (grid == 0).any()                 # serbest su hücreleri var
-    assert (grid == -1).any()                # arena dışı bilinmiyor hücreler
-    # Değerler sözleşme aralığında
-    assert grid.min() >= -1 and grid.max() <= 100
+    # Değerler sözleşme aralığında (−1 desteği çizici/dumper'da DURUYOR;
+    # yalnız bu üretici artık uydurma "bilinmiyor" damgası basmıyor).
+    assert grid.min() >= 0 and grid.max() <= 100
+
+
+def test_local_cost_grid_ARENA_KOSESINDE_gri_basmiyor() -> None:
+    """Nöbetçi: arena maskesi geri gelirse teslim edilen harita yine grileşir.
+
+    Bu testin tek işi o gerilemeyi CI'da kırmızıya düşürmek.
+    """
+    pipe = PlanningPipeline(Bounds(0.0, 200.0, 0.0, 200.0),
+                            PlanningPipelineConfig())
+    pipe.set_state(np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))   # tam köşe
+    grid = np.asarray(pipe.local_cost_grid().data, dtype=np.int16)
+    assert not (grid < 0).any(), (
+        "arena maskesi geri gelmiş: araç origin'deyken pencerenin %75'i "
+        "'bilinmiyor' oluyor ve Dosya-3 çoğunlukla gri teslim edilir"
+    )

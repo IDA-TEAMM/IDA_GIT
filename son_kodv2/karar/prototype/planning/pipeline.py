@@ -568,10 +568,20 @@ class PlanningPipeline:
                 occ = np.maximum(occ, contrib)
 
         grid = np.rint(occ).astype(np.int16)                 # 0..100
-        # Arena dışı → bilinmiyor (-1)
-        b = self._bounds
-        unknown = (gx < b.x_min) | (gx > b.x_max) | (gy < b.y_min) | (gy > b.y_max)
-        grid[unknown] = -1
+        # 🔴 2026-08-07 — ARENA MASKESİ KALDIRILDI (Dosya-3 teslim denetimi).
+        # Eskiden `bounds` dışı hücreler -1 (bilinmiyor) işaretleniyordu. İki
+        # ayrı sebeple YANLIŞTI:
+        #   1) `bounds` YARIŞMA ALANI DEĞİL, RRT*'ın ÖRNEKLEME KUTUSUDUR —
+        #      üstelik `_global_replan` onu her planda start/goal ± 30 m ile
+        #      genişletiyor (F10.2). Planlayıcının arama kutusunu "bilinen
+        #      dünya" sanmak kategori hatasıydı.
+        #   2) Ölçülen bedel: varsayılan `bounds_x/y=[0,200]` ve araç odom
+        #      origin'inde (0,0) başladığı için 50×50 m pencerenin **%75'i**
+        #      gri çıkıyordu → teslim edilen PNG'nin çoğu "bilinmiyor".
+        # Bu haritada gerçek bir "bilinmiyor" kavramı YOK (sensör kapsama
+        # alanını izlemiyoruz); olmayan bilgiyi uydurmak yerine hücreler
+        # engel maliyetini taşır. -1 desteği çizici/dumper tarafında DURUYOR:
+        # ileride gerçek kapsama izlenirse anlamıyla birlikte geri gelir.
 
         return LocalCostGrid(
             data=grid.reshape(-1).astype(np.int8),           # ROS satır-major

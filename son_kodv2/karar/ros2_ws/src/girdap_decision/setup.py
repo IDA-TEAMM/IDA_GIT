@@ -53,6 +53,7 @@ setup(
             "telemetry_node = girdap_decision.telemetry_node:main",
             "mavros_bridge_node = girdap_decision.mavros_bridge_node:main",
             "local_map_node = girdap_decision.local_map_node:main",
+            "lidar_kayit_node = girdap_decision.lidar_kayit_node:main",
             "mission_manager_node = girdap_decision.mission_manager_node:main",
             "perception_lidar_node = girdap_decision.perception_lidar_node:main",
             "perception_camera_node = girdap_decision.perception_camera_node:main",

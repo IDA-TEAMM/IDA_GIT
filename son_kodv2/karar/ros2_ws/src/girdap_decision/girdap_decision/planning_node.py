@@ -69,7 +69,7 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 
-from geometry_msgs.msg import PoseArray, PoseStamped, Twist
+from geometry_msgs.msg import Pose, PoseArray, PoseStamped, Twist
 from mavros_msgs.msg import State as MavState
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from std_msgs.msg import Float32MultiArray, Int32, String
@@ -371,6 +371,21 @@ class PlanningNode(Node):
             Int32, "/girdap/planning/gate_count", 10
         )
         self._son_gate_count = -1        # yalnız DEĞİŞİNCE yayınla + logla
+        # KENAR DUBALARI — DÜNYA (odom) çerçevesinde, Dosya-3 çizimi için.
+        #
+        # 🔑 **Neden ayrı topic, neden local_map_node kendisi dönüştürmüyor:**
+        # kenar dubaları MPPI'nin engel torbasından bilerek çıkarılır
+        # (`_on_classified`), dolayısıyla `local_cost_grid()` occupancy'sinde
+        # HİÇ görünmezler → teslim edilen "engel haritası" parkurun ANA
+        # nesnesini göstermiyordu (md 4.2 Dosya-3 denetimi, 2026-08-07).
+        # Çizim katmanı olarak eklenmeleri gerekiyor; ama gövde→dünya
+        # dönüşümünü ikinci bir node'da TEKRAR yazmak, bu projenin iki kez
+        # yediği "iki kopya ayrıştı" hatasını davet ederdi (§0.0b). Dönüşüm
+        # TEK yerde (`_body_to_world`) kalsın diye sonuç burada yayınlanır.
+        # ⚠ Salt TEŞHİS/ÇİZİM kanalı — hiçbir kontrol kararı buradan sürülmez.
+        self._pub_edge_buoys = self.create_publisher(
+            PoseArray, "/girdap/planning/edge_buoys", 10
+        )
 
         # --- Kontrol döngüsü ---
         rate = float(self.get_parameter("control_rate_hz").value)
@@ -520,6 +535,7 @@ class PlanningNode(Node):
         self._obstacles_world = [(o.cx, o.cy, o.r) for o in obstacles]
         self._pipe.set_obstacles(obstacles)
         self._algi_no += 1                # B5 onayı: yeni algı karesi geldi
+        self._publish_edge_buoys(edges)
 
     def _obstacles_stale(self) -> bool:
         """F-P.2: son obstacle_map `obstacle_timeout_s`'ten eski mi?
@@ -590,6 +606,22 @@ class PlanningNode(Node):
             self._warn_sessiz_ret()
         self._publish_gate_count()
         return result.target
+
+    def _publish_edge_buoys(self, edges: list[tuple[float, float]]) -> None:
+        """Kenar dubalarını DÜNYA (odom) çerçevesinde yayınla — Dosya-3 katmanı.
+
+        Boş liste de yayınlanır: "kapı görünmüyor" da bir bilgidir ve çizici
+        bayat duba göstermemelidir.
+        """
+        msg = PoseArray()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = "odom"          # ⚠ DÜNYA — gövde değil
+        for wx, wy in edges:
+            p = Pose()
+            p.position.x = float(wx)
+            p.position.y = float(wy)
+            msg.poses.append(p)
+        self._pub_edge_buoys.publish(msg)
 
     def _publish_gate_count(self) -> None:
         """Geçilen FARKLI kapı sayısı — md 5.5.2.4 için G1/G2 kanıtı.
@@ -885,13 +917,26 @@ class PlanningNode(Node):
     def _publish_local_map(self) -> None:
         """Dosya-3: araç merkezli yerel maliyet haritası (OccupancyGrid).
 
-        Frame base_link, origin (-w·res/2, -h·res/2) → araç pencere merkezinde,
-        kuzey yukarı. Veri MPPI engel maliyetinden 0-100 normalize; arena dışı -1.
+        🔴 **FRAME ETİKETİ DÜZELTİLDİ (2026-08-07).** Eskiden
+        `frame_id="base_link"` yazıyordu ama `local_cost_grid()` hücreleri
+        **dünya ENU** ekseninde kuruyor ve araç yaw'ını HİÇ kullanmıyor —
+        yani veri gövde çerçevesinde DEĞİL. Ölçümle doğrulandı: araç 0°/90°/
+        180°'ye döndürüldüğünde engel haritada **aynı** hücrede kalıyor
+        (base_link olsaydı sola/öne/sağa kaymalıydı). TF/RViz tüketen herkes
+        engelleri ψ kadar yanlış yere koyardı.
+
+        Doğrusu: eksenler dünya (ENU) ile hizalı, köken araçta → **`odom`**.
+        ⚠️ Bu, `perception_lidar_node`'da bir kez yaşanmış hatanın aynısıydı
+        (GIRDAP_DURUM §0.0b): "etiketi base_link yaz, dönüşümü yapma".
+        Frame kuralı: perception topic'leri GÖVDE, mission/map topic'leri
+        ENU-hizalı ÖTELEME.
+
+        Origin (-w·res/2, -h·res/2) → araç pencere merkezinde, kuzey yukarı.
         """
         cg = self._pipe.local_cost_grid()
         msg = OccupancyGrid()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = "base_link"
+        msg.header.frame_id = "odom"
         msg.info.resolution = float(cg.resolution)
         msg.info.width = int(cg.width)
         msg.info.height = int(cg.height)

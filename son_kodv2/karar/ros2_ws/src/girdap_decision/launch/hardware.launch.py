@@ -939,9 +939,15 @@ def generate_launch_description() -> LaunchDescription:
         Node(package=_PKG, executable="telemetry_node",
              name="telemetry_node", parameters=telemetry_params,
              output="screen"),
-        # Dosya-3: /girdap/map/local → grayscale PNG serisi (~/girdap_logs).
+        # Dosya-3 (md 4.2): /girdap/map/local → zaman damgalı mp4 + PNG yedeği.
         Node(package=_PKG, executable="local_map_node",
              name="local_map_node", **common),
+        # Dosya-1'in "Diğer Otonomi Sensörleri" ayağı (md 487-493): LiDAR
+        # kümeleme videosu. 🔴 Bu teslim 07.08.2026'ya kadar HİÇ üretilmiyordu
+        # (eksik dosya = 5 ceza, md 5.5.4.3.5). Kamera mp4'ünden AYRI dosya
+        # olmak zorunda: "her bir sensör tipi için ayrı ayrı".
+        Node(package=_PKG, executable="lidar_kayit_node",
+             name="lidar_kayit_node", **common),
         # Video: 4-nokta waypoint görevi → /girdap/mission/current_target.
         Node(package=_PKG, executable="mission_manager_node",
              name="mission_manager_node", parameters=mission_params,

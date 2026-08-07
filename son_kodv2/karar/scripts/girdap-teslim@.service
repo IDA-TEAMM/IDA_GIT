@@ -1,0 +1,19 @@
+# GİRDAP İDA — md 4.2 teslim toplayıcı (udev tetikler, %i = sda1 gibi).
+# Kurulum: scripts/teslim_kur.sh
+[Unit]
+Description=GIRDAP IDA md 4.2 teslim toplayici (/dev/%i)
+# Aygıt kaybolursa birim de dursun.
+BindsTo=dev-%i.device
+After=dev-%i.device
+
+[Service]
+Type=oneshot
+# mount/umount için root şart.
+User=root
+# ⚠ Kopya + doğrulama ~50 MB için saniyeler sürer; takılırsa USB'yi sonsuza
+# dek meşgul etmesin.
+TimeoutStartSec=180
+ExecStart=/usr/bin/python3 __WS__/scripts/teslim_topla.py --aygit /dev/%i --log-koku __LOGS__
+# Başarısızlıkta da journal'a düşsün; operatör USB'deki RAPOR.txt'ye bakar.
+StandardOutput=journal
+StandardError=journal

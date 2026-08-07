@@ -1,0 +1,12 @@
+# GİRDAP İDA — USB takılınca md 4.2 teslim dosyalarını kopyala.
+#
+# Yarışma günü md 4.1 gereği Wi-Fi/BT KAPALI ve SSH yok → Jetson'dan dosya
+# çekmenin kalan tek pratik yolu USB takmak. md 5.5.4.3.5: karaya alımdan
+# 20 dk içinde teslim edilmeyen her dosya için 5 ceza puanı.
+#
+# Yalnız USB *bölümleri* (partition) ve üzerinde dosya sistemi olanlar.
+# Uzun iş udev'de KOŞTURULMAZ (udev callback'i bloklar, aygıt kurulumunu
+# geciktirir) → systemd birimi tetiklenir.
+ACTION=="add", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", \
+  ENV{DEVTYPE}=="partition", ENV{ID_FS_USAGE}=="filesystem", \
+  TAG+="systemd", ENV{SYSTEMD_WANTS}+="girdap-teslim@%k.service"
