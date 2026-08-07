@@ -188,3 +188,66 @@ def test_mp4_YOK_ama_PNG_yedegi_VARSA_toplanir_ve_BAGIRIR(tmp_path):
     assert (hedef / "kare_00000.png").exists(), "PNG yedeği USB'ye alınmadı"
     metin = (usb / RAPOR_ADI).read_text(encoding="utf-8")
     assert "ÇEVİRMEDEN TESLİM ETME" in metin
+
+
+def test_PNG_yedegi_OTOMATIK_mp4e_cevriliyor(tmp_path):
+    """🔑 Teslim zincirindeki SON insan adımı kaldırıldı.
+
+    Codec yoksa kaydedici PNG'ye düşüyor; şartname mp4 istiyor. Dönüşüm elle
+    bırakılsaydı 20 dakikalık teslim penceresinde atlanırdı (o akışta durup
+    dosya okuyan bir adım YOK) → 5 ceza. USB takma anına bağlandı.
+    """
+    import shutil as _sh
+    if _sh.which("ffmpeg") is None:
+        pytest.skip("ffmpeg yok")
+    from PIL import Image
+    import numpy as np
+    from prototype.mapping.bev_renderer import FPS_ISARET_ADI
+
+    logs = _kur(tmp_path / "logs", lidar=False)          # mp4 ÜRETİLEMEMİŞ
+    png = logs / "lidar" / "oturum_20260807_143000" / "lidar_kumeleme_png"
+    png.mkdir(parents=True)
+    (png / FPS_ISARET_ADI).write_text("2\n", encoding="utf-8")
+    rng = np.random.default_rng(0)
+    for i in range(6):
+        Image.fromarray(
+            rng.integers(0, 255, (64, 64, 3), dtype=np.uint8), mode="RGB"
+        ).save(png / f"kare_{i:05d}.png")
+
+    usb = tmp_path / "usb"
+    usb.mkdir()
+    rapor, bulgular = topla_ve_yaz(logs, usb)
+
+    # 1) kaynakta mp4 oluştu (Jetson'da da kalıyor)
+    assert (png.parent / "lidar_kumeleme.mp4").is_file()
+    # 2) USB'de ŞARTNAMEDEKİ adla duruyor
+    assert (usb / "Diger_Otonomi_Sensorleri_Veri_Seti"
+            / "lidar_kumeleme.mp4").is_file()
+    # 3) artık EKSİK değil, ceza yok
+    assert rapor.basarili and rapor.tahmini_ceza == 0
+    # 4) USB kökü temiz: PNG_YEDEK klasörü OLUŞMADI
+    assert not (usb / "Diger_Otonomi_Sensorleri_PNG_YEDEK_mp4e_cevrilecek"
+                ).exists()
+    # 5) PNG kaynağı SİLİNMEDİ
+    assert (png / "kare_00000.png").exists()
+    # 6) rapor ne olduğunu söylüyor
+    metin = (usb / RAPOR_ADI).read_text(encoding="utf-8")
+    assert "OTOMATİK mp4'e çevrildi" in metin
+
+
+def test_ffmpeg_YOKSA_PNG_yolu_calismaya_devam_eder(tmp_path, monkeypatch):
+    """ffmpeg kurulu değilse teslim yine de kurtarılabilir olmalı."""
+    import shutil as _sh
+    logs = _kur(tmp_path / "logs", lidar=False)
+    png = logs / "lidar" / "oturum_20260807_143000" / "lidar_kumeleme_png"
+    png.mkdir(parents=True)
+    (png / "kare_00000.png").write_bytes(b"P" * 256)
+    usb = tmp_path / "usb"
+    usb.mkdir()
+
+    monkeypatch.setattr(_sh, "which", lambda ad: None)   # ffmpeg YOK
+    rapor, _ = topla_ve_yaz(logs, usb)
+
+    assert (usb / "Diger_Otonomi_Sensorleri_PNG_YEDEK_mp4e_cevrilecek"
+            / "kare_00000.png").exists(), "PNG yedeği USB'ye alınmadı"
+    assert any("ffmpeg KURULU DEĞİL" in u for u in rapor.uyarilar)

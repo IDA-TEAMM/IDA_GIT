@@ -45,6 +45,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from prototype.mapping.bev_renderer import (
+    FPS_ISARET_ADI, PNG_KARE_DESENI,
+)
+
 # ═══════════════════════════════════════════════════════════════════════════
 # USB YERLEŞİMİ — ADLAR ŞARTNAMEDEN BİREBİR, UYDURMA YOK
 # ═══════════════════════════════════════════════════════════════════════════
@@ -178,6 +182,92 @@ class Rapor:
         return 5 * (len(self.eksik_zorunlu) + len(self.bozuk))
 
 
+def png_yedegini_mp4_yap(log_koku: Path) -> List[str]:
+    """PNG'ye düşmüş kayıtları **ffmpeg ile otomatik mp4'e çevir**.
+
+    🔑 **NEDEN OTOMATİK — insan adımı teslim zincirinde en zayıf halka.**
+    Kaydedici mp4 codec'ini açamazsa PNG'ye düşüyor (kayıt kurtuluyor), ama
+    şartname md 4.2 **`mp4 formatında`** istiyor. Dönüşüm elle bırakılsaydı
+    sıra şöyle olurdu: koşum biter → 20 dakikalık teslim saati başlar → tekne
+    sudan çıkarılır → USB takılır → **birinin `RAPOR.txt`'yi açıp okuması,
+    klasörü bulması, ffmpeg komutunu koşması** → teslim. O akışta durup dosya
+    okuyan bir adım YOK; uyarı üç yere de yazılsa görülmez ve PNG teslim edilir
+    = **5 ceza** (md 5.5.4.3.5). Bu yüzden dönüşüm buraya, USB takma anına
+    bağlandı: insan yalnız USB takıyor.
+
+    Dönüşüm **kaynakta** (`~/girdap_logs`) yapılır, USB'de değil:
+      · `kalemleri_bul` sonra normal mp4'ü bulur → kopya/rapor/manifest yolu
+        hiç özel duruma girmez (tek kod yolu = az hata);
+      · mp4 Jetson'da da kalır, USB çıkarılsa bile kaybolmaz;
+      · USB genelde FAT32 ve yavaş — yazma değil okuma yapıyoruz.
+
+    ⚠ PNG'ler **SİLİNMEZ** (kayıpsız kaynak). Dönüşüm başarılıysa `kalemleri_bul`
+    onları listeye almaz — USB kökü şartnamenin dört kalemiyle temiz kalır.
+
+    Döner: kullanıcıya gösterilecek bilgi/uyarı satırları.
+    """
+    import shutil as _sh
+    import subprocess
+
+    mesajlar: List[str] = []
+    kok = Path(log_koku).expanduser() / "lidar"
+    if not kok.is_dir():
+        return mesajlar
+    for png_dizin in sorted(kok.glob("**/lidar_kumeleme_png")):
+        if not png_dizin.is_dir():
+            continue
+        hedef = png_dizin.parent / "lidar_kumeleme.mp4"
+        if hedef.exists():
+            continue                                  # zaten mp4 var
+        kareler = sorted(png_dizin.glob("kare_*.png"))
+        if not kareler:
+            continue
+        if _sh.which("ffmpeg") is None:
+            mesajlar.append(
+                f"🔴 {png_dizin.name}: {len(kareler)} PNG karesi var ama "
+                "ffmpeg KURULU DEĞİL → mp4'e çevrilemedi. PNG'ler USB'ye "
+                "alındı; şartname mp4 istiyor (md 4.2), başka makinede "
+                "çevirin. Jetson'a `sudo apt install ffmpeg` kalıcı çözüm."
+            )
+            continue
+        # fps'i kaydedicinin bıraktığı makine-okur işaretten al.
+        fps = 2.0
+        isaret = png_dizin / FPS_ISARET_ADI
+        if isaret.is_file():
+            try:
+                fps = float(isaret.read_text(encoding="utf-8").strip())
+            except ValueError:
+                pass                                   # varsayılanla devam
+        # libx264 her ffmpeg derlemesinde YOK; yoksa mpeg4'e düş. İkisi de
+        # olmazsa PNG yolu zaten yedek olarak duruyor.
+        for kodek in ("libx264", "mpeg4"):
+            komut = [
+                "ffmpeg", "-y", "-loglevel", "error",
+                "-framerate", f"{fps:g}",
+                "-i", str(png_dizin / PNG_KARE_DESENI),
+                "-c:v", kodek, "-pix_fmt", "yuv420p", str(hedef),
+            ]
+            try:
+                r = subprocess.run(komut, capture_output=True, timeout=300)
+            except (OSError, subprocess.TimeoutExpired) as e:
+                mesajlar.append(f"🔴 ffmpeg çalıştırılamadı ({kodek}): {e}")
+                break
+            if r.returncode == 0 and hedef.exists() and hedef.stat().st_size > 0:
+                mesajlar.append(
+                    f"✅ mp4 codec'i yoktu → {len(kareler)} PNG karesi ffmpeg "
+                    f"({kodek}, {fps:g} fps) ile OTOMATİK mp4'e çevrildi. "
+                    "Elle yapılacak bir şey YOK."
+                )
+                break
+            hedef.unlink(missing_ok=True)              # yarım dosya bırakma
+        else:
+            mesajlar.append(
+                f"🔴 {png_dizin.name}: ffmpeg mp4 üretemedi (libx264 ve mpeg4 "
+                "denendi). PNG'ler USB'ye alındı, elle çevrilmeli."
+            )
+    return mesajlar
+
+
 def _en_yeni_oturum(kok: Path) -> Optional[Path]:
     """`kok` altındaki en yeni oturum dizini; alt dizin yoksa `kok`.
 
@@ -216,6 +306,12 @@ def kalemleri_bul(
                 p for p in arama_koku.glob(t.desen) if p.is_file()
             )
         out.append(b)
+    # 🔑 mp4 varsa PNG yedeğini teslime KOYMA: dönüşüm başarılıysa (ya da
+    # codec zaten çalışıyorsa) o klasör yalnız kayıpsız kaynaktır ve USB
+    # kökünü kirletir. PNG'ler Jetson'da duruyor, silinmiyor.
+    d = {b.tanim.anahtar: b for b in out}
+    if d["lidar"].bulundu and "lidar_png_yedek" in d:
+        d["lidar_png_yedek"].dosyalar = []
     return out
 
 
@@ -412,9 +508,15 @@ def topla_ve_yaz(
     hepsi: bool = False,
     zaman_damgasi: Optional[str] = None,
 ) -> Tuple[Rapor, List[Bulgu]]:
-    """Uçtan uca: bul → USB köküne kopyala → kontrol raporu + manifest yaz."""
+    """Uçtan uca: **PNG→mp4 otomatik çevir** → bul → kopyala → rapor+manifest.
+
+    Dönüşüm ÖNCE yapılır ki `kalemleri_bul` normal bir mp4 bulsun; böylece
+    kopyalama/rapor/manifest yolu özel duruma hiç girmez.
+    """
+    cevrim_mesajlari = png_yedegini_mp4_yap(log_koku)
     bulgular = kalemleri_bul(log_koku, hepsi=hepsi)
     rapor = kopyala(bulgular, usb_koku, zaman_damgasi=zaman_damgasi)
+    rapor.uyarilar[:0] = cevrim_mesajlari      # dönüşüm notları en üstte
     kok = Path(usb_koku)
     if kok.is_dir():
         (kok / RAPOR_ADI).write_text(

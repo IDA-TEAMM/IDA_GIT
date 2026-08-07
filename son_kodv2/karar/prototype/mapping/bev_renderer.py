@@ -95,6 +95,12 @@ _HAM_NOKTA = (110, 118, 128)
 _METIN = (235, 240, 245)
 _ARAC = (60, 255, 120)
 
+# PNG yedek klasöründe fps'i taşıyan makine-okur işaret dosyası.
+# Teslim toplayıcısı bunu okuyup ffmpeg'i doğru hızda koşturur.
+FPS_ISARET_ADI = "_fps.txt"
+# ffmpeg kare adı deseni — `kare_00000.png` ile birebir uyumlu olmalı.
+PNG_KARE_DESENI = "kare_%05d.png"
+
 
 @dataclass(frozen=True)
 class BevConfig:
@@ -416,8 +422,14 @@ class PngSerisiYazici:
         self.dizin.mkdir(parents=True, exist_ok=True)
         self.fps = float(fps)
         self.kare_sayisi = 0
-        # Klasörü bulan kişi ne yapacağını bilsin — 20 dakikalık teslim
-        # penceresinde "bu ne?" diye düşünecek vakit yok.
+        # 🔑 MAKİNE-OKUR fps işareti — teslim toplayıcısı bu klasörü bulunca
+        # ffmpeg'i KENDİ koşturup mp4'ü üretiyor (`prototype/teslim/
+        # toplayici.py::png_yedegini_mp4_yap`). fps'i metinden ayrıştırmak
+        # kırılgan olurdu; tek satır sayı bırakıyoruz.
+        (self.dizin / FPS_ISARET_ADI).write_text(f"{self.fps:g}\n",
+                                                 encoding="utf-8")
+        # İnsan için son çare talimatı. Normalde OKUNMASI GEREKMEZ — dönüşüm
+        # otomatik. ffmpeg hiç yoksa geriye kalan tek yol bu.
         (self.dizin / "NASIL_MP4_YAPILIR.txt").write_text(
             "Bu klasor mp4 ACILAMADIGI icin yedege dusuldugunde olustu.\n"
             "Kareler zaman damgali; tek komutla mp4'e cevrilir:\n\n"
