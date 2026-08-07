@@ -25,9 +25,11 @@ hakem masasında öğrenmekten iyidir — ve hâlâ müdahale edilebilecek tek a
 ════════════════════════════════════════════════════════════════════════════
 EMNİYET KURALLARI (kod bunları GARANTİ EDER)
 ════════════════════════════════════════════════════════════════════════════
-· USB'de **hiçbir şey SİLİNMEZ/ÜZERİNE YAZILMAZ** — her koşum kendi
-  `GIRDAP_TESLIM_<zaman>/` klasörüne gider. Yanlış USB takılsa bile veri kaybı
-  olmaz (birinin kişisel belleği olabilir).
+· USB'de **hiçbir şey SİLİNMEZ**. Yanlış USB takılsa bile (birinin kişisel
+  belleği olabilir) veri kaybı olmaz. Kökte önceki koşumun kalemleri varsa
+  `onceki_kosum_<zaman>/` altına **taşınır** — silinmez; hakemin kökte gördüğü
+  daima SON koşumdur (md 5.5.3.1: 1 yeniden başlama hakkı → aynı USB'ye iki
+  koşum düşebilir).
 · Kopya öncesi **boş alan kontrolü**; yetmiyorsa hiç başlamaz (yarım teslim,
   hiç teslimden daha kötü: dosya var sanılır).
 · Her dosya **sha256 + boyut** ile doğrulanır; uyuşmazsa rapora BOZUK yazılır.
@@ -43,48 +45,89 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-# ---------------------------------------------------------------------------
-# md 4.2'de TANIMLANAN kalemler. Ceza "tanımlanan her bir dosya için" (md
-# 5.5.4.3.5) → bu liste doğrudan ceza yüzeyidir. `zorunlu=False` olan tek
-# kalem PNG yedeği: teslim sözleşmesinde yok, kayıpsız yedek olarak taşınıyor.
-# ---------------------------------------------------------------------------
+# ═══════════════════════════════════════════════════════════════════════════
+# USB YERLEŞİMİ — ADLAR ŞARTNAMEDEN BİREBİR, UYDURMA YOK
+# ═══════════════════════════════════════════════════════════════════════════
+# Şartname md 4.2 klasör yapısı TARİF ETMİYOR; yalnız kalemleri ve formatları
+# adlandırıyor. Bu yüzden buradaki tek kural: **belgenin kendi başlıkları**
+# kullanılır, fazladan hiyerarşi ya da numara ICAT EDİLMEZ.
+#
+# Belgedeki dört madde (girinti sütunları ölçüldü — dördü de AYNI seviyede;
+# "Dosya 1"in kaymış görünmesi sayfa kırılmasından):
+#     ▪ Dosya 1: Otonomi Sensörleri Veri seti   → • İşlenmiş kamera verisi
+#     ▪ Diğer Otonomi Sensörleri Veri Seti      → lidar vs., HER SENSÖR TİPİ AYRI
+#     ▪ Dosya 2: Araç telemetri verisi
+#     ▪ Dosya 3: Lokal harita/cost map/engel haritası
+# ⚠ Giriş cümlesi "Veriler 3 dosya olacak şekilde" diyor ama madde DÖRT.
+#   Büyük olasılıkla "Diğer Otonomi Sensörleri" sonradan eklenip numaralandırma
+#   güncellenmemiş. Yerleşim her iki okumada da çalışacak şekilde kuruldu:
+#   kök dizinde tam olarak bu dört başlık görünür, başka hiçbir şey.
+#
+# 🔑 İlk iki kalem KLASÖR, son ikisi TEK DOSYA — bu bir tercih değil verinin
+#   dayattığı şey: kamera kaydedicisi segmentler yazıyor (seg_0000.mp4 …) ve
+#   "her bir sensör tipi için ayrı ayrı" birden çok sensör dosyası demek.
+#   Dosya-2 ve Dosya-3 tek dosya olduğu için düz duruyor.
+#
+# Türkçe karakter KULLANILMADI: USB'ler FAT32/exFAT ve dosya adı kodlaması
+# sistemler arasında bozulabiliyor; hakemin makinesinde okunamayan ad riski
+# alınmaz.
+# ═══════════════════════════════════════════════════════════════════════════
 @dataclass(frozen=True)
 class KalemTanimi:
     anahtar: str
-    ad: str
+    ad: str                   # şartnamedeki başlık (rapor metni için)
     madde: str
-    alt_dizin: str            # ~/girdap_logs altında
+    alt_dizin: str            # ~/girdap_logs altında (KAYNAK)
     desen: str                # glob
+    hedef: str                # USB kökündeki ad — ŞARTNAMEDEN
+    klasor: bool              # True → klasör (çok dosya), False → tek dosya
     zorunlu: bool = True
 
 
 KALEMLER: Tuple[KalemTanimi, ...] = (
     KalemTanimi(
-        "kamera", "Dosya-1 işlenmiş kamera verisi",
-        "md 4.2 Dosya 1 (mp4, ≥1 Hz, zaman etiketli, bbox+sınıf)",
+        "kamera",
+        "Dosya 1: Otonomi Sensörleri Veri seti — İşlenmiş kamera verisi",
+        "md 4.2 (mp4, ≥1 Hz, her kare zaman etiketli, bbox + sınıf)",
         "kamera", "**/*.mp4",
+        hedef="Dosya1_Otonomi_Sensorleri_Veri_Seti", klasor=True,
     ),
     KalemTanimi(
-        "lidar", "Dosya-1b LiDAR veri seti",
-        "md 4.2 Diğer Otonomi Sensörleri (her sensör tipi AYRI dosya)",
+        "lidar",
+        "Diğer Otonomi Sensörleri Veri Seti (lidar)",
+        "md 4.2 (her sensör tipi AYRI, mp4, ≥1 Hz, zaman etiketli, "
+        "kümeleme/ayırma görünür)",
         "lidar", "**/*.mp4",
+        hedef="Diger_Otonomi_Sensorleri_Veri_Seti", klasor=True,
     ),
     KalemTanimi(
-        "telemetri", "Dosya-2 araç telemetri verisi",
-        "md 4.2 Dosya 2 (csv, ≥1 Hz, header satırlı)",
+        "telemetri",
+        "Dosya 2: Araç telemetri verisi",
+        "md 4.2 (csv, ≥1 Hz, ilk satır header)",
         "telemetry", "**/telemetri_*.csv",
+        hedef="Dosya2_Arac_Telemetri_Verisi.csv", klasor=False,
     ),
     KalemTanimi(
-        "harita", "Dosya-3 lokal harita / cost map",
-        "md 4.2 Dosya 3 (≥1 Hz)",
+        "harita",
+        "Dosya 3: Lokal harita/cost map/engel haritası",
+        "md 4.2 (≥1 Hz; FORMAT ŞARTNAMEDE BELİRTİLMEMİŞ — diğer görsel "
+        "kalemlerle tutarlı olsun diye mp4)",
         "local_map", "**/*.mp4",
+        hedef="Dosya3_Lokal_Harita_Cost_Map_Engel_Haritasi.mp4", klasor=False,
     ),
     KalemTanimi(
-        "harita_png", "Dosya-3 PNG yedeği (opsiyonel)",
-        "teslim sözleşmesinde YOK — kayıpsız yedek",
-        "local_map", "**/*.png", zorunlu=False,
+        "harita_png",
+        "Dosya 3 — kayıpsız PNG yedeği",
+        "şartnamede YOK; mp4 kabul edilmezse elde kalsın diye taşınır",
+        "local_map", "**/*.png",
+        hedef="Dosya3_png_yedek", klasor=True, zorunlu=False,
     ),
 )
+
+# Bizim kendi kontrol dosyalarımız — teslim kalemi DEĞİL. Alt çizgiyle
+# başlıyorlar ki listede başta dursunlar ve hakem bunları teslim sanmasın.
+RAPOR_ADI = "_GIRDAP_kontrol_raporu.txt"
+MANIFEST_ADI = "_GIRDAP_manifest_sha256.txt"
 
 
 @dataclass
@@ -172,20 +215,45 @@ def _sha256(p: Path, blok: int = 1 << 20) -> str:
     return h.hexdigest()
 
 
+def _onceki_kosumu_arsivle(usb_koku: Path, damga: str) -> Optional[str]:
+    """Kökte önceki koşumun kalemleri varsa onları bir yana AL (SİLME).
+
+    Şartname 1 yeniden başlama hakkı veriyor (md 5.5.3.1) → aynı USB'ye iki
+    koşum düşebilir. Hakemin kökte gördüğü şey DAİMA son koşum olmalı; eski
+    dosyalar karışırsa hangi koşuma ait olduğu belirsizleşir.
+    ⚠ Taşınır, ASLA silinmez.
+    """
+    mevcut = [
+        usb_koku / t.hedef for t in KALEMLER if (usb_koku / t.hedef).exists()
+    ]
+    if not mevcut:
+        return None
+    arsiv = usb_koku / f"onceki_kosum_{damga}"
+    arsiv.mkdir(parents=True, exist_ok=True)
+    for p in mevcut:
+        shutil.move(str(p), str(arsiv / p.name))
+    return arsiv.name
+
+
 def kopyala(
     bulgular: List[Bulgu],
     usb_koku: Path,
     zaman_damgasi: Optional[str] = None,
     dogrula: bool = True,
 ) -> Rapor:
-    """Bulunanları USB'ye kopyala. USB'de HİÇBİR ŞEY SİLİNMEZ.
+    """Bulunanları USB KÖKÜNE, ŞARTNAMEDEKİ adlarla kopyala.
 
-    Hedef: `<usb>/GIRDAP_TESLIM_<zaman>/<kalem>/...`
+    Kökte tam olarak şunlar görünür (başka hiçbir şey):
+        Dosya1_Otonomi_Sensorleri_Veri_Seti/
+        Diger_Otonomi_Sensorleri_Veri_Seti/
+        Dosya2_Arac_Telemetri_Verisi.csv
+        Dosya3_Lokal_Harita_Cost_Map_Engel_Haritasi.mp4
+        _GIRDAP_kontrol_raporu.txt / _GIRDAP_manifest_sha256.txt  (bizim)
+    Sarmalayıcı klasör ICAT EDİLMEZ — şartname öyle bir şey istemiyor.
     """
     usb_koku = Path(usb_koku)
     damga = zaman_damgasi or datetime.now().strftime("%Y%m%d_%H%M%S")
-    hedef = usb_koku / f"GIRDAP_TESLIM_{damga}"
-    rapor = Rapor(hedef=hedef)
+    rapor = Rapor(hedef=usb_koku)
 
     gereken = sum(b.toplam_bayt for b in bulgular if b.bulundu)
     try:
@@ -203,31 +271,53 @@ def kopyala(
         rapor.eksik_zorunlu = [b.tanim.ad for b in bulgular if b.tanim.zorunlu]
         return rapor
 
-    hedef.mkdir(parents=True, exist_ok=True)
+    arsiv = _onceki_kosumu_arsivle(usb_koku, damga)
+    if arsiv:
+        rapor.uyarilar.append(
+            f"Önceki koşumun dosyaları '{arsiv}/' altına ALINDI (silinmedi) — "
+            "kökte daima SON koşum görünür"
+        )
+
     for b in bulgular:
         if not b.bulundu:
             if b.tanim.zorunlu:
                 rapor.eksik_zorunlu.append(b.tanim.ad)
             continue
-        klasor = hedef / b.tanim.anahtar
-        klasor.mkdir(parents=True, exist_ok=True)
-        for src in b.dosyalar:
-            dst = klasor / src.name
-            # Aynı adlı dosya varsa ÜZERİNE YAZMA — sırala.
+        t = b.tanim
+        if t.klasor:
+            hedef_dizin = usb_koku / t.hedef
+            hedef_dizin.mkdir(parents=True, exist_ok=True)
+            ciftler = [(s, hedef_dizin / s.name) for s in b.dosyalar]
+        else:
+            # Tek dosya kalemi: şartnamedeki adı taşır. Birden fazla kaynak
+            # varsa (beklenmez) ilki ada, kalanlar sıralı eke gider — hiçbiri
+            # kaybolmasın.
+            hedef_dizin = usb_koku
+            ana = usb_koku / t.hedef
+            ciftler = [(b.dosyalar[0], ana)]
+            for i, s in enumerate(b.dosyalar[1:], start=1):
+                ciftler.append((s, usb_koku / f"{ana.stem}_{i}{ana.suffix}"))
+            if len(b.dosyalar) > 1:
+                rapor.uyarilar.append(
+                    f"{t.ad}: {len(b.dosyalar)} kaynak dosya bulundu, "
+                    "beklenen 1 — hepsi kopyalandı, hakeme HANGİSİ verilecek "
+                    "elle seçilmeli"
+                )
+        for src, dst in ciftler:
             n = 1
-            while dst.exists():
-                dst = klasor / f"{src.stem}_{n}{src.suffix}"
+            while dst.exists():                # ÜZERİNE YAZMA
+                dst = dst.with_name(f"{dst.stem}_{n}{dst.suffix}")
                 n += 1
             try:
                 shutil.copy2(src, dst)
             except OSError as e:
-                rapor.bozuk.append(f"{b.tanim.ad}/{src.name}: kopyalanamadı ({e})")
+                rapor.bozuk.append(f"{t.ad}/{src.name}: kopyalanamadı ({e})")
                 continue
             if dogrula:
                 if dst.stat().st_size != src.stat().st_size or (
                     _sha256(dst) != _sha256(src)
                 ):
-                    rapor.bozuk.append(f"{b.tanim.ad}/{src.name}: DOĞRULAMA HATASI")
+                    rapor.bozuk.append(f"{t.ad}/{src.name}: DOĞRULAMA HATASI")
                     continue
             rapor.kopyalanan += 1
             rapor.bayt += dst.stat().st_size
@@ -239,7 +329,7 @@ def rapor_metni(bulgular: List[Bulgu], rapor: Rapor) -> str:
     L: List[str] = []
     L.append("GİRDAP İDA — Takım 989124 — md 4.2 VERİ TESLİMİ")
     L.append(f"Toplama zamanı : {datetime.now():%Y-%m-%d %H:%M:%S}")
-    L.append(f"Hedef klasör   : {rapor.hedef.name if rapor.hedef else '-'}")
+    L.append(f"USB kökü       : {rapor.hedef if rapor.hedef else '-'}")
     L.append(f"Kopyalanan     : {rapor.kopyalanan} dosya, "
              f"{rapor.bayt/1e6:.1f} MB")
     L.append("")
@@ -270,8 +360,15 @@ def rapor_metni(bulgular: List[Bulgu], rapor: Rapor) -> str:
                  f"{rapor.tahmini_ceza} puan "
                  f"(eksik/geçersiz dosya başına 5)")
     L.append("")
-    L.append("Not: bu klasör kopyalandıktan sonra USB güvenle çıkarılabilir;")
-    L.append("betik kopyayı bitirince diski senkronize edip ayırır.")
+    L.append("USB KÖKÜNDE HAKEME GÖSTERİLECEKLER (adlar şartname md 4.2'den):")
+    for t in KALEMLER:
+        if t.zorunlu:
+            L.append(f"  {t.hedef}")
+    L.append("")
+    L.append("Bu dosya ve _GIRDAP_manifest_sha256.txt TESLİM KALEMİ DEĞİLDİR;")
+    L.append("kendi kontrolümüz için yazıldı (adları alt çizgiyle başlıyor).")
+    L.append("Betik kopyayı bitirince diski senkronize edip ayırır —")
+    L.append("USB'nin LED'i sönünce güvenle çıkarılabilir.")
     return "\n".join(L)
 
 
@@ -279,7 +376,7 @@ def manifest_metni(rapor: Rapor, hedef: Path) -> str:
     """sha256 manifest — teslim sonrası bütünlük iddiası için."""
     L = ["# sha256  boyut  dosya"]
     for p in sorted(hedef.rglob("*")):
-        if p.is_file() and p.name not in ("MANIFEST.txt", "RAPOR.txt"):
+        if p.is_file() and p.name not in (MANIFEST_ADI, RAPOR_ADI):
             L.append(f"{_sha256(p)}  {p.stat().st_size}  "
                      f"{p.relative_to(hedef)}")
     return "\n".join(L)
@@ -291,14 +388,15 @@ def topla_ve_yaz(
     hepsi: bool = False,
     zaman_damgasi: Optional[str] = None,
 ) -> Tuple[Rapor, List[Bulgu]]:
-    """Uçtan uca: bul → kopyala → RAPOR.txt + MANIFEST.txt yaz."""
+    """Uçtan uca: bul → USB köküne kopyala → kontrol raporu + manifest yaz."""
     bulgular = kalemleri_bul(log_koku, hepsi=hepsi)
     rapor = kopyala(bulgular, usb_koku, zaman_damgasi=zaman_damgasi)
-    if rapor.hedef is not None and rapor.hedef.is_dir():
-        (rapor.hedef / "RAPOR.txt").write_text(
+    kok = Path(usb_koku)
+    if kok.is_dir():
+        (kok / RAPOR_ADI).write_text(
             rapor_metni(bulgular, rapor), encoding="utf-8"
         )
-        (rapor.hedef / "MANIFEST.txt").write_text(
-            manifest_metni(rapor, rapor.hedef), encoding="utf-8"
+        (kok / MANIFEST_ADI).write_text(
+            manifest_metni(rapor, kok), encoding="utf-8"
         )
     return rapor, bulgular

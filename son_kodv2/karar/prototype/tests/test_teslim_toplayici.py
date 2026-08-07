@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 from prototype.teslim.toplayici import (
-    KALEMLER, Bulgu, kalemleri_bul, kopyala, manifest_metni, rapor_metni,
-    topla_ve_yaz,
+    KALEMLER, MANIFEST_ADI, RAPOR_ADI, Bulgu, kalemleri_bul, kopyala,
+    manifest_metni, rapor_metni, topla_ve_yaz,
 )
 
 
@@ -25,7 +25,7 @@ def _kur(kok: Path, *, kamera=True, lidar=True, telemetri=True, harita=True,
     if lidar:
         d = kok / "lidar" / oturum
         d.mkdir(parents=True)
-        (d / "Dosya1b_lidar_kumeleme.mp4").write_bytes(b"L" * 4096)
+        (d / "lidar_kumeleme.mp4").write_bytes(b"L" * 4096)
     if telemetri:
         d = kok / "telemetry"
         d.mkdir(parents=True)
@@ -57,9 +57,11 @@ def test_EKSIK_ZORUNLU_kalem_raporlanir_ve_ceza_hesaplanir(tmp_path):
     rapor, bulgular = topla_ve_yaz(logs, usb)
 
     assert not rapor.basarili
-    assert any("LiDAR" in ad for ad in rapor.eksik_zorunlu)
+    # Kalem adı ŞARTNAMEDEN gelir ("Diğer Otonomi Sensörleri Veri Seti"),
+    # bizim uydurduğumuz "Dosya 1b" gibi bir addan DEĞİL.
+    assert any("Diğer Otonomi Sensörleri" in ad for ad in rapor.eksik_zorunlu)
     assert rapor.tahmini_ceza == 5
-    metin = (rapor.hedef / "RAPOR.txt").read_text(encoding="utf-8")
+    metin = (usb / RAPOR_ADI).read_text(encoding="utf-8")
     assert "EKSİK ZORUNLU" in metin and "5 puan" in metin
 
 
@@ -71,29 +73,35 @@ def test_USB_de_HICBIR_SEY_silinmez(tmp_path):
     kisisel = usb / "kisisel_belgeler"
     kisisel.mkdir()
     (kisisel / "onemli.txt").write_text("dokunma")
-    onceki = usb / "GIRDAP_TESLIM_20260101_000000"
-    onceki.mkdir()
-    (onceki / "eski.txt").write_text("eski kosum")
-
     topla_ve_yaz(logs, usb, zaman_damgasi="20260807_150000")
 
     assert (kisisel / "onemli.txt").read_text() == "dokunma"
-    assert (onceki / "eski.txt").read_text() == "eski kosum"
-    assert (usb / "GIRDAP_TESLIM_20260807_150000").is_dir()
+    # Kokte SARTNAMEDEKI adlar durur, sarmalayici klasor UYDURULMAZ
+    assert (usb / "Dosya1_Otonomi_Sensorleri_Veri_Seti").is_dir()
+    assert (usb / "Diger_Otonomi_Sensorleri_Veri_Seti").is_dir()
+    assert (usb / "Dosya2_Arac_Telemetri_Verisi.csv").is_file()
+    assert (usb / "Dosya3_Lokal_Harita_Cost_Map_Engel_Haritasi.mp4").is_file()
 
 
-def test_ayni_ada_UZERINE_YAZMAZ(tmp_path):
+def test_onceki_kosum_ARSIVLENIR_silinmez(tmp_path):
+    """md 5.5.3.1 — 1 yeniden baslama hakki var; ayni USB'ye iki kosum duser.
+
+    Hakemin kokte gordugu DAIMA son kosum olmali; eskisi silinmemeli.
+    """
     logs = _kur(tmp_path / "logs")
     usb = tmp_path / "usb"
     usb.mkdir()
-    hedef = usb / "GIRDAP_TESLIM_X"
-    (hedef / "lidar").mkdir(parents=True)
-    (hedef / "lidar" / "Dosya1b_lidar_kumeleme.mp4").write_bytes(b"ESKI")
+    eski = usb / "Diger_Otonomi_Sensorleri_Veri_Seti"
+    eski.mkdir()
+    (eski / "ilk_kosum.mp4").write_bytes(b"ESKI")
 
     kopyala(kalemleri_bul(logs), usb, zaman_damgasi="X")
 
-    assert (hedef / "lidar" / "Dosya1b_lidar_kumeleme.mp4").read_bytes() == b"ESKI"
-    assert (hedef / "lidar" / "Dosya1b_lidar_kumeleme_1.mp4").exists()
+    ars = usb / "onceki_kosum_X" / "Diger_Otonomi_Sensorleri_Veri_Seti"
+    assert (ars / "ilk_kosum.mp4").read_bytes() == b"ESKI", "eski kosum silindi"
+    yeni = usb / "Diger_Otonomi_Sensorleri_Veri_Seti"
+    assert (yeni / "lidar_kumeleme.mp4").exists()
+    assert not (yeni / "ilk_kosum.mp4").exists(), "kokte iki kosum karisti"
 
 
 def test_YALNIZ_EN_YENI_OTURUM_kopyalanir(tmp_path):
@@ -117,9 +125,9 @@ def test_dogrulama_ve_manifest(tmp_path):
     usb.mkdir()
     rapor, _ = topla_ve_yaz(logs, usb)
     assert rapor.basarili and not rapor.bozuk
-    man = (rapor.hedef / "MANIFEST.txt").read_text(encoding="utf-8")
+    man = (usb / MANIFEST_ADI).read_text(encoding="utf-8")
     assert man.startswith("# sha256")
-    assert "Dosya1b_lidar_kumeleme.mp4" in man
+    assert "lidar_kumeleme.mp4" in man
     # her satır: sha256(64) + boyut + yol
     satir = [s for s in man.splitlines() if "lidar" in s][0]
     assert len(satir.split()[0]) == 64

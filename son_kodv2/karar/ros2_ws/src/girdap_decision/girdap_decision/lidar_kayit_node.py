@@ -29,7 +29,7 @@ Subscribed:
     /livox/lidar                      sensor_msgs/PointCloud2      (opsiyonel)
     /girdap/fusion/odom               nav_msgs/Odometry
 Çıktı:
-    ~/girdap_logs/lidar/<oturum>/Dosya1b_lidar_kumeleme.mp4
+    ~/girdap_logs/lidar/<oturum>/lidar_kumeleme.mp4
 """
 
 from __future__ import annotations
@@ -117,7 +117,7 @@ class LidarKayitNode(Node):
             )
         cfg = self._rend.cfg
         self._mp4 = Mp4Yazici(
-            self._session_dir / "Dosya1b_lidar_kumeleme.mp4",
+            self._session_dir / "lidar_kumeleme.mp4",
             fps=rate, boyut=(cfg.genislik_px, cfg.yukseklik_px),
         )
 
