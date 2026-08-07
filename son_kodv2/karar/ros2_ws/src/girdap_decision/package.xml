@@ -25,6 +25,16 @@
        (temiz bir ortamda rosdep bağımlılığı kuramaz). -->
   <depend>vision_msgs</depend>
 
+  <!-- 🔴 md 4.2 TESLİM ZİNCİRİ — kodda KULLANILIYORDU, beyan EDİLMEMİŞTİ.
+       Temiz bir Jetson'da `rosdep install` bunları çekmez ve teslim
+       node'ları AÇILIŞTA import hatasıyla ölür; belirti de vermez, yalnız
+       o koşumun Dosya-1b/Dosya-3'ü hiç üretilmez (5+5 ceza).
+       Aynı hata `vision_msgs` için 03.08'de yaşanmıştı (GIRDAP_DURUM §0.0b/3).
+         · python3-opencv → Mp4Yazici (prototype/mapping/bev_renderer.py)
+         · python3-pil    → BevRenderer + LocalMapDumper (PNG/çizim) -->
+  <depend>python3-opencv</depend>
+  <depend>python3-pil</depend>
+
   <test_depend>ament_pep257</test_depend>
   <test_depend>python3-pytest</test_depend>
 
