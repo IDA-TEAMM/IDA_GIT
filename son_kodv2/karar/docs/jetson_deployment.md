@@ -179,6 +179,31 @@ cd ~/girdap-decision && .venv/bin/python -m pytest prototype/tests/ -q
 
 ## AĞ İZOLASYONU — geliştirme ↔ yarışma (şartname md 4.1)
 
+> ## 🔴 md 4.1 FREKANS/WiFi DURUMU — 2026-08-07 ölçümü
+>
+> Şartname md 4.1: *"Tüm bilgisayarlarda dahili WiFi kapalı"* + 2.4-2.8 GHz ve
+> 5.15-5.85 GHz **yasak**.
+>
+> **Jetson: ✅ yapısal olarak uygun — hiç telsiz donanımı YOK.**
+> ```
+> rfkill list        → boş (hiç telsiz cihaz yok)
+> Bluetooth adaptörü → yok    (bluetooth.service çalışıyor ama adaptör yok, yayın yapmıyor)
+> PCI kablosuz kart  → yok    (M.2 WiFi/BT kartı takılı değil)
+> arayüzler          → can0 enP8p1s0 l4tbr0 lo usb0 usb1  (kablosuz arayüz YOK)
+> ```
+> `nmcli radio` "WIFI enabled" der ama bu NetworkManager'ın yazılım bayrağı,
+> arkasında donanım yok. Kapatacak bir şey yok.
+>
+> **🔴 LAPTOP (YKİ): AÇIK — yarışmada KAPATILMALI.**
+> Ölçüm sırasında laptopun `wlo1` arayüzü bir WiFi ağına bağlıydı. Laptop
+> yarışmada YKİ olarak kullanılacağı için md 4.1 kapsamındadır.
+> ```bash
+> nmcli radio wifi off        # yarışma sabahı
+> nmcli radio wifi on         # sonra geri
+> ```
+> ⚠️ Bu adım daha önce **hiçbir dokümanda yoktu**; md 4.1 doğrudan ihlal
+> edilebilirdi. Kontrol listesine eklendi.
+
 İki ayrı mod var; **karıştırma**:
 
 | | Geliştirme / masa testi | Yarışma / video günü |
@@ -187,19 +212,92 @@ cd ~/girdap-decision && .venv/bin/python -m pytest prototype/tests/ -q
 | `ROS_LOCALHOST_ONLY` | **yok** (laptop'tan `ros2 topic echo` çalışsın) | **1** (drop-in ile) |
 | ROS trafiği | ethernet'e çıkar | Jetson içinde kalır |
 
-**Yarışma günü kurulumu** (`scripts/girdap-karar-yarisma.conf`):
+**Yarışma günü kurulumu** — iki yol:
+
+*(a) Repo Jetson'da varsa:*
 ```bash
 sudo mkdir -p /etc/systemd/system/girdap-karar.service.d
-sudo cp ~/girdap-decision/scripts/girdap-karar-yarisma.conf \
+sudo cp <REPO_KOKU>/karar/scripts/girdap-karar-yarisma.conf \
         /etc/systemd/system/girdap-karar.service.d/
+sudo systemctl daemon-reload && sudo systemctl restart girdap-karar
+```
+> 🔴 **`<REPO_KOKU>` sabit yazılMIYOR, çünkü Jetson'da değişebiliyor.**
+> 2026-08-07'de ölçüldü: Jetson'daki tek repo `EyupEker1/girdap-video`
+> (`~/girdap-video`), **son_kodv2 orada YOK** — algı katmanı Eyüp'te olduğu ve
+> son_kodv2 henüz son hâline gelmediği için. Yani "repodan kopyala" o Jetson'da
+> **işlemez**. Kurulumdan önce `find ~ -name girdap-karar-yarisma.conf` ile yeri
+> doğrula; yoksa (b)'yi kullan.
+
+*(b) Repo yoksa — dosyayı doğrudan yaz (2 satır, bağımlılık yok):*
+```bash
+sudo mkdir -p /etc/systemd/system/girdap-karar.service.d
+sudo tee /etc/systemd/system/girdap-karar.service.d/girdap-karar-yarisma.conf >/dev/null <<'EOF'
+[Service]
+Environment=ROS_LOCALHOST_ONLY=1
+EOF
 sudo systemctl daemon-reload && sudo systemctl restart girdap-karar
 ```
 
 **Doğrulama:**
 ```bash
-systemctl show girdap-karar -p Environment | grep LOCALHOST   # =1
-ros2 topic list        # Jetson'da DOLU, laptop'ta BOŞ olmalı
+# 1) Bayrak systemd'ye geçti mi
+systemctl show girdap-karar -p Environment | grep LOCALHOST     # =1 görmeli
+
+# 2) YIĞIN SAĞLIKLI MI — Jetson'da (aynı bayrakla!)
+export ROS_DOMAIN_ID=42 ROS_LOCALHOST_ONLY=1
+source /opt/ros/humble/setup.bash
+for t in /mavros/state /mavros/imu/data /girdap/fusion/odom \
+         /girdap/control/thrust /girdap/mission/state; do
+  echo -n "$t "; timeout 10 ros2 topic hz $t 2>/dev/null | grep -m1 "average rate"
+done
+
+# 3) İZOLASYON — laptop'tan (bayrak OLMADAN)
+ros2 topic list | grep -cE "girdap|mavros"                      # 0 görmeli
 ```
+
+> 🔴 **`ros2 topic list` ile yığın sağlığını KONTROL ETME — YANLIŞ SONUÇ VERİR.**
+> Bu dokümanın önceki hâli *"`ros2 topic list` → Jetson'da DOLU"* diyordu.
+> **2026-08-07'de ölçüldü:** bayrak açıkken yığın tamamen sağlıklıyken
+> (5 kritik topic'in hepsi akıyor) Jetson'da `ros2 topic list` yalnız **2**,
+> `ros2 node list` **0** gösterdi. Sebep: 72 katılımcı varken yeni başlayan
+> kısa ömürlü bir CLI süreci graf keşfini tamamlayamıyor.
+> Bu adımı uygulayan operatör **"sistem çökmüş" diye yanlış alarma kapılır.**
+> Sağlık için **`ros2 topic hz`** kullan — güvenilir çalıştı.
+>
+> ⚠️ Ayrıca Jetson'da ölçüm yaparken kabuğunda da `ROS_LOCALHOST_ONLY=1`
+> **olmalı**: bayraklı yığın ile bayraksız CLI birbirini göremez.
+
+### ✅ ÖLÇÜLDÜ — 2026-08-07 (A/B/A, gerçek Jetson)
+
+Jetson `192.168.117.60`, laptop `192.168.117.50`, doğrudan ethernet, `DOMAIN_ID=42`
+her iki tarafta. Yığın canlı (72 node, MAVROS FC'ye bağlı).
+
+| Laptop'tan görünen | Drop-in YOK | **Drop-in VAR** | Drop-in kaldırıldı |
+|---|---|---|---|
+| `girdap`/`mavros` topic'i | 150 | **0** | 150 |
+| node | 72 | **0** | 72 |
+
+→ **Sızıntı gerçek, izolasyon çalışıyor**, kaynağı kesin olarak bayrak (A/B/A).
+
+Bayrak açıkken yığın sağlığı (Jetson'da, aynı bayrakla ölçüldü):
+
+| Topic | Hz |
+|---|---|
+| `/mavros/state` | 1.001 |
+| `/mavros/imu/data` | 7.386 ← MAVROS FC'den veri alıyor, **seri hat etkilenmiyor** |
+| `/girdap/fusion/odom` | 9.998 |
+| `/girdap/control/thrust` | 10.005 |
+| `/girdap/mission/state` | 10.026 |
+
+→ **Bayrak yığını BOZMUYOR.** Tahmin doğruydu: MAVROS seri porttan, Livox ham
+UDP soketinden konuşuyor, DDS izolasyonu ikisini de etkilemiyor.
+
+> 🔎 **SAHA TUZAĞI (2026-08-07'de yaşandı):** Jetson'ın ethernet arayüzünde
+> **IP yoktu** ve yığın öyle başlamıştı. DDS ağ arayüzlerini **katılımcı
+> oluşturulurken** bağlar; sonradan `ip addr add` ile eklenen adresi görmez.
+> Sonuç: "topic'ler görünmüyor" → izolasyon sanılabilir, oysa DDS o arayüzü hiç
+> tanımıyordur. **Ölçümden önce IP'nin var olduğunu ve yığının ONDAN SONRA
+> başladığını doğrula** (`systemctl restart girdap-karar`).
 
 **Neden:**
 - md 4.1 *"YKİ'lerde görüntü işleme, sensör işleme ya da otonomi kabiliyeti

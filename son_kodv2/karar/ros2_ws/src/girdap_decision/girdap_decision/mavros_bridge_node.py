@@ -185,10 +185,20 @@ class MavrosBridgeNode(Node):
             String, "/girdap/mission/state", self._on_mission_state, 10
         )
         # F-S.1: RC donanım kill-switch — companion computer'dan bağımsız,
-        # tek RC alıcısı üzerinden gelen fiziksel anahtar. mavros /mavros/rc/in
-        # BEST_EFFORT yayınlar (bkz ida_topics CLAUDE.md notu) — qos_profiles
-        # sensor_data_qos ile eşlenmezse RELIABLE varsayılanı sessizce veri
-        # kaybına yol açar (hata fırlatmaz).
+        # tek RC alıcısı üzerinden gelen fiziksel anahtar.
+        # 🔴 2026-08-07 DÜZELTMESİ: buradaki gerekçe YANLIŞTI. Yorum "mavros
+        # /mavros/rc/in BEST_EFFORT yayınlar" diyordu; gerçek donanımda
+        # `ros2 topic info -v /mavros/rc/in` ile ÖLÇÜLDÜ → yayıncı **RELIABLE**
+        # (MAVROS 2.x, ArduRover 4.6.3). BEST_EFFORT abone RELIABLE yayıncıyla
+        # uyumludur (abone daha azını ister), yani kod ÇALIŞIYOR — ama güvenilir
+        # bir kanalda güvenilirliği gereksiz yere bırakıyoruz.
+        # Ölçülen QoS'lar: /mavros/state RELIABLE · /mavros/mission/reached
+        # RELIABLE · /mavros/rc/in RELIABLE · /mavros/imu/data BEST_EFFORT ·
+        # /mavros/local_position/velocity_body BEST_EFFORT.
+        # ⚠ Tehlikeli yön TERSİ: BEST_EFFORT yayıncı + RELIABLE abone = sessiz
+        # veri kaybı. Sensör topic'lerinde sensor_data_qos() bu yüzden ŞART.
+        # Yarışmada RC kullanılmadığı için (rc_kill_channel=-1) bu satır fiilen
+        # devre dışı; bench'te çalışıyor.
         self._sub_rc = self.create_subscription(
             RCIn, "/mavros/rc/in", self._on_rc_in, sensor_data_qos()
         )
