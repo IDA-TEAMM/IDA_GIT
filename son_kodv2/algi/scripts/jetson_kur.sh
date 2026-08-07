@@ -47,7 +47,33 @@ sudo apt install -y \
 
 echo "== 3/6 pip paketleri (sürüm kilitli) =="
 # numpy<2 ŞART: 2.x, apt'ın scipy/matplotlib/ROS derlemelerinin ABI'sini kırar.
-pip install --break-system-packages "numpy>=1.26,<2" "depthai>=3.6"
+pip install --break-system-packages "numpy>=1.26,<2"
+
+# 🔴 depthai SÜRÜMÜ PAZARLIKSIZ 2.30.0.0 — bu satır 2026-08-07'ye kadar
+# "depthai>=3.6" diyordu ve betiği koşan herkesin kamerasını sessizce kırardı:
+# v3 firmware'i bu OAK-D Lite'ta STEREO'yu üretmiyor (05.08 ölçümü: v3'te
+# stereo %0 / mono ~%25-33, v2.30'da stereo 29,7 FPS ve 5/5 tekrarlanabilir).
+# Kodun tamamı 05.08'de v2 API'sine taşındı (0efa49c/3d18ac8/17d08e1) →
+# v3'e çıkmak hem stereo'yu hem kodu kırar. YOLO26 için v3.6+ gerekiyor ama
+# o yol bilerek kapatıldı (menzil stereo'dan geliyor, P3 için stereo zorunlu).
+DAI_HEDEF="2.30.0.0"
+DAI_VAR=$(python3 -c 'import depthai; print(depthai.__version__)' 2>/dev/null || echo "yok")
+if [ "$DAI_VAR" = "$DAI_HEDEF" ]; then
+    echo "   depthai $DAI_VAR — doğru sürüm, DOKUNULMUYOR."
+else
+    echo "   depthai '$DAI_VAR' → $DAI_HEDEF kuruluyor…"
+    # --user: Jetson'a 05.08'de böyle kuruldu (~/.local, sudo gerekmedi).
+    # --user kurulumu sistem kopyasını GÖLGELER; ikisi karışmasın diye aynı
+    # yol korunuyor. Kurulum sonrası doğrulama aşağıda (sessiz başarısızlık yok).
+    pip install --user "depthai==$DAI_HEDEF"
+    DAI_SON=$(python3 -c 'import depthai; print(depthai.__version__)' 2>/dev/null || echo "yok")
+    [ "$DAI_SON" = "$DAI_HEDEF" ] || {
+        echo "!! depthai hâlâ '$DAI_SON' — beklenen $DAI_HEDEF."
+        echo "   Muhtemel sebep: sistem geneli ikinci bir kopya gölgeliyor."
+        echo "   Bak: python3 -c 'import depthai; print(depthai.__file__)'"
+        exit 1; }
+    echo "   depthai $DAI_SON ✓"
+fi
 
 echo "== 4/6 OAK udev kuralı =="
 if [ ! -f /etc/udev/rules.d/80-movidius.rules ]; then
@@ -88,12 +114,36 @@ echo "== 5b/6 WiFi/Bluetooth kapatma (şartname 4.1 — teknik kontrolde bakıl�
 sudo rfkill block wifi bluetooth 2>/dev/null || echo "   (rfkill yok/başarısız — elle kapat)"
 
 echo "== 6/6 model dosyası hatırlatması =="
-MODEL=$(grep -oP 'MODEL_NNARCHIVE\s*=\s*"\K[^"]+' \
-    "$WS/src/girdap-ida-algi/girdap_ida_algi/girdap_ida_algi/duba_gecis_navigator.py")
-if [ -f "$MODEL" ]; then
-    echo "   NN Archive yerinde: $MODEL"
+# 🔴 2026-08-07: bu blok `MODEL_NNARCHIVE` arıyordu ama kod 05.08'de v2'ye
+# taşınınca değişken `MODEL_BLOB` oldu → grep hiç eşleşmiyor → `set -euo
+# pipefail` altında komut ikamesi exit 1 veriyor → BETİK TAM BURADA ÖLÜYORDU
+# ve aşağıdaki `--servis` bloğuna HİÇ ULAŞILMIYORDU. Yani "servisi kur" komutu
+# sessizce servisi kurmuyordu. `|| true` bunu bir daha yaşatmaz.
+MODEL=$(grep -oP 'MODEL_BLOB\s*=\s*"\K[^"]+' \
+    "$WS/src/girdap-ida-algi/girdap_ida_algi/girdap_ida_algi/duba_gecis_navigator.py" || true)
+if [ -z "$MODEL" ]; then
+    echo "   !! MODEL_BLOB satırı bulunamadı — kod değişmiş olabilir, elle bak."
+elif [ -f "$MODEL" ]; then
+    echo "   Model yerinde: $MODEL"
+    # Blob'un shave sayısı YÜKLEMEDEN doğrulanabilir (v2.30'da header'dan okur,
+    # cihaz gerekmez). Fazla shave = model HİÇ yüklenmez, sahada telafisi yok.
+    python3 - "$MODEL" <<'PY' || true
+import sys
+try:
+    import depthai as dai
+    b = dai.OpenVINO.Blob(sys.argv[1])
+    ok = "OK" if b.numShaves <= 4 else "!! FAZLA — cihaz REDDEDER"
+    print(f"   blob numShaves={b.numShaves} (bütçe 4) {ok}")
+except Exception as e:
+    print(f"   (blob okunamadı: {e})")
+PY
+    [ -f "$(dirname "$MODEL")/config.json" ] \
+        && echo "   config.json yanında ✓ (sınıf isimleri buradan okunuyor)" \
+        || echo "   !! config.json YOK — sınıf çözümü yedek sabite düşer (kenar=0/engel=1)"
 else
-    echo "   !! NN Archive eksik: $MODEL — HubAI'den indirilen tar.xz'yi bu yola koy (git'te YOK, elle taşınır)."
+    echo "   !! Model eksik: $MODEL"
+    echo "      Gereken: DÜZ .blob (≤4 shave) + yanında config.json — git'te YOK, elle taşınır."
+    echo "      NNArchive (.tar.xz) v2.30'da YÜKLENMEZ: 'tar -xJf' ile içinden blob çıkar."
 fi
 
 # --- opsiyonel: açılışta otomatik başlatma ---

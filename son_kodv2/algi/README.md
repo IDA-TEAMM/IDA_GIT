@@ -72,7 +72,7 @@ models/            NN Archive dosyaları (git dışı, HubAI'den indirilir)
 | Python | 3.10 (sistem) | ROS Humble buna derli |
 | ROS 2 | **Humble** (Jazzy'ye geçme) | girdap-decision de Humble; TYF raporuyla tutarlı |
 | numpy | **1.26.4** (`>=1.26,<2`) | 2.x, apt scipy/matplotlib/ROS ABI'sini kırar (`_ARRAY_API not found`) |
-| depthai | **>=3.6** (v3 API) | v2 kodu bu repoda çalışmaz |
+| depthai | **2.30.0.0** (v2 API) | 🔴 v3 bu OAK-D Lite'ta STEREO üretmiyor (v3 %0 ↔ v2 29,7 FPS, 05.08 ölçümü); kod 05.08'de v2'ye taşındı. v3'e çıkmak hem stereo'yu hem kodu kırar |
 | vision-msgs | apt `ros-humble-vision-msgs` | `algi_yayin` sözleşme mesajı |
 
 **Tek komutla:** `bash scripts/jetson_kur.sh` — apt+pip bağımlılıkları (sürüm
@@ -85,7 +85,8 @@ El ile kurulum:
 ```bash
 # Bağımlılıklar
 sudo apt install ros-humble-tf2-ros ros-humble-tf2-geometry-msgs ros-humble-vision-msgs
-pip install "depthai>=3.6" "numpy>=1.26,<2" --break-system-packages   # DepthAI v3 API şart
+pip install --user "depthai==2.30.0.0"          # 🔴 v2 API ŞART — v3 bu OAK-D Lite'ta STEREO üretmiyor
+pip install "numpy>=1.26,<2" --break-system-packages
 
 # Derleme
 cd ~/ros2_ws/src && git clone <REPO_URL>

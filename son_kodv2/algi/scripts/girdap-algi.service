@@ -9,16 +9,40 @@
 [Unit]
 Description=GIRDAP IDA algi node (OAK-D Lite YOLO + gecit)
 After=network.target
+# Emniyet kemeri: tek OAK var, iki surec acamaz. systemd'de Conflicts= CIFT
+# YONLUDUR (man systemd.unit: "starting the former will stop the latter and
+# vice versa"), yani veriseti unit'indeki satir teknik olarak yeter — ama o
+# ancak IKI unit de KURULUYSA isler. Burada da acikca yaziyoruz ki bu dosya
+# tek basina okundugunda kisit gorunur olsun.
+# 🔴 YARISMA GUNU: `sudo systemctl disable --now girdap-veriseti` (md 4.1).
+#   Ikisi de enabled kalirsa boot'ta yaris olur, hangisinin kazandigi belirsiz.
+Conflicts=girdap-veriseti.service
 
 [Service]
 Type=simple
 User=__USER__
+# 🔴 SART — 2026-08-05'te veri seti servisi TAM BURADAN COKTU, ayni hata bu
+# dosyada 07.08'e kadar duruyordu: depthai onbellegini/telemetrisini CALISMA
+# DIZININE GORELI yaziyor (`.cache/depthai/...`). WorkingDirectory verilmezse
+# systemd cwd'yi `/` yapar (man systemd.exec: "defaults to the root directory
+# when systemd is running as a system instance") → depthai `/.cache` yaratmaya
+# calisir → "Permission denied" → pipeline HIC acilmaz. Belirti kameraymis gibi
+# gorunur. Elle calistirinca cwd ev dizini oldugu icin sorun GORUNMEZ — yalniz
+# boot'ta/servis olarak coker. Duzeltme veri setinde `a622c3f`.
+WorkingDirectory=/home/__USER__
+Environment=HOME=/home/__USER__
 # Login shell: ROS + workspace ortamini yukle, launch'i kostur.
 # Launch respawn'li - node cokerse launch toparlar; launch'in kendisi cokerse
 # systemd 10 sn sonra yeniden dener.
 ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source __WS__/install/setup.bash && exec ros2 launch girdap_ida_algi algi.launch.py'
 Restart=on-failure
 RestartSec=10
+# 🔴 StartLimit BILEREK YOK — veriseti unit'inde `StartLimitBurst=5/300 sn` var,
+# BURAYA KOPYALANMADI. Oradaki amac "kamera hic takili degilse journal sismesin";
+# burada ayni ayar 5 denemeden sonra algiyi KALICI olarak oldururdu ve yaris
+# ortasinda gecici bir USB kopmasi tum puani goturebilirdi (P1 G1/KD1, P2 G2/KD2).
+# RestartSec=10 dongunun hizini zaten kesiyor: journal 10 sn'de bir satir yazar.
+# Sonsuz yeniden deneme burada DOGRU davranis.
 
 [Install]
 WantedBy=multi-user.target

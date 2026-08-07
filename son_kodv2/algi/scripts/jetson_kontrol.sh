@@ -59,14 +59,39 @@ else
     yesil "numpy $NPV (<2)"
 fi
 
-# --- 6) depthai >= 3.6 (v3 API) ---
+# --- 6) depthai == 2.30.0.0 (v2 API) ---
+# 🔴 2026-08-07 DÜZELTMESİ: bu blok TERSİNİ kontrol ediyordu ("hedef >=3.6,
+# v2 kodu bu repoda çalışmaz") — yani DOĞRU kurulumu KIRMIZI/hata raporluyor,
+# kamerayı kıran v3'ü ise yeşil veriyordu. Gerçek: kod 05.08'de v2'ye taşındı
+# ve v3 firmware'i bu OAK-D Lite'ta stereo üretmiyor (v3 %0 / v2 29,7 FPS).
+# Her iki makinede de kurulu sürüm 2.30.0.0.
 DAI=$(python3 -c 'import depthai; print(depthai.__version__)' 2>/dev/null)
 if [ -z "$DAI" ]; then
-    kirmizi "depthai YOK — pip install 'depthai>=3.6' --break-system-packages"
-elif python3 -c "import depthai as d; v=tuple(map(int, d.__version__.split('.')[:2])); exit(0 if v >= (3,6) else 1)" 2>/dev/null; then
-    yesil "depthai $DAI (v3 API)"
+    kirmizi "depthai YOK — pip install --user 'depthai==2.30.0.0'"
+elif [ "$DAI" = "2.30.0.0" ]; then
+    yesil "depthai $DAI (v2 API — doğru sürüm)"
+elif python3 -c "import depthai as d; exit(0 if int(d.__version__.split('.')[0]) >= 3 else 1)" 2>/dev/null; then
+    kirmizi "depthai $DAI — v3! STEREO ÜRETMEZ (P3 için stereo zorunlu) ve kod v2 API'sinde."
+    kirmizi "  Düzelt: pip install --user 'depthai==2.30.0.0'"
 else
-    kirmizi "depthai $DAI — hedef >=3.6 (v2 kodu bu repoda çalışmaz)"
+    sari "depthai $DAI — beklenen 2.30.0.0; v2 ailesinde ama ölçümler bu sürümle yapılmadı"
+fi
+
+# --- 6b) algı servisi: kurulu/enabled mı, unit'te WorkingDirectory var mı ---
+# WorkingDirectory eksikse boot'ta cwd=/ olur, depthai .cache'i yazamaz ve node
+# HİÇ açılmaz — elle çalıştırınca görünmeyen, yalnız boot'ta çıkan arıza.
+UNIT=/etc/systemd/system/girdap-algi.service
+if [ -f "$UNIT" ]; then
+    yesil "girdap-algi.service kurulu ($(systemctl is-enabled girdap-algi 2>/dev/null || echo '?') / $(systemctl is-active girdap-algi 2>/dev/null || echo '?'))"
+    grep -q "^WorkingDirectory=" "$UNIT" \
+        && yesil "  unit'te WorkingDirectory var" \
+        || kirmizi "  unit'te WorkingDirectory YOK → boot'ta depthai '/.cache' yazamaz, node açılmaz. Yeniden kur: jetson_kur.sh --servis"
+    if [ "$(systemctl is-enabled girdap-veriseti 2>/dev/null)" = "enabled" ] \
+       && [ "$(systemctl is-enabled girdap-algi 2>/dev/null)" = "enabled" ]; then
+        kirmizi "  İKİSİ DE enabled — tek OAK var, boot'ta yarışırlar. Yarışma günü: sudo systemctl disable --now girdap-veriseti (md 4.1)"
+    fi
+else
+    sari "girdap-algi.service kurulu değil — açılışta algı başlamaz (kur: jetson_kur.sh --servis)"
 fi
 
 # --- 7) ROS mesaj paketleri ---

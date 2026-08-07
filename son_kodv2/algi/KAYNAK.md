@@ -1,7 +1,7 @@
 # algi — GİRDAP görüntü işleme katmanı (son_kodv2'nin algı ayağı)
 
-**Kaynak repo:** github.com/EyupEker1/girdap-ida-algi — commit `ee3d623`
-**Kopya tarihi:** 2026-08-06 (bu klasör kaynağın **birebir aynası**; burada
+**Kaynak repo:** github.com/EyupEker1/girdap-ida-algi — commit `605d713`
+**Kopya tarihi:** 2026-08-07 (bu klasör kaynağın **birebir aynası**; burada
 düzenleme yapılmaz, kaynak repoda yapılıp buraya yeniden kopyalanır)
 **Sorumlu:** Eyüp (görüntü işleme)
 
@@ -118,12 +118,56 @@ aktarılmaz).
 cd son_kodv2/algi && python3 -m pytest -q          # 116 passed (kokten de calisir)
 ```
 
-## Çalıştırma
+## 🔴 ÇALIŞTIRMA — bu node'u KİMSE otomatik başlatmıyor, farkında olun
+
 ```bash
-ros2 launch girdap_ida_algi algi.launch.py
+ros2 launch girdap_ida_algi algi.launch.py     # elle
 ```
-Gereken: yukarıdaki **blob + config.json** — henüz üretilmedi (veri seti
-bekleniyor). Model olmadan node açılmaz.
+
+**Karar tarafının `hardware.launch.py`'si bu node'u BAŞLATMIYOR** — 1.010
+satırda `girdap_ida_algi` hiçbir `Node()` çağrısında geçmiyor. Bu bir kusur
+değil, bilinçli iş bölümü: bize **yol açıyorlar** (`use_onboard_camera=false`,
+`with_oak_driver=false`) ama başlatmıyorlar. Sonuç: kimse elle başlatmazsa
+`/perception/buoys` **hiç akmaz**, füzyon tüm LiDAR kümelerini
+`CLASS_UNKNOWN` bırakır ve `gate_follower` ham GPS'e düşer — **hiçbir hata
+basılmadan**. (Fusion'ın `sync_watchdog_s` WARN'ı var ama sahada kimse
+journal okumaz.)
+
+**Yarışmada elle başlatmak da mümkün değil:** md 5.5.3.1 — YKİ'de yalnız YKİ
+arayüzü, başlatma komutu kablodan verilmez; md 4.1 — WiFi/BT kapalı, yani SSH
+yok. ⇒ **Tek geçerli yol systemd autostart.**
+
+```bash
+bash scripts/jetson_kur.sh --servis        # unit'i kurar + enable eder
+systemctl is-enabled girdap-algi           # "enabled" görmeden sahaya çıkma
+bash scripts/jetson_kontrol.sh             # 6b bloğu unit'i ayrıca denetler
+```
+
+⚠️ **Paketimiz karar tarafının `ros2_ws/src`'inde DEĞİL** (bu klasör ayrı) →
+tek `colcon build` ile derlenmiyor. `jetson_kur.sh` bizim paketi
+`~/ros2_ws/src/girdap-ida-algi` altına klonlayıp ayrıca derliyor; teknede
+koşan kopya **odur**, bu ayna klasör değildir.
+
+🔴 **07.08'de bulunan ve düzeltilen 3 başlatma hatası** (hepsi "yarışma günü
+telafisi yok" sınıfıydı, ayrıntı `girdap-ida-algi@605d713`):
+1. `girdap-algi.service`'te **`WorkingDirectory` yoktu** → boot'ta cwd `/`
+   olur, depthai önbelleğini cwd'ye göreli yazdığı için `/.cache` = Permission
+   denied → **node hiç açılmazdı**. Elle çalıştırınca görünmeyen, yalnız
+   boot'ta çıkan arıza (veri seti servisinde 05.08'de birebir yaşanmıştı).
+2. `jetson_kur.sh` **`depthai>=3.6` kuruyordu** → betiği koşan Jetson'ı v3'e
+   yükseltip **stereo'yu öldürüyordu**. Artık `==2.30.0.0` pinli ve idempotent.
+3. `jetson_kur.sh --servis` **servisi hiç kurmuyordu**: 6/6 adımındaki
+   `MODEL_NNARCHIVE` grep'i (kod artık `MODEL_BLOB`) eşleşmeyip `set -e`
+   altında betiği öldürüyordu; `--servis` bloğuna ulaşılmıyordu.
+
+Gereken son girdi: yukarıdaki **blob + config.json** — henüz üretilmedi (veri
+seti bekleniyor). Model olmadan node ilk satırda ölür.
+
+📌 **Karar tarafından beklediğimiz bir şey yok**, ama bilinsin diye:
+`/perception/gate_count`, `/perception/gate_target`, `/perception/buoys_3d`
+topic'lerinin şu an **abonesi yok**. Özellikle `buoys_3d`, LiDAR düşerse
+kamera-only engel haritası olarak kullanılabilirdi
+(`/perception/obstacle_map` ile aynı kodlama).
 
 ## 🔴 DONANIM BULGULARI (ÖLÇÜM, tahmin değil)
 

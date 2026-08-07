@@ -68,8 +68,10 @@ gh repo clone EyupEker1/girdap-ida-algi
 bash girdap-ida-algi/scripts/jetson_kur.sh
 ```
 
-Script sırayla: apt paketleri → **numpy<2 + depthai>=3.6** (sürüm kilitli —
-numpy 2.x KURMA, ROS/scipy ABI'sini kırar) → OAK udev kuralı → iki repoyu
+Script sırayla: apt paketleri → **numpy<2 + depthai==2.30.0.0** (sürüm kilitli —
+numpy 2.x KURMA, ROS/scipy ABI'sini kırar; depthai **v3 KURMA**, bu OAK-D
+Lite'ta stereo üretmiyor ve kod v2 API'sinde. Script kurulu sürümü önce
+kontrol eder, doğruysa dokunmaz) → OAK udev kuralı → iki repoyu
 `~/ros2_ws/src/` altına klonlar (karar yığını **bizim fork'tan** gelir,
 tüm düzeltmelerle) → `colcon build` → `~/.bashrc`'ye source+PYTHONPATH
 satırları → WiFi/BT'yi kapatır (şartname 4.1).
