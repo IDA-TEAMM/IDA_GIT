@@ -410,6 +410,44 @@ angular.z = sola (CCW) dönüş**, yani sağ motor daha hızlı. Yani beklenen �
 > (`_publish_cmd_vel`) — FC'ye dokunma, karar ekibine bildir. İkisi birden ters
 > çıkarsa sorun **FC/kabloda**.
 
+#### ✅ KOŞULDU ve GEÇTİ — 2026-08-07
+
+**Kurulum:** MAVROS `/dev/ttyACM0` (Pixhawk USB) + Mission Planner `ttyUSB0`
+(telemetri) — iki ayrı MAVLink hattı. 🔴 **`mavros_overrides.yaml` yüklendi ve
+`mav_frame = BODY_NED` olduğu `ros2 param get /mavros/setpoint_velocity mav_frame`
+ile TEYİT EDİLDİ** (yoksa bozuk `LOCAL_NED` yolu test edilmiş olurdu).
+Araç ARMED + GUIDED, pervaneler sökük, 4 saniyelik patlamalar.
+
+| Komut | `ch1out` (SAĞ) | `ch3out` (SOL) | `ch1−ch3` | Fiziksel | ROS beklentisi |
+|---|---|---|---|---|---|
+| `angular.z = +0.3` | ~1549 (nötr üstü) | ~1429 (nötr altı) | **+120** | sola döner | sola ✅ |
+| `angular.z = −0.3` | ~1377 (nötr altı) | ~1603 (nötr üstü) | **−226** | sağa döner | sağa ✅ |
+
+**🔴 AÇIK SORU CEVAPLANDI:** işaret çevirmeye **GEREK YOK**.
+`girdap_decision/planning_node.py` doğru; eski `ida_topics/decision_node.py`'deki
+`cmd.angular.z = -angular` düzeltmesi **bu yola taşınmayacak**. (O düzeltme
+muhtemelen farklı bir topic/frame kombinasyonu içindi.)
+
+**Kod tarafı analizle de doğrulandı (uçtan uca tutarlı):**
+```
+catamaran.py     : Mz = (T_sağ − T_sol)·B/2 → r>0 → psi artar → saat tersi
+planning_node.py : angular.z = (u[1] − u[0])·(B/2)/|Nr| = (T_sağ − T_sol)·…
+REP-103          : +angular.z = saat tersi = sola
+```
+Kontrol vektörü `[T_left, T_right]` (`catamaran.py:9`), yani `u[0]`=sol, `u[1]`=sağ.
+
+📌 **Büyüklükler karşılaştırılamaz** (+120 vs −226): bench'te tekne dönemediği
+için yaw kontrolcüsü integralini biriktirmeye devam ediyor, iki ölçüm birikimin
+farklı anlarında yakalandı. **İşaret** testi bundan etkilenmez.
+📌 Doyuma **gitmedi** (uçlara dayanmadı) — `ATC_STR_RAT_P` 2→0.2 düşürülmesi
+(Yahya, 07.08) sayesinde. Düz gaz (`linear.x`) ise doyuyor, bkz. ADIM 5 uyarısı.
+
+**🎯 Yan kazanç — yazılımsal KILL yolu uçtan uca kanıtlandı:** test sonunda
+`ros2 service call /mavros/cmd/arming {value: false}` → **`success=True,
+result=0`**, `armed: false`, servo `1487/1487`. Bu, `mavros_bridge`'in KILL
+yolunun kullandığı tam aynı çağrı. `ARMING_REQUIRE=0` iken `result=4`
+dönüyordu (bkz. ADIM 6). Acil durdurma artık ölçülmüş şekilde çalışıyor.
+
 **Durdur:** komut terminalinde Ctrl-C.
 
 **Durdur:**
@@ -575,7 +613,7 @@ node'ları yeniden başlat veya araç güç döngüsü).
 | 4. Manuel arm (success=true) | ☐ | |
 | 5. Motor sinyali / PWM aralığı | ✅ | 2026-08-06 GEÇTİ — MANUAL modda 1430→1976, iki kanalda **125 örnekte 0 fark**. ⚠️ GUIDED+cmd_vel bench'te KULLANILAMAZ (integral doyumu → %100 gaz) |
 | 5B-1. **Mixing / kanal + yön** | ✅ | 2026-08-05 GEÇTİ — MP Motor Test C=sol/saat yönü, D=sağ/saat tersi, pervaneler ayna → zıt dönüş DOĞRU (FC'de ters çevirme yok, ikisi de `REVERSED=0`) |
-| 5B-2. **cmd_vel işaret sözleşmesi** | ☐ | 5B-1 geçtikten sonra; ters çıkarsa düzeltme KODDA |
+| 5B-2. **cmd_vel işaret sözleşmesi** | ✅ | 2026-08-07 GEÇTİ — `+angular.z` → ch1−ch3 = **+120** (sola), `−angular.z` → **−226** (sağa). İşaret çevirmeye GEREK YOK. `mav_frame=BODY_NED` teyitli |
 | 6. Kill switch + RC failsafe | ☐ | PWM→1000, armed=false |
 | 6B. **Uzaktan GÜÇ kesme** | ☐ | 🔴 ESC ucunda **0 V** + CSV yazmaya devam ediyor — md 4.2 minimum gereksinimi |
 | 7. Heartbeat kaybı → KILL | ☐ | 5 sn içinde |
