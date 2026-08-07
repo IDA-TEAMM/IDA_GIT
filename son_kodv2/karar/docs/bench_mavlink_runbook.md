@@ -306,6 +306,33 @@ değil. Asıl tehlikeli olan iki mod (takas / yerinde dönme) yukarıda elendi.
 
 ---
 
+### ✅ DİFERANSİYEL (DÖNÜŞ) ÖLÇÜMÜ — 2026-08-07, GEÇTİ
+
+> **Neden ayrı ölçüldü:** ADIM 5 (düz gaz) iki kanala da **aynı** komutu verir;
+> kanallar yer değiştirmiş olsa bile sonuç aynı görünür. Diferansiyel davranış
+> ancak **dönüşte** ortaya çıkar. 2026-08-07 denetiminde bu boşluk bulundu:
+> o güne kadar bütün ölçümler düz gazla yapılmıştı, dönüş **hiç** görülmemişti.
+
+MANUAL mod, ARMED, pervaneler sökük, kumandadan yön (steering) çubuğu **sabit
+tutularak** Mission Planner `Durum` sekmesinden okundu:
+
+| Komut | `ch1out` (SAĞ, fn 74) | `ch3out` (SOL, fn 73) | Yorum |
+|---|---|---|---|
+| Nötr | 1487 | 1487 | `SERVOn_TRIM` |
+| **SOLA** | **2000** | **1000** | sağ tam ileri + sol tam geri → sola döner ✅ |
+| **SAĞA** | **1000** | **2000** | birebir ayna ✅ |
+
+**Doğrulananlar:**
+- ✅ **Diferansiyel mixing çalışıyor** — kanallar dönüşte ayrışıyor
+- ✅ **Yön doğru** — skid steer kuralı: sola dönmek için SAĞ motor hızlanır
+- ✅ **Tam simetrik** — sağ komut, sol komutun birebir aynası
+- ✅ **Yetki aralığının tamamı kullanılabiliyor** — uçlar `SERVO_MIN/MAX`
+  (1000/2000) değerlerine dayanıyor, kırpılma yok
+
+> ⚠️ **Saha notu:** çubuk sonuna kadar itilince bir motor tam ileri, diğeri tam
+> geri → tekne **tam güçte yerinde döner**. MANUAL'da normal (gaz açık döngü);
+> GUIDED'da kontrolcü sınırlar. İlk su testinde kumandayla oynarken dikkat.
+
 ### (arşiv) RC ile alternatif yöntem — kullanılmadı
 
 1. Mod: **MANUAL** · araç **ARM** edilmiş
