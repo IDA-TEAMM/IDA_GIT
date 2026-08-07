@@ -1,0 +1,23 @@
+# Girdap IDA — MASA TESTI: burnun TAM 90 derece SOLUNDA 15 m (07.08.2026).
+#
+# Neden 90: bu acida duz gitmek hedefe HIC yaklastirmaz (cos 90 = 0), yani
+# terminal terim donmeyi zorlamak ZORUNDA. Sistem hala simetrik itki basiyorsa
+# sorun aci buyuklugunde degil, kontrolcunun kendisindedir.
+#
+# Tekne masada oldugu icin FIILEN donemez — bakilan sey KOMUT EDILEN itkidir
+# (/girdap/control/thrust), aracin donup donmedigi degil.
+#
+# SAHADA KULLANMA — koordinatlar masada olculen duruşa gore uretildi.
+# Olculen: psi_ENU = -172.10, hedef kerterizi -82.10
+# (ENU acisi ARTAR = saat yonunun TERSI = SOL). 15 m'de kuzey-14.86 dogu+2.06.
+#
+# Algi node'lari BILEREK kapali, yerlerine bos engel listesi yayinlaniyor.
+
+home_ref: {lat: 40.7159732, lon: 31.5247510}
+
+waypoints:
+  - {lat: 40.7159969, lon: 31.5253427, parkur: 1, name: "ARKA_180DER_50M"}
+
+arrival_radius_m: 3.0
+dwell_time_s: 1.0
+cruise_velocity_mps: 1.0

@@ -701,6 +701,15 @@ def generate_launch_description() -> LaunchDescription:
             },
             os.path.join(_mavros_share, "launch", "apm_pluginlists.yaml"),
             os.path.join(_mavros_share, "launch", "apm_config.yaml"),
+            # 🔴 apm_config.yaml'DAN SONRA gelmeli (sonraki dosya kazanır).
+            # setpoint_velocity.mav_frame: LOCAL_NED → BODY_NED.
+            # Gerekçe ve ölçümler: config/mavros_overrides.yaml.
+            # Özeti: planning_node GÖVDE çerçevesinde surge basıyor ama
+            # LOCAL_NED'de ROS linear.x (ENU doğu) NED'in vy alanına düşüyor,
+            # vx sıfır kalıyor → Rover işaretli hızı vx'ten okuduğu için
+            # GERİ komutu İLERİ olarak uygulanıyordu (07.08'de gerçek
+            # donanımda ölçüldü ve kaptan tarafından gözlendi).
+            os.path.join(share, "config", "mavros_overrides.yaml"),
         ],
     )
     # Masa testi (with_mavros:=false): gerçek Pixhawk/MAVROS yok, mevcut

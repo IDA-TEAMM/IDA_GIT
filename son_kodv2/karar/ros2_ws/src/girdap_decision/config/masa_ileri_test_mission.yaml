@@ -24,10 +24,10 @@
 # masaya özgü kaynağı buydu. Suda kenar dubaları zaten engel torbasından
 # çıkarılıyor (class_id=0 → kapı takibi), yani torba doğal olarak boş.
 
-home_ref: {lat: 40.7159896, lon: 31.5247495}
+home_ref: {lat: 40.7160015, lon: 31.5247688}
 
 waypoints:
-  - {lat: 40.7159943, lon: 31.5245719, parkur: 1, name: "ILERI_15M"}
+  - {lat: 40.7164503, lon: 31.5247920, parkur: 1, name: "ILERI_50M"}
 
 arrival_radius_m: 3.0
 dwell_time_s: 1.0

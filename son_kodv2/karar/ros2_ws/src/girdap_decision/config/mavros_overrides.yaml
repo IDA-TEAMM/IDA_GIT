@@ -1,0 +1,45 @@
+# Girdap İDA — MAVROS eklenti override'ları (apm_config.yaml'ın ÜSTÜNE yüklenir).
+#
+# 🔴 setpoint_velocity.mav_frame: LOCAL_NED → BODY_NED
+#
+# NEDEN (07.08.2026'da gerçek donanımda ÖLÇÜLDÜ, tahmin değil):
+#
+# `planning_node` GÖVDE çerçevesinde bir Twist basıyor:
+#     twist.linear.x  = surge (gövde ileri, m/s — İŞARETLİ, geri için negatif)
+#     twist.angular.z = yaw hızı
+#     twist.linear.y  = hiç doldurulmuyor (0)
+#
+# MAVROS'un `setpoint_velocity` eklentisi bunu varsayılan `LOCAL_NED` ile
+# gönderiyor: ROS ENU → MAVLink NED dönüşümünde `linear.x` (ENU **doğu**)
+# NED'in **vy** alanına düşüyor ve **vx sıfır kalıyor**. ArduPilot Rover ise
+# işaretli hızı `vx`'ten okuyor → **işaret kayboluyor, geriye yalnız büyüklük
+# kalıyor.**
+#
+# ÖLÇÜLEN SONUÇ (masa, gerçek FC, nötr PWM = 1487):
+#     tekne batıya bakarken  linear.x = +1.053  → SERVO 1930 / 1932  (ileri)
+#     tekne batıya bakarken  linear.x = -1.059  → SERVO 1940 / 1938  (İLERİ!)
+#     tekne kuzeye bakarken  linear.x = +1.056  → SERVO 1938 / 1932  (ileri)
+# Yani işaret de tekne yönü de değişse çıkış hep ~1935 ileri. Kaptan motorların
+# fiziksel olarak tam ileri bastığını da doğruladı.
+#
+# BODY_NED ile aynı donanımda (pymavlink ile doğrudan, 2 tur A/B):
+#     vx = +1.0 → SERVO 1848.8 / 1860.9   (ileri, simetrik)
+#     vx = -1.0 → SERVO 1140.5 / 1154.2   (GERİ,  simetrik)
+#     vx = +1.0 → SERVO 1830.0 / 1843.8
+#     vx = -1.0 → SERVO 1142.5 / 1154.6
+# İki motor arasındaki fark her turda 12-14 PWM → saf ileri/geri, dönüş yok.
+#
+# Gövde çerçevesinde ROS FLU (x=ileri) → MAVLink FRD (x=ileri) eşlemesi
+# yapıldığı için surge doğru alana, `vx`'e düşer ve işaret korunur.
+#
+# ⚠ NEDEN ÖNEMLİ: MPPI hedef burnun 90°'sinden geniş açıdaysa GERİ gitmeyi
+# seçiyor (ölçüldü: 95°'de ileri bileşke −1,190 N). Düzeltme olmadan bu
+# çözümler araçta **aynı hızda ileri** olarak uygulanıyor, yani tekne hedeften
+# UZAKLAŞARAK tam gaz gidiyor.
+#
+# ⚠ Bu dosya `apm_config.yaml`'DAN SONRA yüklenmeli, yoksa ezilir.
+# ⚠ Desen `/**/` — MAVROS eklentileri mavros namespace'i altında ayrı node.
+
+/**/setpoint_velocity:
+  ros__parameters:
+    mav_frame: BODY_NED
