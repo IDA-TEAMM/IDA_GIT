@@ -50,7 +50,7 @@ from vision_msgs.msg import Detection3DArray
 
 from girdap_decision.qos_profiles import sensor_data_qos
 from prototype.mapping.bev_renderer import (
-    BevConfig, BevRenderer, Kume, Mp4Yazici,
+    BevConfig, BevRenderer, Kume, Mp4Yazici, PngSerisiYazici,
 )
 
 
@@ -116,10 +116,33 @@ class LidarKayitNode(Node):
                 "ihlali; LiDAR teslimi geçersiz olur."
             )
         cfg = self._rend.cfg
-        self._mp4 = Mp4Yazici(
-            self._session_dir / "lidar_kumeleme.mp4",
-            fps=rate, boyut=(cfg.genislik_px, cfg.yukseklik_px),
-        )
+        # 🔴 mp4 AÇILAMAZSA PNG SERİSİNE DÜŞ — teslimi kaybetme.
+        # Jetson'ın OpenCV derlemesinde `mp4v` codec'i olmayabilir
+        # (`ida_topics/kamera_kayit_node` bu riske karşı zaten F-P.11
+        # koruması taşıyor → proje bunu daha önce yaşamış). Ekransız bir
+        # makinede burada ölmek, LiDAR teslimini sessizce sıfırlar ve bu
+        # ancak hakem masasında anlaşılır (md 5.5.4.3.5: 5 ceza).
+        # PNG serisi sonradan `ffmpeg` ile mp4'e çevrilebildiği için
+        # (zaman damgası zaten KAREYE yakılı) yedek yol teslimi KURTARIR.
+        # `PngSerisiYazici` ile `Mp4Yazici` aynı arayüzü sunar; aşağıdaki
+        # kayıt döngüsü hangisini tuttuğunu bilmek zorunda değildir.
+        self._yedege_dusuldu = False
+        try:
+            self._mp4 = Mp4Yazici(
+                self._session_dir / "lidar_kumeleme.mp4",
+                fps=rate, boyut=(cfg.genislik_px, cfg.yukseklik_px),
+            )
+        except Exception as exc:                     # cv2 yok / codec yok
+            self._yedege_dusuldu = True
+            self._mp4 = PngSerisiYazici(
+                self._session_dir / "lidar_kumeleme_png", fps=rate
+            )
+            self.get_logger().error(
+                f"LiDAR mp4 AÇILAMADI ({exc!r}) → PNG serisine düşüldü: "
+                f"{self._mp4.dizin}. Teslimden ÖNCE mp4'e çevirin — klasördeki "
+                "NASIL_MP4_YAPILIR.txt tek satırlık ffmpeg komutunu veriyor. "
+                "md 4.2 mp4 istiyor; çevrilmezse 5 ceza (md 5.5.4.3.5)."
+            )
 
         # --- Subscribers ---
         self._sub_cls = self.create_subscription(
@@ -273,10 +296,19 @@ class LidarKayitNode(Node):
                 throttle_duration_sec=5.0)
         self._kare += 1
         if self._kare % 20 == 1:
-            self.get_logger().info(
-                f"[LiDAR veri seti] {self._kare} kare, "
-                f"{len(self._kumeler)} küme → {self._session_dir.name}"
-            )
+            if self._yedege_dusuldu:
+                # ⚠ Açılıştaki tek ERROR journal selinde kaybolur; yedek yola
+                # düşüldüyse operatör bunu koşum boyunca görmeli, yoksa
+                # teslimden önce çevirmeyi unutur.
+                self.get_logger().error(
+                    f"[LiDAR veri seti] PNG YEDEĞİNDE {self._kare} kare — "
+                    "TESLİMDEN ÖNCE mp4'E ÇEVİRİN (NASIL_MP4_YAPILIR.txt)"
+                )
+            else:
+                self.get_logger().info(
+                    f"[LiDAR veri seti] {self._kare} kare, "
+                    f"{len(self._kumeler)} küme → {self._session_dir.name}"
+                )
 
     def destroy_node(self) -> bool:
         """mp4'ü KAPAT — kapatılmayan dosya oynatılamaz (moov atomu yazılmaz)."""

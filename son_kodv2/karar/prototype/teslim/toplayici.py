@@ -100,6 +100,18 @@ KALEMLER: Tuple[KalemTanimi, ...] = (
         "lidar", "**/*.mp4",
         hedef="Diger_Otonomi_Sensorleri_Veri_Seti", klasor=True,
     ),
+    # 🔴 mp4 açılamayıp PNG'ye düşüldüyse (codec yok) kareler BURADA olur.
+    # Toplanmazsa LiDAR teslimi tamamen kaybolur — mp4 zaten yok, PNG de
+    # USB'ye gitmezse geriye hiçbir şey kalmaz. `zorunlu=False` çünkü normal
+    # koşumda bu klasör HİÇ oluşmaz; oluştuysa rapor ayrıca bağırır.
+    KalemTanimi(
+        "lidar_png_yedek",
+        "⚠ Diğer Otonomi Sensörleri — mp4 AÇILAMADI, PNG yedeği",
+        "TESLİMDEN ÖNCE mp4'E ÇEVİR (klasördeki NASIL_MP4_YAPILIR.txt)",
+        "lidar", "**/*.png",
+        hedef="Diger_Otonomi_Sensorleri_PNG_YEDEK_mp4e_cevrilecek",
+        klasor=True, zorunlu=False,
+    ),
     KalemTanimi(
         "telemetri",
         "Dosya 2: Araç telemetri verisi",
@@ -342,6 +354,18 @@ def rapor_metni(bulgular: List[Bulgu], rapor: Rapor) -> str:
             L.append(f"           {len(b.dosyalar)} dosya, "
                      f"{b.toplam_bayt/1e6:.1f} MB")
     L.append("")
+    # 🔴 En kritik saha uyarısı: mp4 yok ama PNG yedeği var → teslim
+    # KURTARILABİLİR ama ÇEVİRMEK gerekiyor. Bu satır görülmezse 5 ceza.
+    d = {b.tanim.anahtar: b for b in bulgular}
+    if not d["lidar"].bulundu and d["lidar_png_yedek"].bulundu:
+        L.append("╔" + "═" * 68 + "╗")
+        L.append("║ 🔴 LiDAR mp4 YOK ama PNG YEDEĞİ VAR — ÇEVİRMEDEN TESLİM ETME!     ║")
+        L.append("║ Kayıt sırasında mp4 codec'i açılamamış, PNG'ye düşülmüş.          ║")
+        L.append("║ USB'deki 'Diger_Otonomi_Sensorleri_PNG_YEDEK_mp4e_cevrilecek/'    ║")
+        L.append("║ klasöründe NASIL_MP4_YAPILIR.txt tek satırlık komutu veriyor.     ║")
+        L.append("║ Çevirmezsen md 4.2 'mp4 formatında' şartı sağlanmaz = 5 ceza.     ║")
+        L.append("╚" + "═" * 68 + "╝")
+        L.append("")
     if rapor.eksik_zorunlu:
         L.append("🔴 EKSİK ZORUNLU DOSYALAR:")
         for ad in rapor.eksik_zorunlu:

@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional, Sequence, Tuple
 
 import numpy as np
@@ -388,6 +389,57 @@ class BevRenderer:
                f"kirmizi=engel  gri=bilinmiyor",
                fill=_METIN, font=self._font)
         return np.asarray(img, dtype=np.uint8)
+
+
+class PngSerisiYazici:
+    """mp4 açılamadığında ACİL YEDEK — kareleri PNG serisi olarak yazar.
+
+    `Mp4Yazici` ile **aynı arayüz** (`yaz` / `kapat` / `kare_sayisi`): çağıran
+    node ikisinden hangisini tuttuğunu bilmek zorunda kalmaz.
+
+    🔑 **Neden yeterli — teslim KURTARILIR.** PNG serisi sonradan tek komutla
+    mp4'e çevrilir:
+        ffmpeg -framerate 2 -i kare_%05d.png -c:v libx264 -pix_fmt yuv420p out.mp4
+    Zaman damgası zaten KAREYE yakılı olduğu için dönüşümde hiçbir bilgi
+    kaybolmaz. Bu yüzden "mp4 açılamadı" durumu artık teslim kaybı değil,
+    yalnız fazladan bir dönüştürme adımıdır.
+
+    🔴 **Neden gerekli:** Jetson'ın OpenCV derlemesinde `mp4v` codec'i
+    olmayabilir (`ida_topics/kamera_kayit_node` bu riske karşı zaten F-P.11
+    koruması taşıyor → proje bunu daha önce yaşamış). Ekransız bir makinede
+    kaydedici sessizce ölürse o koşumun teslim dosyası hiç üretilmez ve bu
+    ancak hakem masasında anlaşılır (md 5.5.4.3.5: dosya başına 5 ceza).
+    """
+
+    def __init__(self, dizin, fps: float = 2.0) -> None:
+        self.dizin = Path(dizin)
+        self.dizin.mkdir(parents=True, exist_ok=True)
+        self.fps = float(fps)
+        self.kare_sayisi = 0
+        # Klasörü bulan kişi ne yapacağını bilsin — 20 dakikalık teslim
+        # penceresinde "bu ne?" diye düşünecek vakit yok.
+        (self.dizin / "NASIL_MP4_YAPILIR.txt").write_text(
+            "Bu klasor mp4 ACILAMADIGI icin yedege dusuldugunde olustu.\n"
+            "Kareler zaman damgali; tek komutla mp4'e cevrilir:\n\n"
+            f"  ffmpeg -framerate {self.fps:g} -i kare_%05d.png \\\n"
+            "         -c:v libx264 -pix_fmt yuv420p teslim.mp4\n\n"
+            "Sartname md 4.2 mp4 istiyor; donusturup oyle teslim edin.\n",
+            encoding="utf-8",
+        )
+
+    def yaz(self, kare_rgb: np.ndarray) -> bool:
+        """PNG karesi yaz. Disk hatasında False, istisna YOK (F-S.5 deseni)."""
+        yol = self.dizin / f"kare_{self.kare_sayisi:05d}.png"
+        try:
+            Image.fromarray(kare_rgb, mode="RGB").save(yol)
+        except OSError:
+            return False
+        self.kare_sayisi += 1
+        return True
+
+    def kapat(self) -> None:
+        """PNG serisinde kapatılacak tampon yok — arayüz simetrisi için."""
+        return None
 
 
 class Mp4Yazici:

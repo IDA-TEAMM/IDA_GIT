@@ -170,3 +170,21 @@ def test_png_yedegi_ZORUNLU_DEGIL(tmp_path):
     rapor, _ = topla_ve_yaz(logs, usb)
     assert rapor.basarili
     assert rapor.tahmini_ceza == 0
+
+
+def test_mp4_YOK_ama_PNG_yedegi_VARSA_toplanir_ve_BAGIRIR(tmp_path):
+    """🔴 Codec açılamamışsa kareler PNG'de olur; toplanmazsa teslim TAMAMEN
+    kaybolur (mp4 zaten yok). Rapor da çevirmeyi hatırlatmalı."""
+    logs = _kur(tmp_path / "logs", lidar=False)          # mp4 üretilememiş
+    png = logs / "lidar" / "oturum_20260807_143000" / "lidar_kumeleme_png"
+    png.mkdir(parents=True)
+    (png / "kare_00000.png").write_bytes(b"P" * 256)
+    usb = tmp_path / "usb"
+    usb.mkdir()
+
+    rapor, bulgular = topla_ve_yaz(logs, usb)
+
+    hedef = usb / "Diger_Otonomi_Sensorleri_PNG_YEDEK_mp4e_cevrilecek"
+    assert (hedef / "kare_00000.png").exists(), "PNG yedeği USB'ye alınmadı"
+    metin = (usb / RAPOR_ADI).read_text(encoding="utf-8")
+    assert "ÇEVİRMEDEN TESLİM ETME" in metin

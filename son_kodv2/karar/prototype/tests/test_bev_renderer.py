@@ -222,3 +222,36 @@ def test_mp4_kareler_yaziliyor(tmp_path):
     y.kapat()
     assert y.kare_sayisi == 4
     assert yol.exists() and yol.stat().st_size > 0
+
+
+# --------------------------------------------- PNG yedeği (codec yoksa)
+
+def test_png_yedegi_Mp4Yazici_ILE_AYNI_ARAYUZ(tmp_path):
+    """Node hangisini tuttuğunu bilmek zorunda kalmamalı."""
+    from prototype.mapping.bev_renderer import PngSerisiYazici
+
+    for ad in ("yaz", "kapat", "kare_sayisi"):
+        assert hasattr(PngSerisiYazici(tmp_path / "a", fps=2.0), ad)
+        assert hasattr(Mp4Yazici, ad) or ad == "kare_sayisi"
+
+
+def test_png_yedegi_kare_yazar_ve_ffmpeg_talimati_birakir(tmp_path):
+    """🔑 PNG yedeği teslimi KURTARIR — ama ancak çevrilirse.
+
+    Klasörü bulan kişi 20 dakikalık teslim penceresinde "bu ne?" diye
+    düşünmemeli; komut klasörün içinde dursun.
+    """
+    from prototype.mapping.bev_renderer import PngSerisiYazici
+
+    r = BevRenderer(BevConfig(genislik_px=120, yukseklik_px=120))
+    y = PngSerisiYazici(tmp_path / "yedek", fps=2.0)
+    for i in range(3):
+        assert y.yaz(r.render_lidar((0.0, 0.0), kare_no=i))
+    y.kapat()
+
+    assert y.kare_sayisi == 3
+    assert (tmp_path / "yedek" / "kare_00000.png").exists()
+    assert (tmp_path / "yedek" / "kare_00002.png").exists()
+    talimat = (tmp_path / "yedek" / "NASIL_MP4_YAPILIR.txt").read_text(
+        encoding="utf-8")
+    assert "ffmpeg" in talimat and "framerate 2" in talimat
