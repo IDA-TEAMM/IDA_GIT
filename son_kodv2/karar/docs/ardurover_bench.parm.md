@@ -188,10 +188,53 @@ kaynağı donanımda olan, teşhisi en zor hatalardan biridir.
 | Parametre | Değer | Neden |
 |---|---|---|
 | `ARMING_CHECK` | `0` | ⚠️ **Bench:** GPS/EKF fix yokken arming'e izin ver (kuru test). **SU'DA `1`** — tüm pre-arm kontrolleri açık. |
-| `ARMING_REQUIRE` | `0` | ⚠️ **Bench:** arming zorunluluğunu gevşet. **SU'DA `1`** — motor komutları yalnız armed iken. |
+| `ARMING_REQUIRE` | **`1`** | 🔴 **BENCH'TE DE 1 OLMALI** — aşağıdaki kutuya bak. Eski öneri `0`'dı, **YANLIŞTI**. |
 
 > 🔴 Bu iki parametre **su öncesi checklist'in ilk maddesi**. `ARMING_CHECK=0`
 > ile suya inmek = EKF sağlıksızken hareket riski. Asla unutma.
+
+> ## 🔴 `ARMING_REQUIRE=0` ACİL DURDURMAYI ÖLDÜRÜYOR (2026-08-07'de bulundu)
+>
+> Bu dokümanın önceki hâli bench için `ARMING_REQUIRE=0` öneriyordu ("arming
+> zorunluluğunu gevşet"). **Bu tavsiye zararlıydı ve düzeltildi.**
+>
+> ArduPilot'un kendi parametre açıklaması: *"Arming disabled until some
+> requirements are met. **If 0, there are no requirements (arm immediately)**"*
+> → araç **sürekli armed** sayılır ve **disarm hiçbir yolla çalışmaz.**
+>
+> **2026-08-06'da ölçüldü:** disarm Mission Planner Arm/Disarm ile, MP Force
+> Disarm ile, kumandadan rudder disarm ile, MAVROS `cmd/arming` ile — MANUAL'da
+> da HOLD'da da **reddedildi** (`result=4`), FC hiç açıklama basmadı.
+>
+> **En kritik sonuç:** yazılımımızın KILL yolu (`mavros_bridge` → disarm +
+> sıfır thrust) `ARMING_REQUIRE=0` iken **HİÇ ÇALIŞMIYORDU**. Acil durdurma
+> sessizce etkisizdi; kimse fark etmemişti çünkü disarm hiç test edilmemişti.
+> Şartname md 4.2 emniyet gereksinimi doğrudan etkileniyor.
+>
+> **2026-08-07 düzeltmesi:** `ARMING_REQUIRE = 1` yazıldı, disarm **ilk
+> denemede** çalıştı. Ardından ADIM 6 ölçüldü: disarm'da `ch1out = ch3out =
+> 1487` (nötr) — tam geri **değil**, güvenli.
+>
+> ⚠️ **GERİ ALINMAMALI.** 0 yapılırsa acil durdurma tekrar ölür.
+> ⚠️ **Yan etki:** araç artık kendiliğinden armed gelmez, arm edilmesi gerekir.
+> Masa testi akışlarını etkiler — takıma haber verildi (2026-08-07).
+
+### Buzzer — açık kalmalı (2026-08-07)
+
+| Parametre | Değer | Neden |
+|---|---|---|
+| `NTF_BUZZ_TYPES` | `5` | Masa testinde `0`'a çekilmişti (ses rahatsız ediyor). **Geri açıldı.** |
+| `NTF_BUZZ_VOLUME` | `100` | Aynı. |
+
+Buzzer, teknenin **armed olduğunu gösteren tek sesli işaret**. `BRD_SAFETY_DEFLT=0`
+(emniyet anahtarı devre dışı) olduğu için buzzer kapalıyken tekne **sessizce** her an
+motor çalıştırabilir durumda olur — yanına yaklaşan biri bunu anlayamaz.
+
+> ⚠️ `NTF_BUZZ_*` **açılışta okunur** — yazdıktan sonra reboot etmeden devreye girmez.
+> 🔎 Doğrulandı 2026-08-07: reboot melodisi + disarm sesi duyuldu.
+> 🔎 Yan gözlem: batarya bağlı değilken (USB beslemesi) buzzer **sürekli alarm**
+> çalar — `Bat1 0,02 V` < `BATT_CRT_VOLT 12.4` → kritik batarya failsafe'i.
+> Bu **doğru davranış** ve gerilim failsafe yolunun çalıştığını kanıtlar.
 
 ---
 

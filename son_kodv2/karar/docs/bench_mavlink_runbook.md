@@ -412,7 +412,38 @@ Araç **ARMED**, cmd_vel akıyor (ADIM 5 tekrar).
 
 > Ayrıntı: [`ardurover_bench.parm.md`](ardurover_bench.parm.md) → "ÇİFT YÖNLÜ ESC".
 
-### 🟡 Kısmi ölçüm — 2026-08-06 (ARM'da OK, DISARM ölçülemedi)
+### ✅ ÖLÇÜLDÜ ve GEÇTİ — 2026-08-07
+
+| Durum | `ch1out` (SAĞ) | `ch3out` (SOL) | Sonuç |
+|---|---|---|---|
+| ARMED, sıfır komut | 1487 | 1487 | ✅ |
+| **DISARMED** | **1487** | **1487** | ✅ **nötr — 1000 (tam geri) DEĞİL → suya inilebilir** |
+
+Koşullar: Pixhawk USB'den besleniyor (batarya yok, ESC'ler beslenmiyor) → motorlar
+dönemez, **sıfır riskli ölçüm**. `MOT_SAFE_DISARM=0` olduğu için çıkış kesilmiyor,
+`SERVOn_TRIM`'de (1487) kalıyor — beklenen davranış, doğrulandı.
+
+> 🔴 **BU ÖLÇÜM ÖNCE ALINAMIYORDU — SEBEBİ BULUNDU: `ARMING_REQUIRE=0`**
+>
+> 2026-08-06'da disarm **hiçbir yolla** çalışmadı: Mission Planner Arm/Disarm,
+> MP Force Disarm, kumandadan rudder disarm, MAVROS `cmd/arming` — MANUAL'da da
+> HOLD'da da reddedildi (`result=4`), FC hiç açıklama mesajı basmadı.
+>
+> **Sebep:** `ARMING_REQUIRE=0`. ArduPilot'un kendi parametre açıklaması:
+> *"Arming disabled until some requirements are met. **If 0, there are no
+> requirements (arm immediately)**"* → araç sürekli armed sayılır, disarm
+> kavramı yoktur.
+>
+> **🔴 EN ÖNEMLİ SONUÇ:** Yazılımımızın KILL yolu (`mavros_bridge` → disarm +
+> sıfır thrust) `ARMING_REQUIRE=0` iken **HİÇ ÇALIŞMIYORDU**. Acil durdurma
+> sessizce etkisizdi ve kimse fark etmemişti çünkü disarm hiç test edilmemişti.
+>
+> **Düzeltme:** `ARMING_REQUIRE = 1` (2026-08-07). Disarm ilk denemede çalıştı.
+> ⚠️ Bu ayar **geri alınmamalı** — 0 yapılırsa acil durdurma tekrar ölür.
+> ⚠️ Yan etki: araç artık kendiliğinden armed gelmez, arm edilmesi gerekir
+> (masa testi akışlarını etkileyebilir — takıma haber verilmeli).
+
+### (arşiv) 2026-08-06 — ölçüm alınamadı
 
 Tekneye bağlıyken MP → `Durum` sekmesi → `ch1out`/`ch3out` okundu:
 
