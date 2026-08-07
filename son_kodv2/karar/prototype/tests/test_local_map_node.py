@@ -17,7 +17,8 @@ import pytest
 rclpy = pytest.importorskip("rclpy", reason="rclpy yok (.venv) — ROS ortamında koş")
 
 from rclpy.parameter import Parameter               # noqa: E402
-from nav_msgs.msg import OccupancyGrid               # noqa: E402
+from nav_msgs.msg import OccupancyGrid, Odometry     # noqa: E402
+from geometry_msgs.msg import Pose, PoseArray        # noqa: E402
 
 girdap = pytest.importorskip(
     "girdap_decision.local_map_node",
@@ -148,3 +149,40 @@ def test_dosya3_1Hz_ALTI_acilista_REDDEDILIR(ros_context, tmp_path) -> None:  # 
                 Parameter("dump_rate_hz", Parameter.Type.DOUBLE, 0.5),
             ]
         )
+
+
+def test_odom_GELMEDEN_kenar_dubasi_CIZILMEZ(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 `_arac` varsayılanı (0,0); occupancy araç merkezli kurulduğu için
+    harita DOĞRU görünür ama dubalar mutlak dünya koordinatına düşer.
+
+    Ölçüldü: araç (30,40)'ta, duba (32,52) iken odom varken piksel (216,104);
+    odom yokken duba kare dışına çıkıp HİÇ çizilmiyor — harita normal
+    görünürken duba yanlış/yok = sessiz yanlış veri. Kural: bilmiyorsak
+    çizmeyiz. Bu test o kuralı dondurur.
+    """
+    node = girdap.LocalMapNode(
+        parameter_overrides=[
+            Parameter("output_dir", Parameter.Type.STRING, str(tmp_path)),
+            Parameter("mp4_enabled", Parameter.Type.BOOL, False),
+        ]
+    )
+    try:
+        pa = PoseArray()
+        p = Pose()
+        p.position.x, p.position.y = 32.0, 52.0
+        pa.poses.append(p)
+        node._on_edges(pa)
+
+        assert node._edges and not node._odom_geldi
+        # odom gelmeden çizim katmanı BOŞ olmalı
+        kenarlar = node._edges if node._odom_geldi else []
+        assert kenarlar == [], "odom yokken duba çizilecekti (yanlış yere)"
+
+        o = Odometry()
+        o.pose.pose.position.x, o.pose.pose.position.y = 30.0, 40.0
+        o.pose.pose.orientation.w = 1.0
+        node._on_odom(o)
+        assert node._odom_geldi
+        assert node._arac == (30.0, 40.0)
+    finally:
+        node.destroy_node()

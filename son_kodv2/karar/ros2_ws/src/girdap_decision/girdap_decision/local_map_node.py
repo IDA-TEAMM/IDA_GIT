@@ -97,6 +97,17 @@ class LocalMapNode(Node):
         self._last: Optional[OccupancyGrid] = None
         self._arac: Tuple[float, float] = (0.0, 0.0)
         self._yaw: Optional[float] = None
+        # 🔴 Odom GELMEDEN kenar dubası ÇİZİLMEZ. `_arac` varsayılanı (0,0)
+        # ve occupancy ızgarası araç merkezli KURULDUĞU için harita yine
+        # doğru görünür — ama dubalar `dunya_to_px(p, _arac)` ile
+        # yerleştirildiğinden MUTLAK dünya koordinatlarına düşer. Ölçüldü:
+        # araç (30,40)'ta, duba (32,52) iken odom varken piksel (216,104),
+        # odom yokken duba KARE DIŞINA çıkıp hiç çizilmiyor. Harita normal
+        # görünürken duba yanlış/yok = SESSİZ YANLIŞ VERİ, bu modülün
+        # docstring'inde uyardığı hata sınıfının ta kendisi.
+        # Kural: bilmiyorsak ÇİZMEYİZ (yanlış çizmektense).
+        self._odom_geldi = False
+        self._odom_uyari_t = 0.0
         self._edges: List[Tuple[float, float]] = []
 
         rate = float(self.get_parameter("dump_rate_hz").value)
@@ -164,6 +175,7 @@ class LocalMapNode(Node):
         q = msg.pose.pose.orientation
         self._arac = (float(p.x), float(p.y))
         self._yaw = 2.0 * math.atan2(float(q.z), float(q.w))
+        self._odom_geldi = True
 
     def _on_edges(self, msg: PoseArray) -> None:
         # Boş liste de anlamlıdır ("kapı görünmüyor") — bayat duba çizmeyelim.
@@ -224,10 +236,23 @@ class LocalMapNode(Node):
         res = float(m.info.resolution) or 0.5
 
         if self._mp4 is not None:
+            # Odom yoksa duba katmanını BOŞ geç (yukarıdaki gerekçe) ve
+            # operatörü 10 saniyede bir uyar — sessizce eksik çizmeyelim.
+            kenarlar = self._edges if self._odom_geldi else []
+            if self._edges and not self._odom_geldi:
+                now = self._now()
+                if now - self._odom_uyari_t > 10.0:
+                    self._odom_uyari_t = now
+                    self.get_logger().warn(
+                        f"{len(self._edges)} kenar dubası geliyor ama "
+                        "/girdap/fusion/odom HİÇ gelmedi → dubalar Dosya-3 "
+                        "haritasına ÇİZİLMİYOR (yanlış yere çizmektense boş "
+                        "bırakılıyor). fusion_node'u kontrol et."
+                    )
             try:
                 kare = self._rend.render_costmap(
                     occ, res, self._arac, yaw=self._yaw,
-                    kenar_dubalari=self._edges,
+                    kenar_dubalari=kenarlar,
                     zaman_metni=self._damga(m), kare_no=self._kare,
                     saat_guvenilir=self._saat_guvenilir,
                 )
