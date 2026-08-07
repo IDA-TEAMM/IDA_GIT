@@ -11,8 +11,20 @@ Yayınlar:
   /local_map  → nav_msgs/OccupancyGrid (1Hz)
 
 Kaydeder:
-  ~/girdap_logs/local_map/map_YYYYMMDD_HHMMSS.pgm (PGM görüntü formatı)
-  ~/girdap_logs/local_map/map_YYYYMMDD_HHMMSS.yaml (metadata)
+  ~/girdap_logs/local_map_eski/map_YYYYMMDD_HHMMSS.pgm (PGM görüntü formatı)
+  ~/girdap_logs/local_map_eski/map_YYYYMMDD_HHMMSS.yaml (metadata)
+
+⚠️ 2026-08-07 — ÇIKTI KLASÖRÜ AYRILDI (`local_map` → `local_map_eski`).
+Bu node ESKİ yığının parçası (`sistem_baslat.sh`); yarışmaya giden Dosya-3
+üreticisi artık `girdap_decision/local_map_node` ve o
+`~/girdap_logs/local_map/<oturum>/` altına zaman damgalı mp4 + PNG yazıyor.
+İkisi AYNI klasöre yazınca `.pgm`/`.yaml` ile `oturum_*/` iç içe giriyor ve
+teslim anında hangi dosyanın hangi koşuma ait olduğu belirsizleşiyordu
+(20 dakikalık pencerede bu tam bir hata kaynağı). Teslim toplayıcısı
+(`prototype/teslim/toplayici.py`) `.pgm`/`.yaml` almıyor, yani yanlış dosya
+teslim edilmiyordu — ama klasör kirliliği operatörü yanıltabilirdi.
+🔑 İki yığın aynı anda koşabildiği için (bkz. commit a823762: eski 11-node
+yığını container'da hâlâ koşuyordu) ayrım kodda garanti altına alındı.
 
 Yazar: IDA/Girdap Takım 989124 - Alt Alan B
 """
@@ -56,9 +68,13 @@ class LocalMapNode(Node):
         # ── Çıktı klasörü ─────────────────────────────────────────────────────
         # Sartname 4.2 Dosya-3 teslim dosyasi - /tmp KULLANMA: tmpfs'te
         # reboot/guc kesintisinde kaybolur (dosya basi 5 ceza puani).
+        # ⚠ `local_map` DEĞİL `local_map_eski`: yarışmaya giden Dosya-3
+        # üreticisi girdap_decision/local_map_node ve o `local_map/` altını
+        # kullanıyor. Aynı klasöre yazmak teslim anında karışıklık yaratıyordu
+        # (modül docstring'i). Ayrı tutuluyor.
         self.declare_parameter('output_dir', '')
         self.output_dir = self.get_parameter('output_dir').value or \
-            os.path.expanduser('~/girdap_logs/local_map')
+            os.path.expanduser('~/girdap_logs/local_map_eski')
         os.makedirs(self.output_dir, exist_ok=True)
         self.timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 

@@ -251,3 +251,28 @@ def test_ffmpeg_YOKSA_PNG_yolu_calismaya_devam_eder(tmp_path, monkeypatch):
     assert (usb / "Diger_Otonomi_Sensorleri_PNG_YEDEK_mp4e_cevrilecek"
             / "kare_00000.png").exists(), "PNG yedeği USB'ye alınmadı"
     assert any("ffmpeg KURULU DEĞİL" in u for u in rapor.uyarilar)
+
+
+def test_YABANCI_dosyalar_teslime_GIRMEZ(tmp_path):
+    """🔑 Klasöre başka bir yazıcı bulaşırsa teslim kirlenmemeli.
+
+    Eski `ida_topics/local_map_node` aynı `~/girdap_logs/local_map/` altına
+    `.pgm`+`.yaml` yazıyordu (07.08'de `local_map_eski/`'ye ayrıldı). Ayrım
+    kodda yapıldı ama toplayıcı da kendi başına dayanıklı olmalı: bu test
+    HERHANGİ bir yabancı yazıcıya karşı sözleşmeyi dondurur — teslime yalnız
+    beklenen uzantılar girer.
+    """
+    logs = _kur(tmp_path / "logs")
+    otr = logs / "local_map" / "oturum_20260807_143000"
+    (otr / "map_20260807_143000.pgm").write_bytes(b"P5\n1 1\n255\n\x00")
+    (otr / "map_20260807_143000.yaml").write_text("image: map.pgm\n")
+    (logs / "local_map" / "map_eski.pgm").write_bytes(b"P5\n")
+    usb = tmp_path / "usb"
+    usb.mkdir()
+
+    rapor, _ = topla_ve_yaz(logs, usb)
+
+    kopyalanan = {p.suffix for p in usb.rglob("*") if p.is_file()}
+    assert ".pgm" not in kopyalanan, "yabancı .pgm teslime girdi"
+    assert ".yaml" not in kopyalanan, "yabancı .yaml teslime girdi"
+    assert rapor.basarili
