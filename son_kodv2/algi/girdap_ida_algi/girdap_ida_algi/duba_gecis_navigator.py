@@ -1246,13 +1246,27 @@ class DubaNavigator(Node):
             f" | NN {self.olculen_fps:.1f} FPS"
             + (" | GÖREV TAMAM" if self.gorev_tamam else ""))
         # SESSİZ RET uyarısı: kenar dubası görüyoruz ama kapı kuramıyoruz.
-        if k >= 2 and self.durum == "ARAMA" and any(self._tani.values()):
+        # 🔴 2026-08-09: `mono_menzil` TETİKLEYİCİYE KATILMAZ — o bir red sebebi
+        # değil, tespiti KURTARAN pinhole yedeği. Sayaçlar kümülatif (hiçbir yerde
+        # sıfırlanmıyor) olduğu için alarma katılsaydı ilk mono düşüşünden sonra
+        # uyarı bir daha susmazdı; sürekli yanan uyarıyı sahada kimse okumaz.
+        # Bilgi olarak yine basılıyor: YÜKSEK değeri "stereo suda çalışmıyor"
+        # demek ve SSH olmadığı için bunu görebileceğimiz tek kanal bu.
+        RED_KALEMLERI = ("dar", "dizili", "arada_duba", "menzil_celiski", "menzil_yok")
+        if k >= 2 and self.durum == "ARAMA" and any(self._tani[a] for a in RED_KALEMLERI):
+            # ⚠️ TEK KONUMSAL ARGÜMAN — pazarlıksız. rclpy imzası
+            # `log(message, severity, **kwargs)`; printf tarzı ek konumsal
+            # argüman TypeError atar, istisna timer callback'inden `rclpy.spin()`e
+            # çıkar ve NODE ÖLÜR (09.08.2026, humble 3.3.21'de ölçüldü — üstelik
+            # tam da bu uyarının gerektiği anda). Regresyon testi:
+            # test/test_log_imzalari.py
             self.get_logger().warn(
                 f"kapı kurulamıyor — red sebepleri: dar={self._tani['dar']} "
                 f"dizili={self._tani['dizili']} arada_duba={self._tani['arada_duba']} "
-                f"menzil_çelişki={self._tani['menzil_celiski']}",
-                f"mono_menzil={self._tani['mono_menzil']}",
-                f"menzil_yok={self._tani['menzil_yok']}",
+                f"menzil_çelişki={self._tani['menzil_celiski']} "
+                f"menzil_yok={self._tani['menzil_yok']} "
+                f"| bilgi: mono_menzil={self._tani['mono_menzil']} "
+                f"(pinhole yedeği; yüksekse stereo suda ölçemiyor)",
                 throttle_duration_sec=10.0)
 
 
