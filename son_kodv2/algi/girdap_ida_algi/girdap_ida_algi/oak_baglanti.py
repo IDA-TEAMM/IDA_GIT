@@ -90,8 +90,8 @@ def usb_reset(oturma_payi=2.5, zaman_asimi=10.0):
     finally:
         os.close(fd)
 
-    bas = time.time()
-    while time.time() - bas < zaman_asimi:
+    bas = time.monotonic()          # SÜRE: duvar saati sıçramasından etkilenmesin
+    while time.monotonic() - bas < zaman_asimi:
         if usb_dugum_yolu():
             time.sleep(oturma_payi)     # enumerasyon otursun
             return True

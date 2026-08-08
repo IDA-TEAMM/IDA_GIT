@@ -67,6 +67,18 @@ PLAN B hızlı başlangıç:
 import math
 import os
 import time
+# ⏱️ SAAT KURALI (2026-08-09) — İKİ SAAT VAR, KARIŞTIRMA:
+#   SÜRE / zaman aşımı / periyot   -> time.monotonic()   (duvar saati DEĞİL)
+#   MUTLAK an (damga, etiket, tarih) -> time.time() / ROS saati
+# NEDEN: Jetson'da RTC pili yok, boot'ta saat geride açılıyor (ölçüldü: bir kez
+# ~15 saat, bir kez bir gün) ve kıyı yordamımız saati NODE ÇALIŞIRKEN
+# düzeltiyor (`sudo date -s`, ya da tethering gelince NTP adımı).
+# `time.time()` ayarlanabilir (`time.get_clock_info('time').adjustable=True`),
+# `time.monotonic()` değildir. Duvar saati ileri sıçrarsa geçiş penceresi
+# (`pass_bitis_t`) ANINDA dolar (G puanı), geri sıçrarsa `durum_log` susar
+# (sahadaki tek görünürlük kanalı) ve Dosya-1 kaydı durur (md 4.2 = 5 ceza p.).
+# Toplayıcı (scripts/oak_veriseti_topla.py) bu ayrımı zaten yapıyordu.
+# Regresyon testi: test/test_saat_kaynagi.py
 from dataclasses import dataclass
 
 import depthai as dai
@@ -527,7 +539,7 @@ class DubaNavigator(Node):
             self.tf_buffer = tf2_ros.Buffer()
             self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
             self.son_goal = None           # (x, y) HEDEF_FRAME içinde
-            self.son_goal_t = 0.0
+            self.son_goal_t = -math.inf
             self.son_arama_goal_t = 0.0
         elif MOD == "dogrudan_surus":
             self.cmd_pub = self.create_publisher(
@@ -542,7 +554,7 @@ class DubaNavigator(Node):
         self._vw = None            # cv2.VideoWriter (tembel açılır)
         self._vw_t0 = 0.0
         self._seg_no = 0
-        self._son_kayit_t = 0.0
+        self._son_kayit_t = -math.inf
         if KAYIT_AKTIF:
             self._kayit_dizin = os.path.join(
                 KAYIT_DIZIN, time.strftime("session_%Y%m%d_%H%M%S"))
@@ -579,9 +591,9 @@ class DubaNavigator(Node):
                 "SIRA TERSSE TURUNCU/SARI YER DEĞİŞİR — sahaya çıkmadan doğrula!")
 
         self.dubalar = []
-        self.son_tespit_t = 0.0
+        self.son_tespit_t = -math.inf
         self.durum = "ARAMA"
-        self.arama_baslangic = time.time()
+        self.arama_baslangic = time.monotonic()
         self.gecit_sayisi = 0
         self.gorev_tamam = False
         self.son_gecit = None      # (bearing, orta_z, zaman)
@@ -631,9 +643,9 @@ class DubaNavigator(Node):
                 "Dosya-1 zaman etiketleri yanlış olabilir (md 4.2, teslimde "
                 "5 ceza riski). Koşudan ÖNCE: tethering ile NTP senkronu, ya da "
                 "`sudo date -s '...'` → sonra bu node'u yeniden başlat.")
-        self._son_log = 0.0
+        self._son_log = -math.inf
         self._fps_n = 0            # ölçülen NN FPS (beklenen: ~11, tavan 12,2)
-        self._fps_t0 = time.time()
+        self._fps_t0 = time.monotonic()
         self.olculen_fps = 0.0
 
         self.timer = self.create_timer(1.0 / KONTROL_HZ, self.dongu)
@@ -647,7 +659,7 @@ class DubaNavigator(Node):
                 break
             msg = m
             self._fps_n += 1
-        t = time.time()
+        t = time.monotonic()
         if t - self._fps_t0 >= 5.0:
             self.olculen_fps = self._fps_n / (t - self._fps_t0)
             self._fps_n, self._fps_t0 = 0, t
@@ -689,7 +701,7 @@ class DubaNavigator(Node):
         # _lb_pay __init__'te 0 sabitlendi (letterbox'a dönülürse gm.letterbox_payi
         # saf katmanı hazır, 78+ testli).
         self.dubalar = dets
-        self.son_tespit_t = time.time()
+        self.son_tespit_t = time.monotonic()
         if MOD == "algi_yayin":
             self.tespit_yayinla()   # taze NN karesi → sözleşme topic'leri
 
@@ -725,16 +737,19 @@ class DubaNavigator(Node):
                 cv2.putText(img, f"{ad} {d.conf:.2f} Z:{d.z:.1f}m",
                             (x1, max(14, y1 - 6)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.45, renk, 1)
-            t = time.time()
-            etiket = (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t))
-                      + f".{int((t % 1.0) * 1000):03d}")
+            # 🔴 İKİ AYRI SAAT: görünen etiket DUVAR saati olmak zorunda
+            # (md 4.2 "her frame zaman etiketine sahip"), segment süresi ise
+            # MONOTONIC — saat sıçrarsa segment sayacı bozulmasın.
+            t_duvar = time.time()
+            etiket = (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t_duvar))
+                      + f".{int((t_duvar % 1.0) * 1000):03d}")
             cv2.putText(img, etiket, (8, 18),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 2)
             cv2.putText(img, f"{self.durum} gecit={self.gecit_sayisi}"
                              f" NN {self.olculen_fps:.1f}FPS",
                         (8, h - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
                         (0, 255, 0), 1)
-            self._kayit_yaz(img, t)
+            self._kayit_yaz(img, time.monotonic())
         except Exception as e:
             self._kayit_bozuk = True
             self.get_logger().error(
@@ -939,7 +954,7 @@ class DubaNavigator(Node):
     def duruma_gec(self, yeni):
         if yeni != self.durum:
             if yeni == "ARAMA":
-                self.arama_baslangic = time.time()
+                self.arama_baslangic = time.monotonic()
             self.durum = yeni
 
     def gecis_baslat(self, orta_z, gecit_bl=None, yari_gen=None):
@@ -962,14 +977,14 @@ class DubaNavigator(Node):
         else:
             self.gecit_cizgi = None
         if self.gecit_cizgi is not None:
-            self.pass_bitis_t = time.time() + max(GECIS_ZAMAN_KATSAYI * tahmin, 8.0)
+            self.pass_bitis_t = time.monotonic() + max(GECIS_ZAMAN_KATSAYI * tahmin, 8.0)
         else:
-            self.pass_bitis_t = time.time() + tahmin   # odom yok: eski zaman tahmini
+            self.pass_bitis_t = time.monotonic() + tahmin  # odom yok: eski zaman tahmini
         self.get_logger().info(f">> Geçide giriliyor (orta nokta {orta_z:.1f} m)")
 
     def dongu(self):
         self.tespitleri_oku()
-        simdi = time.time()
+        simdi = time.monotonic()
 
         # Dosya-1: görev durumundan BAĞIMSIZ kayıt (şartname ≥1 Hz; görev
         # tamamlansa da karaya alınana dek kayıt sürer)
@@ -1201,7 +1216,7 @@ class DubaNavigator(Node):
                 throttle_duration_sec=5.0)
             return
 
-        simdi = time.time()
+        simdi = time.monotonic()
         if not zorla and self.son_goal is not None:
             dx = hedef.pose.position.x - self.son_goal[0]
             dy = hedef.pose.position.y - self.son_goal[1]
@@ -1235,7 +1250,7 @@ class DubaNavigator(Node):
 
     # ---------- Log ----------
     def durum_log(self):
-        simdi = time.time()
+        simdi = time.monotonic()
         if simdi - self._son_log < 2.0:
             return
         self._son_log = simdi

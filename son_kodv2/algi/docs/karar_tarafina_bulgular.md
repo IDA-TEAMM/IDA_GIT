@@ -92,18 +92,31 @@ Bu değer bizim repomuzda ve notlarımızda **hiç geçmiyordu**; PC'de ölçtü
 | 3 | **Başlatma zinciri 4 yerden kırıktı** (servis `WorkingDirectory` yok → boot'ta node hiç açılmıyordu; kurulum betiği depthai'yi v3'e yükseltiyordu) | ✅ `@605d713`; 🔴 Jetson'da **reboot testi hâlâ yapılmadı** |
 | 4 | Yayınlanan bbox piksel uzayı 640 ↔ 1280 uyuşmazlığı | ✅ 04.08'de kapandı |
 
-## 🔎 BİZDE AÇIK, ÜZERİNDE ÇALIŞIYORUZ (sizi de ilgilendiren tek kalem)
+## 🔧 5. BİZDE DE BİR SAAT SORUNU VARDI — ✅ 09.08'de DÜZELTİLDİ
 
-**Algı node'u süre ölçümlerinin hepsini duvar saatiyle (`time.time()`) yapıyor.**
+**Algı node'u süre ölçümlerinin hepsini duvar saatiyle (`time.time()`) yapıyordu.**
 Jetson **RTC pilsiz** ve boot'ta saat geride açılıyor (iki kez ölçüldü: bir kez
 ~15 saat, bir kez bir gün). Kıyı yordamımız *"`date` ile doğrula, yanlışsa
 `sudo date -s`"* diyor — yani **saat, node çalışırken düzeltiliyor**.
-Duvar saati ileri sıçrarsa geçiş penceresi (`pass_bitis_t`) anında dolar, geri
-sıçrarsa durum log'u tamamen susar. Damgalar (`header.stamp`) doğru kaynaktan
-geliyor, o kısım etkilenmiyor. Kendi tarafımızda düzeltiyoruz; **sizden bir şey
-gerekmiyor**, yalnız haberiniz olsun.
-📌 İlgili: toplayıcımız (`scripts/oak_veriseti_topla.py`) bunu zaten doğru
-yapıyor (süre = `time.monotonic()`, damga = `time.time()`).
+Duvar saati **ileri** sıçrarsa geçiş penceresi (`pass_bitis_t`) anında dolar
+(G puanı), **geri** sıçrarsa `durum_log` tamamen susar (sahadaki tek görünürlük
+kanalı) ve Dosya-1 kaydı durur (md 4.2 → geçersiz dosya = 5 ceza puanı).
+
+✅ **Düzeltildi:** süre ölçümleri `time.monotonic()`'e taşındı (16 çağrı yeri),
+mutlak anlar duvar saatinde bırakıldı. İki incelik:
+- **Dosya-1'in görünen zaman etiketi** aynı değişkeni paylaşıyordu; ayrıldı
+  (`t_duvar` = etiket · `time.monotonic()` = segment süresi). Körü körüne
+  dönüştürseydik md 4.2'nin istediği etiketi bozacaktık.
+- Sentinel'ler `0.0` → `-math.inf`: `monotonic()` boot'ta küçük olduğu için
+  `0.0` açılışta **yanlış "taze tespit var"** üretiyordu (duvar saatinde,
+  epoch ~1,7e9 iken bu hata görünmüyordu).
+
+Regresyon testi: `test/test_saat_kaynagi.py` (AST; ROS/kamera gerektirmez) —
+süre ölçümünde duvar saati kullanılırsa **ve** Dosya-1 etiketi yanlışlıkla
+monotonic'e çevrilirse testler kırmızıya döner. 129 → **133 test**.
+📌 Not: toplayıcımız (`scripts/oak_veriseti_topla.py`) bu ayrımı **zaten doğru**
+yapıyordu; hata yalnız deploy node'undaydı.
+⇒ **Sizden bir şey gerekmiyor**, yalnız haberiniz olsun.
 
 ---
 <sub>Hazırlayan: algı ekibi (Eyüp). Kanıtların tamamı bu repoda ve
