@@ -53,6 +53,58 @@ def mesafe_genislikten(w_px: float, cap_m: float, f_px: float):
     return f_px * cap_m / w_px
 
 
+# Mono (pinhole) menzilin KABUL EDİLDİĞİ bant.
+# Alt: bu kadar yakında duba kadrajı doldurur; daha küçük genişlik ölçüm değil
+# gürültüdür. Üst: 15 m'de 30 cm duba ~6 px kalır (kalibrasyondan: w_px=90,1/Z),
+# altında bağıl hata hızla büyür → hayalet duba üretmemek için tavan.
+MONO_MENZIL_ALT_M = 0.5
+MONO_MENZIL_UST_M = 15.0
+# Stereo Z'nin "geçerli" sayıldığı alt sınır (m). depthai geçersiz derinlikte 0 verir.
+STEREO_GECERLI_ALT_M = 0.05
+
+
+def menzil_coz(z_stereo, w_px, f_px, cap_m: float = DUBA_CAP_M,
+               alt: float = MONO_MENZIL_ALT_M, ust: float = MONO_MENZIL_UST_M):
+    """Tespitin menzili: stereo varsa O, yoksa bbox genişliğinden pinhole YEDEĞİ.
+
+    Döner: ``(menzil_m, kaynak)`` — kaynak ``"stereo"`` | ``"mono"`` | ``None``.
+
+    🔴 NEDEN VAR (2026-08-08): eski kod ``z <= 0.05`` olan tespiti KOMPLE
+    atıyordu. Su, derinlik sensörleri için en zor yüzeylerden biri — mesafede
+    dokusuz, ışıkta aynasal (NODAR su yüzeyi testi, 11.06.2026: durgun su ayna
+    gibi davranıp yüzeyin ALTINDA sahte derinlik üretiyor; dalgalıyken çalışıyor).
+    Ayrıca deploy'da ``setDepthUpperThreshold(10000)`` var ⇒ **10 m ötesi zaten
+    geçersiz** dönüyor. Sonuç: duba görülüyor ama yayınlanmıyor →
+    ``/perception/buoys`` boş → füzyon CLASS_UNKNOWN → ``gate_follower`` ham
+    GPS'e düşer → P1 (G1/KD1≥0,5) ve P2 (≥2 ikili) gider, **hata basılmadan**.
+
+    Yedek yol stereo'dan BAĞIMSIZ: duba çapı şartnamede SABİT (md 5.5.2.1,
+    Ø30 cm) — yükseklik değil, çünkü su üstünde kalan yükseklik "o anki
+    şartlara bağlı". Bu yüzden GENİŞLİKTEN.
+
+    ⚖️ Kapsam bilinçli olarak dar: yalnız **bugün atılan** tespitleri kurtarır,
+    geçerli stereo'ya DOKUNMAZ. Absürt sonuç (bant dışı) yine elenir.
+    """
+    if z_stereo is not None and z_stereo > STEREO_GECERLI_ALT_M:
+        return float(z_stereo), "stereo"
+    d = mesafe_genislikten(w_px, cap_m, f_px)
+    if d is None or not (alt <= d <= ust):
+        return None, None
+    return float(d), "mono"
+
+
+def yanal_konum(z_m: float, cx_norm: float, f_px_norm: float) -> float:
+    """Kamera çerçevesinde yanal konum (m, sağ +): x = z · (cx − 0,5) / f.
+
+    Mono yedeğe düşüldüğünde stereo'nun X'i de geçersizdir (0 gelir); yanal
+    konum bbox merkezinden geometriyle üretilmelidir, yoksa duba kaza eseri
+    tam karşımızda sanılır. Normalize bbox (0..1) ve normalize odak ile çalışır.
+    """
+    if f_px_norm is None or f_px_norm <= 0.0:
+        return 0.0
+    return float(z_m) * (float(cx_norm) - 0.5) / float(f_px_norm)
+
+
 def menzil_tutarli(z_stereo, d_mono, bagil_tol: float = 0.35) -> bool:
     """Stereo Z ile mono menzil çelişmiyor mu?
 

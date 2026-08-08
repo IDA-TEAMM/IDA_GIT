@@ -93,20 +93,8 @@ yolo detect train data=data.yaml model=yolo11n.pt imgsz=416 rect=False
 
 ## 3. Çevirme — İKİ YOL
 
-### ⭐ Yol A0 — TEK KOMUT (2026-08-08; aşağıdaki Yol A'nın betiği)
-```bash
-cd son_kodv2/algi && ./scripts/model_uret.sh /yol/best.pt
-```
-Aşağıdaki üç adımı sırayla yapar ve **§4 doğrulamasını zorunlu kılar**
-(düşerse durur). Elle yapıldığında en çok unutulan iki ayar — `shaves=4` ve
-`config.json`'ı blob'un yanına koymak — betikte sabittir. İlk çalıştırma
-araç zincirini `~/girdap_model_araclari` altına kurar (torch, ~1 GB).
-Bu makinede 08.08'de stok `yolo11n.pt` ile uçtan uca koşturuldu: blob
-`numShaves=4`, giriş `416×416×3`, doğrulama COCO'yu reddetti (beklenen).
-
 ### Yol A (06.08'de UÇTAN UCA ÇALIŞTIRILDI, tercih edilen)
 Bu yol gerçekten koşuldu ve ürettiği blob **gerçek kamerada** ölçüldü.
-(Betik tam olarak bunu otomatikleştirir.)
 
 ```bash
 # 1) Kafa ameliyatı + ONNX (yerelde)

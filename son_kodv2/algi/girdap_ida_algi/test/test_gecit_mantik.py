@@ -336,3 +336,71 @@ def test_bbox_gecersiz_hedef_uzayi_hata_verir():
     """0/negatif uzay sessizce 0'a bölmemeli — yapılandırma hatası görünür olsun."""
     with pytest.raises(ValueError):
         gm.bbox_piksel(0.5, 0.5, 0.1, 0.1, 0.0, 0, 720)
+
+
+# ---------------------------------------------------------------------------
+# Menzil yedeği (2026-08-08): stereo ölçemeyince tespit ATILMASIN.
+# Senaryolar önce çıkarıldı, sonra yazıldı (mantik-senaryo-avi kuralı).
+# ---------------------------------------------------------------------------
+_F = gm.odak_px(1.0)                       # normalize odak (bbox 0..1)
+
+
+def _w_icin(mesafe_m):
+    """Verilen mesafede 30 cm dubanın normalize bbox genişliği."""
+    return gm.DUBA_CAP_M * _F / mesafe_m
+
+
+def test_S1_stereo_gecerliyse_stereo_kullanilir():
+    z, kaynak = gm.menzil_coz(4.2, _w_icin(4.2), _F)
+    assert kaynak == "stereo" and z == 4.2
+
+
+def test_S1b_stereo_gecerliyse_bbox_celisse_bile_stereo_kazanir():
+    # Yedek yalnız ATILACAK tespiti kurtarır; geçerli stereo'ya DOKUNMAZ.
+    z, kaynak = gm.menzil_coz(4.0, _w_icin(9.0), _F)
+    assert kaynak == "stereo" and z == 4.0
+
+
+def test_S2_stereo_yoksa_mono_devreye_girer():
+    z, kaynak = gm.menzil_coz(0.0, _w_icin(6.0), _F)
+    assert kaynak == "mono"
+    assert abs(z - 6.0) < 1e-6
+
+
+def test_S3_stereo_yok_bbox_bozuksa_tespit_dusiyor():
+    assert gm.menzil_coz(0.0, 0.0, _F) == (None, None)
+    assert gm.menzil_coz(None, None, _F) == (None, None)
+
+
+def test_S4_absurt_mono_menzil_elenir():
+    # Çok yakın (kadrajı dolduran leke) ve çok uzak (birkaç piksel) reddedilir.
+    assert gm.menzil_coz(0.0, _w_icin(0.2), _F)[1] is None
+    assert gm.menzil_coz(0.0, _w_icin(40.0), _F)[1] is None
+
+
+def test_S5_stereo_tavaninin_otesi_mono_ile_kurtarilir():
+    # setDepthUpperThreshold(10000) yüzünden 10 m ötesi stereo'da 0 gelir.
+    z, kaynak = gm.menzil_coz(0.0, _w_icin(12.0), _F)
+    assert kaynak == "mono" and 11.0 < z < 13.0
+
+
+def test_S6_durgun_su_aynasi_10m_tavaniyla_gecersizlesip_mono_ya_duser():
+    # Ayna yansıması stereo'ya 29 m dedirtir; firmware tavanı 0'a çevirir.
+    z, kaynak = gm.menzil_coz(0.0, _w_icin(7.0), _F)
+    assert kaynak == "mono" and abs(z - 7.0) < 1e-6
+
+
+def test_yanal_konum_merkezde_sifir_sagda_pozitif():
+    assert gm.yanal_konum(5.0, 0.5, _F) == 0.0
+    assert gm.yanal_konum(5.0, 0.75, _F) > 0.0
+    assert gm.yanal_konum(5.0, 0.25, _F) < 0.0
+
+
+def test_yanal_konum_geometrisi_dogru():
+    # cx=0,5+dx → x = z·dx/f  (küçük açı değil, tam pinhole bağıntısı)
+    z, dx = 8.0, 0.1
+    assert abs(gm.yanal_konum(z, 0.5 + dx, _F) - z * dx / _F) < 1e-9
+
+
+def test_yanal_konum_bozuk_odakta_cokmez():
+    assert gm.yanal_konum(5.0, 0.9, 0.0) == 0.0

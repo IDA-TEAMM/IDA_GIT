@@ -74,31 +74,6 @@ sabitten değil, config.json'daki **isimlerden** çözüyor
 
 ## Yeni model koyarken
 
-### ⭐ Tek komut (2026-08-08 — elle yapılan üç adımın yerine)
-
-```bash
-cd son_kodv2/algi
-./scripts/model_uret.sh /yol/best.pt          # .pt → 4 shave blob + config.json
-```
-Betik sırayla: luxonis/tools ile kafa ameliyatı + ONNX → `blobconverter`
-(**shaves=4**, FP16, 2022.1) → `config.json`'ı blob'un yanına çıkarır →
-`scripts/model_dogrula.py` ile **shave · giriş · sınıf isimleri**ni denetler.
-Denetim düşerse betik "tekneye TAŞIMA" deyip durur (yanlış blob sahada
-düzeltilemez: v2.30'da superblob yok, yeniden dönüşüm internet ister).
-
-Doğrulamayı tek başına da koşabilirsin:
-```bash
-python3 scripts/model_dogrula.py /home/girdap/models/yolo11n_duba_rvc2.blob
-```
-⚠️ Betiğin ilk çalıştırması araç zincirini kurar (torch, ~1 GB, internet).
-Kurulum yeri `~/girdap_model_araclari` (`GIRDAP_ARACLAR` ile değiştirilebilir).
-**2026-08-08'de bu makinede kurulu ve stok `yolo11n.pt` ile uçtan uca
-koşturuldu** — üretilen blob `numShaves=4`, giriş `416×416×3`; doğrulama stok
-COCO modelini (80 sınıf, isimlerde `kenar`/`engel` yok) beklendiği gibi
-REDDETTİ.
-
-### Elle (betik kullanılmıyorsa)
-
 1. NNArchive `tar.xz`'yi `/home/girdap/models/`e koy, SHA256'sını tabloya işle.
 2. `tar -xJf` ile blob + config.json çıkar; blob'u `MODEL_BLOB` adına taşı.
 3. `python3 -c "import json;print(json.load(open('config.json'))['model']['heads'][0]['metadata']['classes'])"`

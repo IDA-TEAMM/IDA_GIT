@@ -334,6 +334,9 @@ class Duba:
     cy: float = 0.0
     w: float = 0.0
     h: float = 0.0
+    # Menzilin nereden geldiği: "stereo" (varsayılan) | "mono" (pinhole yedeği).
+    # Tanılama için ve çapraz kontrolün kendi kendini doğrulamasını önlemek için.
+    kaynak: str = "stereo"
 
 
 def _model_siniflarini_oku(blob_yolu: str):
@@ -591,7 +594,13 @@ class DubaNavigator(Node):
         # görünüyor ama hiçbir çift kapı olmuyor, araç ham GPS noktasına gidiyor
         # ve HİÇBİR hata basılmadan puan kaybediyoruz. Sahada SSH yok, bu yüzden
         # sayaçlar journal'a periyodik basılır. (Fikir: ekibin GateDiagnostics'i.)
-        self._tani = {"dar": 0, "dizili": 0, "arada_duba": 0, "menzil_celiski": 0}
+        self._tani = {"dar": 0, "dizili": 0, "arada_duba": 0, "menzil_celiski": 0,
+                      # Stereo ölçemeyip pinhole yedeğine düşülen tespit sayısı.
+                      # Sahada YÜKSEK çıkarsa stereo suda çalışmıyor demektir —
+                      # SSH olmadığı için tek görünürlük kanalı bu sayaç.
+                      "mono_menzil": 0,
+                      # Ne stereo ne mono menzil üretilemedi → tespit atıldı.
+                      "menzil_yok": 0}
         # Geçilen geçitlerin orta noktaları (dünya/odom çerçevesi). Şartname G
         # tanımı "FARKLI karşılıklı kenar dubaları arasından geçiş sayısı" →
         # aynı geçitten tekrar geçilirse SAYILMAZ (bkz. gm.yeni_gecit_mi).
@@ -652,14 +661,29 @@ class DubaNavigator(Node):
         for d in msg.detections:
             if d.confidence < CONF_ESIK:
                 continue
-            x = d.spatialCoordinates.x / 1000.0
-            z = d.spatialCoordinates.z / 1000.0
-            if z <= 0.05:
+            cx = (d.xmin + d.xmax) / 2.0
+            w_n = (d.xmax - d.xmin)
+            z_stereo = d.spatialCoordinates.z / 1000.0
+            # 🔴 2026-08-08: eskiden `if z <= 0.05: continue` vardı — stereo
+            # ölçemeyince duba GÖRÜLDÜĞÜ HÂLDE atılıyordu. Su, derinlik için en
+            # zor yüzey (dokusuz/aynasal) ve setDepthUpperThreshold(10000)
+            # yüzünden 10 m ötesi zaten geçersiz dönüyor. Artık genişlikten
+            # pinhole yedeği devreye giriyor; yalnız ATILACAK olanı kurtarır.
+            z, kaynak = gm.menzil_coz(z_stereo, w_n, self._f_norm)
+            if z is None:
+                self._tani["menzil_yok"] += 1
                 continue
+            if kaynak == "mono":
+                # Stereo yoksa X'i de geçersizdir (0 gelir) → bbox merkezinden
+                # geometriyle üret, yoksa duba tam karşımızda sanılır.
+                x = gm.yanal_konum(z, cx, self._f_norm)
+                self._tani["mono_menzil"] += 1
+            else:
+                x = d.spatialCoordinates.x / 1000.0
             dets.append(Duba(
                 int(d.label), x, z, float(d.confidence),
-                cx=(d.xmin + d.xmax) / 2.0, cy=(d.ymin + d.ymax) / 2.0,
-                w=(d.xmax - d.xmin), h=(d.ymax - d.ymin)))
+                cx=cx, cy=(d.ymin + d.ymax) / 2.0,
+                w=w_n, h=(d.ymax - d.ymin), kaynak=kaynak))
         # v2 notu: v3'teki msg.getTransformation() yok — gerek de yok. Preview
         # keepAspectRatio(False) tam kareyi sıkıştırdığı için şerit oluşmuyor;
         # _lb_pay __init__'te 0 sabitlendi (letterbox'a dönülürse gm.letterbox_payi
@@ -888,7 +912,14 @@ class DubaNavigator(Node):
         """Stereo Z ile bbox genişliğinden gelen pinhole menzil çelişiyor mu?
 
         bbox normalize olduğu için ölçek 416/640'tan bağımsız: f_norm=odak_px(1.0).
-        Ölçümlerden biri yoksa çelişki iddia edilmez (True döner)."""
+        Ölçümlerden biri yoksa çelişki iddia edilmez (True döner).
+
+        🔴 2026-08-08: menzil zaten mono'dan geldiyse çapraz kontrol ANLAMSIZ —
+        aynı sayıyı kendisiyle karşılaştırır, her zaman "tutarlı" çıkar. O hâlde
+        kontrol atlanır; sessiz-onay olmasın diye ayrı sayaçta (mono_menzil)
+        zaten görünüyor."""
+        if getattr(d, "kaynak", "stereo") == "mono":
+            return True
         d_mono = gm.mesafe_genislikten(d.w, gm.DUBA_CAP_M, self._f_norm)
         ok = gm.menzil_tutarli(d.z, d_mono, MENZIL_BAGIL_TOL)
         if not ok:
@@ -1220,6 +1251,8 @@ class DubaNavigator(Node):
                 f"kapı kurulamıyor — red sebepleri: dar={self._tani['dar']} "
                 f"dizili={self._tani['dizili']} arada_duba={self._tani['arada_duba']} "
                 f"menzil_çelişki={self._tani['menzil_celiski']}",
+                f"mono_menzil={self._tani['mono_menzil']}",
+                f"menzil_yok={self._tani['menzil_yok']}",
                 throttle_duration_sec=10.0)
 
 
