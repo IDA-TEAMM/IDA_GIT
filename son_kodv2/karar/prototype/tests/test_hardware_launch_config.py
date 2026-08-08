@@ -367,3 +367,104 @@ def test_B0_montaj_parametreleri_lidar_nodeun_EN_SONUNDA() -> None:
     assert len(lidar) == 1
     params = getattr(lidar[0], "_Node__parameters")
     assert isinstance(params[-1], dict) and "mount_z" in params[-1]
+
+
+# --------------------------------------------------------------------------
+# Overlay ZİNCİRİ (2026-08-08) — P1 koşusu yarışma ayarını MİRAS ALIR
+# --------------------------------------------------------------------------
+_PKG_KAYNAK = (
+    Path(__file__).resolve().parents[2] / "ros2_ws" / "src" / "girdap_decision"
+)
+
+
+def _kaynak_share(monkeypatch, mod) -> None:
+    """`get_package_share_directory` → kaynak paket dizini (config/ orada)."""
+    monkeypatch.setattr(mod, "get_package_share_directory", lambda _p: str(_PKG_KAYNAK))
+
+
+def test_overlay_zinciri_soldan_saga_binder(monkeypatch, capsys) -> None:
+    """`yarisma.yaml:parkur1.yaml` → yarışma ayarları + P1 görev etiketleri.
+
+    Zincir olmasaydı parkur1.yaml yarisma.yaml'ın KOPYASI olmak zorunda
+    kalırdı; yarisma.yaml başlığının bilerek reddettiği drift budur.
+    """
+    mod = _load_module()
+    _kaynak_share(monkeypatch, mod)
+    monkeypatch.setenv("GIRDAP_CONFIG_OVERLAY", "yarisma.yaml:parkur1.yaml")
+    cfg = mod._load_hardware_config()
+
+    # parkur1.yaml'ın TEK farkı:
+    assert cfg["mission_file"] == "parkur1_mission.yaml"
+    # yarisma.yaml'dan MİRAS (P1 koşusu = yarışma koşusu):
+    assert cfg["use_rrt"] is True
+    assert cfg["fsm"]["start_on_mode"] == "GUIDED"
+    assert cfg["fsm"]["start_on_arm_in_mode"] is False
+    assert cfg["bridge"]["auto_guided"] is True
+    assert cfg["telemetry"]["setpoint_source"] == "girdap"
+    assert cfg["mission_timing"]["dwell_time_s"] == 2.0
+    # İki overlay de operatöre BİLDİRİLİR (sessiz uygulama yok).
+    err = capsys.readouterr().err
+    assert "yarisma.yaml" in err and "parkur1.yaml" in err
+
+
+def test_yarisma_overlayi_tek_basina_competition_gorevini_secer(
+    monkeypatch,
+) -> None:
+    """Zincir eklentisi tek-overlay davranışını BOZMAMALI (geriye uyum)."""
+    mod = _load_module()
+    _kaynak_share(monkeypatch, mod)
+    monkeypatch.setenv("GIRDAP_CONFIG_OVERLAY", "yarisma.yaml")
+    cfg = mod._load_hardware_config()
+    assert cfg["mission_file"] == "competition_mission.yaml"
+    assert cfg["use_rrt"] is True
+
+
+def test_overlaysiz_video_moduna_duser(monkeypatch) -> None:
+    """Overlay YOKSA hardware.yaml = VİDEO senaryosu.
+
+    Bu testin varlık sebebi: servis dosyası overlay'i set etmeyi unutursa
+    yığın sessizce bu moda düşer (2026-08-08 bulgusu, drop-in ile kapatıldı).
+    """
+    mod = _load_module()
+    _kaynak_share(monkeypatch, mod)
+    monkeypatch.delenv("GIRDAP_CONFIG_OVERLAY", raising=False)
+    cfg = mod._load_hardware_config()
+    assert cfg["use_rrt"] is False and cfg["fsm"]["start_on_mode"] == "AUTO"
+
+
+def test_systemd_dropinleri_overlay_ortam_degiskenini_veriyor() -> None:
+    """Yarışma/P1 drop-in'leri overlay'i GERÇEKTEN set ediyor mu?
+
+    `girdap-karar.service` launch'ı çıplak başlatır; overlay yalnız bu
+    drop-in'lerden gelir. Satır düşerse yığın video modunda koşar ve bunun
+    sahada BELİRTİSİ YOKTUR — bu yüzden test dondurur.
+    """
+    scripts = Path(__file__).resolve().parents[2] / "scripts"
+    yarisma = (scripts / "girdap-karar-yarisma.conf").read_text(encoding="utf-8")
+    parkur1 = (scripts / "girdap-karar-parkur1.conf").read_text(encoding="utf-8")
+    assert "Environment=GIRDAP_CONFIG_OVERLAY=yarisma.yaml" in yarisma
+    assert (
+        "Environment=GIRDAP_CONFIG_OVERLAY=yarisma.yaml:parkur1.yaml" in parkur1
+    )
+
+
+def test_parkur1_gorev_dosyasi_TEK_parkur_yani_kamikaze_tetiklenemez() -> None:
+    """parkur1_mission.yaml etiketleri hep 1 → hiçbir parkur geçişi olmaz.
+
+    P1'i competition_mission.yaml ile koşmak 4. waypoint'te PARKUR_3
+    (kamikaze) tetikler; bu dosya o yolu YAPISAL olarak kapatır.
+    """
+    from prototype.mission.parkur_fsm import (
+        ParkurState,
+        ParkurTransitionLogic,
+        load_parkur_labels,
+    )
+
+    yol = _PKG_KAYNAK / "config" / "parkur1_mission.yaml"
+    labels = load_parkur_labels(str(yol))
+    assert labels and set(labels) == {1}
+
+    logic = ParkurTransitionLogic(labels)
+    for idx in range(len(labels) + 3):        # fazladan waypoint de gelse
+        logic.current_waypoint_reached(idx)
+    assert logic.state is ParkurState.PARKUR_1

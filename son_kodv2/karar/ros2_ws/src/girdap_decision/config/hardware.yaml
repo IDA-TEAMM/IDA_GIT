@@ -100,7 +100,10 @@ planning:
   mppi_sigma_u: 0.364              # N, σ = 0.25·max_thrust (06.08 ölçümü)
   mppi_obstacle_margin: 1.0        # m, SOFT emniyet payı (⚠ 1.5 geçidi kapatır)
   mppi_terminal_mode: "lookahead"  # lookahead | global (eski davranış)
-  mppi_terminal_lookahead_m: 15.0  # m, terminal hedef yay uzaklığı
+  # 🔴 15.0 → 3.0 (08.08): kural `lookahead ≥ hız × ufuk`; gerçek tekne
+  # 1,05 m/s × 2,5 s = 2,62 m. Eski 15, itkisi 30 N sanılan tekneye aitti.
+  # P1 kapalı-döngü: la=15 → 0/2 tohum bitiremedi, la=3 → 3/3 bitti.
+  mppi_terminal_lookahead_m: 3.0   # m, terminal hedef yay uzaklığı
   mppi_ref_window_size: 100        # nokta, kayan referans penceresi
   mppi_ref_window_enabled: true    # false → tam tarama (16× yavaş, A/B için)
   # --- Kapı takibi (2026-08-03) — md 5.5.2.2, puan kapıdan geçmekten gelir.

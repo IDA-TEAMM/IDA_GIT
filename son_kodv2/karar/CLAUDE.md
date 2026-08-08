@@ -405,9 +405,20 @@ yan etkisi**. Eşleşen hızda açıklık farkı +0.08 → +0.21 m ile sınırl�
 | lookahead (50) | **0.52 m** | **1.89 m** | +0.29 m | 56.4 ms |
 
 **`terminal_lookahead_m` seçimi:** ≥ seyir_hızı × horizon (T·dt) olmalı.
-Ölçüm (w=50): 10 m → hız 3.85 m/s'de sınırlanıyor (fren); 15 m → 5.31 m/s;
-25 m → 5.89 m/s; 40 m → açıklık +0.19 → −0.12 m'ye bozuluyor (global'e
-yaklaşıyor). **15-25 m** aralığı makul.
+Ölçüm (w=50, ⚠ **hayali tekne** — itki 30 N, seyir ~5,3 m/s): 10 m → hız
+3.85 m/s'de sınırlanıyor (fren); 15 m → 5.31 m/s; 25 m → 5.89 m/s; 40 m →
+açıklık +0.19 → −0.12 m'ye bozuluyor. O tekne için 15-25 m makuldü.
+
+🔴 **GÜNCEL (2026-08-08): varsayılan 15.0 → 3.0.** 05.08'de dinamik log 58'den
+tanılandı (max_thrust 30 → 1.455 N, Xu → −2.48) ve gerçek seyir **1,05 m/s**
+çıktı; aynı kural artık **1,05 × 2,5 = 2,62 m** diyor. 15 m ufkun 5,8 katı,
+yani rollout uçlarının erişemeyeceği bir nokta — terminal terim örnekler
+arasında ayrım yapmayı bırakıp "burnu hedefe çevir, tam gaz"a dejenere oluyor
+ve yanal (kapı çizgisi) hassasiyeti kayboluyor. P1 kapalı-döngü ölçümü
+(`docs/parkur1_kontrol_listesi.md` §4): la=15 → **0/2 tohum parkuru
+bitiremedi**; la=3 → **3/3 bitti**, ort 4,0/6 kapı; la=5 → 3/3 ama 3,0/6 kapı.
+`T` bilerek 50 kaldı (Orin Nano maliyeti değişmesin). Yukarıdaki eski tablo
+tarihsel kayıt olarak duruyor — gerçek tekneyle yeniden ölçülmedi.
 
 **✅ BENİMSENDİ (2026-08-02):** `terminal_mode="lookahead"` varsayılan +
 `_PARKUR_PROFILES` üçünde de `w_terminal=50.0`. **İKİSİ AYRILMAZ** — biri
@@ -656,7 +667,7 @@ Kontrol yumuşaklığı **2.0×**, takip/hız/süre değişmedi.
 | `mppi_sigma_u` | `5.0` | N, kontrol gürültüsü σ |
 | `mppi_obstacle_margin` | `1.0` | m, SOFT ceza. ⚠ 1.5 Parkur-2 geçidini kapatır |
 | `mppi_terminal_mode` | `lookahead` | `global` = eski davranış; geçersiz değer → WARN + varsayılan (node ölmez) |
-| `mppi_terminal_lookahead_m` | `15.0` | m; ≥ seyir_hızı × horizon (T·dt) |
+| `mppi_terminal_lookahead_m` | `3.0` | m; ≥ seyir_hızı × horizon (T·dt) = 1,05×2,5. **08.08'de 15.0'dan düşürüldü** (15 ile P1 bitmiyordu) |
 | `mppi_ref_window_size` | `100` | nokta (0.5 m aralıkta 50 m ileri) |
 | `mppi_ref_window_enabled` | `true` | `false` → tam tarama (16× yavaş, A/B) |
 

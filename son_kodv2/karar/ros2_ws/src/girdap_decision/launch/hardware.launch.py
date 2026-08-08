@@ -163,7 +163,7 @@ _MPPI_DEFAULTS: dict[str, tuple[object, type]] = {
     "mppi_sigma_u": (0.364, float),   # 06.08 ölçümü (bkz. MPPIConfig)
     "mppi_obstacle_margin": (1.0, float),
     "mppi_terminal_mode": ("lookahead", str),
-    "mppi_terminal_lookahead_m": (15.0, float),
+    "mppi_terminal_lookahead_m": (3.0, float),   # 08.08 ölçümü (bkz. MPPIConfig)
     "mppi_ref_window_size": (100, int),
     "mppi_ref_window_enabled": (True, bool),
 }
@@ -273,8 +273,15 @@ def _load_hardware_config() -> dict:
         # hardware.yaml'dan miras kalır. Ayrı bir tam kopya tutmuyoruz çünkü
         # iki tam dosya zamanla birbirinden kayar (drift) ve yarışma sabahı
         # hangisinin güncel olduğu belirsizleşir.
-        overlay_name = os.environ.get("GIRDAP_CONFIG_OVERLAY", "").strip()
-        if overlay_name:
+        #
+        # 2026-08-08: ZİNCİR desteklendi — `yarisma.yaml:parkur1.yaml` gibi
+        # `:` ile ayrılmış liste SOLDAN SAĞA bindirilir. Gerekçe aynı drift
+        # kaygısı: Parkur-1 test günü yarışma ayarlarının TAMAMINI ister,
+        # tek farkı görev etiketi dosyasıdır (parkur1.yaml). Zincir olmasaydı
+        # yarisma.yaml'ın kopyası çıkarılacaktı — bu dosyanın en başında
+        # "yapmayacağız" denen şeyin ta kendisi.
+        overlay_ham = os.environ.get("GIRDAP_CONFIG_OVERLAY", "").strip()
+        for overlay_name in [p.strip() for p in overlay_ham.split(":") if p.strip()]:
             with open(
                 os.path.join(cfg_dir, overlay_name), "r", encoding="utf-8"
             ) as fh:

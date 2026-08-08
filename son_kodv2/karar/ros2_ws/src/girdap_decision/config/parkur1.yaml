@@ -1,0 +1,25 @@
+# GİRDAP İDA — PARKUR-1 koşusu config OVERLAY'i (yarisma.yaml'ın ÜSTÜNE)
+#
+# KULLANIM (zincir — sıra önemli, soldan sağa bindirilir):
+#   GIRDAP_CONFIG_OVERLAY=yarisma.yaml:parkur1.yaml \
+#     ros2 launch girdap_decision hardware.launch.py
+#
+# Launch başında ŞU İKİ SATIRI görmelisin (yoksa video moduna düşülmüştür):
+#   *** config overlay UYGULANDI: yarisma.yaml (hardware.yaml üstüne)
+#   *** config overlay UYGULANDI: parkur1.yaml (hardware.yaml üstüne)
+#
+# NEDEN YALNIZ BİR ANAHTAR: P1 koşusu, yarışma koşusunun ta kendisidir
+# (GUIDED + MPPI + RRT* + kapı takibi + RC kapalı + telemetri "girdap").
+# Tek fark GÖREV ETİKETİ dosyasıdır. Bu yüzden burada yarisma.yaml'ın
+# kopyası YOK — yarışma ayarları değişirse tek yerde değişir.
+
+mission:
+  # 🔴 P1'i TEK BAŞINA koşarken competition_mission.yaml KULLANILMAZ:
+  # onun etiketleri [1,1,2,2,3] → 2. noktada PARKUR_2, 4. noktada PARKUR_3
+  # (KAMİKAZE) tetiklenir. Ayrıntı: parkur1_mission.yaml başlığı.
+  mission_file: "parkur1_mission.yaml"
+
+# ⚠ Bu dosya P1'i "tek parkur" yapar; P1→P2 geçişi bilerek KAPALIDIR.
+# Yarışma günü (P1→P2→P3 zinciri) bu overlay KULLANILMAZ, yalnız
+# yarisma.yaml uygulanır ve competition_mission.yaml etiketleri o günkü
+# göreve göre GÜNCELLENİR (yarisma.yaml sonundaki elle-yapılacaklar listesi).

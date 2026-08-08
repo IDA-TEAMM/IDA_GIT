@@ -11,11 +11,15 @@
 #     konum = 40.7159723, 31.5248170
 #     15 m ileri = kuzey +0.54 m, doğu -14.99 m
 #
-# Neden 1. koşumdaki 20 m değil de 15 m: kaptan isteği. Not — MPPI
-# `terminal_lookahead_m` = 15 m, yani hedef tam çapa mesafesinde. Bu, aracın
-# frenleme rejimine girme sınırıdır; 20 m'de terminal terim doygundu ve seyir
-# hızı komutu daha net görünüyordu. 15 m'de ileri komutun bir miktar daha
-# düşük çıkması BEKLENEN davranıştır, arıza değildir.
+# Neden 1. koşumdaki 20 m değil de 15 m: kaptan isteği. Not — o gün MPPI
+# `terminal_lookahead_m` = 15 m'ydi, yani hedef tam çapa mesafesindeydi. Bu,
+# aracın frenleme rejimine girme sınırıdır; 20 m'de terminal terim doygundu ve
+# seyir hızı komutu daha net görünüyordu. 15 m'de ileri komutun bir miktar
+# daha düşük çıkması BEKLENEN davranıştı, arıza değildi.
+# 🔴 08.08 GÜNCELLEMESİ: `terminal_lookahead_m` **3.0**'a düşürüldü (15 ile P1
+# kapalı-döngüde parkur bitmiyordu). Bu masa koşumu TEKRARLANIRSA komut profili
+# farklı çıkar — yukarıdaki gözlem 15 m'lik ayara aittir, karşılaştırma
+# yaparken bunu hesaba kat.
 #
 # ⚠ Bu koşumda algı node'ları BİLEREK durduruldu ve yerlerine BOŞ engel
 # listesi yayınlandı (scratchpad/bos_engel.py). Sebep: kapalı mekânda LiDAR

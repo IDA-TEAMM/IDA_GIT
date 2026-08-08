@@ -79,9 +79,20 @@ planning_node:
     mppi_terminal_mode: "lookahead"   # "lookahead" | "global" (eski davranış).
                              # ⚠ "global"e dönersen parkur profillerindeki
                              # w_terminal=50 fazla gelir (köşe keser).
-    mppi_terminal_lookahead_m: 15.0   # m, terminal hedefin çapadan yay uzaklığı.
-                             # ≥ seyir_hızı × horizon (T·dt) olmalı; 10 m'de
-                             # fren etkisi, 40 m'de engel açıklığı bozuluyor.
+    mppi_terminal_lookahead_m: 3.0    # m, terminal hedefin çapadan yay uzaklığı.
+                             # ≥ seyir_hızı × horizon (T·dt) olmalı.
+                             # 🔴 15.0 → 3.0 (08.08): 15 m, itkisi 30 N sanılan
+                             # HAYALİ tekneden kalmaydı (5,3 m/s × 2,5 s = 13,25).
+                             # Gerçek tekne (log 58 tanılaması) 1,05 m/s →
+                             # kural 1,05 × 2,5 = 2,62 m diyor; 15 m ufkun 5,8
+                             # katıydı ve terminal terim örnekler arasında ayrım
+                             # yapmayı bırakıyordu. P1 kapalı-döngü ölçümü:
+                             # la=15 → 0/2 tohum parkuru bitiremedi;
+                             # la=3 → 3/3 bitti, ort 4,0/6 kapı.
+                             # (docs/parkur1_kontrol_listesi.md §4)
+                             # ⚠ Eski notlar: 10 m'de fren etkisi / 40 m'de engel
+                             # açıklığı bozulması ölçümleri de o hayali tekneye
+                             # aitti — gerçek tekneyle yeniden ölçülmedi.
     mppi_ref_window_size: 100   # nokta, kayan referans penceresi ileri derinliği
                              # (0.5 m aralıkta 50 m ileri + 12.5 m geri).
     mppi_ref_window_enabled: true  # false → eski tam tarama (regresyon/A-B).

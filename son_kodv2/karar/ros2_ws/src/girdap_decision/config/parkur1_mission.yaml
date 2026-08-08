@@ -1,0 +1,46 @@
+# Girdap İDA — YALNIZ PARKUR-1 görev etiketleri (P1 su testi / P1 koşusu).
+#
+# 🔴 NİYE AYRI DOSYA: `competition_mission.yaml` etiketleri [1,1,2,2,3]'tür.
+# P1'i tek başına koşarken o dosya kullanılırsa (mission_source=fc iken
+# konumlar FC'den, ETİKETLER bu dosyadan okunur — fsm_node
+# ParkurTransitionLogic):
+#   · 2. waypoint'e varınca  → PARKUR_2 (MPPI w_obstacle 50 → 200)
+#   · 4. waypoint'e varınca  → PARKUR_3 = **KAMİKAZE MODU** (hedefe Gaussian
+#     çekici, w_track 1.0) → tekne P1 noktasının üstüne SÜRER ve FSM 3 g şok
+#     bekler. P1 testinde bu hem yanlış hem TEHLİKELİ.
+# Bu dosyada her waypoint `parkur: 1` olduğu için hiçbir geçiş TETİKLENMEZ
+# (ParkurTransitionLogic: bir sonraki parkur listede yoksa geçiş no-op) ve
+# yığın baştan sona PARKUR1 profiliyle koşar.
+#
+# KAÇ SATIR OLMALI: önemi yok. Etiketlerin hepsi 1 olduğu sürece FC'ye kaç
+# nokta yüklendiği fark etmez — fazlası kullanılmaz, eksiği geçiş üretmez.
+# Aşağıdaki 12 satır "hakem ne verirse yeter" payıdır.
+#
+# KONUMLAR: `mission_source: fc` iken lat/lon BURADAN OKUNMAZ (Mission
+# Planner'dan FC'ye yüklenen görev kazanır) — 0.0'lar bilinçli placeholder.
+# `mission_source: file` ile offline koşacaksan gerçek koordinatları yaz.
+#
+# KULLANIM (P1 test günü):
+#   GIRDAP_CONFIG_OVERLAY=yarisma.yaml:parkur1.yaml \
+#     ros2 launch girdap_decision hardware.launch.py
+# (parkur1.yaml yalnız bu dosyayı işaret eder; gerisi yarışma ayarıdır.)
+
+home_ref: {lat: 0.0, lon: 0.0}     # ilk arm noktası runtime'da set edilir
+
+waypoints:
+  - {lat: 0.0, lon: 0.0, parkur: 1, name: "P1_WP1"}
+  - {lat: 0.0, lon: 0.0, parkur: 1, name: "P1_WP2"}
+  - {lat: 0.0, lon: 0.0, parkur: 1, name: "P1_WP3"}
+  - {lat: 0.0, lon: 0.0, parkur: 1, name: "P1_WP4"}
+  - {lat: 0.0, lon: 0.0, parkur: 1, name: "P1_WP5"}
+  - {lat: 0.0, lon: 0.0, parkur: 1, name: "P1_WP6"}
+  - {lat: 0.0, lon: 0.0, parkur: 1, name: "P1_WP7"}
+  - {lat: 0.0, lon: 0.0, parkur: 1, name: "P1_WP8"}
+  - {lat: 0.0, lon: 0.0, parkur: 1, name: "P1_WP9"}
+  - {lat: 0.0, lon: 0.0, parkur: 1, name: "P1_WP10"}
+  - {lat: 0.0, lon: 0.0, parkur: 1, name: "P1_WP11"}
+  - {lat: 0.0, lon: 0.0, parkur: 1, name: "P1_WP12"}
+
+arrival_radius_m: 2.0          # bu yarıçapa girince waypoint'e "varıldı"
+dwell_time_s: 2.0              # her waypoint'te bekleme (GUIDED'da gerçek)
+cruise_velocity_mps: 1.0       # referans seyir hızı (MPPI hedef hızı)

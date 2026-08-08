@@ -301,7 +301,27 @@ class MPPIConfig:
     # w_terminal=50 (pipeline._PARKUR_PROFILES). İkisi BİRLİKTE değişir;
     # w_terminal telafisi olmadan lookahead aracı 1.07 m/s'e düşürür.
     terminal_mode: str = "lookahead"
-    terminal_lookahead_m: float = 15.0
+    # 🔴 15.0 → 3.0 (2026-08-08, kaptan onayı). 15 m yukarıdaki ölçümlerin
+    # yapıldığı HAYALİ tekneye aitti (itki 30 N sanılıyordu, seyir ~5,3 m/s:
+    # 5,3 × 2,5 s = 13,25 → 15 kuralı sağlıyordu). 05.08'de dinamik log 58'den
+    # tanılandı (max_thrust 1,455 N, Xu −2,48) ve gerçek seyir **1,05 m/s**
+    # çıktı → aynı kural artık **1,05 × 2,5 = 2,62 m** diyor; 15 m ufkun
+    # 5,8 KATI, yani rollout uçlarının ERİŞEMEYECEĞİ bir nokta. O zaman
+    # terminal terim örnekler arasında ayrım yapmayı bırakır (hepsi hedeften
+    # ~13 m uzakta biter) ve fiilen "burnu hedefe çevir, tam gaz"a dejenere
+    # olur — yanal hassasiyet, yani kapı çizgisini tutturma yeteneği kaybolur.
+    #
+    # ÖLÇÜM (P1 kapalı-döngü, planning_node zincirinin aynası, 6 kapı + 6 GN,
+    # docs/parkur1_kontrol_listesi.md §4):
+    #   la=15 (eski) → 0/2 tohum parkuru BİTİREMEDİ (3/6 ve 1/6 GN, 400 s)
+    #   la=3         → 3/3 tohum bitti (101/140/252 s), ort 4,0/6 kapı
+    #   la=5         → 3/3 bitti ama ort 3,0/6 kapı (puan üreten kapı daha az)
+    # Kamera 360°/25 m yapılıp algı MÜKEMMELLEŞTİRİLDİĞİNDE de la=15 bir
+    # tohumda varamadı → sorun algıda değil, ufuk/lookahead ilişkisinde.
+    # ⚠ `T` BİLEREK 50 kaldı: hesap maliyeti (Orin Nano) değişmesin.
+    # ⚠ 3,0 uydurulmuş bir sayı DEĞİL: kuralın kendi alt sınırı (2,62 m)
+    #   yukarı yuvarlanmış hâli. Tekne hızı ölçümle değişirse bu da değişir.
+    terminal_lookahead_m: float = 3.0
 
     # Hesap backend'i (docs/mppi_cuda_plani.md): "numpy" = CPU float64
     # (eski davranış birebir), "cupy" = GPU float32, "auto" = cupy+CUDA

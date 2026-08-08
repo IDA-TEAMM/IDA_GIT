@@ -492,6 +492,14 @@ def _cfg(pencere: bool, **kw) -> MPPIConfig:
     base = dict(
         K=128, T=20, seed=4, backend="numpy",
         ref_window_enabled=pencere, ref_window_size=100,
+        # ⚠ w_terminal: kod varsayılanı 5.0, ama SEVK EDİLEN eşleşme
+        # `_PARKUR_PROFILES`'ın üçünde de 50.0 — lookahead'den AYRILMAZ
+        # (CLAUDE.md F-M.3, `test_terminal_mode_varsayilan_lookahead`).
+        # Telafisiz 5.0'da terminal gradyan (2·w·d) w_control'ü yenemez;
+        # araç sürünür, çapa hiç ilerlemez → pencere testleri sahada HİÇ
+        # koşmayan bir konfigürasyonu ölçmüş olurdu (08.08'de lookahead
+        # 15 → 3 düşünce tam bu oldu, üç test kırıldı).
+        w_terminal=50.0,
     )
     base.update(kw)
     return MPPIConfig(**base)
@@ -515,8 +523,13 @@ def test_capa_kapali_donguda_monoton_ilerler(
     dyn: CatamaranDynamics, bounds: Bounds
 ) -> None:
     """Çapa kapalı döngü boyunca monoton artmalı (tekne referansta ilerliyor)
-    ve hiçbir adımda kenar-fallback'e düşmemeli (pencere yeterli)."""
-    ctrl, _, anchors, _ = _kapali_dongu(dyn, bounds, _cfg(True), n_steps=60)
+    ve hiçbir adımda kenar-fallback'e düşmemeli (pencere yeterli).
+
+    n_steps: gerçek tekne yavaş (tam itkide denge hızı ~1,17 m/s, duruştan
+    ivmeleniyor) — 60 adımda 0,6 m, yani 0,5 m aralıkta çapa ancak 1 ilerler.
+    150 adımda ~3,1 m / 6 indeks: pay dar değil, dinamiğin küçük bir
+    değişikliği testi kararsızlaştırmasın."""
+    ctrl, _, anchors, _ = _kapali_dongu(dyn, bounds, _cfg(True), n_steps=150)
     assert all(b >= a for a, b in zip(anchors, anchors[1:])), (
         f"çapa geri gitti: {anchors}"
     )
@@ -592,7 +605,7 @@ def test_yeni_referans_capayi_sifirlar(
     """set_reference YENİ bir yol verirse çapa sıfırlanır; AYNI yol tekrar
     yüklenirse korunur (boru hattı her engel tazelemesinde çağırıyor —
     koşulsuz sıfırlama pencereyi her adımda rotanın başına atardı)."""
-    ctrl, _, anchors, _ = _kapali_dongu(dyn, bounds, _cfg(True), n_steps=60)
+    ctrl, _, anchors, _ = _kapali_dongu(dyn, bounds, _cfg(True), n_steps=150)
     assert ctrl._ref_anchor_idx > 0                    # çapa ilerlemiş durumda
     ilerlemis = ctrl._ref_anchor_idx
 
@@ -650,7 +663,12 @@ def test_lookahead_referans_sonunda_son_noktaya_duser(
     """Çapa rotanın sonuna yaklaşınca terminal hedefi ref[-1]'e kırpılır —
     varış davranışı (goal'e yanaşma) korunur."""
     ctrl = MPPIController(
-        dyn, bounds, [], _cfg(True, K=1, T=4, terminal_mode="lookahead"),
+        # 15.0 AÇIK yazılı: aşağıdaki çapalar (380/400) "30 indekslik
+        # lookahead'ten yakın" olacak şekilde seçildi. Sevk edilen varsayılan
+        # 3.0 = 6 indeks; onunla çapa 380 kırpılmaz ve test kırpmayı ölçmez.
+        dyn, bounds, [],
+        _cfg(True, K=1, T=4, terminal_mode="lookahead",
+             terminal_lookahead_m=15.0),
     )
     ctrl.set_reference(_UZUN_REF, spacing=0.5)          # son nokta (200, 0)
     son = np.asarray(ctrl._ref_xy[-1])
@@ -684,6 +702,36 @@ def test_terminal_mode_varsayilan_lookahead() -> None:
         "lookahead varsayılanı w_terminal telafisi olmadan aracı yavaşlatır"
 
 
+def test_terminal_lookahead_ufuk_kuralini_saglar(dyn: CatamaranDynamics) -> None:
+    """🔴 NÖBETÇİ (2026-08-08): `terminal_lookahead_m` ≥ seyir_hızı × ufuk.
+
+    Bu test bir arızadan doğdu. 05.08'de dinamik model log 58'den yeniden
+    tanılandı (max_thrust 30 → 1.455 N, Xu → −2.48) ama ONA BAĞLI olan
+    `terminal_lookahead_m`=15.0 dokunulmadan kaldı — çünkü aralarındaki bağ
+    hiçbir yerde koda yazılmamıştı, yalnız CLAUDE.md'de cümleydi. 15 m, gerçek
+    teknenin 2,5 s'lik ufkunda ASLA varamayacağı bir nokta: terminal terim
+    rolloutlar arasında ayrım yapmayı bırakıp "burnu hedefe çevir, tam gaz"a
+    dejenere olur, yanal (kapı çizgisini tutturma) hassasiyeti kaybolur.
+    P1 kapalı döngüde ölçülen sonuç: 0/2 tohum parkuru bitiremedi (§0.16a).
+
+    Kural artık koda bağlı. Terminal hız = `2·max_thrust/|Xu|` (tam itkide
+    sürükleme dengesi — `test_planning_node.py`'deki aynı formül), ufuk = T·dt.
+
+    ⚠ Bu test KIRMIZI olursa çözüm sayıyı büyütmek DEĞİL: dinamik yeniden
+    ölçüldüyse `terminal_lookahead_m`'yi (gerekirse `T`'yi) o ölçümden TÜRET
+    ve dört yerde birden güncelle (`test_planning_config_drift` bağlıyor).
+    """
+    cfg = MPPIConfig()
+    terminal_hiz = 2.0 * dyn.p.max_thrust / abs(dyn.p.Xu)
+    ufuk_s = cfg.T * cfg.dt
+    assert cfg.terminal_lookahead_m >= terminal_hiz * ufuk_s, (
+        f"lookahead {cfg.terminal_lookahead_m} m < terminal hız "
+        f"{terminal_hiz:.3f} m/s × ufuk {ufuk_s:.2f} s = "
+        f"{terminal_hiz * ufuk_s:.3f} m — rollout uçları hedefe ERİŞEMEZ, "
+        "terminal terim örnekler arasında ayrım yapmayı bırakır"
+    )
+
+
 def test_lookahead_ileri_surus_gradyanini_kucultur(
     dyn: CatamaranDynamics, bounds: Bounds
 ) -> None:
@@ -705,7 +753,10 @@ def test_lookahead_ileri_surus_gradyanini_kucultur(
         c = MPPIController(
             dyn, bounds, [],
             _cfg(True, K=1, T=4, w_track=0.0, w_heading=0.0, w_terminal=5.0,
-                 terminal_mode=mod),
+                 # 15.0 AÇIK yazılı — aşağıdaki aritmetik elle bu mesafeye
+                 # göre hesaplandı. Sevk edilen varsayılan 3.0 (08.08, §0.16a);
+                 # onu `test_planning_config_drift` + ufuk nöbetçisi donduruyor.
+                 terminal_lookahead_m=15.0, terminal_mode=mod),
         )
         c.set_reference(_UZUN_REF, spacing=0.5)        # rota sonu x=200
         c._ref_anchor_idx = 200                        # x=100 → lookahead hedefi x=115
@@ -735,7 +786,10 @@ def test_lookahead_terminal_maliyeti_dusurur(
         c = MPPIController(
             dyn, bounds, [],
             _cfg(True, K=1, T=4, w_track=0.0, w_heading=0.0, w_terminal=5.0,
-                 terminal_mode=mod),
+                 # 15.0 AÇIK yazılı — aşağıdaki aritmetik elle bu mesafeye
+                 # göre hesaplandı. Sevk edilen varsayılan 3.0 (08.08, §0.16a);
+                 # onu `test_planning_config_drift` + ufuk nöbetçisi donduruyor.
+                 terminal_lookahead_m=15.0, terminal_mode=mod),
         )
         c.set_reference(_UZUN_REF, spacing=0.5)
         c._ref_anchor_idx = 200                          # x=100 — rota ortası
