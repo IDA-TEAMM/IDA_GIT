@@ -394,7 +394,29 @@ gerekmedi, doğrudan lensten ölçüldü.
 >    ayrı kümeye** bölünebilir. `gate_follower`'ın açıkça korunmaya çalıştığı
 >    hata bu ("tek dubanın iki tespite bölünmesi" → sahte kapı çifti).
 >    **→ Yahya (LiDAR/karar).**
-> 2. 🔴 **DATASET 416×416 — bbox KOORDİNAT UZAYI ACİLEN TEYİT EDİLMELİ.**
+> 2. ✅ **DATASET 416×416 — KONTROL EDİLDİ, ÜÇ ENDİŞE DE ZATEN ÇÖZÜLMÜŞ.**
+>    Aşağıdaki üç madde (2-eski/2b/2c) 09.08'de ham risk olarak yazılmıştı;
+>    aynı gün `algi/` aynasındaki kod okunup **üçünün de Eyüp tarafından
+>    çözüldüğü** görüldü. Tarihsel kayıt olarak bırakıldı ama **AÇIK İŞ
+>    DEĞİLLER — kimseye iletilmeyecek.** Çözümleri:
+>
+>    | Endişe | Durum | Mekanizma |
+>    |---|---|---|
+>    | bbox 416-uzayında gelir mi? | ✅ hayır | `duba_gecis_navigator.py` → `BBOX_W, BBOX_H = 1280, 720` **sabit**; `bbox_piksel()` NN-normalize bbox'ı bu uzaya çevirir. Bizim `camera_image_width_px` ile eşleşmek üzere **bilinçli** seçilmiş, kodda `hardware.yaml:207-208`'e referans var |
+>    | HFOV kırpmadan 42°'ye düşer mi? | ✅ hayır | `setPreviewKeepAspectRatio(False)` → 4:3 kare 416×416'ya **EZİLİR** (kırpılmaz) → **tam FOV korunur**, letterbox payı 0 → `camera_hfov_rad: 1.2` **doğru** |
+>    | 416 yerine 640 kullanılsa? | ✅ kullanılamaz | 416 **bilinçli**: Myriad X VPU sınırı. YOLO11n 416 + StereoDepth = **11 FPS**, ölçülen tavan **12,2**. 640 bu cihazda bütçeyi aşar. Önerim geçersizdi |
+>
+>    ⚠️ Ayrıca Eyüp **tam bu arızayı** kendi kodunda zaten belgelemiş, birebir
+>    aynı aritmetikle: *"640 yayınlayıp 1280'e bölmek → kare ortasındaki duba
+>    +17°'de görünür, tolerans 8,6° → hiçbir LiDAR kümesine eşleşmez → sınıf
+>    düşer → geçit bulunamaz"*. Yani sözleşme iki taraftan da korunuyor.
+>
+>    **Ders:** `algi/` bu repoda **ayna olarak duruyor** — karar tarafında bir
+>    algı endişesi doğduğunda önce oradaki kod ve `KAYNAK.md` topic sözleşmesi
+>    okunmalı, sonra soru sorulmalı. Üç madde de o adım atlandığı için
+>    gereksiz "acil" olarak yazıldı.
+>
+> 2-eski. ~~🔴 **DATASET 416×416 — bbox KOORDİNAT UZAYI ACİLEN TEYİT EDİLMELİ.**~~
 >    Kullanıcı bildirdi (09.08): eğitilecek dataset görüntüleri **416×416**.
 >    `perception_fusion_node.py:360` şunu yapıyor:
 >    ```python
@@ -447,11 +469,15 @@ gerekmedi, doğrudan lensten ölçüldü.
 >    Ek not: 16:9'u **kareye letterbox**'lamak satırların **%44'ünü dolgu**
 >    yapar; dikdörtgen `imgsz` (örn. 640×384) hem pikseli daha iyi kullanır
 >    hem 640×640'tan hızlıdır. **→ Eyüp'ün kararı, karar ekibi sadece bildirir.**
-> 3. ✅ **Bu dataset hiç doğrulanmamış HSV eşiklerini doğrulayabilir.**
->    `camera_buoys.py` docstring'i kırmızı/yeşil/kahverengi için *"sahada
->    henüz doğrulanmadı, ilk tahmin, kör güvenilmemeli"* diyor. Karelerde
->    **sarı, yeşil, turuncu/kırmızı** duba var — tam ihtiyaç duyulan veri.
->    **→ Eyüp (algı).**
+> 3. ⚪ **Karar tarafının HSV eşikleri — YARIŞMA YOLUNDA KULLANILMIYOR, konu
+>    değil.** `camera_buoys.py` docstring'i kırmızı/yeşil/kahverengi için
+>    *"sahada doğrulanmadı, kör güvenilmemeli"* diyor ve bu doğru; ama o kod
+>    `perception_camera_node`'da yaşıyor ve node yalnız
+>    `use_onboard_camera:=true` ile açılıyor — **varsayılan `false`**
+>    (`hardware.launch.py:488`). Yarışmada `/perception/buoys`'u **Eyüp'ün OAK
+>    node'u** üretiyor (VPU'da YOLO11n), HSV yolu hiç koşmuyor. İkisi birden
+>    açılırsa OAK-D USB cihazını iki süreç açamaz — varsayılanın `false`
+>    olması bu yüzden **doğru ayar**, değiştirilmemeli.
 
 > ✅ **Beklenmedik çapraz teyit:** `39.5 + 39.0 = 78.5 cm` — bu **tam olarak**
 > §1'de ölçülen gövde genişliği. İki bağımsız ölçüm çakıştı; ayrıca metrenin
