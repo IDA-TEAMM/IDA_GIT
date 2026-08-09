@@ -107,15 +107,18 @@ Ayrıca Mission Planner "Load from file" **yalnız farklı olanları** yazdığ�
 | Parametre | FC'de | Neden bekliyor |
 |---|---|---|
 | 🔴 `SERIAL2_BAUD` | **921600** (bizde 57600) | — |
-| 🔴 `SERIAL2_OPTIONS` | **8 = TX/RX swap** (bizde 0) | — |
+| ~~`SERIAL2_OPTIONS`~~ | 8 | ✅ **DEĞİŞMEMİŞ — bizde de zaten 8.** İlk raporda yanlış yazıldı (eski dosyada `OPTIONS` satırı grep'lenmemiş, yokluğu 0 sanıldı). TX/RX swap **bizim kendi ayarımız**, kablolama onu gerektiriyor |
 | 🔴 `SERIAL1_BAUD` | **57600** (bizde 19200) | — |
 | ⚠️ `BATT_AMP_PERVLT` | **0.44** (bizde 36.36) | 0.44 A/V ile 3.3 V tam skalada ~1.5 A okunur; sistemde **50 A** kontaktör var → akımı ciddi eksik okur. Nasıl bulundu? |
 | ⚪ `COMPASS_MOTCT` | 1 | Motor kompanzasyonu açık ama `COMPASS_MOT_*` katsayıları değişmemiş (muhtemelen 0) → etkisiz. Kalibre edildi mi? |
 
 > 🔴 **SERIAL sorusu her şeyi kilitliyor:** bizim `fcu_url` **57600** diyor ve
-> dokümanımız FTDI'yi **TELEM2**'de gösteriyor. TELEM2 artık 921600 + swap.
+> dokümanımız FTDI'yi **TELEM2**'de gösteriyor. TELEM2 artık **921600** (swap ikisinde de aynı).
 >
-> - FTDI **TELEM2'de kaldıysa** → MAVROS **hiç bağlanamaz**. 09.08 gecesi
+> Tek gerçek uyumsuzluk **baud**: `SERIAL2_OPTIONS` (swap) iki tarafta da 8,
+> yani kablolama sözleşmesi değişmemiş.
+>
+> - FTDI **TELEM2'de kaldıysa** → MAVROS **hiç bağlanamaz** (921600 ↔ 57600). 09.08 gecesi
 >   Jetson'da görülen `connected: false` bunun belirtisi olabilir (bataryayı
 >   kapalı sanmıştım — ayırt edilemedi).
 > - FTDI **TELEM1'e taşındıysa** → 57600 tutuyor, çalışır; ama dokümanı ve
