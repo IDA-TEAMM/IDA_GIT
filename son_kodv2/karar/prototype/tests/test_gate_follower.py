@@ -16,6 +16,7 @@ import math
 import pytest
 
 from prototype.mission.gate_follower import (
+    BUOY_RADIUS_M,
     ONAY_TICK,
     Gate,
     GateDiagnostics,
@@ -259,21 +260,31 @@ def test_gecilebilirlik_duba_capini_hesaba_katar() -> None:
     """🔴 Dubalar MERKEZDEN algılanır; serbest açıklık `sep − 2r`.
 
     Yalnız gövde genişliğiyle karşılaştırmak süzgeci duba çapı kadar (30 cm)
-    GEÇ kapatır: `[0.78 ; 1.08)` aralığındaki çiftler geçilemez oldukları hâlde
-    kapı sayılır, araç sığmayacağı bir ortaya nişan alır ve İKİ dubaya birden
-    çarpar. Üstelik tam bu aralık sahte çiftlerin (tek dubanın iki kümeye
-    bölünmesi, su yansıması) düştüğü yerdir.
+    GEÇ kapatır: `[0.785 ; 1.085)` aralığındaki çiftler geçilemez oldukları
+    hâlde kapı sayılır, araç sığmayacağı bir ortaya nişan alır ve İKİ dubaya
+    birden çarpar. Üstelik tam bu aralık sahte çiftlerin (tek dubanın iki
+    kümeye bölünmesi, su yansıması) düştüğü yerdir.
+
+    ⚠ Eşik SABİT YAZILMAZ — gövde genişliği ölçülen bir sayıdır (09.08'de
+    0.78 → 0.785 güncellendi). Test bir DEĞERİ değil İLİŞKİYİ donduruyor:
+    "geçilebilir en dar merkez-mesafesi = gövde genişliği + duba ÇAPI".
     """
-    assert _CFG.min_passable_width == pytest.approx(1.08, abs=1e-9)
+    assert _CFG.min_passable_width == pytest.approx(
+        _CFG.hull_width_m + 2.0 * BUOY_RADIUS_M, abs=1e-9
+    )
+    # Duba çapı GERÇEKTEN hesaba giriyor (yalnız gövde genişliği değil).
+    assert _CFG.min_passable_width - _CFG.hull_width_m == pytest.approx(
+        0.30, abs=1e-9
+    )
     diag = GateDiagnostics()
-    # sep = 0.90 → gövdeden (0.78) GENİŞ ama duba yüzeyleri arası yalnız 0.60.
+    # sep = 0.90 → gövdeden (0.785) GENİŞ ama duba yüzeyleri arası yalnız 0.60.
     assert select_gate(
         (0.0, 0.0), (0.0, 20.0), [(-0.45, 10.0), (0.45, 10.0)], _CFG, diag
     ) is None
     assert diag.reddedilen_genislik[0] == pytest.approx(0.9, abs=1e-6)
     assert 0.9 > _CFG.hull_width_m          # eski testi GEÇERDİ — asıl bulgu bu
 
-    # sep = 1.20 → serbest açıklık 0.90 > 0.78, gövde sığar.
+    # sep = 1.20 → serbest açıklık 0.90 > 0.785, gövde sığar.
     gate = select_gate((0.0, 0.0), (0.0, 20.0), [(-0.6, 10.0), (0.6, 10.0)], _CFG)
     assert gate is not None
 

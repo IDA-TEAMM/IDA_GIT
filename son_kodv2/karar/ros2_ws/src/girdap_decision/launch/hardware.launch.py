@@ -192,7 +192,7 @@ _GATE_DEFAULTS: dict[str, tuple[object, type]] = {
     "gate_following_enabled": (True, bool),
     "edge_buoy_class_id": (0, int),
     "use_classified_obstacles": (True, bool),
-    "hull_width_m": (0.78, float),
+    "hull_width_m": (0.785, float),
     "hull_length_m": (1.04, float),
     # B2 huni (09.08): kapı direğinin ceza payı ÜST sınırı. Payın kendisi
     # ölçülen açıklıktan türer (planning_node._huni_payi) — bu yalnız tavan.

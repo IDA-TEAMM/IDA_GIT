@@ -49,11 +49,11 @@ Bu eksikti, iki sebeple:
    gövdesi ortadan **13.75 cm sancağa kaymış** geçerdi:
 
 ```
-kapı açıklığı (md 5.5.2.1, ~1.35 m varsayımı)        1.350 m
-tekne genişliği                                      0.780 m
-→ ideal yan pay (her iki yanda)                      0.285 m
-base_link ofseti yüzünden  sancak payı  0.285−0.1375 = 0.148 m
-                           iskele payı               = 0.423 m
+kapı açıklığı (md 5.5.2.1, ~1.35 m varsayımı)         1.350 m
+tekne genişliği (ölçüldü 09.08)                       0.785 m
+→ ideal yan pay (her iki yanda)                       0.2825 m
+base_link ofseti yüzünden sancak payı  0.2825−0.1375 = 0.145 m
+                          iskele payı                = 0.420 m
 ```
 
 Sancak emniyet payı **yarıya iniyordu.** Şartname kapı genişliğinin alana göre
@@ -127,20 +127,26 @@ boştu, bkz. `olcum_formu.md` §2 / F5.1).
 | Ölçü | Değer | Durum |
 |---|---|---|
 | Gövde **boyu** | **1.03 m** | ✅ ölçüldü 2026-08-04 (kodda 1.04 yazıyor, 1 cm fark tolerans içinde) |
-| Gövde **genişliği** (en geniş yer) | 0.78 m | 🟡 **KAYNAKLAR ÇELİŞİYOR** — aşağıya bak |
-| Fender/şamandıra dahil toplam genişlik | `____` m | ⏳ ölçülmedi |
+| Gövde **genişliği** (en geniş yer) | **0.785 m** | ✅ ölçüldü 2026-08-09 (78,5 cm) |
+| Fender/şamandıra dahil toplam genişlik | `____` m | ⏳ ölçülmedi — 0.785 gövdenin kendisi |
 
-> 🟡 **Genişlik çelişkisi (çözülmeli):** `hardware.yaml` satırı
-> `hull_width_m: 0.78 # ÖLÇÜLMÜŞ (GIRDAP_DURUM §1)` diyor; ama
-> `olcum_formu.md` §1 aynı sayıyı **"teyit edin"** diye işaretleyip alanı boş
-> bırakmış (`____`). Yani 0.78 eski bir dokümandan geliyor, 04.08 ölçüm
-> turunda **yeniden ölçülmedi** — boy ölçüldü (1.04 → gerçek **1.03**), en
-> ölçülmedi. Boyda 1 cm sapma çıktığına göre ende de çıkabilir.
+> **Genişlik ölçümü (2026-08-09):** şeritle, **duba yüksekliği bandında**
+> (su hattı ↔ ~50 cm — dubaya sadece o bant çarpabilir, üstteki LiDAR kubbesi
+> / anten sayılmaz). Kodda kaynağı belirsiz **0.78** yazıyordu → **5 mm fark**,
+> yani eski değer pratikte doğruydu.
 >
-> Genişlik `gate_follower`'ın kapı geçilebilirlik testinde kullanılıyor —
-> eşik ayarı değil, **fizik**: bundan dar açıklık "kapı" sayılmıyor. Gerçek en
-> 0.78'den **büyükse** geçemeyeceği bir kapıyı geçilebilir sayar. **Şeritle
-> 2 dakikada ölçülür, ölçün.**
+> **Kod 4 yerde 0.785'e güncellendi** (`gate_follower.py` `GateFollowerConfig` ·
+> `hardware.launch.py` `_GATE_DEFAULTS` · `params.yaml` · `hardware.yaml`;
+> `test_planning_config_drift.py` dördünü birbirine bağlar). 5 mm için
+> güncellendi çünkü genişlik **iki** emniyet payı üretiyor —
+> `min_passable_width` ve `planning_node._huni_payi` — ve huni ölçümü gövde
+> payını **−0,006 m**'de buluyor; 6 mm'lik marjda 5 mm yuvarlanmaz. Yön
+> güvenli tarafta: büyük genişlik = daha muhafazakâr.
+>
+> 🔑 **Kaptana not:** bu fark `gate_post_margin_m` analizini **bozmuyor**,
+> teyit ediyor. Gövde payı −0,006 → −0,0085 m; ikisi de "temas" tarafında,
+> dolayısıyla 1.0'ın yetersiz / 1.4 tavanının gerekli olduğu sonucu aynen
+> geçerli. Yeniden ölçüm gerekmez.
 
 ---
 

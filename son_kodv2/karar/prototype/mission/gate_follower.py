@@ -117,7 +117,7 @@ class GateFollowerConfig:
     # Genişlik: bundan dar bir açıklıktan tekne fiziksel olarak GEÇEMEZ, o
     # yüzden öyle bir çift kapı değildir (büyük olasılıkla tek dubanın iki
     # tespite bölünmesidir). Bu bir eşik ayarı değil, geçilebilirlik testi.
-    hull_width_m: float = 0.78
+    hull_width_m: float = 0.785
     # Boy: dubanın "önümüzde" sayılması için burnun ötesinde olması gerekir.
     hull_length_m: float = 1.04
 
@@ -138,7 +138,7 @@ class GateFollowerConfig:
         🔴 Dubalar MERKEZLERİNDEN algılanır ama gövde duba YÜZEYLERİ arasından
         geçer: serbest açıklık = `merkez_mesafe − 2r`. Yalnız `hull_width_m`
         ile karşılaştırmak duba çapı kadar (30 cm) GEÇ kapanan bir süzgeçtir →
-        `[0.78 ; 1.08)` aralığındaki çiftler geçilemez oldukları hâlde kapı
+        `[0.785 ; 1.085)` aralığındaki çiftler geçilemez oldukları hâlde kapı
         sayılır, araç sığmayacağı bir orta noktaya nişan alır ve **iki dubaya
         birden çarpar**. Üstelik tam bu aralık sahte çiftlerin (tek dubanın iki
         kümeye bölünmesi, su yansıması) düştüğü yerdir.

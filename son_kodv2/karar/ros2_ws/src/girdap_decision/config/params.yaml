@@ -130,7 +130,7 @@ planning_node:
     #                     geometrik sınır; ölçek-bağımsız, genişlik bilmez)
     #   kapı geçildi    = ileri mesafe ≤ 0  (kapı düzlemi arkada kaldı)
     #   aynı kapı mı    = kapının kendi genişliğinin yarısı (öz-ölçekli)
-    hull_width_m: 0.78       # m, ÖLÇÜLMÜŞ gövde genişliği
+    hull_width_m: 0.785      # m, ÖLÇÜLDÜ 09.08 (şeritle, duba yüksekliği bandı)
     hull_length_m: 1.04      # m, ÖLÇÜLMÜŞ gövde boyu
     # --- B2 HUNİ (2026-08-09) — kapı direği artık ENGEL de kalıyor ---
     # Direkler çarpışma korumasından TAMAMEN çıkarılıyordu; dubalardan iten

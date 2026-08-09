@@ -546,7 +546,7 @@ Bu yüzden her sayı ya **ölçülmüş bir tekne boyutudur** ya da **saf geomet
 | eski (tahmin) | yerine geçen |
 |---|---|
 | `gate_width_max` = 20 m | **YOK** — genişlik hiç kısıt değil, geniş kapı da geçilir |
-| `gate_width_min` = 1.0 m | **gövde genişliği 0.78 m** (fizik: dar açıklıktan geçilemez) |
+| `gate_width_min` = 1.0 m | **gövde genişliği 0.785 m** (ölçüldü 09.08; fizik: dar açıklıktan geçilemez) |
 | `max_lookahead` = 25 m | **YOK** — menzili algı katmanı belirler |
 | `pair_depth_tol` = 3.0 m | **\|Δileri\| < \|Δyanal\|** (45° geometrik ayrım) |
 | `min_forward` = 0.5 m | **gövde boyu / 2** (burun hattı) |

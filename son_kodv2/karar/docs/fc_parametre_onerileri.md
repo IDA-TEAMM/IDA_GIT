@@ -189,7 +189,7 @@ merkez hattı, gövde tabanı). Ölçümler `docs/olcum_formu.md` §0/§2'de.
 varsayar; mutlak konumu GPS çivilediği için raporlanan konum pratikte **GPS
 anteninin** konumu olur. Anten merkez hattının 16 cm iskelesinde → tüm konum
 16 cm kayık. Kapı ortasına sürerken tekne gövdesi o kadar sancağa kaymış
-geçer; kapı ~1.35 m, tekne 0.78 m → yan pay 28.5 cm iken sancak payı yarıya
+geçer; kapı ~1.35 m, tekne 0.785 m → yan pay 28.25 cm iken sancak payı yarıya
 iner (md 5.5.4.2 geçiş + `Ç1`/`Ç2` çarpma cezası).
 
 > ⚠️ **EKSEN:** ArduPilot body frame = X ileri, **Y sancak +**, **Z aşağı +**.

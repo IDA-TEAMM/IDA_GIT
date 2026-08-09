@@ -180,14 +180,27 @@ etkiler.
 ## §1 — Tekne gövde ölçüleri
 
 `gate_follower` bu iki sayıyı kullanıyor (kapı geçilebilirlik testi — eşik
-ayarı değil, fizik). Şu an kodda `hull_width_m=0.78`, `hull_length_m=1.04`
-yazıyor (kaynak: GIRDAP_DURUM §1). **Teyit edin:**
+ayarı değil, fizik). Kaynağı belirsiz olan eski değerler `hull_width_m=0.78`,
+`hull_length_m=1.04` idi (kaynak: GIRDAP_DURUM §1). **İkisi de ölçüldü:**
 
-| Ölçü | Kodda | Ölçülen | Not |
+| Ölçü | Eski (kodda) | Ölçülen | Not |
 |---|---|---|---|
-| Gövde genişliği (uçtan uca, en geniş yer) | 0.78 m | `____` m | Kapıdan sığma hesabı |
+| Gövde genişliği (uçtan uca, en geniş yer) | 0.78 m | **0.785 m** ✅ | Ölçüldü 2026-08-09 (78,5 cm, şeritle, duba yüksekliği bandında). 5 mm fark → **kod 4 yerde güncellendi** (aşağıya bak) |
 | Gövde boyu | 1.04 m | **1.03 m** ✅ | Ölçüldü 2026-08-04; koddaki 1.04 ile 1 cm fark → tolerans içinde, kod değişmiyor |
-| Şamandıra/fender vb. ile toplam genişlik | — | `____` m | Çarpma payı için |
+| Şamandıra/fender vb. ile toplam genişlik | — | `____` m ⏳ | Çarpma payı için. **Hâlâ açık** — 0.785 gövdenin kendisi |
+
+> **Genişlik neden boyun aksine koda işlendi (5 mm için):** boy yalnız burun
+> hattı (`hull_length_m/2`) hesabında kullanılıyor, genişlik ise **iki** yerde
+> emniyet payı üretiyor — `min_passable_width` (kapı geçilebilir mi) ve
+> `planning_node._huni_payi` (kapı direği ceza halkası, 09.08). Huni payı
+> ölçümü gövde payını **−0,006 m** bulmuştu; 6 mm'lik bir marjda 5 mm'yi
+> yuvarlamak doğru değil. **Yön güvenli tarafta:** büyük genişlik = daha
+> muhafazakâr.
+>
+> Güncellenen 4 yer (drift testi dördünü birbirine bağlar, biri kalırsa CI
+> kırmızı): `prototype/mission/gate_follower.py` `GateFollowerConfig` ·
+> `launch/hardware.launch.py` `_GATE_DEFAULTS` · `config/params.yaml` ·
+> `config/hardware.yaml`.
 
 ---
 
@@ -270,10 +283,10 @@ geometrik merkezinde DEĞİL.
 
 ```
 kapı açıklığı (md 5.5.2.1'e göre değişken, ~1.35 m varsayımı)   1.350 m
-tekne genişliği                                                 0.780 m
-→ ideal yan pay (her iki yanda)                                 0.285 m
-base_link ofseti yüzünden sancak payı  0.285 − 0.1375       =   0.148 m
-                                       iskele payı           =   0.423 m
+tekne genişliği (ölçüldü 09.08)                                 0.785 m
+→ ideal yan pay (her iki yanda)                                 0.2825 m
+base_link ofseti yüzünden sancak payı  0.2825 − 0.1375      =   0.145 m
+                                       iskele payı           =   0.420 m
 ```
 
 Yani sancak tarafındaki emniyet payı **yarıya iniyor**. Şartname kapı

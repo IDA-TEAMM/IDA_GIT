@@ -121,7 +121,9 @@ planning:
   gate_following_enabled: true     # false → ham görev noktasına git (eski davranış)
   edge_buoy_class_id: 0            # turuncu KENAR dubası → engel DEĞİL, kapı
   use_classified_obstacles: true   # sınıflı topic aktığında obstacle_map'i ezer
-  hull_width_m: 0.78               # ÖLÇÜLMÜŞ (GIRDAP_DURUM §1) — bundan dar
+  hull_width_m: 0.785              # ÖLÇÜLDÜ 09.08 (78,5 cm — şeritle, duba
+                                   # yüksekliği bandında; eskiden 0.78 idi ve
+                                   # kaynağı belirsizdi) — bundan dar
                                    # açıklıktan tekne geçemez → kapı sayılmaz
   hull_length_m: 1.04              # ÖLÇÜLMÜŞ — yarısı burun hattı
   # B2 HUNİ (09.08): kapı direği artık ENGEL de kalıyor, payı ölçülen
