@@ -18,7 +18,7 @@
 #   sonradan düzelse bile DOSYA ADLARI YANLIŞ KALIR.
 #
 # 🔴 NEDEN Type=oneshot (seri port tekildir)
-#   MAVROS /dev/ttyUSB0'ı açık tutar; iki süreç aynı portu açamaz. Bu servis
+#   MAVROS /dev/pixhawk'ı açık tutar; iki süreç aynı portu açamaz. Bu servis
 #   MAVROS'tan ÖNCE koşar, portu bırakır, çıkar. Ayrıca saat kurucu MAVROS'u
 #   bekleyemez: MAVROS'u girdap-karar başlatıyor → dairesel bağımlılık olurdu.
 #
@@ -52,8 +52,8 @@ Description=GIRDAP IDA — sistem saatini Pixhawk GPS saatinden kur (md 4.2)
 # Saat, teslim node'lari dosya adlarini uretmeden ONCE dogru olmali.
 Before=girdap-karar.service
 # Seri port (FTDI/USB) enumerate olmus olsun.
-After=dev-ttyUSB0.device
-Wants=dev-ttyUSB0.device
+After=dev-pixhawk.device
+Wants=dev-pixhawk.device
 # NTP ile yarismasin: internet varsa (gelistirme) timesyncd zaten kurar.
 Conflicts=systemd-timesyncd.service
 
@@ -62,7 +62,7 @@ Type=oneshot
 RemainAfterExit=yes
 # root SART: clock_settime + adjtimex(ADJ_STATUS) CAP_SYS_TIME ister.
 User=root
-ExecStart=/usr/local/bin/girdap_saat_kur.py --port /dev/ttyUSB0 --baud 57600 --zaman-asimi 90
+ExecStart=/usr/local/bin/girdap_saat_kur.py --port /dev/pixhawk --baud 57600 --zaman-asimi 90
 # Kurulamazsa (GPS fix yok) yigin YINE baslamali -> basarisizlik yutulur.
 SuccessExitStatus=0 1 2 3 4
 TimeoutStartSec=120

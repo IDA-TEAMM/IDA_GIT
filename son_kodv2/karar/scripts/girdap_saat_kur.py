@@ -8,9 +8,19 @@ Açılışta **bir kez** koşar (`girdap-saat.service`, oneshot), saati kurar, �
 NEDEN VAR
 ═══════════════════════════════════════════════════════════════════════════
 Jetson yanlış saatle açılıyor — ÖLÇÜLDÜ, tahmin değil: 06.08'de ~15 saat,
-07.08'de ~3 saat geri. md 4.2 teslimleri (Dosya-1/2/3) **zaman etiketli** olmak
-zorunda; geçersiz dosya başına **5 ceza puanı** (md 5.5.4.3.5). Yanlış saat
-SESSİZDİR: dosyalar üretilir, damgalar makul görünür, kimse fark etmez.
+07.08'de ~3 saat, **09.08'de 25 saat 57 dakika** geri. md 4.2 teslimleri
+(Dosya-1/2/3) **zaman etiketli** olmak zorunda; geçersiz dosya başına **5 ceza
+puanı** (md 5.5.4.3.5). Yanlış saat SESSİZDİR: dosyalar üretilir, damgalar
+makul görünür, kimse fark etmez.
+
+🔴 **KÖK NEDEN (09.08'de Jetson'da ölçüldü):** `timedatectl` →
+`RTC time: Thu 1970-01-01 00:13:54` · `System clock synchronized: no`.
+RTC **pilsiz** — her güç kesintisinde 1970'e düşüyor (13 dakika = açılıştan
+beri geçen süre), sistem saati de son kapanış zamanından devam ediyor. Yani
+sapma "son ne zaman kapatıldıysa o kadar" — bu yüzden her ölçümde farklı.
+Tamamlayıcı donanım önlemi: **CR1225 (şarj edilemez)** saat pili; şarjlı
+ML1220 + şarj devresi Orin Nano BBAT ile uyumsuz. Bkz.
+`docs/saat_gps_senkron_plani.md`.
 
 NTP çözüm DEĞİL: md 4.1 tüm bilgisayarlarda WiFi'yi kapatmayı zorunlu kılıyor
 → yarışma günü internet yok. Ağ gerektirmeyen tek mutlak zaman kaynağı GPS.
@@ -27,9 +37,16 @@ TASARIM KARARLARI (üçü de tuzaktan kaçınmak için)
    servisinin de saat kurucudan sonra başlaması gerekirdi → DAİRESEL
    bağımlılık. Doğrudan pymavlink ile bağlanmak bunu keser.
 
-2) 🔴 **Oneshot olmak ZORUNDA — seri port tekildir.** MAVROS `/dev/ttyUSB0`'ı
+2) 🔴 **Oneshot olmak ZORUNDA — seri port tekildir.** MAVROS `/dev/pixhawk`'ı
    açık tutar; iki süreç aynı portu açamaz. Bu script MAVROS'tan ÖNCE koşar,
    portu bırakır, çıkar (`Before=girdap-karar.service`).
+
+Port adı `/dev/pixhawk`: Jetson'da **iki FTDI** var ve `ttyUSBn` numarası
+enumerate sırasına göre verilir. Sabit adı Eyüp'ün `99-girdap-fc.rules`
+kuralı üretiyor (seri no `DU0EFEA7`, ayrıca `ID_MM_DEVICE_IGNORE=1` ile
+ModemManager'ın portu problayıp MAVROS'u ~30 s geciktirmesini de engelliyor —
+F-M.8). Kural 09.08'de Jetson'da **kurulu ve çalışır** bulundu; `fcu_url` de
+zaten bu symlink'e bakıyor.
 
 3) 🔴 **SYSTEM_TIME İSTENİR, gelmesi UMULMAZ.** Mesaj ArduPilot'ta bir EXTRA
    stream grubunda; varsayılan hızda gelmeyebilir. `SET_MESSAGE_INTERVAL`
@@ -160,17 +177,137 @@ def sta_unsync_temizle(log) -> bool:
         return False
 
 
-def gps_saati_al(port: str, baud: int, zaman_asimi: float, log):
-    """FC'den GPS kaynaklı UNIX zamanını (saniye, float) okur; yoksa None.
+#: SYSTEM_TIME mesaj kimliği ve MAVLink CRC_EXTRA'sı (mavlink common.xml).
+_SYSTEM_TIME_ID = 2
+_SYSTEM_TIME_CRC_EXTRA = 137
 
-    SYSTEM_TIME açıkça İSTENİR (bkz. modül docstring'i, tasarım kararı 3).
+
+def _crc_accumulate(b: int, crc: int) -> int:
+    """MAVLink X.25/CCITT CRC birikimi (crc16-mcrf4xx)."""
+    tmp = b ^ (crc & 0xFF)
+    tmp = (tmp ^ (tmp << 4)) & 0xFF
+    return ((crc >> 8) ^ (tmp << 8) ^ (tmp << 3) ^ (tmp >> 4)) & 0xFFFF
+
+
+def _crc_hesapla(govde: bytes, crc_extra: int) -> int:
+    crc = 0xFFFF
+    for b in govde:
+        crc = _crc_accumulate(b, crc)
+    return _crc_accumulate(crc_extra, crc)
+
+
+def system_time_ayikla(tampon: bytearray):
+    """Tampondan DOĞRULANMIŞ bir SYSTEM_TIME varsa `time_unix_usec` döndürür.
+
+    Tüketilen baytları tampondan siler. Bulamazsa None.
+
+    NEDEN ELLE AYRIŞTIRIYORUZ — pymavlink'e bağlanamayız:
+    Jetson'da **internet YOK** (09.08'de ölçüldü: varsayılan rota yok, DNS yok)
+    ve bu bir arıza değil, md 4.1'in sonucu (WiFi yasak). Hedef makinede
+    KURULAMAYAN bir bağımlılık, yarışma-kritik bir açılış servisinde olmamalı.
+    Elle ayrıştırma bu servisi **bağımlılıksız** yapar.
+
+    Mesajı İSTEMEK gerekmiyor: `SR2_EXTRA3 = 10` (canlı param dökümü) ve
+    ArduPilot'ta SYSTEM_TIME **EXTRA3** grubunda → TELEM2'de 10 Hz kendiliğinden
+    akıyor. Yani yalnız OKUYUP ayrıştırmak yeterli, çerçeve ÜRETMEK gerekmez.
+
+    CRC **doğrulanıyor** (CRC_EXTRA=137): rastgele bayt dizisinin geçerli
+    çerçeve gibi görünüp çöp bir saat yazdırmasına karşı. Zaman aralığı
+    kontrolü (çağıran tarafta) ikinci süzgeç.
     """
-    try:
-        from pymavlink import mavutil
-    except ImportError:
-        log("pymavlink kurulu degil: pip3 install pymavlink")
-        return None, 4
+    while True:
+        # v2 (0xFD) ya da v1 (0xFE) başlangıcını bul; öncesindeki çöpü at.
+        i2, i1 = tampon.find(0xFD), tampon.find(0xFE)
+        adaylar = [i for i in (i2, i1) if i >= 0]
+        if not adaylar:
+            del tampon[:]
+            return None
+        i = min(adaylar)
+        if i:
+            del tampon[:i]
+        v2 = tampon[0] == 0xFD
+        # Başlık: v2 10 bayt (msgid 3 bayt), v1 6 bayt (msgid 1 bayt)
+        bas = 10 if v2 else 6
+        if len(tampon) < bas + 2:
+            return None                      # başlık tamamlanmadı, daha bekle
+        uzunluk = tampon[1]
+        imza = 13 if (v2 and (tampon[2] & 0x01)) else 0
+        toplam = bas + uzunluk + 2 + imza
+        if len(tampon) < toplam:
+            return None                      # çerçeve tamamlanmadı, daha bekle
+        cerceve = bytes(tampon[:toplam])
+        msgid = (int.from_bytes(cerceve[7:10], "little") if v2 else cerceve[5])
+        if msgid == _SYSTEM_TIME_ID:
+            govde = cerceve[1:bas + uzunluk]  # STX hariç, CRC hariç
+            gelen = int.from_bytes(
+                cerceve[bas + uzunluk:bas + uzunluk + 2], "little")
+            if _crc_hesapla(govde, _SYSTEM_TIME_CRC_EXTRA) == gelen:
+                yuk = cerceve[bas:bas + uzunluk]
+                if len(yuk) >= 8:            # time_unix_usec = ilk alan
+                    del tampon[:toplam]
+                    return int.from_bytes(yuk[:8], "little")
+        # Bu çerçeve bizim değil ya da CRC tutmadı → 1 bayt kaydır, tekrar ara.
+        del tampon[:1]
 
+
+def gps_saati_al_bagimsiz(port: str, zaman_asimi: float, log):
+    """pymavlink OLMADAN: portu oku, SYSTEM_TIME ayıkla. (t, kod) döner."""
+    try:
+        import serial  # pyserial — Jetson'da kurulu (3.5, 09.08 teyidi)
+        sp = serial.Serial(port, 57600, timeout=1.0)
+        kapat = sp.close
+        oku = lambda: sp.read(4096) or b""     # noqa: E731
+    except ImportError:
+        # pyserial de yoksa stdlib termios ile aç (garantili mevcut).
+        import termios
+        fd = os.open(port, os.O_RDONLY | os.O_NOCTTY)
+        a = termios.tcgetattr(fd)
+        a[4] = a[5] = termios.B57600                     # ispeed / ospeed
+        a[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
+        a[0] = a[1] = a[3] = 0                           # iflag/oflag/lflag ham
+        a[6][termios.VMIN], a[6][termios.VTIME] = 0, 10  # 1 s zaman aşımı
+        termios.tcsetattr(fd, termios.TCSANOW, a)
+        kapat = lambda: os.close(fd)                     # noqa: E731
+        oku = lambda: os.read(fd, 4096)                  # noqa: E731
+
+    tampon = bytearray()
+    bitis = time.monotonic() + zaman_asimi
+    sifir_uyarildi = False
+    try:
+        while time.monotonic() < bitis:
+            veri = oku()
+            if not veri:
+                continue
+            tampon += veri
+            if len(tampon) > 65536:                      # sınırsız büyümesin
+                del tampon[:-4096]
+            while True:
+                usec = system_time_ayikla(tampon)
+                if usec is None:
+                    break
+                t = usec / 1e6
+                if t <= 0:
+                    if not sifir_uyarildi:
+                        log("SYSTEM_TIME geldi ama time_unix_usec=0 "
+                            "(GPS fix yok) — beklenilyor")
+                        sifir_uyarildi = True
+                    continue
+                if not (_EN_ERKEN <= t <= _EN_GEC):
+                    log(f"SYSTEM_TIME makul aralikta DEGIL ({_iso(t)}) — reddedildi")
+                    continue
+                log(f"GPS saati alindi (bagimsiz ayristirici): {_iso(t)}")
+                return t, 0
+        log("zaman asimi — gecerli SYSTEM_TIME gelmedi (GPS fix yok?)")
+        return None, 2
+    finally:
+        try:
+            kapat()
+        except Exception:
+            pass
+
+
+def gps_saati_al(port: str, baud: int, zaman_asimi: float, log):
+    """FC'den GPS kaynaklı UNIX zamanını (saniye, float) okur; yoksa None."""
     # Portun BELIRMESINI bekle. Acilista udev/FTDI enumerate'i gecikebilir ve
     # `mavlink_connection` yok olan porta istisna atar. systemd device unit'ine
     # (`After=dev-...device`) guvenmek yerine burada bekliyoruz: symlink
@@ -182,7 +319,17 @@ def gps_saati_al(port: str, baud: int, zaman_asimi: float, log):
         log(f"port belirmedi: {port} — kablo/udev kurali? (ls -l /dev/serial/by-id)")
         return None, 1
 
-    log(f"FC'ye baglaniliyor: {port} @ {baud}")
+    # BAĞIMSIZ YOL BİRİNCİL: Jetson'da pymavlink YOK ve internet olmadığı için
+    # kurulamaz (md 4.1). pymavlink varsa (geliştirme makinesi) onu kullanırız —
+    # daha olgun çerçeveleme — ama üretimde koşan yol bağımsız ayrıştırıcıdır.
+    try:
+        from pymavlink import mavutil
+    except ImportError:
+        log("pymavlink yok → bagimsiz ayristirici kullaniliyor (SR2_EXTRA3=10, "
+            "SYSTEM_TIME kendiliginden akiyor; istek gerekmez)")
+        return gps_saati_al_bagimsiz(port, zaman_asimi, log)
+
+    log(f"FC'ye baglaniliyor (pymavlink): {port} @ {baud}")
     try:
         m = mavutil.mavlink_connection(port, baud=baud)
     except Exception as e:
@@ -243,7 +390,7 @@ def _iso(t: float) -> str:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--port", default="/dev/ttyUSB0",
+    ap.add_argument("--port", default="/dev/pixhawk",
                     help="FC seri portu (hardware.yaml fcu_url ile AYNI olmali)")
     ap.add_argument("--baud", type=int, default=57600)
     ap.add_argument("--zaman-asimi", type=float, default=90.0,
