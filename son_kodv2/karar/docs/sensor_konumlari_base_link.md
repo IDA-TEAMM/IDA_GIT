@@ -99,13 +99,14 @@ düzeltme uygulansın" yolu **reddedildi** — kod karmaşası, tek parametreyle
 | **Livox Mid-360** (LiDAR) | `livox_frame` | **+0.015** | **0.000** | **+0.410** | ⏳ `____` | 0.0 | 0.0 | Öteleme ✅ ölçüldü · yaw ⏳ |
 | **Pixhawk 6C** (IMU) | `imu_link` | **−0.055** | **+0.1375** | **+0.155** | 0.0 | 0.0 | 0.0 | ✅ ölçüldü |
 | **GPS anteni** (Holybro H-RTK F9P) | — (TF yayınlanmıyor) | **−0.035** | **+0.160** | **+0.365** | — | — | — | ✅ ölçüldü |
-| **OAK-D Lite** (kamera) | `oak_frame` | ⏳ `____` | ⏳ `____` | ⏳ `____` | ⏳ `____` | ⏳ `____` | 0.0 | 🔴 **HENÜZ TAKILMADI** |
+| **OAK-D Lite** (kamera) | `oak_frame` | **+0.185** | **0.000** | **+0.280** | ⏳ `____` | ⏳ `____` | 0.0 | Öteleme ✅ ölçüldü 09.08 · açılar ⏳ |
 
 ### Aynı ölçümler fiziksel dille (işaret hatası yapmamak için)
 
 | Sensör | ileri/geri | sağ/sol | yükseklik (gövde tabanından) |
 |---|---|---|---|
 | Livox Mid-360 | 1.5 cm **pruvada** | merkez hattında (0) | **41.0 cm** |
+| OAK-D Lite (RGB lens) | 18.5 cm **pruvada** | merkez hattında (0) | **28.0 cm** |
 | Pixhawk 6C | 5.5 cm **kıçta** | 13.75 cm **iskelede** | **15.5 cm** |
 | GPS anteni | 3.5 cm **kıçta** | 16 cm **iskelede** | **36.5 cm** |
 

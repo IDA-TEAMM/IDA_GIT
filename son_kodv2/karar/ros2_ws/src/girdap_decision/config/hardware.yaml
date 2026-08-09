@@ -278,9 +278,15 @@ tf:
   # ⏳ yaw: ampirik kalibre edilecek (olcum_formu §0.5 — merkez hattına 10 m
   #    ileriye hedef koy, /perception/obstacle_map'te position.y ≈ 0 olmalı).
   livox_frame: {x: 0.015, y: 0.0, z: 0.41, yaw: 0.0, pitch: 0.0, roll: 0.0}
-  # ⏳ Kamera HENÜZ TAKILMADI (pruvadaki mavi kutu onun yuvası). Not: oak_frame
-  #    TF'i şu an hiçbir node tarafından tüketilmiyor (füzyon bearing
-  #    eşleştirmesi kalibrasyonsuz) — takılınca ölçülecek, önceliği düşük.
-  oak_frame:   {x: 0.0, y: 0.0, z: 0.0, yaw: 0.0, pitch: 0.0, roll: 0.0}
+  # Kamera TAKILDI ve ötelemeler ÖLÇÜLDÜ (09.08). Referans = ortadaki RGB
+  # lensin merkezi; lens açıkta, muhafaza yok. Ölçüm: ön uçlara dayanan dikey
+  # levhadan lens hizasında yatay 33 cm (→ x), lensten sol/sağ dışa 39.5/39.0
+  # (→ y≈0, toplamı 78.5 = ölçülen gövde genişliği, çapraz teyit), masadan
+  # lens merkezine 28 cm (→ z). Ayrıntı: olcum_formu §3.
+  # ⏳ pitch/yaw HENÜZ 0 — ölçülmedi, kalibre DEĞİL.
+  #    🔴 pitch işareti: AŞAĞI bakıyorsa ARTI, YUKARI bakıyorsa EKSİ
+  #    (REP-103; static_transform_publisher --pitch). olcum_formu §3 09.08'e
+  #    kadar tersini yazıyordu, düzeltildi.
+  oak_frame:   {x: 0.185, y: 0.0, z: 0.28, yaw: 0.0, pitch: 0.0, roll: 0.0}
   # Pixhawk 6C (IMU): ortadan 5.5 cm kıçta, 13.75 cm iskelede, tabandan 15.5 cm.
   imu_link:    {x: -0.055, y: 0.1375, z: 0.155, yaw: 0.0, pitch: 0.0, roll: 0.0}

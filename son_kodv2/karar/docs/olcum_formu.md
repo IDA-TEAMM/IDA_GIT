@@ -200,9 +200,16 @@ demek, ama 5°'yi elle ölçmek zordur. Bunun yerine:
 > Bu yöntem hem daha doğru hem de montaj/optik eksen farklarını da yakalar.
 
 ### Pitch (yalnız kamera)
-Telefonun eğim/su terazisi uygulamasını kameranın **düz üst yüzeyine** koyun.
-Ufka göre aşağı bakıyorsa **negatif** yazın. Duba mesafe tahminini doğrudan
-etkiler.
+Telefonun eğim/su terazisi uygulamasını kameranın **düz üst yüzeyine** koyun
+(kaidenin değil — kamera kaideye göre yatık olabilir). Kameranın üst yüzü optik
+eksene **paralel** olduğu için okuduğunuz eğim doğrudan pitch'tir.
+
+🔴 **İŞARET:** ufka göre **aşağı** bakıyorsa **ARTI**, **yukarı** bakıyorsa
+**EKSİ** (REP-103 / `static_transform_publisher` kuralı). Bu satır 09.08'e kadar
+tersini söylüyordu — bkz. §3'teki kırmızı not. Emin olmak için açıyı **fiziksel
+olarak** ("yukarı/aşağı, şu kadar derece") not edip çevrimi tek yerde yapın.
+
+Duba mesafesi tahminini doğrudan etkiler.
 
 ---
 
@@ -335,14 +342,42 @@ kapıda bu fark çarpma cezasına dönüşebilir (`Ç1`/`Ç2`).
 
 ## §3 — Kamera (OAK-D Lite)
 
+**Referans nokta: ortadaki (RGB) lensin merkezi.** Kaide değil, kutunun kenarı
+değil — füzyon bbox merkezini o lense göre hesaplıyor. Lens **açıkta**, önünde
+cam/muhafaza YOK (2026-08-09 fotoğraf teyidi) → vekil nokta + offset hesabı
+gerekmedi, doğrudan lensten ölçüldü.
+
 | Ölçü | Değer | Not |
 |---|---|---|
-| `x` — ileri (+) | `____` m | |
-| `y` — iskele (+) | `____` m | |
-| `z` — yukarı | `____` m | |
-| `yaw` — pruvaya göre | `____` ° | |
-| `pitch` — ufka göre (aşağı bakıyorsa −) | `____` ° | Duba mesafesi tahminini doğrudan etkiler |
-| Lens ekseni su hattından yükseklik | `____` m | |
+| `x` — ileri (+) | **+0.185 m** ✅ | Ön uçlara dayanan **dikey levhadan**, lens hizasında yatay: **33 cm** → `51.5 − 33` |
+| `y` — iskele (+) | **0.000 m** ✅ | Lensten sol dışa **39.5**, sağ dışa **39.0** cm → 2.5 mm sancak sapması, tolerans altı |
+| `z` — yukarı | **+0.280 m** ✅ | Masadan lens merkezine **28 cm**; tekne doğrudan masada (takoz YOK) |
+| `yaw` — pruvaya göre | `____` ° ⏳ | Kaide hizalıysa 0; doğrusu **ampirik** (§0.5) |
+| `pitch` — ufka göre | `____` ° ⏳ | 🔴 İŞARET TERSİ DÜZELTİLDİ — aşağıdaki nota bak. Duba mesafesi tahminini doğrudan etkiler |
+| Lens ekseni su hattından yükseklik | `____` m ⏳ | İlk suya inişte |
+
+> ✅ **Beklenmedik çapraz teyit:** `39.5 + 39.0 = 78.5 cm` — bu **tam olarak**
+> §1'de ölçülen gövde genişliği. İki bağımsız ölçüm çakıştı; ayrıca metrenin
+> gerçekten **dik** tutulduğunu kanıtlıyor (yatık olsaydı toplam 78.5'i
+> **aşardı**).
+
+> 🔴 **PITCH İŞARETİ — bu form 2026-08-09'a kadar TERS yazıyordu.** Eski hâli
+> *"aşağı bakıyorsa −"* idi. **Yanlış.** `hardware.yaml` `tf:` değerleri
+> `hardware.launch.py` → `_static_tf` üzerinden doğrudan
+> `tf2_ros static_transform_publisher --pitch`'e gidiyor, yani standart REP-103
+> kuralı geçerli: +y (iskele) etrafında sağ-el dönüşü,
+> `R_y(θ)·x̂ = (cosθ, 0, −sinθ)` → küçük pozitif θ'da z bileşeni **negatif**.
+>
+> | | |
+> |---|---|
+> | `pitch` **pozitif** | kamera **AŞAĞI** bakar |
+> | `pitch` **negatif** | kamera **YUKARI** bakar |
+>
+> Eski notu okuyup dolduran kişi açıyı **ters** yazardı → kamera TF'te yanlış
+> yöne yatar, duba mesafe ve kerteriz projeksiyonu bozulur, ve **hata sessizdir**
+> (mesafeler tutarlı biçimde yanlış çıkar, hiçbir uyarı basılmaz). Ölçümü
+> **fiziksel olarak** not edin ("ufka göre yukarı/aşağı, şu kadar derece"),
+> işaret çevrimini tek yerde yapın.
 
 ---
 
