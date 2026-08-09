@@ -352,9 +352,58 @@ gerekmedi, doğrudan lensten ölçüldü.
 | `x` — ileri (+) | **+0.185 m** ✅ | Ön uçlara dayanan **dikey levhadan**, lens hizasında yatay: **33 cm** → `51.5 − 33` |
 | `y` — iskele (+) | **0.000 m** ✅ | Lensten sol dışa **39.5**, sağ dışa **39.0** cm → 2.5 mm sancak sapması, tolerans altı |
 | `z` — yukarı | **+0.280 m** ✅ | Masadan lens merkezine **28 cm**; tekne doğrudan masada (takoz YOK) |
-| `yaw` — pruvaya göre | `____` ° ⏳ | Kaide hizalıysa 0; doğrusu **ampirik** (§0.5) |
-| `pitch` — ufka göre | `____` ° ⏳ | 🔴 İŞARET TERSİ DÜZELTİLDİ — aşağıdaki nota bak. Duba mesafesi tahminini doğrudan etkiler |
+| `yaw` — pruvaya göre | **0.0** 🟡 | Kaide düzgün vidalandı (mekanik). ⏳ Suda ampirik doğrulanacak (§0.5) |
+| `pitch` — ufka göre | **0.0** 🟡 | **AMPİRİK ölçüldü ±5°** — aşağıdaki ufuk yöntemi. İşaret kuralı için kırmızı nota bak |
+| `roll` | **0.0** | Ufuk karelerde yatay görünüyor |
 | Lens ekseni su hattından yükseklik | `____` m ⏳ | İlk suya inişte |
+
+> ✅ **`pitch` AMPİRİK ÖLÇÜLDÜ (2026-08-09) — mekanik izlenim YANLIŞTI.**
+> Montaj fotoğrafına bakıp *"kamera geriye yatık, yukarı bakıyor"* denmişti;
+> o kare önden-yukarıdan çekildiği ve kaidenin arka duvarı yüksek olduğu için
+> yanıltıcıydı. **Doğrusu: kamera düz ileri bakıyor.**
+>
+> **Yöntem — ufuk çizgisi.** Kameranın 08.08'de gölde (tekne SUDA yüzerken,
+> **aynı kaidede**, kaide o gün sabit) çektiği dataset karelerinde ufkun kare
+> içindeki dikey konumu okundu:
+>
+> | kare | kare boyu | orta | ufuk | sapma | `pitch` |
+> |---|---|---|---|---|---|
+> | A | 700 px | 350 | ~345 | −5 px | −0.4° |
+> | B | 700 px | 350 | ~352 | +2 px | +0.2° |
+>
+> `pitch = atan(sapma / f)`, `f ≈ 687 px` (4:3 karede HFOV 68.8°'den).
+> Mekanik teyit: kaide **yere paralel** vidalanmış (kullanıcı). İki bağımsız
+> yol aynı sonucu verdi.
+>
+> ⚠️ **Neden ±5°, neden daha iyisi değil:** eldeki kareler WhatsApp + Windows
+> Photos'tan geçmiş, boyutları tutarsız (946×707 / 941×700 / 934×700) ve
+> köşelerinde damga var → **kırpılmış olabilirler**, kırpma merkezi kaydırır.
+> ⏳ **Orijinal (ham) dosyalarla ±0.5°'ye indirilebilir** — ufuk satırı
+> programatik ölçülür. Dataset klasöründeki ham kareler gerekiyor.
+>
+> ⚠️ Ufuk yöntemi kameranın **dünyaya göre** açısını verir; TF'e gereken
+> **gövdeye göre**. Aradaki fark teknenin sudaki **trim**'i. Katamaran durgun
+> suda düz oturur, fark küçüktür — ±5° bandı bunu da kapsıyor.
+
+> 🔀 **BU ÖLÇÜMDEN ÇIKAN, DİĞER EKİPLERİ İLGİLENDİREN BULGULAR (09.08)**
+> Karar ekibinin işi değil ama dataset karelerinde görüldü, iletilmeli:
+>
+> 1. 🔴 **Dubaların üstünde BAYRAK var.** LiDAR tarafı dubayı tek küme sayıyor
+>    (`min_cluster_size: 5`, `cluster_tolerance: 0.5 m`). Bayrak direği ince
+>    olduğu için gövde ile bayrak **arasında dönüş olmaz** → bir duba **iki
+>    ayrı kümeye** bölünebilir. `gate_follower`'ın açıkça korunmaya çalıştığı
+>    hata bu ("tek dubanın iki tespite bölünmesi" → sahte kapı çifti).
+>    **→ Yahya (LiDAR/karar).**
+> 2. 🟡 **Kareler 4:3, kod 16:9 bekliyor.** `hardware.yaml` `camera_image_
+>    width_px: 1280 / height_px: 720` ve füzyon bbox'ı **bu değerlerle**
+>    normalize ediyor. Dataset 4:3'te toplandıysa hem YOLO eğitim/çıkarım
+>    kadrajı farklı olur hem kerteriz hesabı kayar. Kırpmadan gelmiş de
+>    olabilir → **dataset'in gerçek çözünürlüğü teyit edilmeli.**
+> 3. ✅ **Bu dataset hiç doğrulanmamış HSV eşiklerini doğrulayabilir.**
+>    `camera_buoys.py` docstring'i kırmızı/yeşil/kahverengi için *"sahada
+>    henüz doğrulanmadı, ilk tahmin, kör güvenilmemeli"* diyor. Karelerde
+>    **sarı, yeşil, turuncu/kırmızı** duba var — tam ihtiyaç duyulan veri.
+>    **→ Eyüp (algı).**
 
 > ✅ **Beklenmedik çapraz teyit:** `39.5 + 39.0 = 78.5 cm` — bu **tam olarak**
 > §1'de ölçülen gövde genişliği. İki bağımsız ölçüm çakıştı; ayrıca metrenin

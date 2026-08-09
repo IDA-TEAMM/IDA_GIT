@@ -283,10 +283,15 @@ tf:
   # levhadan lens hizasında yatay 33 cm (→ x), lensten sol/sağ dışa 39.5/39.0
   # (→ y≈0, toplamı 78.5 = ölçülen gövde genişliği, çapraz teyit), masadan
   # lens merkezine 28 cm (→ z). Ayrıntı: olcum_formu §3.
-  # ⏳ pitch/yaw HENÜZ 0 — ölçülmedi, kalibre DEĞİL.
-  #    🔴 pitch işareti: AŞAĞI bakıyorsa ARTI, YUKARI bakıyorsa EKSİ
-  #    (REP-103; static_transform_publisher --pitch). olcum_formu §3 09.08'e
-  #    kadar tersini yazıyordu, düzeltildi.
+  # pitch = 0: AMPİRİK ölçüldü ±5° (gölde tekne suda, aynı kaidede çekilmiş
+  #   dataset karelerinde ufuk kare ortasında: −5/+2 px → ∓0.4°). Mekanik
+  #   teyit: kaide yere paralel vidalı. ⏳ Ham dosyalarla ±0.5°'ye indirilir.
+  #   ⚠️ Montaj fotoğrafından "yukarı bakıyor" sanılmıştı — YANLIŞTI.
+  #   🔴 pitch işareti: AŞAĞI bakıyorsa ARTI, YUKARI bakıyorsa EKSİ
+  #   (REP-103; static_transform_publisher --pitch). olcum_formu §3 09.08'e
+  #   kadar tersini yazıyordu, düzeltildi.
+  # yaw = 0: mekanik (kaide düzgün vidalı). ⏳ Suda ampirik doğrulanacak —
+  #   merkez hattına 10 m ileriye duba, görüntünün TAM ortasında olmalı.
   oak_frame:   {x: 0.185, y: 0.0, z: 0.28, yaw: 0.0, pitch: 0.0, roll: 0.0}
   # Pixhawk 6C (IMU): ortadan 5.5 cm kıçta, 13.75 cm iskelede, tabandan 15.5 cm.
   imu_link:    {x: -0.055, y: 0.1375, z: 0.155, yaw: 0.0, pitch: 0.0, roll: 0.0}

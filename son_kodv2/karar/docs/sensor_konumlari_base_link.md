@@ -99,7 +99,7 @@ düzeltme uygulansın" yolu **reddedildi** — kod karmaşası, tek parametreyle
 | **Livox Mid-360** (LiDAR) | `livox_frame` | **+0.015** | **0.000** | **+0.410** | ⏳ `____` | 0.0 | 0.0 | Öteleme ✅ ölçüldü · yaw ⏳ |
 | **Pixhawk 6C** (IMU) | `imu_link` | **−0.055** | **+0.1375** | **+0.155** | 0.0 | 0.0 | 0.0 | ✅ ölçüldü |
 | **GPS anteni** (Holybro H-RTK F9P) | — (TF yayınlanmıyor) | **−0.035** | **+0.160** | **+0.365** | — | — | — | ✅ ölçüldü |
-| **OAK-D Lite** (kamera) | `oak_frame` | **+0.185** | **0.000** | **+0.280** | ⏳ `____` | ⏳ `____` | 0.0 | Öteleme ✅ ölçüldü 09.08 · açılar ⏳ |
+| **OAK-D Lite** (kamera) | `oak_frame` | **+0.185** | **0.000** | **+0.280** | **0.0** 🟡 | **0.0** 🟡 | 0.0 | ✅ ölçüldü 09.08 · açılar ampirik/±5°, suda teyit edilecek |
 
 ### Aynı ölçümler fiziksel dille (işaret hatası yapmamak için)
 
@@ -225,15 +225,16 @@ INS_POS1_Z   -0.155        GPS1_POS_Z   -0.365
 | # | Ne | Neden önemli | Kim |
 |---|---|---|---|
 | 1 | **Livox `yaw`** (ampirik) | 10 m'de 5° hata → **0.87 m yanal kayma**; kapı ortası hesabını doğrudan bozar | ölçüm: mekanik + karar |
-| 2 | **Kamera (OAK-D) x/y/z/yaw/pitch** | Kamera takılmadı. `oak_frame` şu an hiçbir node tarafından tüketilmiyor (füzyon kalibrasyonsuz) → **önceliği düşük** | mekanik, takıldıktan sonra |
+| 2 | **Kamera `pitch`/`yaw` kesinleştirmesi** | Öteleme ✅ bitti (09.08). `pitch` ampirik **±5°** — **ham dataset dosyalarıyla ±0.5°'ye iner**; `yaw` mekanik 0, suda teyit edilecek | karar (ham dosyalar) + su testi |
 | 3 | **Livox'un su hattından yüksekliği** (yüklü tekne, sakin su) | `z_min`'in doğru değerini bu belirler | ilk suya inişte |
 | 4 | **6 FC parametresinin girilmesi + masa testinde doğrulanması** | Girilmeden odom ≠ base_link. ArduPilot'un ofseti **fiilen uyguladığı** gözle görülmeden "tamam" denmeyecek | Alt Alan B (A-3) |
 | 5 | Gövdenin LiDAR görüş alanına giren kısmı var mı | Varsa `min_range` filtresi gerekir | ilk suya inişte |
 
 > **Kapanan:** gövde boyu (1.03 m) · gövde genişliği (0.785 m, çıkıntı yok) ·
-> LiDAR / Pixhawk / GPS ötelemeleri. Yani mekanikten beklenen ölçüm kalmadı —
-> geriye kalan 5 kalemin hepsi ya **kamera takılmasına** ya **suya inmeye** ya
-> **FC'ye parametre girmeye** bağlı.
+> LiDAR / Pixhawk / GPS ötelemeleri · **kamera ötelemeleri + pitch/roll**
+> (09.08). Yani **mekanikten beklenen ölçüm kalmadı** — geriye kalan 5 kalemin
+> hepsi ya **suya inmeye**, ya **FC'ye parametre girmeye**, ya **ham dataset
+> dosyalarına** bağlı.
 
 ### `yaw` nasıl ampirik ölçülür (iletkiyle uğraşma)
 
