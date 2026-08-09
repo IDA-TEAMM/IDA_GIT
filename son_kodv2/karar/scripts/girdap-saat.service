@@ -54,18 +54,30 @@ Before=girdap-karar.service
 # Seri port (FTDI/USB) enumerate olmus olsun.
 After=dev-pixhawk.device
 Wants=dev-pixhawk.device
-# NTP ile yarismasin: internet varsa (gelistirme) timesyncd zaten kurar.
-Conflicts=systemd-timesyncd.service
+# NOT: systemd-timesyncd ile CONFLICTS YAZILMAZ (09.08'de yaziImisti, geri
+# alindi). Gerekce: gelistirme makinesinde internet varken timesyncd saati
+# DOGRU kurar ve STA_UNSYNC'i de temizler; onu durdurmak zarar. Ikisi rahat
+# bir arada yasar cunku script'te 2 saniye toleransi var — saat zaten
+# dogruysa DOKUNMUYOR. Yarisma gununde internet olmadigi icin timesyncd
+# hicbir sey yapamaz, engellemeye gerek yok.
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 # root SART: clock_settime + adjtimex(ADJ_STATUS) CAP_SYS_TIME ister.
 User=root
-ExecStart=/usr/local/bin/girdap_saat_kur.py --port /dev/pixhawk --baud 57600 --zaman-asimi 90
+# 🔴 ZAMAN ASIMI = 45 s, BILINCLI UST SINIR.
+# Before=girdap-karar + Type=oneshot demek: bu servis BITENE KADAR yigin
+# BASLAMAZ. Yani zaman asimi dogrudan ACILIS GECIKMESIDIR.
+# Takas: yanlis DOSYA ADI icin gorevi geciktirmek kotu bir takastir — veri
+# zaten gecerli, yalnizca "guvenilmez" damgalanir; ama gorev baslamazsa hic
+# puan yok. 45 s, sicak GPS fix'i (FC genelde Jetson'dan once ayaga kalkar)
+# icin yeterli, soguk fix'te ise bilerek VAZGECIYORUZ.
+# Toplam en kotu hal: port bekleme (<=15 s, zaman_asimi/3) + 45 s.
+ExecStart=/usr/local/bin/girdap_saat_kur.py --port /dev/pixhawk --baud 57600 --zaman-asimi 45
 # Kurulamazsa (GPS fix yok) yigin YINE baslamali -> basarisizlik yutulur.
 SuccessExitStatus=0 1 2 3 4
-TimeoutStartSec=120
+TimeoutStartSec=75
 StandardOutput=journal
 StandardError=journal
 
