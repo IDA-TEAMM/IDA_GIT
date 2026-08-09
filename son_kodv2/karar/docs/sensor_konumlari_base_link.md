@@ -210,9 +210,13 @@ INS_POS1_Z   -0.155        GPS1_POS_Z   -0.365
 | 1 | **Livox `yaw`** (ampirik) | 10 m'de 5° hata → **0.87 m yanal kayma**; kapı ortası hesabını doğrudan bozar | ölçüm: mekanik + karar |
 | 2 | **Kamera (OAK-D) x/y/z/yaw/pitch** | Kamera takılmadı. `oak_frame` şu an hiçbir node tarafından tüketilmiyor (füzyon kalibrasyonsuz) → **önceliği düşük** | mekanik, takıldıktan sonra |
 | 3 | **Livox'un su hattından yüksekliği** (yüklü tekne, sakin su) | `z_min`'in doğru değerini bu belirler | ilk suya inişte |
-| 4 | **Gövde genişliği** teyidi | `gate_follower` geçilebilirlik testi | mekanik |
-| 5 | **6 FC parametresinin girilmesi + masa testinde doğrulanması** | Girilmeden odom ≠ base_link. ArduPilot'un ofseti **fiilen uyguladığı** gözle görülmeden "tamam" denmeyecek | Alt Alan B (A-3) |
-| 6 | Gövdenin LiDAR görüş alanına giren kısmı var mı | Varsa `min_range` filtresi gerekir | ilk suya inişte |
+| 4 | **6 FC parametresinin girilmesi + masa testinde doğrulanması** | Girilmeden odom ≠ base_link. ArduPilot'un ofseti **fiilen uyguladığı** gözle görülmeden "tamam" denmeyecek | Alt Alan B (A-3) |
+| 5 | Gövdenin LiDAR görüş alanına giren kısmı var mı | Varsa `min_range` filtresi gerekir | ilk suya inişte |
+
+> **Kapanan:** gövde boyu (1.03 m) · gövde genişliği (0.785 m, çıkıntı yok) ·
+> LiDAR / Pixhawk / GPS ötelemeleri. Yani mekanikten beklenen ölçüm kalmadı —
+> geriye kalan 5 kalemin hepsi ya **kamera takılmasına** ya **suya inmeye** ya
+> **FC'ye parametre girmeye** bağlı.
 
 ### `yaw` nasıl ampirik ölçülür (iletkiyle uğraşma)
 
