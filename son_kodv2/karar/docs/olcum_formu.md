@@ -394,11 +394,59 @@ gerekmedi, doğrudan lensten ölçüldü.
 >    ayrı kümeye** bölünebilir. `gate_follower`'ın açıkça korunmaya çalıştığı
 >    hata bu ("tek dubanın iki tespite bölünmesi" → sahte kapı çifti).
 >    **→ Yahya (LiDAR/karar).**
-> 2. 🟡 **Kareler 4:3, kod 16:9 bekliyor.** `hardware.yaml` `camera_image_
->    width_px: 1280 / height_px: 720` ve füzyon bbox'ı **bu değerlerle**
->    normalize ediyor. Dataset 4:3'te toplandıysa hem YOLO eğitim/çıkarım
->    kadrajı farklı olur hem kerteriz hesabı kayar. Kırpmadan gelmiş de
->    olabilir → **dataset'in gerçek çözünürlüğü teyit edilmeli.**
+> 2. 🔴 **DATASET 416×416 — bbox KOORDİNAT UZAYI ACİLEN TEYİT EDİLMELİ.**
+>    Kullanıcı bildirdi (09.08): eğitilecek dataset görüntüleri **416×416**.
+>    `perception_fusion_node.py:360` şunu yapıyor:
+>    ```python
+>    bbox_cx = det.bbox.center.position.x / self._image_w   # _image_w = 1280
+>    ```
+>    Yani `/perception/buoys` bbox'ı **1280 genişlikli görüntünün pikselinde**
+>    olmak ZORUNDA. Tespitler 416-uzayında yayınlanırsa:
+>    ```
+>    görüntü merkezi 208 → 208/1280 = 0.1625
+>    bearing = (0.5 − 0.1625) × 1.2 = 0.405 rad = 23° SOLA
+>    ```
+>    → **her tespit sürekli 23° solda** raporlanır, saçılma üçte bire sıkışır,
+>    eşleşme toleransı (0.15 rad = 8.6°) hepsini ya kaçırır ya YANLIŞ eşler.
+>    **Hiçbir uyarı basılmaz** — sessiz arıza. Sonuç: sarı engel "kapı direği"
+>    sınıfı alabilir, `planning_node` onu engel torbasından çıkarır, araç
+>    engele sürer (Ç1/Ç2).
+>
+>    **Sorulacak (Eyüp):** `/perception/buoys` bbox'ı hangi uzayda —
+>    **orijinal kare** (1280×720) mı, **model girdisi** (416×416) mı?
+>    *Ultralytics normalde kutuları orijinal boyuta geri ölçekler; ama
+>    `.pt → blob` zinciriyle DepthAI/Myriad X üzerinde koşturulunca bu
+>    otomatik DEĞİLDİR* (bkz. commit `14efcef`).
+>
+> 2b. 🔴 **416 KARE → HFOV ARTIK 68.8° OLMAYABİLİR.** DepthAI kare (1:1) NN
+>    girdisi üretirken iki yol var ve `camera_hfov_rad`'ı **1.63× değiştirir:**
+>
+>    | Yol | HFOV | `camera_hfov_rad` |
+>    |---|---|---|
+>    | **Kırp** (`setPreviewKeepAspectRatio(True)`, VARSAYILAN) | **42.1°** | **0.735** |
+>    | **Ez/gerdir** (`False`) | 68.8° (korunur) | 1.2 (mevcut) |
+>
+>    Kırpma yapılıyorsa mevcut `1.2` bütün kerterizleri **1.63× şişirir** —
+>    ayrıca yatay görüş alanının %44'ü kaybedilir (kenardaki kapı direkleri
+>    hiç görünmez). Teyit edilmeli.
+>
+> 2c. 🟡 **416 tespit menzilini sınırlıyor.** Şartname dubası 30 cm çap.
+>    Model girdisinde dubanın piksel genişliği `≈ D·W/(HFOV·d)`:
+>
+>    | mesafe | 416 (gerdirme) | 640 (gerdirme) |
+>    |---|---|---|
+>    | 10 m | 10.4 px | 16.0 px |
+>    | 15 m | **6.9 px** | 10.7 px |
+>    | 25 m | 4.2 px | 6.4 px |
+>
+>    YOLO'nun küçük nesne tabanı pratikte ~8-10 px. **416'da 15 m sınırda,
+>    640'ta güvenli.** Yükseklikte durum iyi (duba 50 cm + BAYRAK → 15 m'de
+>    ~20-40 px), yani ince-uzun bir hedef; renk de ayırt edici. Yani 416
+>    çalışabilir ama menzil payı dar. P1 kapalı-döngü ölçümü "kamera 15 m"
+>    ile koşuldu — o menzil bu çözünürlükte marjinal.
+>    Ek not: 16:9'u **kareye letterbox**'lamak satırların **%44'ünü dolgu**
+>    yapar; dikdörtgen `imgsz` (örn. 640×384) hem pikseli daha iyi kullanır
+>    hem 640×640'tan hızlıdır. **→ Eyüp'ün kararı, karar ekibi sadece bildirir.**
 > 3. ✅ **Bu dataset hiç doğrulanmamış HSV eşiklerini doğrulayabilir.**
 >    `camera_buoys.py` docstring'i kırmızı/yeşil/kahverengi için *"sahada
 >    henüz doğrulanmadı, ilk tahmin, kör güvenilmemeli"* diyor. Karelerde
