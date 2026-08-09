@@ -1,0 +1,121 @@
+# FC parametre uzlaşması — 2026-08-10
+
+**Durum:** hedef dosya hazır, **FC'ye yazılmadı** · **Alan:** Alt Alan B
+
+## Ne oldu
+
+2026-08-09'da Pixhawk parametreleri **başkası tarafından** değiştirildi.
+07.08 temelimizle kıyaslandı (`scripts/param_kiyasla.py`): **928 parametrenin
+32'si** farklı. *"Tamamen değiştirilmiş"* değil — ve **en tehlikeli olanların
+hiçbirine dokunulmamış:**
+
+`ARMING_REQUIRE=1` · `SERVO1/3_FUNCTION=74/73` · `SERVO*_MIN/MAX/TRIM=
+1000/2000/1487` · `SERVO*_REVERSED=0` · `SERVO2/4_FUNCTION=0` · `FRAME_CLASS=2`
+· `BRD_RTC_TYPES=1` · `SR2_EXTRA3=10` · `NTF_BUZZ_TYPES=5` · `MODE_CH=8` ·
+`INS_POS1_*`/`GPS1_POS_*` (hâlâ 0)
+
+## 🔴 Neden "kendi dosyamızı geri yükle" YAPILMADI
+
+İlk içgüdü *"bizimki doğru, onu yaz"*dı. **Yanlış olurdu, üç sebeple:**
+
+1. **Bizim dosyada gerçek bir HATA var ve o kişi tam onu düzeltmiş.**
+   `BATT_VOLT_MULT=18.18` yüzünden batarya **57.7 V** okuyordu (hafızada
+   "kalibrasyon şüpheli" diye açık konuydu). Ham gerilim `57.7/18.18 = 3.17 V`;
+   yeni katsayıyla `3.17 × 5.0916 = 16.2 V` → **4S paket için tam doğru.**
+   Geri yüklemek bu hatayı geri getirirdi.
+2. **Taze sensör kalibrasyonunu ezerdi.** Jiroskop yeniden kalibre edilmiş
+   (`INS_GYR*OFFS_*`, kalibrasyon sıcaklığı 42 °C → 26 °C). Bizim değerler eski
+   ve **farklı sıcaklıkta** alınmış. Elimizde kapanmamış bir **"Kötü AHRS"**
+   sorunu varken taze kalibrasyonu bayatla değiştirmek onu kötüleştirebilir.
+3. 🔴 **Yazma sırasında canlı telemetri hattını kesebilirdi.** `SERIAL1_BAUD`
+   19200'e geri yazılsa ve radyo o portta 57600'de çalışıyorsa bağlantı
+   **yazmanın ortasında** kopar → parametrelerin bir kısmı yazılmış, bir kısmı
+   yazılmamış, hangisi belli değil. İki durumdan da kötü.
+
+## ✅ Bunun yerine: GERÇEKLİKTEN başla, 5 düzeltme uygula
+
+`docs/fc_hedef_parametreler_2026-08-10.param` = **10.08 canlı dökümü** +
+aşağıdaki 5 değişiklik. Sonuç FC'den **tam 5 parametre** farklı (doğrulandı).
+
+**Yönün önemi:** bizim eski dosyadan başlasak **27 bayat değeri** tek tek
+elemek gerekirdi. Gerçeklikten başlayınca fark küçük ve denetlenebilir kalıyor.
+Ayrıca Mission Planner "Load from file" **yalnız farklı olanları** yazdığı için
+`SERIAL*` ayarlarına **hiç dokunulmaz** → konuşulan hat kopmaz.
+
+### Geri alınan 5 parametre (bizim doğrulanmış değerlerimiz)
+
+| Parametre | FC'de | Hedef | Neden |
+|---|---|---|---|
+| `BATT_LOW_VOLT` | 0 | **13.2** | 3.3 V/hücre. 4S7P Li-ion'da aşırı deşarj hücreleri **kalıcı** bozar |
+| `BATT_CRT_VOLT` | 0 | **12.4** | 3.1 V/hücre |
+| `BATT_FS_LOW_ACT` | 0 | **2** | low failsafe eylemi — 0 = koruma YOK |
+| `BATT_FS_CRT_ACT` | 0 | **3** | critical failsafe eylemi — 0 = koruma YOK |
+| `MOT_THR_MIN` | 0 | **10** | düşük hız kalkış eşiği; su testinden geçti. 0'da ince manevra (kapı ortalama) authority kaybı |
+
+> 🔑 **Kritik incelik:** batarya eşikleri ile o kişinin gerilim düzeltmesi
+> **birlikte** anlam kazanıyor. Önceden failsafe hiç tetiklenmiyordu çünkü
+> 57.7 V daima 13.2'nin üstündeydi. Gerilim artık doğru okunduğu için bu
+> failsafe **ilk kez gerçekten çalışacak.**
+
+### ✅ Korunan (o kişinin haklı değişiklikleri)
+
+| Parametre | Değer | Neden korundu |
+|---|---|---|
+| `BATT_VOLT_MULT` | 5.091626 | **Gerçek düzeltme** — yukarıya bak |
+| `ARMING_CHECK` | 1 | Sahada kontroller **açık olmalı**; biz tezgah için 0'lamıştık. Yan etki: arm reddedilebilir ("Kötü AHRS") — arıza değil, kontrolün işini yapması |
+| `INS_GYR*OFFS_*`, `INS_GYR*_CALTEMP` | yeni | Taze kalibrasyon, bizimki bayat |
+| `GPS1_RATE_MS` | 100 | 5 → **10 Hz**, navigasyon için iyileştirme |
+| `GPS1_TYPE` | 2 | Açık uBlox (F9P için doğru) |
+| `LOG_DISARMED`, `LOG_FILE_DSRMROT` | 1 | Hata ayıklama kolaylığı |
+| `MIS_DONE_BEHAVE` | 0 | 0 = HOLD; tekne için LOITER'dan güvenli |
+| `BARO1_GND_PRESS`, `COMPASS_DEC`, `STAT_*`, `MIS_TOTAL` | — | Otomatik/olgusal, müdahale edilmez |
+| `SR0_ADSB`, `SR0_RAW_CTRL` | 0 | USB akış hızı azaltımı, zararsız |
+
+### ⏳ KARAR VERİLMEDİ — o kişiye sorulacak
+
+| Parametre | FC'de | Neden bekliyor |
+|---|---|---|
+| 🔴 `SERIAL2_BAUD` | **921600** (bizde 57600) | — |
+| 🔴 `SERIAL2_OPTIONS` | **8 = TX/RX swap** (bizde 0) | — |
+| 🔴 `SERIAL1_BAUD` | **57600** (bizde 19200) | — |
+| ⚠️ `BATT_AMP_PERVLT` | **0.44** (bizde 36.36) | 0.44 A/V ile 3.3 V tam skalada ~1.5 A okunur; sistemde **50 A** kontaktör var → akımı ciddi eksik okur. Nasıl bulundu? |
+| ⚪ `COMPASS_MOTCT` | 1 | Motor kompanzasyonu açık ama `COMPASS_MOT_*` katsayıları değişmemiş (muhtemelen 0) → etkisiz. Kalibre edildi mi? |
+
+> 🔴 **SERIAL sorusu her şeyi kilitliyor:** bizim `fcu_url` **57600** diyor ve
+> dokümanımız FTDI'yi **TELEM2**'de gösteriyor. TELEM2 artık 921600 + swap.
+>
+> - FTDI **TELEM2'de kaldıysa** → MAVROS **hiç bağlanamaz**. 09.08 gecesi
+>   Jetson'da görülen `connected: false` bunun belirtisi olabilir (bataryayı
+>   kapalı sanmıştım — ayırt edilemedi).
+> - FTDI **TELEM1'e taşındıysa** → 57600 tutuyor, çalışır; ama dokümanı ve
+>   saat servisinin dayandığı `SR2_EXTRA3` referansını **`SR1`**'e çevirmeliyiz
+>   (`SR1_EXTRA3=2` → saat servisi için yeterli).
+>
+> **Sorulacak tek soru: FTDI kablosu hangi porta takılı?**
+> Cevap gelmeden `SERIAL*` parametrelerine dokunulmaz.
+
+## Uygulama
+
+```
+Mission Planner → Config → Full Parameter List
+  → Load from file → docs/fc_hedef_parametreler_2026-08-10.param
+  → değişen 5 satırın işaretlendiğini GÖR (fazlası varsa DUR)
+  → Write Params
+```
+
+Sonra **taze döküm** al ve teyit et:
+
+```bash
+python3 scripts/param_kiyasla.py \
+    docs/fc_hedef_parametreler_2026-08-10.param <yeni_dokum>.param
+# beklenen: DEGISEN 0
+```
+
+## Dosyalar
+
+| Dosya | Ne |
+|---|---|
+| `fc_mevcut_parametreler_2026-08-07.param` | Bizim doğrulanmış temelimiz (**referans**, geri yazılmaz) |
+| `fc_mevcut_parametreler_2026-08-10.param` | Değiştirildikten sonraki canlı hâl |
+| `fc_hedef_parametreler_2026-08-10.param` | **Yazılacak olan** (canlı + 5 düzeltme) |
+| `scripts/param_kiyasla.py` | Kıyas aracı; kritik listeyi ve "bozulursa ne olur"u ayrı raporlar |
