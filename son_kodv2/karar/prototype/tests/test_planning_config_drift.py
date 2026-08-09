@@ -204,6 +204,54 @@ def test_gate_takibi_varsayilan_ACIK() -> None:
     assert _yaml(_HARDWARE_FILE)["planning"]["gate_following_enabled"] is True
 
 
+def test_huni_tavani_UC_yerde_de_ayni() -> None:
+    """B2 huni tavanı (`gate_post_margin_m`) launch ↔ params ↔ hardware birebir.
+
+    Çekirdek `GateFollowerConfig`'te KARŞILIĞI YOK ve olmamalı: bu bir kapı
+    SEÇİM eşiği değil, kaçınma şiddeti (`obstacle_margin` ailesinden) —
+    `test_kapi_seciminde_ayarlanabilir_esik_KALMADI` o ayrımı koruyor.
+
+    ⚠ Ayrışırsa arıza sessiz: yaml'ı okuyan operatör 1.8 görür, node 1.0 ile
+    koşar ve gövde payı temasa döner (ölçüm: 1.0 → −0,019 m).
+    """
+    launch_deger, launch_tip = _sabit("_GATE_DEFAULTS")["gate_post_margin_m"]
+    params = _yaml(_PARAMS_FILE)["planning_node"]["ros__parameters"]
+    hardware = _yaml(_HARDWARE_FILE)["planning"]
+
+    assert launch_tip is float
+    assert params["gate_post_margin_m"] == launch_deger
+    assert hardware["gate_post_margin_m"] == launch_deger
+    # İKİ TARAFLI ölçülmüş bant — ikisi de gerçek parkurda ölçüldü:
+    #   alt: 1.0'da gövde payı −0,006 m = TEMAS (Ç1, P1'de 16 puan)
+    #   üst: 1.8'de SON güzergah noktasına varılamıyor (3/4) — o nokta kapı
+    #        direğine 2,0 m uzakta ve halka 2,0 m'lik varış yarıçapını yiyor
+    # Kırmızıya dönerse çözüm testi gevşetmek değil, ikisini de yeniden ÖLÇMEK.
+    assert 1.0 < launch_deger < 1.8, (
+        f"gate_post_margin_m={launch_deger} ölçülen bandın ({1.0}, {1.8}) "
+        "dışında — altı temas, üstü son noktaya varamama demek"
+    )
+
+
+def test_huni_tavani_KURESEL_paydan_bagimsiz() -> None:
+    """Huni tavanı `mppi_obstacle_margin`'e EŞİTLENMEMELİ.
+
+    09.08'de tam bu denendi (huni tavanı = küresel pay) ve küresel payı
+    büyütmek zorunda kaldık; sonuç: model gelmeyen kol kırıldı (ham güzergah
+    noktasına sürüş 3,3/4 → 1/4 nokta). İkisinin ayrı kalması, kapı takipli
+    kolu model gelmeyen kolu bozmadan ayarlayabilmenin tek yolu.
+    """
+    gate = _sabit("_GATE_DEFAULTS")["gate_post_margin_m"][0]
+    mppi = _sabit("_MPPI_DEFAULTS")["mppi_obstacle_margin"][0]
+    assert gate != mppi, (
+        "huni tavanı küresel engel payıyla aynı değere getirilmiş — biri "
+        "diğerini takip etmeye başlarsa 09.08'deki gerileme geri gelir"
+    )
+    assert mppi == 1.0, (
+        f"mppi_obstacle_margin={mppi}; BÜYÜTÜLMEMELİ (1.2'de model gelmeyen "
+        "kol 2/4 noktaya düşüyor) — gövde payı için gate_post_margin_m'i kullan"
+    )
+
+
 @pytest.mark.parametrize("dosya", ["params", "hardware"])
 def test_gate_yaml_anahtarlari_launch_ile_ayni(dosya: str) -> None:
     """yaml'daki kapı anahtar KÜMESİ launch/node ile birebir (yazım hatası

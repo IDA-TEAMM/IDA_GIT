@@ -77,7 +77,12 @@ from vision_msgs.msg import Detection3DArray
 
 from girdap_decision.qos_profiles import sensor_data_qos
 from prototype.control.mavros_bridge import MavrosBridge, MavrosBridgeConfig
-from prototype.mission.gate_follower import GateFollower, GateFollowerConfig
+from prototype.mission.edge_memory import EdgeBuoyMemory
+from prototype.mission.gate_follower import (
+    BUOY_RADIUS_M,
+    GateFollower,
+    GateFollowerConfig,
+)
 from prototype.planning.mppi import MPPIConfig
 from prototype.planning.pipeline import PlanningPipeline, PlanningPipelineConfig
 from prototype.planning.rrt_star import Bounds, CircleObstacle
@@ -196,6 +201,10 @@ class PlanningNode(Node):
         # "deneyerek" ayarlanmaz.
         self.declare_parameter("hull_width_m", _gate.hull_width_m)
         self.declare_parameter("hull_length_m", _gate.hull_length_m)
+        # B2 huni tavanı — payın kendisi ölçülen açıklıktan türer (`_huni_payi`).
+        # AYRI bir sayı, mppi_obstacle_margin DEĞİL: küresel payı büyütmek model
+        # gelmeyen kolu kırıyor, huni ise sınıf yoksa hiç devreye girmiyor.
+        self.declare_parameter("gate_post_margin_m", 1.4)
 
         bx = self.get_parameter("bounds_x").value
         by = self.get_parameter("bounds_y").value
@@ -264,6 +273,14 @@ class PlanningNode(Node):
                 hull_width_m=float(self.get_parameter("hull_width_m").value),
                 hull_length_m=float(self.get_parameter("hull_length_m").value),
             )
+        )
+        # KENAR DUBASI HAFIZASI — bir kez turuncu sınıflanan duba, rengi
+        # kadrajdan çıksa da kenar kalır (§0.17e; edge_memory.py docstring'i).
+        # 12 m'lik gerçek kapıda P1'in ÇALIŞMA ŞARTI: hafızasız 1/4 nokta.
+        self._edge_memory = EdgeBuoyMemory()
+        self._edge_mem_log_t = 0.0
+        self._gate_post_margin = float(
+            self.get_parameter("gate_post_margin_m").value
         )
         # Kenar dubaları DÜNYA ENU'da (classified_obstacles'tan her taramada
         # tazelenir). Boş liste = kapı görünmüyor → gate_follower ham GN'ye düşer.
@@ -503,6 +520,15 @@ class PlanningNode(Node):
 
         Eşleşmeyen LiDAR tespiti (CLASS_UNKNOWN=99) engel olarak KALIR —
         füzyon sözleşmesinin güvenlik kuralı (bilinmeyeni atma).
+
+        🔑 **KENAR DUBASI HAFIZASI (2026-08-09, §0.17e).** "Şu an turuncu
+        görünen" ile "kenar dubası" aynı şey DEĞİL: kapı 12 m ise iki direk
+        ancak 8,8-15 m arasında aynı karede görünür, daha yakında kadrajdan
+        çıkarlar ve UNKNOWN olarak **engel torbasına** düşerler → MPPI tam kapı
+        ağzında dışarı iter. Kaybolan konum değil RENKTİR (Livox 360°/25 m
+        konumu akıtmaya devam eder) ve renk bir kez öğrenildi. Ölçüldü: 12 m'de
+        hafızasız **1/4** güzergah noktası, hafızalı **4/4**.
+        Ayrıntı + eşleşme ölçüsü: `prototype/mission/edge_memory.py`.
         """
         self._classified_seen = True
         self._last_obstacle_t = self._now()          # F-P.2 bekçisini besle (poz
@@ -511,8 +537,8 @@ class PlanningNode(Node):
         if self._last_xy is None:                 # poz yok → dönüştürülemez
             return
 
-        obstacles: list[CircleObstacle] = []
-        edges: list[tuple[float, float]] = []
+        # Tespitleri önce DÜNYA çerçevesine al (sınıf kararı ondan sonra).
+        tespitler: list[tuple[float, float, float, Optional[int]]] = []
         for det in msg.detections:
             cls = None
             if det.results:
@@ -525,17 +551,112 @@ class PlanningNode(Node):
                 wx, wy = self._body_to_world(c.x, c.y)
             except ValueError:
                 return
-            if self._gate_enabled and cls == self._edge_class_id:
-                edges.append((wx, wy))
-                continue                  # kapı dubası ENGEL DEĞİL
             # bbox.size.x = çap (perception_fusion_node sözleşmesi)
-            obstacles.append(CircleObstacle(wx, wy, abs(det.bbox.size.x) / 2.0))
+            tespitler.append((wx, wy, abs(det.bbox.size.x) / 2.0, cls))
+
+        if self._gate_enabled:
+            kenar_mi = self._edge_memory.siniflandir(tespitler, self._edge_class_id)
+        else:
+            kenar_mi = [False] * len(tespitler)
+
+        obstacles: list[CircleObstacle] = []
+        edges: list[tuple[float, float]] = []
+        for (wx, wy, r, _cls), kenar in zip(tespitler, kenar_mi):
+            if kenar:
+                edges.append((wx, wy))
+            else:
+                obstacles.append(CircleObstacle(wx, wy, r))
+
+        # B2 HUNİ: kapı direkleri kenar OLARAK KALIR ama çarpışma korumasından
+        # çıkarılmaz — payları ölçülen açıklıktan türetilerek engel torbasına da
+        # girerler (aşağıdaki `_huni_payi`). Ölçüldü: −0,231 → −0,019 m gövde
+        # payı, üstelik geçilen kapı 6/8 → 7/8 (huni geçidi kapatmıyor, aksine
+        # aracı ortadan geçmeye zorluyor).
+        for i, (ex, ey) in enumerate(edges):
+            m = self._huni_payi(i, edges)
+            obstacles.append(CircleObstacle(ex, ey, BUOY_RADIUS_M, margin=m))
 
         self._edge_buoys = edges
+        self._log_edge_memory()
         self._obstacles_world = [(o.cx, o.cy, o.r) for o in obstacles]
         self._pipe.set_obstacles(obstacles)
         self._algi_no += 1                # B5 onayı: yeni algı karesi geldi
         self._publish_edge_buoys(edges)
+
+    def _huni_payi(
+        self, i: int, kenarlar: list[tuple[float, float]]
+    ) -> float:
+        r"""B2 HUNİ — kapı direğinin engel payı, ÖLÇÜLEN açıklıktan türer.
+
+        🔴 **Çözdüğü arıza (§0.2b B2 + §0.17g/2).** Kenar dubaları engel
+        torbasından tamamen çıkarılıyordu; gerekçe doğruydu (küresel 1,0 m'lik
+        ceza halkası dar bir geçidin içini kaplar, 1,5 m'de araç geçitten HİÇ
+        geçmiyor) ama sonuç fazla keskindi: **dubalardan iten hiçbir kuvvet
+        kalmıyordu.** Çarpma cezası (Ç1/Ç2) kenar dubalarını da sayar — P1'de
+        16, P2'de 30 puan; md 815-818'e göre aynı dubaya 30 sn temas = 2 çarpma.
+        Ölçülen gövde payı **−0,23 m** (temas).
+
+        **Formül:**
+
+            m = clamp( (W − hull_width − 2r) / 2 , 0 , gate_post_margin_m )
+
+        `W` = bu direğin **en yakın diğer kenar dubasına** ölçülen mesafe.
+        Formülün girdileri ya ölçülmüş tekne boyutu (`hull_width_m`) ya şartname
+        sabiti (duba çapı 30 cm) ya da **o an ölçülen** geometri; tek serbest
+        sayı TAVAN'dır ve o da kapı SEÇİMİNE değil kaçınma şiddetine ait
+        (`obstacle_margin` ile aynı aile) → §0.0d'nin donmuş kuralı bozulmuyor.
+
+        🔑 **Neden "en yakın diğer kenar", "kapının kendi genişliği" değil:**
+        koridoru daraltan şey her zaman kapının kendi direkleri olmayabilir —
+        ardışık kapıların direkleri birbirine kapı açıklığından daha yakın
+        olabilir (gerçek P1: partner 12 m, komşu kapının direği 6,4 m). Ölçüt
+        "geçmem gereken en dar boşluk" olmalı; bu tanım kapıyı da komşuluğu da
+        kapsar ve kapı eşleştirmesinin YAPILMASINI beklemez (bu fonksiyon
+        `_on_classified`'da, kapı seçiminden ÖNCE çalışır).
+
+        🔑 **Tavan neden AYRI bir parametre, `obstacle_margin` DEĞİL:** küresel
+        payı büyütmek gövde payını düzeltir ama **model gelmeyen kolu kırar**
+        (ölçüm: 1.4'te ham güzergah noktasına sürüş 3,3/4 → 1/4 nokta; hakemin
+        noktası dubaya ~2,2 m yakın olabiliyor ve büyüyen halka aracı 2,0 m'lik
+        varış yarıçapına sokmuyor). Huni ise sınıf gelmeden HİÇ devreye girmez
+        → iki kol birbirini bozmadan ayrı ayrı ayarlanabiliyor.
+
+        Gerçek P1'de (12 m) formül tavana dayanır, yani direkler normal engel
+        gibi davranır — dar kapıda ise pay kendiliğinden küçülür ve geçidi
+        asla kapatmaz.
+        """
+        if len(kenarlar) < 2:
+            return self._gate_post_margin
+        dx, dy = kenarlar[i]
+        # İndeksle dışla, koordinatla DEĞİL: iki tespit aynı noktaya düşerse
+        # koordinat karşılaştırması ikisini birden eler ve pay tavana çıkardı.
+        en_yakin = min(
+            math.hypot(dx - kx, dy - ky)
+            for j, (kx, ky) in enumerate(kenarlar) if j != i
+        )
+        serbest = en_yakin - self._gate._cfg.hull_width_m - 2.0 * BUOY_RADIUS_M
+        return max(0.0, min(self._gate_post_margin, serbest / 2.0))
+
+    def _log_edge_memory(self) -> None:
+        """Hafızanın sahadaki tek görünürlük kanalı — 5 sn'de bir özet.
+
+        Neden gerekli: hafıza sessiz çalışır. Tutmuyorsa belirtisi yalnız
+        "araç kapı ağzında dışarı itiliyor"dur ve bunu logdan ayırt etmek
+        imkânsızdır. `kurtarılan` 0 kalıyorsa hafıza iş görmüyor demektir.
+        """
+        now = self._now()
+        if now - self._edge_mem_log_t < 5.0:
+            return
+        self._edge_mem_log_t = now
+        if not self._gate_enabled or self._edge_memory.boyut == 0:
+            return
+        self.get_logger().info(
+            f"kenar hafızası: {self._edge_memory.boyut} duba hatırlanıyor, "
+            f"rengi görünmezken kurtarılan tespit "
+            f"{self._edge_memory.hatirlanarak_kurtarilan}, "
+            f"sınıf çelişkisiyle silinen {self._edge_memory.celiskiyle_silinen} "
+            f"(şu an {len(self._edge_buoys)} kenar / kapı takibi)"
+        )
 
     def _obstacles_stale(self) -> bool:
         """F-P.2: son obstacle_map `obstacle_timeout_s`'ten eski mi?
@@ -744,6 +865,12 @@ class PlanningNode(Node):
         # Parkur değişince kilitli kapıyı BIRAK: Parkur-1'in son kapısına
         # kilitliyken Parkur-2'ye geçilirse eski kapı hedefi taşınmamalı
         # (gate_follower.reset() sözleşmesi: "parkur geçişi / yeniden başlama").
+        # ⚠ KENAR HAFIZASI BİLEREK SIFIRLANMIYOR (`_edge_memory.temizle()` YOK).
+        # Kilitli kapıyı bırakmak doğru, hafızayı atmak DEĞİL: geçiş anında araç
+        # Parkur-2'nin ilk kapısına 8,8 m'den yakınsa (12 m açıklıkta iki direğin
+        # aynı karede görüldüğü pencerenin içi) rengi bir daha HİÇ öğrenemez ve
+        # tam da düzeltilen arıza geri gelir. Yanlış hafızayı süre değil SINIF
+        # ÇELİŞKİSİ temizler (edge_memory.py: sarı/hedef görülürse kayıt silinir).
         if msg.data != self._pipe.mission_state:
             self._gate.reset()
             self._last_gate_used_fallback = True

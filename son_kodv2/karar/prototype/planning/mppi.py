@@ -237,6 +237,18 @@ class MPPIConfig:
     # 1.0 m bu sınırın altında kalır — geçit ölçümü CLAUDE.md'de.
     # ⚠ Bu SOFT ceza; RRT* safety_margin'i HARD kısıt (bkz. rrt_star.py) —
     # ikisi eşit OLMAK ZORUNDA DEĞİL, sıralı olmalı: RRT* ≤ MPPI.
+    #
+    # 🔴 **1.0'DA KALDI — büyütmek DENENDİ ve GERİ ALINDI (2026-08-09).**
+    # Gövde payını pozitife çıkarmak için 1.0 → 1.4 denendi: kapı takibi olan
+    # kolda işe yaradı (−0,019 → +0,273 m) ama **model gelmeyen kolu kırdı**
+    # (ham güzergah noktasına sürüş: 3,3/4 → 1/4 nokta; 1.2'de bile 2/4).
+    # Sebep: hakemin noktaları dubaya ~2,2 m yakın olabiliyor (md 5.5.2.2) ve
+    # büyüyen ceza halkası aracı varış yarıçapına (2,0 m) sokmuyor.
+    # `.pt` gelmezse koşulacak kol tam da o kol → küresel pay BÜYÜTÜLEMEZ.
+    #
+    # Gövde payı bunun yerine **B2 huni** ile kazanıldı: kapı direkleri kendi
+    # payını `planning_node._huni_payi`'den alır (`gate_post_margin_m`), o da
+    # model YOKKEN hiç devreye girmez → iki kol birbirini bozmuyor.
     obstacle_margin: float = 1.0     # m
 
     # Parkur-3 kamikaze modu — hedef noktasına Gaussian çekici (negatif maliyet,
@@ -503,8 +515,18 @@ class MPPIController:
             self._obs_xy = self.xp.asarray(
                 [[o.cx, o.cy] for o in obstacles], dtype=self._dtype
             )
+            # B2 HUNİ: engelin kendi `margin`'i varsa küresel payın YERİNE geçer
+            # (kapı direkleri — payları o an ölçülen açıklıktan türer, yoksa
+            # küresel 1,0 m dar bir kapıyı kapatır). None → eski davranış.
             self._obs_r = self.xp.asarray(
-                [o.r + self.cfg.obstacle_margin for o in obstacles],
+                [
+                    o.r + (
+                        self.cfg.obstacle_margin
+                        if getattr(o, "margin", None) is None
+                        else o.margin
+                    )
+                    for o in obstacles
+                ],
                 dtype=self._dtype,
             )
         else:

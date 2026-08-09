@@ -57,11 +57,22 @@ class Bounds:
 
 @dataclass(frozen=True)
 class CircleObstacle:
-    """Dairesel engel: (cx, cy) merkezli, r yarıçaplı disk (m)."""
+    """Dairesel engel: (cx, cy) merkezli, r yarıçaplı disk (m).
+
+    `margin` verilirse bu engel için **küresel `obstacle_margin` yerine** o pay
+    kullanılır (B2 HUNİ, 2026-08-09). Gerekçe: kapı direkleri hem geçilecek hem
+    çarpılmaması gereken nesnelerdir; küresel pay dar bir kapıyı kapatabilir,
+    payı sıfırlamak ise onları çarpışma korumasından tamamen çıkarır (ölçülen
+    sonuç: gövde payı −0,23 m = temas). Doğrusu payı **o an ölçülen açıklıktan**
+    türetmek — bkz. `planning_node._huni_payi`.
+
+    None = küresel payı kullan (eski davranış, tüm normal engeller).
+    """
 
     cx: float
     cy: float
     r: float
+    margin: Optional[float] = None
 
 
 @dataclass
