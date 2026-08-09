@@ -1,6 +1,37 @@
 # FC parametre uzlaşması — 2026-08-10
 
-**Durum:** hedef dosya hazır, **FC'ye yazılmadı** · **Alan:** Alt Alan B
+**Durum:** ✅ **FC'YE YAZILDI ve DOĞRULANDI (2026-08-10 01:07)** · **Alan:** Alt Alan B
+
+## ✅ YAZMA DOĞRULANDI
+
+Hedef dosya Mission Planner ile yüklendi ve yazıldı; ardından **taze döküm**
+alınıp (`canli_2026-08-07d.param` → repoda
+`fc_mevcut_parametreler_2026-08-10-YAZILDI.param`) hedefle kıyaslandı:
+
+```
+DEGISEN: 0 · yeni dosyada YOK: 0 · YENI: 0
+✅ KRITIK LISTEDE HIC SAPMA YOK
+```
+
+Yani **tam istenen 5 parametre yazıldı, fazladan hiçbir şey değişmedi** —
+`SERIAL*` ayarlarına dokunulmadı, telemetri hattı kopmadı (öngörüldüğü gibi).
+
+Üç grup gözle de teyit edildi:
+
+| Grup | Sonuç |
+|---|---|
+| Geri alınan 5 | `BATT_LOW_VOLT 13.2` · `BATT_CRT_VOLT 12.4` · `BATT_FS_LOW_ACT 2` · `BATT_FS_CRT_ACT 3` · `MOT_THR_MIN 10` ✅ |
+| Korunan düzeltmeler | `BATT_VOLT_MULT 5.091626` · `ARMING_CHECK 1` · `GPS1_RATE_MS 100` · `GPS1_TYPE 2` · `LOG_DISARMED 1` ✅ |
+| Emniyet çekirdeği | `ARMING_REQUIRE 1` · `SERVO1/3_FUNCTION 74/73` · `SERVO*_TRIM 1487` · `FRAME_CLASS 2` · `BRD_RTC_TYPES 1` · `SR2_EXTRA3 10` · `NTF_BUZZ_TYPES 5` ✅ hiç dokunulmadı |
+
+⚠️ **Dosya adı tuzağı:** operatör dökümü `canli_2026-08-07d.param` diye
+kaydetti ama tarih **10.08**'dir (adlandırma 07.08 serisinden devam etmiş).
+Repoya `...2026-08-10-YAZILDI.param` adıyla alındı. Sonradan okuyan kişi
+Masaüstündeki `07d` dosyasını 7 Ağustos'a ait sanmasın.
+
+⏳ **Hâlâ açık:** aşağıdaki "KARAR VERİLMEDİ" tablosu — özellikle **SERIAL
+sorusu** (FTDI hangi portta). Yazma işi onu çözmedi, çünkü bilinçli olarak
+`SERIAL*`'a dokunulmadı.
 
 ## Ne oldu
 
