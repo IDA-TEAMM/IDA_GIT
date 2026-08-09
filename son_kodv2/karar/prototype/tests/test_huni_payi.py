@@ -21,11 +21,14 @@ from __future__ import annotations
 
 import math
 
+from prototype.mission.gate_follower import BUOY_RADIUS_M, GateFollowerConfig
 from prototype.planning.mppi import MPPIConfig, MPPIController
 from prototype.planning.rrt_star import Bounds, CircleObstacle
 
-HULL_W = 0.78
-BUOY_R = 0.15
+# ⚠ Gövde boyutları TEK KAYNAKTAN okunur (takım 09.08'de 0,78 → 0,785 m
+# yeniden ölçtü; gömülü kopya sessizce bayatlardı).
+HULL_W = GateFollowerConfig().hull_width_m
+BUOY_R = BUOY_RADIUS_M
 
 
 def huni_payi(i: int, kenarlar: list, tavan: float, hull_w: float = HULL_W) -> float:
@@ -60,8 +63,10 @@ def test_dar_kapida_pay_KUCULUR_gecit_kapanmaz() -> None:
     iki halka geçidin içinde ÜST ÜSTE BİNER ve araç hiç giremezdi."""
     kenarlar = [(0.0, 0.0), (1.65, 0.0)]
     m = huni_payi(0, kenarlar, 1.4)
-    assert math.isclose(m, (1.65 - HULL_W - 0.30) / 2.0, abs_tol=1e-9)
-    assert math.isclose(m, 0.285, abs_tol=1e-3)
+    # ⚠ Elle yazılmış sayı YOK: gövde genişliği yeniden ölçülünce (09.08'de
+    # 0,78 → 0,785 oldu) beklenen pay da onunla kayar. Dondurulan şey FORMÜL.
+    assert math.isclose(m, (1.65 - HULL_W - 2 * BUOY_R) / 2.0, abs_tol=1e-9)
+    assert 0.2 < m < 0.4, f"pay {m:.3f} m — B2 tablosunun mertebesinde değil"
     # Geçilebilirlik: iki halka arasında gövde sığmalı
     serbest = 1.65 - 2 * BUOY_R - 2 * m
     assert serbest >= HULL_W - 1e-9

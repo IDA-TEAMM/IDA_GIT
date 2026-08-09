@@ -14,14 +14,20 @@ hesaplanır, en yakın bearing'li çift greedy olarak birleştirilir.
     kod / çıktı sözleşmesi değişmez — bkz. CLAUDE.md Perception bölümü).
 
 Eşleşmeyen LiDAR tespiti GÜVENLİK NEDENİYLE atılmaz — class_id=CLASS_UNKNOWN
-(99) ile korunur (MPPI cost map'te hâlâ engel olarak sayılmalı). Eşleşmeyen
-kamera tespiti atılır (3D konumu yok, planning'e taşınamaz).
+(99) ile korunur (MPPI cost map'te hâlâ engel olarak sayılmalı).
+
+🆕 Eşleşmeyen kamera tespiti ARTIK ATILMIYOR (2026-08-09, H3): algı tarafı
+08.08'den beri `/perception/buoys_3d` ile kendi 3B konum kestirimini de
+yayınlıyor (stereo, yoksa bbox genişliğinden pinhole — duba çapı şartname
+sabiti Ø30 cm; geçerli bant 0,5-15 m). Konumu olan tespit `source="kamera"`
+ile sonuca girer. Konumu YOKSA eski davranış: atılır.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Optional
 
 #: LiDAR-only (eşleşmemiş, renksiz) tespit sınıfı — güvenlik: engel olarak tut.
 #: Kamera sınıfları (0=parkur_kenari, 1=engel, 2=hedef) camera_buoys'ta tanımlı;
@@ -46,6 +52,16 @@ class CameraDetection:
     bbox_cy: float
     class_id: int
     score: float
+    # 🆕 H3 (2026-08-09): kameranın KENDİ 3B konum kestirimi
+    # (`/perception/buoys_3d`) — base_link, x=ileri, y=sol, metre.
+    # None ise eski davranış (yalnız bearing) BİREBİR korunur.
+    x: Optional[float] = None
+    y: Optional[float] = None
+    radius: Optional[float] = None
+
+    @property
+    def konumu_var(self) -> bool:
+        return self.x is not None and self.y is not None
 
 
 @dataclass
@@ -57,7 +73,16 @@ class FusedObstacle:
     radius: float
     class_id: int
     score: float
-    matched: bool      # True: kamera+LiDAR eşleşti, False: yalnız LiDAR
+    matched: bool      # True: sınıf kameradan geldi
+    #: Konumun KAYNAĞI (H3) — teşhis + aşağı akış kararları için:
+    #:   "lidar"  : LiDAR kümesi, sınıf yok (CLASS_UNKNOWN)
+    #:   "fused"  : LiDAR konumu + kamera sınıfı — en güvenilir
+    #:   "kamera" : yalnız kamera; LiDAR o mesafede kümeleyemedi. Konum
+    #:              bbox genişliğinden kestirim → uzakta menzil hatası
+    #:              büyük (15 m'de duba ~6 px, ±1 px ≈ %17), ama YANAL
+    #:              hassasiyet iyi (12 m'de ~2 cm) — kapı nişanı için
+    #:              gereken de odur.
+    source: str = "lidar"
 
 
 @dataclass
@@ -91,6 +116,36 @@ def _circular_diff(a: float, b: float) -> float:
     return math.atan2(math.sin(a - b), math.cos(a - b))
 
 
+#: Bearing eşleşmesinin menzil tutarlılığı payı (H3 yan kazancı, 2026-08-09).
+#:
+#: 🔴 **Kapattığı tehlike:** bearing eşleştirmesi MENZİL BİLMEZ — aynı yöndeki
+#: her şeyi eşleştirir. 5 m'deki SARI ENGEL ile 14 m'deki TURUNCU KAPI DİREĞİ
+#: aynı hizadaysa, engel "kapı direği" sınıfını alır, `planning_node` onu engel
+#: torbasından ÇIKARIR ve araç doğrudan engele sürer (Ç1/Ç2 çarpma puanı).
+#: Eskiden bu kontrol EDİLEMİYORDU: kameranın menzili yoktu. Artık var.
+#:
+#: Oran ölçüsü, kameranın kendi belirsizlik modelinden türer. Pinhole menzil
+#: `D = K/w_px` olduğu için hata menzille KARESEL büyür: `dD = D²·dw/K`.
+#: Algı tarafının kalibrasyonuyla (`w_px = 90,1/Z`) 15 m'de ±2 px ≈ ±5 m,
+#: yani **%33**. 0,5 bunun üstünde güvenli pay bırakır → doğru eşleşmeyi
+#: reddetmez, ama yukarıdaki 5 m ↔ 14 m karışmasını (%180) yakalar.
+#: ⚠ Kameranın gerçek menzil hatası SUDA ölçülmedi; bu pay ölçümle
+#: güncellenmeli (kamera menzili sistematik saparsa oran büyütülür).
+_MENZIL_TUTARLILIK_ORANI = 0.5
+
+
+def _konum_celisiyor(lid: LidarDetection, cam: CameraDetection) -> bool:
+    """Bearing eşleşmesi iki sensörün KONUMUYLA çelişiyor mu.
+
+    Kameranın 3B konumu yoksa kontrol edilemez → False (eski davranış birebir).
+    """
+    if not cam.konumu_var:
+        return False
+    ayrik = math.hypot(lid.x - cam.x, lid.y - cam.y)
+    kamera_menzili = math.hypot(cam.x, cam.y)
+    return ayrik > kamera_menzili * _MENZIL_TUTARLILIK_ORANI
+
+
 def associate(
     lidar_list: list[LidarDetection],
     camera_list: list[CameraDetection],
@@ -98,9 +153,16 @@ def associate(
 ) -> list[FusedObstacle]:
     """Greedy en-yakın-bearing eşleştirme.
 
+    ÜÇ GEÇİŞ (2. ve 3. 2026-08-09'da eklendi, H3):
+      1. **Bearing** eşleştirme — greedy en yakın açı (eski davranış).
+      2. **Konumsal** eşleştirme — kameranın 3B konumu varsa, bearing'in
+         kaçırdığı çiftleri daire çakışmasıyla yakala (ayar eşiği yok).
+      3. **Yalnız kamera** — hâlâ eşleşmemiş ama konumu olan tespitler
+         sonuca `source="kamera"` ile girer (LiDAR o mesafede kümeleyemiyor).
+
     - Her LiDAR tespiti sonuca girer (eşleşmesin bile — CLASS_UNKNOWN ile).
-    - Her kamera tespiti EN FAZLA bir LiDAR'a eşlenir (double-match yok);
-      eşleşmeyen kamera tespiti atılır (3D konumu yok).
+    - Her kamera tespiti EN FAZLA bir LiDAR'a eşlenir (double-match yok).
+    - Konumu OLMAYAN eşleşmemiş kamera tespiti yine atılır (eski davranış).
     - Aday çiftler bearing farkına göre küçükten büyüğe işlenir → global
       olarak en yakın çiftler önce kilitlenir (greedy, optimal değil ama
       kalibrasyonsuz bearing-only senaryoda yeterli).
@@ -111,8 +173,13 @@ def associate(
         for j, camera_det in enumerate(camera_list):
             camera_bearing = bearing_from_camera(camera_det, cfg.camera_hfov_rad)
             diff = abs(_circular_diff(lidar_bearing, camera_bearing))
-            if diff <= cfg.bearing_tolerance_rad:
-                candidates.append((diff, i, j))
+            if diff > cfg.bearing_tolerance_rad:
+                continue
+            # H3 yan kazancı: aynı YÖNDE ama çok farklı MENZİLDE olan çift
+            # aynı cisim değildir (`_MENZIL_TUTARLILIK_ORANI` gerekçesi).
+            if _konum_celisiyor(lidar_det, camera_det):
+                continue
+            candidates.append((diff, i, j))
     candidates.sort(key=lambda c: c[0])
 
     matched_camera_for_lidar: dict[int, int] = {}
@@ -123,6 +190,26 @@ def associate(
         matched_camera_for_lidar[i] = j
         used_camera_idx.add(j)
 
+    # 🆕 H3 — 2. GEÇİŞ: KONUMSAL eşleştirme (bearing kaçırdıysa kurtar).
+    # Kameranın 3B konumu varsa, bearing toleransına takılmayan çiftleri
+    # daire çakışmasıyla yakalarız: `d ≤ r_lidar + r_kamera`. Ayarlanabilir
+    # eşik DEĞİL — iki katı cisim aynı yeri kaplayamaz (aynı ölçüt
+    # `EdgeBuoyMemory`'de de kullanılıyor). Bearing yaklaşımı kalibrasyonsuz
+    # ve kaba olduğu için (modül docstring'i) bu ikinci geçiş onu tamamlar.
+    for j, cam in enumerate(camera_list):
+        if j in used_camera_idx or not cam.konumu_var:
+            continue
+        en_iyi, en_yakin = None, math.inf
+        for i, lid in enumerate(lidar_list):
+            if i in matched_camera_for_lidar:
+                continue
+            d = math.hypot(lid.x - cam.x, lid.y - cam.y)
+            if d <= lid.radius + (cam.radius or 0.0) and d < en_yakin:
+                en_iyi, en_yakin = i, d
+        if en_iyi is not None:
+            matched_camera_for_lidar[en_iyi] = j
+            used_camera_idx.add(j)
+
     fused: list[FusedObstacle] = []
     for i, lidar_det in enumerate(lidar_list):
         if i in matched_camera_for_lidar:
@@ -131,7 +218,7 @@ def associate(
                 FusedObstacle(
                     x=lidar_det.x, y=lidar_det.y, radius=lidar_det.radius,
                     class_id=camera_det.class_id, score=camera_det.score,
-                    matched=True,
+                    matched=True, source="fused",
                 )
             )
         else:
@@ -139,6 +226,31 @@ def associate(
                 FusedObstacle(
                     x=lidar_det.x, y=lidar_det.y, radius=lidar_det.radius,
                     class_id=CLASS_UNKNOWN, score=0.0, matched=False,
+                    source="lidar",
                 )
             )
+
+    # 🆕 H3 — 3. GEÇİŞ: eşleşmeyen ama KONUMU OLAN kamera tespitleri.
+    #
+    # 🔴 Bu satırlar §0.19c/§0.20c'deki menzil boşluğunu kapatıyor. 30 cm duba
+    # LiDAR'da ~8 m'de kesiliyor (yeterli nokta düşmüyor); kapı takibi ise
+    # iki direği aynı karede görmek için 8,8-15 m'ye ihtiyaç duyuyor →
+    # pencereler ÖRTÜŞMÜYORDU ve ölçümde model AÇIKKEN P1 çöküyordu
+    # (0 kapı, 1/4 nokta). Kameranın kendi menzil kestirimi (bbox
+    # genişliğinden, duba çapı şartname sabiti Ø30 cm) 0,5-15 m bandında
+    # geçerli → tam o boşluğu dolduruyor.
+    #
+    # Eski davranış (`camera_positions` yoksa) BİREBİR korunur: konumu
+    # olmayan eşleşmemiş kamera tespiti yine atılır.
+    for j, cam in enumerate(camera_list):
+        if j in used_camera_idx or not cam.konumu_var:
+            continue
+        fused.append(
+            FusedObstacle(
+                x=cam.x, y=cam.y,
+                radius=cam.radius if cam.radius is not None else 0.0,
+                class_id=cam.class_id, score=cam.score,
+                matched=True, source="kamera",
+            )
+        )
     return fused

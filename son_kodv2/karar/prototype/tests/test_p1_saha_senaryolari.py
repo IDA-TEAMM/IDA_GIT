@@ -36,13 +36,20 @@ import numpy as np
 
 from prototype.dynamics.catamaran import CatamaranDynamics
 from prototype.mission.edge_memory import CLASS_UNKNOWN, EdgeBuoyMemory
-from prototype.mission.gate_follower import GateFollower, GateFollowerConfig
+from prototype.mission.gate_follower import (
+    BUOY_RADIUS_M,
+    GateFollower,
+    GateFollowerConfig,
+)
 from prototype.mission.parkur_dunyasi import oku as parkuru_oku
 from prototype.planning.pipeline import PlanningPipeline, PlanningPipelineConfig
 from prototype.planning.rrt_star import Bounds, CircleObstacle
 
-HULL_W, HULL_L = 0.78, 1.04
-BUOY_R = 0.15                  # md 5.5.2.1: duba çapı 30 cm
+# ⚠ TEK KAYNAK: takım 09.08'de gövde genişliğini 0,78 → 0,785 m yeniden ölçtü.
+# Gömülü kopya bırakılırsa test gerçek tekneden başka bir tekneyi ölçer.
+_GC = GateFollowerConfig()
+HULL_W, HULL_L = _GC.hull_width_m, _GC.hull_length_m
+BUOY_R = BUOY_RADIUS_M         # md 5.5.2.1: duba çapı 30 cm
 KAMERA_FOV = 1.2               # rad — hardware.yaml perception.fusion
 KAMERA_MENZIL = 15.0           # m
 EDGE_CLASS_ID = 0              # planning_node.edge_buoy_class_id varsayılanı

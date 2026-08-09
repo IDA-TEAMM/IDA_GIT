@@ -290,8 +290,16 @@ class PlanningNode(Node):
         # kayması için gerekli: kenar dubaları MPPI'de engel olmadığından
         # geçitte iten tek kuvvet budur (gate_follower.aim_point).
         self._obstacles_world: list[tuple[float, float, float]] = []
-        # classified_obstacles hiç aktı mı? (obstacle_map ile hakemlik için)
+        # classified_obstacles hiç aktı mı? (yalnız log/teşhis için — hakemlik
+        # artık TAZELİKLE yapılıyor, aşağıdaki `_last_classified_t`)
         self._classified_seen = False
+        # H4: sınıflı akışın SON varış anı. Mandal artık tek yönlü değil —
+        # akış susarsa ham LiDAR yolu devralır (`_on_obstacles` docstring'i).
+        self._last_classified_t: Optional[float] = None
+        self._sinifsiz_uyarildi = False
+        # H5: "akıyor ama hep boş" kapanı (`_bos_akis_denetle`)
+        self._son_dolu_akis_t: Optional[float] = None
+        self._bos_akis_uyarildi = False
         self._gate_log_t = 0.0
         self._last_gate_used_fallback = True
         # Algı karesi sayacı — her `classified_obstacles` mesajında artar.
@@ -320,6 +328,22 @@ class PlanningNode(Node):
         # F-P.2: obstacle_map bayatlık takibi
         self._obstacle_timeout = float(
             self.get_parameter("obstacle_timeout_s").value
+        )
+        # H4 eşiği AYRI BİR AYAR DEĞİL, F-P.2 bütçesinden TÜRER: durdurma
+        # bütçesinin yarısında yedeğe geç → devralmak için bütçenin yarısı
+        # hep elde kalır. Bütçe 0 (bekçi kapalı) ise yedek de kapalı sayılır
+        # ve eski davranış birebir korunur.
+        self._classified_timeout = (
+            self._obstacle_timeout / 2.0 if self._obstacle_timeout > 0.0
+            else float("inf")
+        )
+        # H5 eşiği de F-P.2'den türer ama TERS yönde: bekçi "sustu"yu ölçer
+        # (2 sn yeter), bu "hep boş"u ölçer. Boşluk geçici olabilir (dubaların
+        # arasından çıkmış olabiliriz), o yüzden çok daha uzun: bütçenin 5
+        # katı = 10 sn. 1,05 m/s'te ~10 m yol — parkurda bu kadar boşluk yok.
+        self._bos_akis_uyari_s = (
+            self._obstacle_timeout * 5.0 if self._obstacle_timeout > 0.0
+            else 10.0
         )
         self._last_obstacle_t: float | None = None
         self._obstacle_stale_warn_t = 0.0
@@ -488,12 +512,32 @@ class PlanningNode(Node):
     def _on_obstacles(self, msg: PoseArray) -> None:
         """PLACEHOLDER şema: position.{x,y} merkez, orientation.z yarıçap.
 
-        Sınıflı topic (`classified_obstacles`) bir kez aktıysa BU YOL SUSAR —
+        Sınıflı topic (`classified_obstacles`) **TAZE AKARKEN** bu yol susar —
         aynı engeller oradan sınıf bilgisiyle birlikte geliyordur ve kapı
         dubalarının ayıklanması yalnız orada mümkündür (F-S.9).
+
+        🔴 **H4 (2026-08-09) — MANDAL ÇİFT YÖNLÜ YAPILDI.** Eskiden ölçüt
+        `_classified_seen` idi: sınıflı akış **bir kez** geldiyse bu yol
+        KALICI olarak susuyordu. Koşu ortasında kamera/OAK/füzyon düşerse
+        (F-P.22'de gerçek donanımda yaşandı) sonuç şuydu:
+
+            classified susar → ham LiDAR yolu mandal yüzünden kapalı →
+            engel torbası DONAR → `_last_obstacle_t` güncellenmez →
+            2 sn sonra F-P.2 thrust'ı sıfırlar → **tekne kalıcı durur**
+
+        …oysa LiDAR sapasağlam ve tek başına kaçınma yapabilir: sınıfsız kol
+        gerçek parkurda P1'i **53,75 puanla bitiriyor** (§0.20c ölçümü, model
+        yokken 3/3 tohum). Yani çalışan bir yedek varken kapatılmıştı.
+
+        Artık ölçüt **tazelik**: sınıflı akış `_classified_timeout` kadar
+        susarsa bu yol kendiliğinden devralır, geri gelince yine susar.
+        Eşik F-P.2'nin durdurma bütçesinin YARISI — yedeğin devreye girmesi
+        için bütçenin yarısı hep elde kalır, "durmadan hemen önce devral"
+        gibi işe yaramaz bir eşik olmaz.
         """
-        if self._use_classified and self._classified_seen:
+        if self._use_classified and self._classified_taze():
             return
+        self._sinifsiz_yola_dusuldu()
         # F-P.2 bayatlık saati poz kontrolünden ÖNCE: bu bekçi "perception
         # kaynağı sustu mu"yu ölçer, "biz dönüştürebildik mi"yi değil. Poz
         # yokluğunda saati durdurmak bekçiyi sessizce kör ederdi.
@@ -507,6 +551,30 @@ class PlanningNode(Node):
         ]
         self._obstacles_world = [(o.cx, o.cy, o.r) for o in obstacles]
         self._pipe.set_obstacles(obstacles)
+        self._bos_akis_denetle(len(obstacles))
+
+    def _classified_taze(self) -> bool:
+        """Sınıflı akış hâlâ geliyor mu (H4 mandalının ölçütü)."""
+        if self._last_classified_t is None:
+            return False
+        return (self._now() - self._last_classified_t) <= self._classified_timeout
+
+    def _sinifsiz_yola_dusuldu(self) -> None:
+        """Sınıflı → sınıfsız geçişini BİR KEZ logla (10 Hz'te sel olmasın).
+
+        Sahadaki tek görünürlük kanalı: bu satır basılmışsa kapı takibi artık
+        çalışmıyor demektir (tüm dubalar engel), yani P1/P2 geçiş puanı
+        düşecek — ama araç sürmeye devam ediyor.
+        """
+        if not self._classified_seen or self._sinifsiz_uyarildi:
+            return
+        self._sinifsiz_uyarildi = True
+        self.get_logger().error(
+            f"sınıflı algı {self._classified_timeout:.1f} sn'dir gelmiyor → "
+            "HAM LiDAR yoluna düşüldü. Araç sürmeye devam eder ama KAPI TAKİBİ "
+            "YOK (tüm dubalar engel; geçiş puanı düşer). Kamera/OAK/füzyon "
+            "node'unu kontrol et."
+        )
 
     def _on_classified(self, msg: Detection3DArray) -> None:
         """Sınıflı engeller → kapı dubaları AYRIŞTIRILIR, gerisi engel kalır.
@@ -531,6 +599,8 @@ class PlanningNode(Node):
         Ayrıntı + eşleşme ölçüsü: `prototype/mission/edge_memory.py`.
         """
         self._classified_seen = True
+        self._last_classified_t = self._now()        # H4: tazelik saati
+        self._sinifsiz_uyarildi = False              # akış döndü → uyarı sıfırla
         self._last_obstacle_t = self._now()          # F-P.2 bekçisini besle (poz
                                                      # kontrolünden ÖNCE — üstteki
                                                      # _on_obstacles notuna bak)
@@ -578,6 +648,7 @@ class PlanningNode(Node):
 
         self._edge_buoys = edges
         self._log_edge_memory()
+        self._bos_akis_denetle(len(tespitler))
         self._obstacles_world = [(o.cx, o.cy, o.r) for o in obstacles]
         self._pipe.set_obstacles(obstacles)
         self._algi_no += 1                # B5 onayı: yeni algı karesi geldi
@@ -678,6 +749,45 @@ class PlanningNode(Node):
         self.get_logger().error(
             f"engel haritası {age:.1f}s'dir gelmiyor → MPPI DURDURULDU, "
             "thrust sıfır (F-P.2: bayat engel bilgisiyle kör sürme yok)"
+        )
+
+    def _bos_akis_denetle(self, n_engel: int) -> None:
+        """🔴 H5 — "AKIYOR AMA HEP BOŞ" kapanı (2026-08-09 taraması).
+
+        F-P.2 bekçisi mesajın **varış zamanına** bakar, **içeriğine** bakmaz:
+        her mesajda `_last_obstacle_t` tazelenir. Dolayısıyla algı her karede
+        **boş dizi** yayınlarsa her şey sağlıklı görünür ve araç **sıfır
+        engelle** sürer — hiçbir yerde tek satır uyarı basılmadan.
+
+        Bu varsayımsal değil, projenin YAŞADIĞI arıza: B0/F5.1'de LiDAR z
+        filtresi yanlış çerçevede uygulanınca `obstacle_map` sürekli boş
+        geliyordu (§0.2b). O gün belirti yoktu; bugün olacak.
+
+        Ölçüt uydurma değil, fiziksel: parkurda **her zaman** duba vardır
+        (şartname md 5.5.2.1 — kenar dubaları parkuru tanımlar). Görevdeyken
+        `boş_akış_uyarı_s` boyunca TEK BİR cisim bile görülmediyse algı
+        çalışmıyordur; açık suda bile 25 m menzilde sıfır dönüş fiziksel
+        olarak beklenmez.
+        """
+        now = self._now()
+        if n_engel > 0:
+            self._son_dolu_akis_t = now
+            self._bos_akis_uyarildi = False
+            return
+        if self._son_dolu_akis_t is None:            # boot — henüz hiç dolu gelmedi
+            self._son_dolu_akis_t = now
+            return
+        if self._bos_akis_uyarildi:
+            return
+        if now - self._son_dolu_akis_t < self._bos_akis_uyari_s:
+            return
+        self._bos_akis_uyarildi = True
+        self.get_logger().error(
+            f"algı {now - self._son_dolu_akis_t:.0f} sn'dir AKIYOR ama HEP BOŞ "
+            "(0 engel). F-P.2 bekçisi bunu yakalamaz — mesaj geliyor, içi boş. "
+            "Araç ENGELSİZ sürüyor. Kontrol: LiDAR z filtresi doğru çerçevede "
+            "mi (B0/F5.1, mount_z girili mi) · `ros2 topic echo "
+            "/perception/obstacle_map --once` · kümeleme logunda nokta sayısı"
         )
 
     def _refine_target(self, coarse: tuple[float, float]) -> tuple[float, float]:

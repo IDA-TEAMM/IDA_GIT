@@ -45,9 +45,21 @@ düzeltmenin bu hatta hiç taşınmadığını bulup raporladı):
     clustering ms'ler); ama açık suda ölçülmedi, o yüzden ölçülmüş değer
     varsayılan bırakıldı.
 
+🆕 H3 (2026-08-09) — KAMERANIN KENDİ MENZİLİ ARTIK KULLANILIYOR.
+Ölçüldü (§0.19c): 30 cm duba LiDAR'da ~8 m'de kesiliyor (yeterli nokta
+düşmüyor), kapı takibi ise iki direği aynı karede görmek için 8,8-15 m'ye
+ihtiyaç duyuyor → İKİ PENCERE ÖRTÜŞMÜYORDU ve model AÇIKKEN P1 çöküyordu
+(§0.20c: 0 kapı, 1/4 nokta). Algı tarafı 08.08'den beri bbox genişliğinden
+menzil kestirip `/perception/buoys_3d`'ye basıyordu (0,5-15 m); karar tarafı
+bu topic'e hiç abone değildi. Artık damgaya göre önbelleğe alınıp füzyona
+veriliyor → LiDAR'ın göremediği mesafedeki duba da sınıfıyla birlikte
+planlamaya ulaşıyor.
+
 Subscribed:
     /perception/obstacle_map   geometry_msgs/PoseArray        (RELIABLE)
     /perception/buoys          vision_msgs/Detection2DArray   (RELIABLE)
+    /perception/buoys_3d       geometry_msgs/PoseArray        (H3, opsiyonel —
+                               akmıyorsa eski bearing-only davranış birebir)
 Published:
     /perception/classified_obstacles   vision_msgs/Detection3DArray
 Header: frame_id=base_link, stamp = LiDAR mesajının stamp'i (iki kaynaktan
@@ -56,6 +68,7 @@ Header: frame_id=base_link, stamp = LiDAR mesajının stamp'i (iki kaynaktan
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from typing import Optional
 
 import message_filters
@@ -104,6 +117,7 @@ class PerceptionFusionNode(Node):
         self.declare_parameter("log_period_s", 5.0)
 
         p = self.get_parameter
+        self._sync_queue_size = int(p("sync_queue_size").value)
         self._cfg = FusionConfig(
             bearing_tolerance_rad=float(p("bearing_tolerance_rad").value),
             camera_hfov_rad=float(p("camera_hfov_rad").value),
@@ -125,9 +139,19 @@ class PerceptionFusionNode(Node):
         self._camera_sub = message_filters.Subscriber(
             self, Detection2DArray, "/perception/buoys"
         )
+        # 🆕 H3: kameranın KENDİ 3B konum kestirimi. Sync'e ÜÇÜNCÜ girdi
+        # olarak EKLENMEZ — 3'lü ApproximateTime eşleşmeyi zorlaştırır ve
+        # çalışan LiDAR↔kamera senkronunu riske atar. Bunun yerine damgaya
+        # göre önbelleğe alınır: algı node'u `buoys` ile `buoys_3d`'yi AYNI
+        # fonksiyonda, AYNI damgayla, ARDIŞIK yayınlıyor (tespit_yayinla) →
+        # damga eşleşmesi kesin, indeks sırası da BİREBİR aynı.
+        self._buoys3d: "OrderedDict[tuple, list]" = OrderedDict()
+        self._sub_buoys3d = self.create_subscription(
+            PoseArray, "/perception/buoys_3d", self._on_buoys3d, 10
+        )
         self._sync = message_filters.ApproximateTimeSynchronizer(
             [self._lidar_sub, self._camera_sub],
-            queue_size=int(p("sync_queue_size").value),
+            queue_size=self._sync_queue_size,
             slop=float(p("sync_slop_s").value),
         )
         self._sync.registerCallback(self._on_sync)
@@ -220,11 +244,14 @@ class PerceptionFusionNode(Node):
                                 radius=abs(pose.orientation.z))
                 for pose in poses.poses
             ]
-            camera_list = [
-                cam
-                for det in detections.detections
-                if (cam := self._to_camera_detection(det)) is not None
-            ]
+            camera_list = []
+            ham_idx = []                 # H3: buoys_3d ile indeks hizası
+            for k, det in enumerate(detections.detections):
+                cam = self._to_camera_detection(det)
+                if cam is not None:
+                    camera_list.append(cam)
+                    ham_idx.append(k)
+            n_konumlu = self._konumlari_bagla(detections, camera_list, ham_idx)
             fused = associate(lidar_list, camera_list, self._cfg)
         except Exception as exc:
             self.get_logger().error(
@@ -254,11 +281,66 @@ class PerceptionFusionNode(Node):
         self._pub.publish(out)
 
         n_matched = sum(o.matched for o in fused)
+        n_kamera = sum(1 for o in fused if o.source == "kamera")
         self.get_logger().debug(
             f"{len(lidar_list)} lidar + {len(camera_list)} kamera → "
-            f"{len(fused)} füzyon ({n_matched} eşleşti)"
+            f"{len(fused)} füzyon ({n_matched} eşleşti, {n_kamera} yalnız kamera)"
         )
-        self._periodic_info(len(fused), n_matched)
+        self._periodic_info(len(fused), n_matched, n_kamera, n_konumlu)
+
+    # --------------------------------------------------------- H3: buoys_3d
+
+    @staticmethod
+    def _damga(header) -> tuple:                       # noqa: ANN001, ANN205
+        return (header.stamp.sec, header.stamp.nanosec)
+
+    def _on_buoys3d(self, msg: PoseArray) -> None:
+        """Kameranın 3B konum kestirimini damgaya göre önbelleğe al (H3).
+
+        Önbellek `sync_queue_size` kadar derin: kamera karesi sync kuyruğunda
+        ne kadar bekleyebiliyorsa (LiDAR gecikmesi kadar), eşi de o kadar
+        beklemeli — yoksa eşleşme anında 3B konum çoktan düşmüş olur ve
+        düzeltme sessizce hiç çalışmaz.
+        """
+        self._buoys3d[self._damga(msg.header)] = [
+            (p.position.x, p.position.y, abs(p.orientation.z))
+            for p in msg.poses
+        ]
+        while len(self._buoys3d) > self._sync_queue_size:
+            self._buoys3d.popitem(last=False)          # en eskisini at
+
+    def _konumlari_bagla(
+        self, detections, camera_list: list, ham_idx: list
+    ) -> int:                                          # noqa: ANN001
+        """Önbellekteki 3B konumları kamera tespitlerine iliştir (H3).
+
+        🔑 **İNDEKS SÖZLEŞMESİ:** algı node'u `buoys` ile `buoys_3d`'yi tek
+        döngüde, aynı sırayla dolduruyor → `detections[k]` ile `poses[k]`
+        AYNI tespittir. Ama `camera_list` süzülerek kuruluyor (sayısal
+        olmayan class_id atlanır), bu yüzden `ham_idx` orijinal indeksi
+        taşır — onsuz sınıf ile konum KAYARDI.
+
+        Uzunluk uyuşmazsa hiçbir şey iliştirilmez: sözleşme bozulmuşsa
+        yanlış konum vermektense eski davranışa (bearing-only) düşmek
+        güvenlidir.
+        """
+        konumlar = self._buoys3d.get(self._damga(detections.header))
+        if konumlar is None:
+            return 0
+        if len(konumlar) != len(detections.detections):
+            self.get_logger().warn(
+                f"buoys_3d uzunluğu ({len(konumlar)}) buoys ile "
+                f"({len(detections.detections)}) uyuşmuyor — indeks sözleşmesi "
+                "bozulmuş, 3B konumlar YOK SAYILDI (bearing-only'ye düşüldü)",
+                throttle_duration_sec=5.0,
+            )
+            return 0
+        n = 0
+        for cam, k in zip(camera_list, ham_idx):
+            cx, cy, r = konumlar[k]
+            cam.x, cam.y, cam.radius = float(cx), float(cy), float(r)
+            n += 1
+        return n
 
     def _to_camera_detection(self, det) -> Optional[CameraDetection]:      # noqa: ANN001
         """Detection2D (piksel bbox) → CameraDetection (normalize [0,1])."""
@@ -281,14 +363,21 @@ class PerceptionFusionNode(Node):
             score=float(hyp.score),
         )
 
-    def _periodic_info(self, n_fused: int, n_matched: int) -> None:
-        """log_period_s'de bir INFO — her sync callback'te log seli olmasın."""
+    def _periodic_info(self, n_fused: int, n_matched: int,
+                       n_kamera: int = 0, n_konumlu: int = 0) -> None:
+        """log_period_s'de bir INFO — her sync callback'te log seli olmasın.
+
+        `yalnız kamera` sayısı H3'ün sahadaki tek görünürlük kanalı: 0 kalıyorsa
+        ya LiDAR her şeyi zaten görüyor (iyi) ya da `/perception/buoys_3d`
+        akmıyor (kötü — `konumlu` sütunu 0 ise sebep budur).
+        """
         now = self.get_clock().now().nanoseconds * 1e-9
         if self._last_log_t is None or now - self._last_log_t >= self._log_period_s:
             self._last_log_t = now
             self.get_logger().info(
-                f"füzyon: {n_fused} engel ({n_matched} eşleşti, "
-                f"{n_fused - n_matched} bilinmiyor)"
+                f"füzyon: {n_fused} engel ({n_matched} sınıflı, "
+                f"{n_fused - n_matched} bilinmiyor · {n_kamera} yalnız kamera, "
+                f"{n_konumlu} tespitte 3B konum var)"
             )
 
 
