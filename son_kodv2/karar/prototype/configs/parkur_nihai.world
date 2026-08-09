@@ -1,0 +1,534 @@
+<?xml version="1.0" ?>
+<sdf version="1.6">
+  <world name="ida_yarismasi_parkuru">
+
+    <!-- GUNES -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+    </light>
+
+    <!-- DENIZ -->
+    <model name="ocean">
+      <static>true</static>
+
+      <link name="water">
+        <visual name="visual">
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>250 250</size>
+            </plane>
+          </geometry>
+
+          <material>
+            <ambient>0 0.2 0.8 1</ambient>
+            <diffuse>0 0.2 0.8 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+
+    <!-- ========================= -->
+    <!-- BASLANGIC -->
+    <!-- ========================= -->
+
+    <model name="BB">
+      <static>true</static>
+      <pose>-18 0 0.5 0 0 0</pose>
+
+      <link name="link">
+        <visual name="visual">
+          <geometry>
+            <box>
+              <size>3 3 1</size>
+            </box>
+          </geometry>
+
+          <material>
+            <ambient>0 0 0 1</ambient>
+            <diffuse>0 0 0 1</diffuse>
+          </material>
+
+        </visual>
+      </link>
+    </model>
+
+
+
+    <!-- ================================================= -->
+    <!-- PARKUR 1 -->
+    <!-- ================================================= -->
+
+    <!-- SOL -->
+
+    <include>
+      <name>p1_l1</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>6 1 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p1_l2</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>10 6 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p1_l3</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>14 11 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p1_l4</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>18 6 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p1_l5</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>22 1 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p1_l6</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>26 6 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p1_l7</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>30 11 0 0 0 0</pose>
+    </include>
+   
+     <include>
+      <name>p1_l8</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>34 5 0 0 0 0</pose>
+    </include>
+
+
+
+
+    <!-- SAG -->
+
+    <include>
+      <name>p1_r1</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>6 -11 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p1_r2</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>10 -6 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p1_r3</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>14 -1 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p1_r4</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>18 -6 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p1_r5</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>22 -11 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p1_r6</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>26 -6 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p1_r7</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>30 -1 0 0 0 0</pose>
+    </include>
+
+     <include>
+      <name>p1_r8</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>34 -7 0 0 0 0</pose>
+    </include>
+
+
+    <!-- GN NOKTALARI -->
+
+    <model name="GN1">
+      <static>true</static>
+      <pose>2 0 0.5 0 0 0</pose>
+
+      <link name="link">
+        <visual name="visual">
+          <geometry>
+            <sphere>
+              <radius>0.7</radius>
+            </sphere>
+          </geometry>
+
+          <material>
+            <ambient>0 0 1 1</ambient>
+            <diffuse>0 0 1 1</diffuse>
+          </material>
+
+        </visual>
+      </link>
+    </model>
+
+
+    <model name="GN2">
+      <static>true</static>
+      <pose>12 5 0.5 0 0 0</pose>
+
+      <link name="link">
+        <visual name="visual">
+          <geometry>
+            <sphere>
+              <radius>0.7</radius>
+            </sphere>
+          </geometry>
+
+          <material>
+            <ambient>0 0 1 1</ambient>
+            <diffuse>0 0 1 1</diffuse>
+          </material>
+
+        </visual>
+      </link>
+    </model>
+
+
+    <model name="GN3">
+      <static>true</static>
+      <pose>20 -5 0.5 0 0 0</pose>
+
+      <link name="link">
+        <visual name="visual">
+          <geometry>
+            <sphere>
+              <radius>0.7</radius>
+            </sphere>
+          </geometry>
+
+          <material>
+            <ambient>0 0 1 1</ambient>
+            <diffuse>0 0 1 1</diffuse>
+          </material>
+
+        </visual>
+      </link>
+    </model>
+
+
+    <model name="GN4">
+      <static>true</static>
+      <pose>32 5 0.5 0 0 0</pose>
+
+      <link name="link">
+        <visual name="visual">
+          <geometry>
+            <sphere>
+              <radius>0.7</radius>
+            </sphere>
+          </geometry>
+
+          <material>
+            <ambient>0 0 1 1</ambient>
+            <diffuse>0 0 1 1</diffuse>
+          </material>
+
+        </visual>
+      </link>
+    </model>
+
+
+
+
+    <!-- ================================================= -->
+    <!-- PARKUR 2 -->
+    <!-- ================================================= -->
+
+    <!-- UST KENAR -->
+
+    <include>
+      <name>p2_u1</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>40 11 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p2_u2</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>45 13 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p2_u3</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>50 12 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p2_u4</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>55 10 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p2_u5</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>60 11 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p2_u6</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>65 12 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p2_u7</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>70 11 0 0 0 0</pose>
+    </include> 
+
+     <include>
+      <name>p2_u8</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>75 10 0 0 0 0</pose>
+    </include>
+  
+     <include>
+      <name>p2_u9</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>80 11 0 0 0 0</pose>
+    </include>
+
+     <include>
+      <name>p2_u10</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>85 13 0 0 0 0</pose>
+    </include>
+ 
+     <include>
+      <name>p2_u11</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>90 14 0 0 0 0</pose>
+    </include>
+
+
+    <!-- ALT KENAR -->
+
+    <include>
+      <name>p2_a1</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>40 -10 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p2_a2</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>45 -9 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p2_a3</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>50 -10 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p2_a4</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>55 -12 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p2_a5</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>60 -11 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>p2_a6</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>65 -10 0 0 0 0</pose>
+    </include>
+
+     <include>
+      <name>p2_a7</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>70 -11 0 0 0 0</pose>
+    </include>
+
+     <include>
+      <name>p2_a8</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>75 -12 0 0 0 0</pose>
+    </include>
+
+     <include>
+      <name>p2_a9</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>80 -11 0 0 0 0</pose>
+    </include>
+
+     <include>
+      <name>p2_a10</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>85 -9 0 0 0 0</pose>
+    </include>
+ 
+     <include>
+      <name>p2_a11</name>
+      <uri>model://turuncu_buoy</uri>
+      <pose>90 -8 0 0 0 0</pose>
+    </include>
+
+
+    <!-- ENGELLER -->
+
+    <include>
+      <name>engel1</name>
+      <uri>model://sari_buoy</uri>
+      <pose>43 2 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>engel2</name>
+      <uri>model://sari_buoy</uri>
+      <pose>47 -2 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>engel3</name>
+      <uri>model://sari_buoy</uri>
+      <pose>51 1 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>engel4</name>
+      <uri>model://sari_buoy</uri>
+      <pose>55 -2 0 0 0 0</pose>
+    </include>
+  
+    <include>
+      <name>engel5</name>
+      <uri>model://sari_buoy</uri>
+      <pose>59 2 0 0 0 0</pose>
+    </include>
+  
+    <include>
+      <name>engel6</name>
+      <uri>model://sari_buoy</uri>
+      <pose>63 -2 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>engel7</name>
+      <uri>model://sari_buoy</uri>
+      <pose>67 1 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>engel8</name>
+      <uri>model://sari_buoy</uri>
+      <pose>71 -1 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>engel9</name>
+      <uri>model://sari_buoy</uri>
+      <pose>75 2 0 0 0 0</pose>
+    </include>
+
+
+    <!-- GN5 -->
+
+    <model name="GN5">
+      <static>true</static>
+      <pose>90 0 0.5 0 0 0</pose>
+
+      <link name="link">
+        <visual name="visual">
+          <geometry>
+            <sphere>
+              <radius>0.7</radius>
+            </sphere>
+          </geometry>
+
+          <material>
+            <ambient>0 0 1 1</ambient>
+            <diffuse>0 0 1 1</diffuse>
+          </material>
+
+        </visual>
+      </link>
+    </model>
+
+
+
+
+    <!-- ================================================= -->
+    <!-- PARKUR 3 -->
+    <!-- ================================================= -->
+
+    <include>
+      <name>hedef_kirmizi</name>
+      <uri>model://kirmizi_buoy</uri>
+      <pose>102 8 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>hedef_yesil</name>
+      <uri>model://yesil_buoy</uri>
+      <pose>102 0 0 0 0 0</pose>
+    </include>
+
+    <include>
+      <name>hedef_kahverengi</name>
+      <uri>model://kahverengi_buoy</uri>
+      <pose>102 -8 0 0 0 0</pose>
+    </include>
+    
+    <include>
+      <name>IDA</name>
+      <uri>model://girdap</uri>
+      <pose>-10 0 0.3 0 0 1.5708</pose>
+    </include>
+
+    <plugin filename="gz-sim-buoyancy-system"
+            name="gz::sim::systems::Buoyancy">
+      <graded_buoyancy>
+        <default_density>1000</default_density>
+        <density_change>
+          <above_depth>0</above_depth>
+          <density>1</density>
+        </density_change>
+      </graded_buoyancy>
+    </plugin>
+
+  </world>
+</sdf>

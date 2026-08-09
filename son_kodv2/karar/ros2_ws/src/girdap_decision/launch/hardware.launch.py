@@ -174,7 +174,9 @@ _MPPI_ARG_DESC = {
                    "(tek örnek seçimi), λ≥500 araç hedefe varamaz",
     "mppi_sigma_u": "MPPI kontrol gürültüsü σ (N, her thruster)",
     "mppi_obstacle_margin": "MPPI engel emniyet payı (m, SOFT ceza). "
-                            "⚠ 1.5 Parkur-2 geçidini kapatır (net açıklık 1.35 m)",
+                            "⚠ BÜYÜTME: 1.2'de ham güzergah noktasına sürüş "
+                            "kırılıyor (2/4 nokta). Kapı direği payı için "
+                            "gate_post_margin_m'i kullan",
     "mppi_terminal_mode": "Terminal hedef: lookahead | global (eski davranış)",
     "mppi_terminal_lookahead_m": "Terminal hedefin çapadan yay uzaklığı (m); "
                                  "≥ seyir_hızı × horizon olmalı",
@@ -192,6 +194,9 @@ _GATE_DEFAULTS: dict[str, tuple[object, type]] = {
     "use_classified_obstacles": (True, bool),
     "hull_width_m": (0.78, float),
     "hull_length_m": (1.04, float),
+    # B2 huni (09.08): kapı direğinin ceza payı ÜST sınırı. Payın kendisi
+    # ölçülen açıklıktan türer (planning_node._huni_payi) — bu yalnız tavan.
+    "gate_post_margin_m": (1.4, float),
 }
 _GATE_ARG_DESC = {
     "gate_following_enabled": "Kapı (kenar dubası ikilisi) orta noktası takibi. "
@@ -205,6 +210,11 @@ _GATE_ARG_DESC = {
                     "sığmaz → kapı sayılmaz. Ayar değil, tekne boyutu.",
     "hull_length_m": "Gövde boyu (m, ÖLÇÜLMÜŞ). Yarısı = burun hattı; duba "
                      "bunun önünde olmalı. Ayar değil, tekne boyutu.",
+    "gate_post_margin_m": "Kapı direği ceza payının ÜST sınırı (m). Payın "
+                          "kendisi ölçülen açıklıktan türer, dar kapıda "
+                          "kendiliğinden küçülür. 1.4 ölçülmüş (gövde payı "
+                          "+0,31 m); 1.0'da temas, 1.8'de son güzergah "
+                          "noktasına varılamıyor (nokta dubaya 2,0 m yakın)",
 }
 # perception.fusion varsayılanları — kamera-LiDAR bearing füzyonu (Sprint 3).
 _FUSION_DEFAULTS: dict[str, tuple[object, type]] = {
@@ -215,6 +225,11 @@ _FUSION_DEFAULTS: dict[str, tuple[object, type]] = {
     "camera_image_width_px": (1280, int),
     "camera_image_height_px": (720, int),
     "sync_slop_s": (0.1, float),
+    # 2026-07-09 tezgah ölçümü (gerçek Livox + OAK): LiDAR clustering gecikince
+    # eşleşme HİÇ olmuyordu; 10 ve 50 yetmedi, 100 tuttu. Damgalar aynı tabanda
+    # (~27 ms) — bu bir gecikme sorunu, slop sorunu DEĞİL. Düzeltme 14.07 klasör
+    # taşınmasında düşmüş, 09.08'de algı ekibinin raporuyla geri geldi.
+    "sync_queue_size": (100, int),
     "log_period_s": (5.0, float),
 }
 

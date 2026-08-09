@@ -58,13 +58,40 @@ from girdap_decision.qos_profiles import sensor_data_qos
 from prototype.mission.mission_manager import latlon_to_enu
 from prototype.telemetry.csv_logger import quat_to_rpy
 
-# p_GUNCEL_20260625.world — Parkur-2 "PARKUR 2" bölümündeki 9 sarı engel
-# şamandırası (sari_buoy, "engel1".."engel9"), dünya-çerçevesi ENU (east,
-# north) metre — course_home_lat/lon parametresine göre sabit, taşınmaz.
-_REAL_ENGEL_BUOYS_ENU = [
-    (43.0, 3.5), (47.0, -3.5), (51.0, 3.5), (55.0, -3.5), (59.0, 3.5),
-    (63.0, -3.5), (67.0, 3.5), (71.0, -3.5), (75.0, 3.5),
+# Parkur-2'nin 9 sarı engel şamandırası (sari_buoy, "engel1".."engel9"),
+# dünya-çerçevesi ENU (east, north) metre — course_home_lat/lon parametresine
+# göre sabit, taşınmaz.
+#
+# 🔴 **ARTIK GÖMÜLÜ DEĞİL — `parkur_nihai.world`'den OKUNUYOR (09.08).**
+# Buradaki liste 25.06 tarihli `p_GUNCEL_20260625.world`'den kopyalanmıştı ve
+# hepsi y=±3,5 diyordu; gerçek parkur y=2/−2/1/−2/2/−2/1/−1/2. Kopya 45 gün
+# bayat kaldı ve kimse fark etmedi çünkü doğruluğunu denetleyen bir şey yoktu.
+# Şimdi tek kaynak `prototype/configs/parkur_nihai.world`.
+#
+# ⚠ Okuma başarısız olursa (dosya kurulum sırasında kopyalanmamış olabilir)
+# node ÖLMEZ, son bilinen değerlere düşer ve gürültülü uyarı basar: bu bir
+# teşhis/simülasyon node'u, sessizce kaybolması onu işe yaramaz hâle getirir.
+_FALLBACK_ENGEL_BUOYS_ENU = [
+    (43.0, 2.0), (47.0, -2.0), (51.0, 1.0), (55.0, -2.0), (59.0, 2.0),
+    (63.0, -2.0), (67.0, 1.0), (71.0, -1.0), (75.0, 2.0),
 ]
+
+
+def _engel_buoylari_yukle() -> list:
+    try:
+        from prototype.mission.parkur_dunyasi import oku
+        engeller = oku().engeller
+    except Exception as exc:                       # noqa: BLE001 — teşhis node'u
+        print(
+            f"[yarisma_simulasyonu] UYARI: parkur_nihai.world okunamadı ({exc}) "
+            "— gömülü yedek engel koordinatları kullanılıyor",
+            flush=True,
+        )
+        return list(_FALLBACK_ENGEL_BUOYS_ENU)
+    return engeller or list(_FALLBACK_ENGEL_BUOYS_ENU)
+
+
+_REAL_ENGEL_BUOYS_ENU = _engel_buoylari_yukle()
 _REAL_BUOY_RADIUS_M = 0.3   # sari_buoy fiziksel yarıçapı (gövde+güvenlik payı)
 
 

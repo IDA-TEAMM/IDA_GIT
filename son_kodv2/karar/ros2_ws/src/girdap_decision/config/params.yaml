@@ -65,17 +65,14 @@ planning_node:
                              # gürültü 'rastgele tam gaz' olur — eski 5.0 buydu).
                              # ⚠ İtki değişirse ORANI koru, N'yi değil.
     mppi_obstacle_margin: 1.0  # m, engel emniyet payı (SOFT ceza yarıçapı).
-                             # Tekne yarı genişliği 0.375 m; 0.5 m'de gövde
-                             # payı −0.29 m (çarpma), 1.0 m'de +0.17 m.
-                             # ⚠ ÜST SINIR: 1.5 m'de araç geçide HİÇ girmiyor.
-                             # 🔴 Bu sınır "geçit net açıklığı ~1.35 m"
-                             # varsayımıyla ölçüldü — o sayının ŞARTNAMEDE
-                             # KARŞILIĞI YOK (kod_denetimi F10.1'de kaynaksız
-                             # geçiyor; şartname mesafelerin yarışma alanına
-                             # göre değişeceğini söylüyor). Geçit gerçekte
-                             # daha genişse 1.0 m fazlasıyla güvenli; DARSA
-                             # 1.0 m de geçidi kapatabilir → sahada ilk kapı
-                             # görüldüğünde /girdap/planning/gate ile teyit et.
+                             # ⚠ BÜYÜTMEYİ DENEME — 09.08'de denendi, geri
+                             # alındı: 1.4'te kapı takipli kol iyileşiyor ama
+                             # MODEL GELMEYEN kol kırılıyor (ham güzergah
+                             # noktasına sürüş 3,3/4 → 1/4 nokta; 1.2'de 2/4).
+                             # Sebep: hakemin noktası dubaya ~2,2 m yakın
+                             # olabiliyor, büyüyen halka aracı varış
+                             # yarıçapına (2,0 m) sokmuyor.
+                             # Kapı direği payı için: gate_post_margin_m.
     mppi_terminal_mode: "lookahead"   # "lookahead" | "global" (eski davranış).
                              # ⚠ "global"e dönersen parkur profillerindeki
                              # w_terminal=50 fazla gelir (köşe keser).
@@ -135,6 +132,21 @@ planning_node:
     #   aynı kapı mı    = kapının kendi genişliğinin yarısı (öz-ölçekli)
     hull_width_m: 0.78       # m, ÖLÇÜLMÜŞ gövde genişliği
     hull_length_m: 1.04      # m, ÖLÇÜLMÜŞ gövde boyu
+    # --- B2 HUNİ (2026-08-09) — kapı direği artık ENGEL de kalıyor ---
+    # Direkler çarpışma korumasından TAMAMEN çıkarılıyordu; dubalardan iten
+    # hiçbir kuvvet yoktu → gerçek parkurda gövde payı −0,23 m (TEMAS, Ç1).
+    # Direğin payı ölçülen açıklıktan türer (planning_node._huni_payi):
+    #     m = clamp( (en_yakın_kenar_mesafesi − gövde_genişliği − 2r)/2, 0, TAVAN )
+    # → dar kapıda kendiliğinden küçülür, geçidi ASLA kapatmaz. Bu satır o
+    # formülün TAVANI; ayrı bir sayı çünkü küresel mppi_obstacle_margin'i
+    # büyütmek model gelmeyen kolu kırıyor (yukarıdaki nota bak), huni ise
+    # sınıf yoksa hiç devreye girmediği için o kolu etkilemiyor.
+    # Ölçüm (gerçek parkur, 8 kapı): tavan 1.0 → gövde payı −0,006 m (TEMAS) ·
+    # 1.2 → +0,162 · 1.4 → +0,306 · 1.6 → +0,454 · 1.8 → +0,582.
+    # ⚠ ÜST SINIR 1.8'DE: hakemin son noktası kapı direğine 2,0 m uzakta ve
+    # 1.8'lik halka aracı 2,0 m'lik varış yarıçapına sokmuyor → 3/4 nokta.
+    # 1.4 seçildi: pozitif pay + uçurumdan güvenli mesafe + 328 s (1.6'da 376 s).
+    gate_post_margin_m: 1.4  # m, kapı direği ceza payının ÜST sınırı
     mode_name: "GUIDED"      # mod geçidi — mavros_bridge ile aynı olmalı
     map_rate_hz: 10.0        # Dosya-3 yerel harita yayım hızı
     use_rrt: true            # yarışma: RRT*. Video: hardware.yaml false override
@@ -251,6 +263,10 @@ perception_fusion_node:
     camera_image_width_px: 1280   # /perception/buoys bbox normalizasyonu
     camera_image_height_px: 720
     sync_slop_s: 0.1               # ApproximateTimeSynchronizer toleransı
+    # Eşleşme hiç olmuyorsa ÖNCE burayı büyüt, slop'u değil (tezgah 09.07:
+    # damgalar aynı tabanda ~27 ms, arıza clustering gecikmesi; 10 ve 50
+    # yetmedi, 100 tuttu). Kuyruk = kamera Hz × gecikme sn.
+    sync_queue_size: 100           # sync geçmiş derinliği (LiDAR gecikme marjı)
     log_period_s: 5.0              # füzyon özet INFO log periyodu
 
 telemetry_node:

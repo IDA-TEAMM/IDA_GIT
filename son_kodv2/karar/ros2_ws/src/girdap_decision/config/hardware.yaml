@@ -98,7 +98,10 @@ planning:
   # Ölçüm tabloları ve üst sınırlar: CLAUDE.md MPPI bölümleri.
   mppi_lambda: 0.0                 # 0 = parkur profili kazansın (P1/P2=1, P3=10)
   mppi_sigma_u: 0.364              # N, σ = 0.25·max_thrust (06.08 ölçümü)
-  mppi_obstacle_margin: 1.0        # m, SOFT emniyet payı (⚠ 1.5 geçidi kapatır)
+  mppi_obstacle_margin: 1.0        # m, SOFT emniyet payı
+                                   # ⚠ BÜYÜTME: 1.2'de model gelmeyen kol
+                                   # kırılıyor (2/4 nokta). Kapı direği payı
+                                   # için gate_post_margin_m.
   mppi_terminal_mode: "lookahead"  # lookahead | global (eski davranış)
   # 🔴 15.0 → 3.0 (08.08): kural `lookahead ≥ hız × ufuk`; gerçek tekne
   # 1,05 m/s × 2,5 s = 2,62 m. Eski 15, itkisi 30 N sanılan tekneye aitti.
@@ -121,6 +124,12 @@ planning:
   hull_width_m: 0.78               # ÖLÇÜLMÜŞ (GIRDAP_DURUM §1) — bundan dar
                                    # açıklıktan tekne geçemez → kapı sayılmaz
   hull_length_m: 1.04              # ÖLÇÜLMÜŞ — yarısı burun hattı
+  # B2 HUNİ (09.08): kapı direği artık ENGEL de kalıyor, payı ölçülen
+  # açıklıktan türüyor (dar kapıda kendiliğinden küçülür, geçidi kapatmaz).
+  # Bu satır o payın TAVANI. Ölçüm: 1.0 → gövde payı −0,006 m (TEMAS) ·
+  # 1.4 → +0,306 · 1.8 → +0,582 AMA son noktaya varılamıyor (3/4; nokta
+  # kapı direğine 2,0 m uzakta, halka varış yarıçapını yiyor).
+  gate_post_margin_m: 1.4          # m, kapı direği ceza payı ÜST sınırı
 
 # --- Görev dosyası seçimi (Sprint 4 parkur katmanı) ---
 # hardware.launch bu dosya adını config/ altında çözer ve HEM mission_manager
@@ -214,6 +223,10 @@ perception:
     camera_image_width_px: 1280    # /perception/buoys bbox normalizasyonu
     camera_image_height_px: 720
     sync_slop_s: 0.1                # ApproximateTimeSynchronizer toleransı
+    # Eşleşme hiç olmuyorsa ÖNCE burayı büyüt, slop'u değil (tezgah 09.07:
+    # damgalar aynı tabanda ~27 ms, arıza clustering gecikmesi; 10 ve 50
+    # yetmedi, 100 tuttu). Kuyruk = kamera Hz × gecikme sn.
+    sync_queue_size: 100            # sync geçmiş derinliği (LiDAR gecikme marjı)
     log_period_s: 5.0
 
 # --- Sensör / perception topic isimleri ---
