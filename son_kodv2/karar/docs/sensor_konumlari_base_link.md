@@ -128,7 +128,7 @@ boştu, bkz. `olcum_formu.md` §2 / F5.1).
 |---|---|---|
 | Gövde **boyu** | **1.03 m** | ✅ ölçüldü 2026-08-04 (kodda 1.04 yazıyor, 1 cm fark tolerans içinde) |
 | Gövde **genişliği** (en geniş yer) | **0.785 m** | ✅ ölçüldü 2026-08-09 (78,5 cm) |
-| Fender/şamandıra dahil toplam genişlik | `____` m | ⏳ ölçülmedi — 0.785 gövdenin kendisi |
+| Fender/şamandıra dahil toplam genişlik | **0.785 m** | ✅ 2026-08-09 — **çıkıntı YOK**, gövdeyle aynı |
 
 > **Genişlik ölçümü (2026-08-09):** şeritle, **duba yüksekliği bandında**
 > (su hattı ↔ ~50 cm — dubaya sadece o bant çarpabilir, üstteki LiDAR kubbesi

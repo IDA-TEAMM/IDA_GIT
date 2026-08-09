@@ -206,11 +206,36 @@ cd ~/girdap-decision && .venv/bin/python -m pytest prototype/tests/ -q
 
 İki ayrı mod var; **karıştırma**:
 
-| | Geliştirme / masa testi | Yarışma / video günü |
-|---|---|---|
-| `ROS_DOMAIN_ID` | 42 (serviste + bashrc) | 42 (aynı) |
-| `ROS_LOCALHOST_ONLY` | **yok** (laptop'tan `ros2 topic echo` çalışsın) | **1** (drop-in ile) |
-| ROS trafiği | ethernet'e çıkar | Jetson içinde kalır |
+| | Geliştirme / masa testi | Parkur-1 su testi | Yarışma / video günü |
+|---|---|---|---|
+| `ROS_DOMAIN_ID` | 42 (serviste) | 42 | 42 (aynı) |
+| `ROS_LOCALHOST_ONLY` | **yok** | **yok** (kapı sayacı izlenecek) | **1** |
+| Kurulacak drop-in | — | `girdap-karar-parkur1.conf` | `girdap-karar-yarisma.conf` |
+| ROS trafiği | ethernet'e çıkar | ethernet'e çıkar | Jetson içinde kalır |
+
+> 🔴 **ÜÇ MOD, İKİ DROP-IN — 2026-08-08'de değişti (Yahya, `6f7d23d`).**
+> Bu bölüm önceden "izolasyon bayrağını kur" diye **tek amaçlı** bir drop-in
+> anlatıyordu. Artık drop-in'ler **iki iş birden** yapıyor: `ROS_LOCALHOST_ONLY`
+> **ve** `GIRDAP_CONFIG_OVERLAY`. Sebebi ayrı bir hataydı:
+> `girdap-karar.service` `hardware.launch.py`'yi çıplak başlatıyordu → overlay
+> hiç set edilmiyordu → `hardware.yaml` video senaryosuna ayarlı olduğu için
+> **yarışma günü yığın sessizce VİDEO MODUNDA koşacaktı** (MPPI GUIDED'ı hiç
+> talep etmez, RRT* kapalı, parkur katmanı PARKUR_1'de kilitli, belirtisi yok).
+>
+> **Bunun bu doküman için sonucu — iki kural:**
+> 1. **AYRI bir "yalnız izolasyon" drop-in'i KURMA.** `ROS_LOCALHOST_ONLY`
+>    artık `girdap-karar-yarisma.conf`'un içinde. Ayrı bir dosyayla kurmak
+>    Parkur-1 su testini **sessizce bozar**: `girdap-karar-parkur1.conf`
+>    bayrağı **bilerek** içermiyor (laptop'tan
+>    `ros2 topic echo /girdap/planning/gate_count` ile kapı sayacı izlenecek),
+>    ama ayrı drop-in systemd'de onunla birleşip bayrağı yine açar → operatör
+>    hiçbir topic göremez ve nedenini bulamaz.
+> 2. **İkisi AYNI ANDA kurulmaz.** Parkur-1'e geçerken `yarisma.conf` silinir,
+>    yarışma günü `parkur1.conf` silinir.
+>
+> `ROS_DOMAIN_ID=42` ikisinde de yok — o zaten `girdap-karar.service`'in
+> kendi içinde (satır 32). A-2'nin istediği iki ayar bu yüzden **iki farklı
+> yerde**: domain serviste (her zaman), localhost drop-in'de (yalnız yarışma).
 
 **Yarışma günü kurulumu** — iki yol:
 
@@ -228,20 +253,36 @@ sudo systemctl daemon-reload && sudo systemctl restart girdap-karar
 > **işlemez**. Kurulumdan önce `find ~ -name girdap-karar-yarisma.conf` ile yeri
 > doğrula; yoksa (b)'yi kullan.
 
-*(b) Repo yoksa — dosyayı doğrudan yaz (2 satır, bağımlılık yok):*
+*(b) Repo yoksa — dosyayı doğrudan yaz:*
 ```bash
 sudo mkdir -p /etc/systemd/system/girdap-karar.service.d
 sudo tee /etc/systemd/system/girdap-karar.service.d/girdap-karar-yarisma.conf >/dev/null <<'EOF'
 [Service]
+Environment=GIRDAP_CONFIG_OVERLAY=yarisma.yaml
 Environment=ROS_LOCALHOST_ONLY=1
 EOF
 sudo systemctl daemon-reload && sudo systemctl restart girdap-karar
 ```
 
+> 🔴 **`GIRDAP_CONFIG_OVERLAY` satırı ATLANAMAZ.** Bu blok 2026-08-09'a kadar
+> yalnız `ROS_LOCALHOST_ONLY` satırını içeriyordu (izolasyon işi olarak
+> yazılmıştı, overlay hatası henüz bilinmiyordu). O hâliyle **doğru isimde ama
+> eksik içerikli** bir dosya üretiyordu — üstelik repodan kopyalanmış doğru
+> dosyanın üstüne yazardı. Sonuç: ağ izole olur, operatör
+> `grep LOCALHOST` doğrulamasını **geçer**, ama yığın yarışma gününde video
+> modunda koşar. Doğrulamada bu yüzden `OVERLAY`'e de bakılıyor (aşağıda).
+>
+> Parkur-1 için: `GIRDAP_CONFIG_OVERLAY=yarisma.yaml:parkur1.yaml`,
+> `ROS_LOCALHOST_ONLY` satırı **YOK**, dosya adı `girdap-karar-parkur1.conf`.
+
 **Doğrulama:**
 ```bash
-# 1) Bayrak systemd'ye geçti mi
-systemctl show girdap-karar -p Environment | grep LOCALHOST     # =1 görmeli
+# 1) İKİ ayar da systemd'ye geçti mi (yalnız LOCALHOST'a bakmak YETMEZ)
+systemctl show girdap-karar -p Environment | grep -E 'LOCALHOST|OVERLAY'
+#   ROS_LOCALHOST_ONLY=1  ve  GIRDAP_CONFIG_OVERLAY=yarisma.yaml  görmeli
+
+# 1b) Overlay FİİLEN uygulandı mı (set edilmiş olması yetmez)
+journalctl -u girdap-karar | grep 'config overlay UYGULANDI'    # yarisma.yaml
 
 # 2) YIĞIN SAĞLIKLI MI — Jetson'da (aynı bayrakla!)
 export ROS_DOMAIN_ID=42 ROS_LOCALHOST_ONLY=1

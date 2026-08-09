@@ -187,7 +187,7 @@ ayarı değil, fizik). Kaynağı belirsiz olan eski değerler `hull_width_m=0.78
 |---|---|---|---|
 | Gövde genişliği (uçtan uca, en geniş yer) | 0.78 m | **0.785 m** ✅ | Ölçüldü 2026-08-09 (78,5 cm, şeritle, duba yüksekliği bandında). 5 mm fark → **kod 4 yerde güncellendi** (aşağıya bak) |
 | Gövde boyu | 1.04 m | **1.03 m** ✅ | Ölçüldü 2026-08-04; koddaki 1.04 ile 1 cm fark → tolerans içinde, kod değişmiyor |
-| Şamandıra/fender vb. ile toplam genişlik | — | `____` m ⏳ | Çarpma payı için. **Hâlâ açık** — 0.785 gövdenin kendisi |
+| Şamandıra/fender vb. ile toplam genişlik | — | **0.785 m** ✅ | 2026-08-09: **hiçbir çıkıntı YOK** (fender/şamandıra/cıvata) → toplam genişlik = gövdenin kendisi. Ayrı bir çarpma payı gerekmiyor |
 
 > **Genişlik neden boyun aksine koda işlendi (5 mm için):** boy yalnız burun
 > hattı (`hull_length_m/2`) hesabında kullanılıyor, genişlik ise **iki** yerde
