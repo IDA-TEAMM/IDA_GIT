@@ -33,7 +33,18 @@ Eski sayıları bir yere kopyalamışsanız **değiştirin.** Karışıklık olu
 |---|---|---|
 | `x` | Gövde **boy ortası** | Ön uçtan **51.5 cm** (tekne boyu **103 cm**) |
 | `y` | Gövde **merkez hattı** | Livox tam bu hat üzerinde |
-| `z` | Gövde **tabanı** | Tekne masadayken **masa yüzeyi** |
+| `z` | **Dış** gövde tabanı | Tekne masadayken **masa yüzeyi** |
+
+> 🔴 **`z = 0` DIŞ TABAN — içteki platform DEĞİL (2026-08-09).** Su alma
+> tehlikesine karşı teknenin içine **~2 cm yüksekliğinde platform** yapıldı,
+> bileşenler onun üzerine sabitlendi. Bu platform "iç zemin" gibi görünüyor ve
+> datum sanılmaya müsait; ondan ölçen kişi bütün `z`'leri **2 cm eksik** okur.
+> Metreyi **zemine/masaya** dayayın.
+>
+> **Bu tablodaki hiçbir değer değişmedi:** Pixhawk (kendi 3D platformu zaten
+> vardı, ölçüm onunla alınmıştı), Livox ve GPS anteni **aynı yükseklikte
+> kaldı**. Platformla yükselenler ESC'ler ve güç kartı — hiçbiri TF'e girmiyor,
+> **kod/parametre değişikliği gerekmez.**
 
 ### Neden taşındı (gerekçe — kaptanın sorabileceği)
 
@@ -187,6 +198,12 @@ INS_POS1_Z   -0.155        GPS1_POS_Z   -0.365
 > Küçük teknede ikisi yakındır ve düzeltmeyi asıl belirleyen GPS↔IMU arasındaki
 > **göreli** geometridir (o doğru). Ağırlık merkezi belirgin şekilde başka
 > yerdeyse tüm değerler ötelenir.
+>
+> 🟡 **09.08 güncellemesi:** iç platform (~2 cm) ESC ve güç kartını yukarı
+> taşıdığı için **ağırlık merkezi yükseldi** → bu varsayım biraz daha gerildi.
+> Ofsetler yine doğru çalışır (göreli GPS↔IMU geometrisi değişmedi), ama
+> ⏳ **bataryanın da yükseldiği teyit edilmeli** — baskın kütle o (4S7P,
+> 28 hücre); yükseldiyse AM kayması ihmal edilebilir olmaktan çıkar.
 
 ---
 

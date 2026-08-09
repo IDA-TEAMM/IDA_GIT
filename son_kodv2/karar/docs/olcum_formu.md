@@ -45,6 +45,35 @@ değişmez**, ve araç üzerinde fiziksel olarak işaretlenir (bant/kalem).
 | `y` | Gövde **merkez hattı** | LiDAR zaten tam orada |
 | `z` | Gövde **tabanı** | Tekne masadayken masa yüzeyi |
 
+> 🔴 **DATUM UYARISI (2026-08-09) — `z = 0` DIŞ GÖVDE TABANIDIR, İÇ PLATFORM
+> DEĞİL.** Su alma tehlikesine karşı teknenin **içine ~2 cm yüksekliğinde bir
+> platform** yapıldı ve bileşenler onun üzerine sabitlendi. Bu platform artık
+> gözle bakınca "iç zemin" gibi görünüyor ve **ölçüm datum'u sanılmaya son
+> derece müsait**. Ondan ölçen kişi bütün `z` değerlerini **2 cm eksik**
+> okur — ve fark etmez, çünkü sayılar makul görünür.
+>
+> `z = 0` **tekne masadayken masa yüzeyine değen dış taban**. Platform içeride
+> olduğu için dış taban KIPIRDAMADI, dolayısıyla bu formdaki hiçbir `z`
+> değişmedi. Ölçerken metreyi **zemine/masaya** dayayın, platforma değil.
+>
+> **Platformdan ETKİLENMEYEN (yükseklikleri aynı kaldı, ölçümler geçerli):**
+> **Pixhawk** (kendi 3D baskı platformu zaten vardı, ölçüm onunla alınmıştı) ·
+> **Livox Mid-360** · **GPS anteni**.
+> **Platformla ~2 cm YÜKSELEN:** ESC'ler · güç kartı · diğer iç bileşenler.
+> Bunların hiçbiri TF'e girmiyor → **kod/parametre değişikliği gerekmez.**
+>
+> ⚠️ **Etkilendiği tek şey ağırlık merkezi:** iç bileşenler yükseldiği için AM
+> yukarı kaydı. Aşağıdaki "ArduPilot AM'ye göre tanımlar, biz geometrik merkezi
+> kullandık" varsayımı bu yüzden biraz daha gerildi. Düzeltmeyi asıl belirleyen
+> GPS↔IMU arası **göreli** geometri olduğu ve o değişmediği için ofsetler hâlâ
+> doğru çalışır. ⏳ **Bataryanın da yükselip yükselmediği teyit edilmeli** —
+> baskın kütle o (4S7P, 28 hücre); yükseldiyse AM kayması ihmal edilebilir
+> olmaktan çıkar.
+>
+> ⏳ Platformun eklediği ağırlık **su çekimini** de artırır → §2'deki "LiDAR'ın
+> su hattından yüksekliği" ölçümü **platform takılıyken** alınmalı (zaten
+> alınmadı, ilk suya inişte alınacak).
+
 > **Neden Pixhawk değil?** İlk öneri Pixhawk'tı; gerekçe "ArduPilot IMU'yu araç
 > orijini sayar" idi. **Bu eksikti:** mutlak konumu **GPS çiviliyor** ve
 > `GPS1_POS_*` sıfırken EKF, anten ölçümünü olduğu gibi kabul eder — yani
