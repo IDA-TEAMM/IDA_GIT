@@ -229,6 +229,7 @@ class PlanningPipeline:
         self._engel_imzasi_son: Optional[Tuple] = None
         self._replan_sayisi = 0          # fiilen koşan RRT* sayısı
         self._replan_atlandi = 0         # gereksiz olduğu için atlanan çağrı
+        self._duz_cizgiye_dusuldu = 0    # A1: RRT* reddedip düz çizgiye düşülen tur
         # F-S.10: PID yedek kontrolcü — cfg.control_mode="pid" iken kullanılır.
         self._pid = CascadeHeadingPidController(self.cfg.pid_cfg)
 
@@ -371,6 +372,26 @@ class PlanningPipeline:
         dışında) mevcut `_ref_path` KORUNUR ve False döner — istisna asla
         dışarı sızmaz (F10.1: rclpy callback'inde yakalanmayan istisna
         planning_node'u görev ortasında öldürüyordu).
+
+        🔴 **A1 (2026-08-09) — REFERANS HİÇ YOKKEN DÜZ ÇİZGİYE DÜŞÜLÜR.**
+        "Eski referansı koru" kuralının sessiz bir deliği vardı: soğuk
+        başlangıçta korunacak referans YOKTUR. O hâlde `_ref_path` None kalır
+        → `_rebuild_mppi` erken döner → `_mppi` hiç kurulmaz →
+        `compute_control` **None** → node sıfır thrust basar ve **araç hiç
+        kıpırdamaz**. Belirtisi yalnız logdaki bir WARN satırıdır.
+
+        Ölçüldü (09.08, kapalı döngü, model YOKken = her duba engel):
+        GN kapı ortasından **1,5 m kaçıkken** (md 5.5.2.2 bunu açıkça mümkün
+        sayıyor) hedef, dubanın `safety_margin`+r = 0,65 m halkasının içinde
+        kalıyor → **2001/2001 adım sıfır thrust, 0/3 GN**. Aynı kök P3'ün
+        145 puanını da kilitliyordu (hedef duba `class_id=2` → engel).
+
+        Düşülen yol yeni değil: `set_reference_direct`'in düz çizgi referansı
+        (video modunda kanıtlanmış kol). Engelden kaçınmayı MPPI'nin kendi
+        `obstacle_margin` cezası üstlenir — RRT*'ın sert `safety_margin`'i
+        gibi ikili "geçer/geçmez" kararı vermez, yani hedef halkanın içinde
+        olsa bile çözüm üretir. RRT* bir sonraki turda başarılı olursa
+        yörünge normal yoluna kendiliğinden döner.
         """
         if not self._waypoints:
             return False
@@ -390,17 +411,48 @@ class PlanningPipeline:
         try:
             path = rrt.plan(start, goal)
         except ValueError as exc:
-            _log.warning(
-                "RRT* plan reddedildi (%s) — eski referans korunuyor", exc
-            )
-            return False
+            return self._rrt_basarisiz(f"plan reddedildi ({exc})", goal)
         if path is None:
-            _log.warning("RRT* çözüm bulamadı — eski referans korunuyor")
-            return False
+            return self._rrt_basarisiz("çözüm bulamadı", goal)
         self._ref_path = path
         self._planlanan_goal = (float(goal[0]), float(goal[1]))   # A3 ölçütü
         self._rebuild_mppi()
         return True
+
+    def _rrt_basarisiz(self, sebep: str, goal: Tuple[float, float]) -> bool:
+        """RRT* bir plan üretemedi — referans İSTENEN hedefe gidiyorsa koru,
+        gitmiyorsa düz çizgiye düş.
+
+        Ayrım kasıtlı: elde, hedefe giden çalışan bir yörünge varken onu düz
+        çizgiyle değiştirmek gerileme olurdu (RRT* geçen tur o yolu bir sebeple
+        seçti). Ama korunan referans **başka bir hedefe** gidiyorsa "koru"
+        demek, araca eski waypoint'e gitmeyi sürdürtmek demektir.
+
+        Ölçüldü (09.08): GN kaçıkken 1. noktaya varılıyor, sonra waypoint
+        ilerliyor, yeni hedefe plan kurulamıyor ve araç **1. noktanın
+        yörüngesinde kalıyor → 1/3 GN**. Bayatlık ölçütü yeni değil, A3'ün
+        `set_waypoints`'te kullandığı ölçütün aynısı: planlanan hedef ile
+        istenen hedef arasındaki kayma > RRT*'ın kendi `goal_tolerance`'ı.
+        """
+        bayat = (
+            self._planlanan_goal is None
+            or math.hypot(
+                goal[0] - self._planlanan_goal[0],
+                goal[1] - self._planlanan_goal[1],
+            ) > self._rrt_cfg.goal_tolerance
+        )
+        if self._ref_path is not None and not bayat:
+            _log.warning("RRT* %s — eski referans korunuyor", sebep)
+            return False
+        self._duz_cizgiye_dusuldu += 1
+        _log.error(
+            "RRT* %s ve REFERANS YOK → düz çizgi hedefine düşülüyor "
+            "(%.1f, %.1f). Araç hareket eder; engelden kaçınma yalnız MPPI'de. "
+            "Sık tekrarlıyorsa hedef bir dubanın içinde olabilir.",
+            sebep, goal[0], goal[1],
+        )
+        self.set_reference_direct(goal[0], goal[1])
+        return False
 
     def _active_mppi_cfg(self) -> MPPIConfig:
         """Mevcut parkur profilini temel MPPI config üzerine uygula."""
@@ -486,6 +538,27 @@ class PlanningPipeline:
     @property
     def global_path(self) -> Optional[List[Tuple[float, float]]]:
         return self._ref_path
+
+    @property
+    def compute_control_hazir(self) -> bool:
+        """Kontrolcü kurulu mu — `compute_control()` komut üretebilir mi.
+
+        A1 teşhisi: False iken node **sıfır thrust** basar ve araç kıpırdamaz.
+        Ayrı bir property çünkü "referans var" (`global_path`) ile "kontrolcü
+        kuruldu" aynı şey değil: `control_mode="pid"` kolunda MPPI hiç kurulmaz.
+        """
+        if self.cfg.control_mode == "pid":
+            return bool(self._waypoints)
+        return self._mppi is not None
+
+    @property
+    def duz_cizgiye_dusuldu(self) -> int:
+        """A1: RRT* reddedip düz çizgi referansına düşülen tur sayısı (teşhis).
+
+        Sahada 0'dan büyükse hedef bir dubanın payı içinde kalıyor demektir —
+        araç yine de sürülür ama kaçınma yalnız MPPI cezasına kalır.
+        """
+        return self._duz_cizgiye_dusuldu
 
     @property
     def replan_sayaclari(self) -> Tuple[int, int]:
