@@ -23,6 +23,7 @@ Published:
 
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 import numpy as np
@@ -85,6 +86,10 @@ class PerceptionLidarNode(Node):
             mount_yaw=float(p("mount_yaw").value),
         )
         self._log_period_s = float(p("log_period_s").value)
+        # Livox Mid-360 spesifikasyonu: 200 000 nokta/s @ 10 Hz → kare
+        # başına 20 000 nokta. Kümeleme bu periyodu (100 ms) aşarsa
+        # obstacle_map geç varır ve füzyon eşleşmesi kesilir.
+        self._beklenen_hz = 10.0
         self._last_log_t: Optional[float] = None
 
         # --- I/O ---
@@ -144,9 +149,11 @@ class PerceptionLidarNode(Node):
                 msg, field_names=("x", "y", "z"), skip_nans=True
             )
             points = structured_to_unstructured(structured).reshape(-1, 3)
+            t0 = time.perf_counter()
             obstacles = detect_obstacles(
                 np.asarray(points, dtype=np.float64), self._cfg
             )
+            sure_ms = (time.perf_counter() - t0) * 1000.0
         except Exception as exc:
             self.get_logger().error(
                 f"bozuk PointCloud2, bu tarama atlandı: {exc!r}",
@@ -156,9 +163,9 @@ class PerceptionLidarNode(Node):
         self._pub.publish(self._to_pose_array(obstacles, msg))
 
         self.get_logger().debug(
-            f"{len(points)} nokta → {len(obstacles)} engel"
+            f"{len(points)} nokta → {len(obstacles)} engel ({sure_ms:.1f} ms)"
         )
-        self._periodic_info(len(obstacles))
+        self._periodic_info(len(obstacles), len(points), sure_ms)
 
     def _to_pose_array(self, obstacles: list, msg: PointCloud2) -> PoseArray:
         """CircleObstacle listesi → placeholder PoseArray (docstring'e bak)."""
@@ -177,12 +184,54 @@ class PerceptionLidarNode(Node):
             out.poses.append(pose)
         return out
 
-    def _periodic_info(self, n_obstacles: int) -> None:
-        """log_period_s'de bir INFO — her callback'te log seli olmasın."""
+    def _periodic_info(
+        self, n_obstacles: int, n_points: int = 0, sure_ms: float = 0.0
+    ) -> None:
+        """log_period_s'de bir INFO — her callback'te log seli olmasın.
+
+        🔴 **SÜRE NEDEN LOGLANIYOR (2026-08-09 ölçümü).** Kümeleme süresi
+        aracın SESSİZ tek darboğazıydı: 09.07 tezgahında 1-3,3 s/kare ölçülmüş
+        ve `/perception/obstacle_map` o kadar GEÇ varınca füzyon eşleşmesi hiç
+        oluşmamıştı (`classified_obstacles` üretilmiyordu → kapı takibi ham
+        GPS'e düşüyordu → P1/P2 puanı gidiyordu). Ama node **hiçbir yerde süre
+        yazmıyordu**: sahada "gecikme kaç saniye" sorusunun cevabı yoktu.
+
+        Ölçülen bütçe (bu laptop, üretim config'i tolerance=0,5 · voxel=0,1):
+
+        | sahne | nokta → voxel | çift | süre |
+        |---|---|---|---|
+        | açık su, 8 kapı dubası | 49 → 35 | 95 | **0,2 ms** |
+        | açık su + 10k su dönüşü | 10 049 → 9 828 | 30 206 | **8,5 ms** |
+        | kapalı oda 8×6×3 m, 20k | 20 000 → 9 686 | 298 299 | **26,4 ms** |
+        | 5 m'lik kapalı hacim (en kötü) | 15 628 | 1 372 707 | **112 ms** |
+
+        🔑 Darboğaz nokta sayısı DEĞİL, `query_pairs`'in döndürdüğü **çift
+        sayısı**: yoğunluk arttıkça nokta başına komşu 1,2 → 176'ya çıkıyor ve
+        süre onunla büyüyor. Açık suda ışınların çoğu dönmediği için sorun
+        yok (0,2-8,5 ms, bütçenin 12-500 katı altında); **risk kıyıya yakın
+        olduğumuz an** — yani başlangıç noktası.
+
+        ⚠ Tezgahtaki 1-3,3 s bu makinede ÜRETİLEMEDİ (en kötü 112 ms). Fark
+        büyük olasılıkla Jetson'ın CPU'su + o an koşan diğer node'lar + gerçek
+        odanın modelimden yoğun olması. Yani **gerçek sayı Jetson'da
+        ölçülmeli** — bu log tam onun için var. İlk su testinde bak:
+        `journalctl -u girdap-karar | grep "kümeleme"`.
+        """
         now = self.get_clock().now().nanoseconds * 1e-9
         if self._last_log_t is None or now - self._last_log_t >= self._log_period_s:
             self._last_log_t = now
-            self.get_logger().info(f"tespit: {n_obstacles} engel")
+            butce_ms = 1000.0 / max(self._beklenen_hz, 1e-6)
+            uyari = ""
+            if sure_ms > butce_ms:
+                uyari = (
+                    f" 🔴 BÜTÇE AŞILDI (>{butce_ms:.0f} ms): obstacle_map GEÇ "
+                    "varır, füzyon eşleşmesi kesilebilir — voxel_size açık mı, "
+                    "kıyıya/rıhtıma yakın mıyız kontrol et"
+                )
+            self.get_logger().info(
+                f"tespit: {n_obstacles} engel · {n_points} nokta · "
+                f"kümeleme {sure_ms:.1f} ms{uyari}"
+            )
 
 
 def main(args: Optional[list[str]] = None) -> None:
