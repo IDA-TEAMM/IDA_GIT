@@ -62,13 +62,13 @@ değişmez**, ve araç üzerinde fiziksel olarak işaretlenir (bant/kalem).
 > **Platformla ~2 cm YÜKSELEN:** ESC'ler · güç kartı · diğer iç bileşenler.
 > Bunların hiçbiri TF'e girmiyor → **kod/parametre değişikliği gerekmez.**
 >
-> ⚠️ **Etkilendiği tek şey ağırlık merkezi:** iç bileşenler yükseldiği için AM
-> yukarı kaydı. Aşağıdaki "ArduPilot AM'ye göre tanımlar, biz geometrik merkezi
-> kullandık" varsayımı bu yüzden biraz daha gerildi. Düzeltmeyi asıl belirleyen
-> GPS↔IMU arası **göreli** geometri olduğu ve o değişmediği için ofsetler hâlâ
-> doğru çalışır. ⏳ **Bataryanın da yükselip yükselmediği teyit edilmeli** —
-> baskın kütle o (4S7P, 28 hücre); yükseldiyse AM kayması ihmal edilebilir
-> olmaktan çıkar.
+> ✅ **Ağırlık merkezi — teyit edildi, ihmal edilebilir (2026-08-09).**
+> **Batarya YÜKSELMEDİ**, o da aynı yükseklikte kaldı (kullanıcı teyidi).
+> Baskın kütle (4S7P, 28× INR21700-50S) yerinde olduğu için AM kayması yalnız
+> ESC + güç kartının yer değiştirmesi kadar — ikisi de hafif. Aşağıdaki
+> "ArduPilot AM'ye göre tanımlar, biz geometrik merkezi kullandık" varsayımı
+> bu yüzden **gerilmedi**; düzeltmeyi asıl belirleyen GPS↔IMU arası **göreli**
+> geometri de hiç değişmedi. Ek işlem gerekmez.
 >
 > ⏳ Platformun eklediği ağırlık **su çekimini** de artırır → §2'deki "LiDAR'ın
 > su hattından yüksekliği" ölçümü **platform takılıyken** alınmalı (zaten

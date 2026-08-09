@@ -199,11 +199,10 @@ INS_POS1_Z   -0.155        GPS1_POS_Z   -0.365
 > **göreli** geometridir (o doğru). Ağırlık merkezi belirgin şekilde başka
 > yerdeyse tüm değerler ötelenir.
 >
-> 🟡 **09.08 güncellemesi:** iç platform (~2 cm) ESC ve güç kartını yukarı
-> taşıdığı için **ağırlık merkezi yükseldi** → bu varsayım biraz daha gerildi.
-> Ofsetler yine doğru çalışır (göreli GPS↔IMU geometrisi değişmedi), ama
-> ⏳ **bataryanın da yükseldiği teyit edilmeli** — baskın kütle o (4S7P,
-> 28 hücre); yükseldiyse AM kayması ihmal edilebilir olmaktan çıkar.
+> ✅ **09.08 — kontrol edildi, sorun yok.** İç platform (~2 cm) yalnız ESC ve
+> güç kartını yukarı taşıdı; **batarya yükselmedi** (baskın kütle o — 4S7P,
+> 28 hücre — ve yerinde kaldı). Ağırlık merkezi kayması ihmal edilebilir,
+> varsayım gerilmedi. Göreli GPS↔IMU geometrisi de hiç değişmedi.
 
 ---
 
