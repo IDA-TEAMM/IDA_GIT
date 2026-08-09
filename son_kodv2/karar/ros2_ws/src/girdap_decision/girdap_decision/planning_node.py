@@ -626,6 +626,16 @@ class PlanningNode(Node):
 
         if self._gate_enabled:
             kenar_mi = self._edge_memory.siniflandir(tespitler, self._edge_class_id)
+            # 🆕 H1 (§0.21): bu karede GÖRÜLMEYEN cisimler de haritada kalır.
+            # Eskiden engel torbası her karede sıfırdan kuruluyordu → o an
+            # görünmeyen cisim planlayıcı için YOKTU. Kapıya yaklaşırken
+            # direkler önce kameranın 69°'lik kadrajından, sonra LiDAR'ın
+            # (30 cm duba için ~8 m) menzilinden çıkıyor ve kapı ortadan
+            # kayboluyordu. UNUTMA YOK — kaptan kararı 09.08 (gerekçe:
+            # `EdgeBuoyMemory.hatirlananlar` docstring'i).
+            for tespit, kenar in self._edge_memory.hatirlananlar():
+                tespitler.append(tespit)
+                kenar_mi.append(kenar)
         else:
             kenar_mi = [False] * len(tespitler)
 
@@ -648,7 +658,9 @@ class PlanningNode(Node):
 
         self._edge_buoys = edges
         self._log_edge_memory()
-        self._bos_akis_denetle(len(tespitler))
+        # ⚠ H5 TAZE tespit sayısına bakar, hafızadan eklenenlere DEĞİL: hafıza
+        # doluyken algı ölse torba "dolu" görünür ve boş-akış kapanı körleşirdi.
+        self._bos_akis_denetle(len(msg.detections))
         self._obstacles_world = [(o.cx, o.cy, o.r) for o in obstacles]
         self._pipe.set_obstacles(obstacles)
         self._algi_no += 1                # B5 onayı: yeni algı karesi geldi

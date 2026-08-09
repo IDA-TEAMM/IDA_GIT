@@ -96,13 +96,24 @@ Tespit = Tuple[float, float, float, Optional[int]]
 
 @dataclass
 class HatirlananKenar:
-    """Bir kez turuncu sınıflanmış dubanın en son bilinen hâli."""
+    """Haritada tutulan tek cismin en son bilinen hâli.
+
+    🆕 H1 (2026-08-09): `sinif` alanı eklendi — hafıza artık YALNIZ turuncu
+    kapı direklerini değil, **görülen her cismi** tutuyor (sarı engel, iskele,
+    tekne, sınıfsız LiDAR kümesi…). `sinif is None` → hiç sınıflanmamış.
+    """
 
     x: float
     y: float
     r: float
     # Kaç algı karesinde teyit edildi — salt teşhis (sahada "hafıza tutuyor mu").
     gorulme: int = 1
+    #: En son bilinen sınıf. `edge_class_id` ise kenar dubası; CLASS_UNKNOWN
+    #: ya da None ise sınıfsız (engel olarak kalır, güvenlik kuralı).
+    sinif: Optional[int] = None
+    #: Bu karede taze görüldü mü — `siniflandir()` her çağrıda tazeler.
+    #: `hatirlananlar()` yalnız GÖRÜLMEYENLERİ döndürmek için buna bakar.
+    taze: bool = False
 
     def cakisiyor(self, x: float, y: float, r: float) -> bool:
         """İki daire çakışıyor mu = aynı fiziksel cisim mi (ayarsız ölçüt)."""
@@ -126,6 +137,9 @@ class EdgeBuoyMemory:
 
     def __init__(self) -> None:
         self._kayitlar: List[HatirlananKenar] = []
+        #: Son `siniflandir` çağrısındaki kenar sınıfı — `hatirlananlar()`
+        #: bunu kullanır. Ayrı bir parametre DEĞİL (donmuş kural: ayar yok).
+        self._edge_id: Optional[int] = None
         self._hatirlanarak_kurtarilan = 0      # teşhis: hafızanın kazandırdığı
         self._celiskiyle_silinen = 0           # teşhis: sınıf çelişkisi sayısı
 
@@ -170,8 +184,11 @@ class EdgeBuoyMemory:
           2. Rengi görünmeyenler — sınıfı bilinen ve farklıysa çelişki (kaydı
              siler, engel olur); sınıfsız/UNKNOWN ise hafızada aranır.
         """
+        self._edge_id = edge_class_id
         kenar = [False] * len(tespitler)
         kullanilan: set[int] = set()          # bir kayıt en fazla bir tespite
+        for k in self._kayitlar:              # H1: tazelik her karede sıfırlanır
+            k.taze = False
 
         # --- 1. geçiş: renk ŞU AN görünüyor ---------------------------------
         for i, (x, y, r, cls) in enumerate(tespitler):
@@ -180,10 +197,12 @@ class EdgeBuoyMemory:
             kenar[i] = True
             j = self._eslesen_kayit(x, y, r, haric=kullanilan)
             if j is None:
-                self._kayitlar.append(HatirlananKenar(x, y, r))
+                self._kayitlar.append(
+                    HatirlananKenar(x, y, r, sinif=cls, taze=True)
+                )
                 kullanilan.add(len(self._kayitlar) - 1)
             else:
-                self._tasi(j, x, y, r)
+                self._tasi(j, x, y, r, cls)
                 kullanilan.add(j)
 
         # --- 2. geçiş: renk görünmüyor --------------------------------------
@@ -198,23 +217,64 @@ class EdgeBuoyMemory:
             )
             j = self._eslesen_kayit(x, y, r, haric=kullanilan | silinecek)
             if j is None:
+                # 🆕 H1: eşleşen kayıt yok → YENİ kayıt aç. Hafıza artık yalnız
+                # turuncu direkleri değil GÖRÜLEN HER CİSMİ tutuyor (sarı engel,
+                # iskele, tekne, sınıfsız küme). Kenar bayrağı False kalır:
+                # sınıfsız cisim engel olarak sürer (güvenlik kuralı bozulmadı).
+                self._kayitlar.append(
+                    HatirlananKenar(x, y, r, sinif=cls, taze=True)
+                )
+                kullanilan.add(len(self._kayitlar) - 1)
                 continue
             if bilinen_farkli:
                 # Kamera "orada sarı/hedef var" diyor — hafızadan taze bilgi.
-                silinecek.add(j)
+                # Kayıt SİLİNMEZ, SINIFI GÜNCELLENİR (H1): cisim hâlâ orada,
+                # yalnız ne olduğu değişti. Silmek onu haritadan düşürürdü.
+                self._tasi(j, x, y, r, cls)
                 self._celiskiyle_silinen += 1
+                kullanilan.add(j)
                 continue
-            kenar[i] = True
-            self._tasi(j, x, y, r)
+            kenar[i] = self._kayitlar[j].sinif == edge_class_id
+            self._tasi(j, x, y, r, cls)
             self._kayitlar[j].gorulme += 1
-            self._hatirlanarak_kurtarilan += 1
+            if kenar[i]:
+                self._hatirlanarak_kurtarilan += 1
             kullanilan.add(j)
 
-        if silinecek:
-            self._kayitlar = [
-                k for j, k in enumerate(self._kayitlar) if j not in silinecek
-            ]
         return kenar
+
+    def hatirlananlar(self) -> List[Tuple[Tespit, bool]]:
+        """🆕 H1 — bu karede GÖRÜLMEYEN kayıtlar `((x, y, r, sınıf), kenar_mı)`.
+
+        🔴 **Çözdüğü arıza (GIRDAP_DURUM §0.21/H1, ölçüm §0.22d).** `siniflandir`
+        yalnız **gelen** tespiti sınıflandırıyordu; **kaybolan** cismi haritada
+        tutmuyordu. Sonuç: planlayıcının engel torbası her karede sıfırdan
+        kuruluyordu ve o an görülmeyen cisim **yok** sayılıyordu.
+
+        Ölçüldü: kapıya yaklaşınca direkler önce kameranın 69°'lik kadrajından,
+        sonra LiDAR'ın (30 cm duba için ~8 m) menzilinden çıkıyor. O anda
+        hiçbir tespit gelmiyor → kapı ortadan kayboluyor → araç nişanı
+        kaybediyor. H3 (kamera menzili) bunu 0/3'ten 2/3'e çıkardı ama
+        kapatamadı; kalan boşluk tam burası.
+
+        🔑 **UNUTMA YOK — kaptan kararı (09.08).** Kayıt ne süreyle ne de
+        "LiDAR oraya bakıyor ama boş dönüyor" kuralıyla silinir. Gerekçe:
+        LiDAR o dubayı zaten 8 m'den uzakta göremiyor, yani böyle bir silme
+        kuralı cismi **yok olduğu için değil menzil yetmediği için** silerdi —
+        düzeltilen arızayı geri getirirdi. Ayrıca asimetrik bedel: hayalet
+        duba yalnız gereksiz kaçınma yaratır, unutulan gerçek duba ise
+        **çarpma** (Ç1: P1'de 16 puan).
+
+        ⚠ Konum doğruluğu odometriye bağlı. RTK sabit fix'te ~5 cm (H-RTK
+        F9P) — duba çapının (30 cm) çok altında, yani hafıza pratikte
+        kesindir. RTK kaybında 2,5 m'ye çıkar; o hâlde eski kayıtla eşleşme
+        tutmaz ve **yeni** kayıt açılır (çift kayıt), silme değil.
+        """
+        return [
+            ((k.x, k.y, k.r, k.sinif), k.sinif is not None and k.sinif == self._edge_id)
+            for k in self._kayitlar
+            if not k.taze
+        ]
 
     # ------------------------------------------------------------- yardımcı
 
@@ -231,7 +291,8 @@ class EdgeBuoyMemory:
                 en_iyi, en_yakin = j, d
         return en_iyi
 
-    def _tasi(self, j: int, x: float, y: float, r: float) -> None:
+    def _tasi(self, j: int, x: float, y: float, r: float,
+              sinif: Optional[int] = None) -> None:
         """Kaydı en son ölçüme taşı — duba (ve odometri) kayar, kayıt takip eder.
 
         Yerinde güncelleme, hafızanın sınırsız büyümesini de engeller: hareket
@@ -239,3 +300,9 @@ class EdgeBuoyMemory:
         """
         k = self._kayitlar[j]
         k.x, k.y, k.r = x, y, r
+        k.taze = True
+        # Sınıf yalnız BİLİNEN bir değerle güncellenir: UNKNOWN/None gelmesi
+        # "artık bilmiyoruz" demek değil, "bu karede kamera veremedi" demektir.
+        # Öğrenilmiş rengi silmek H1'in çözdüğü arızayı geri getirirdi.
+        if sinif is not None and sinif != CLASS_UNKNOWN:
+            k.sinif = sinif
