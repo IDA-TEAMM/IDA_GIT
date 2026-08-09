@@ -23,8 +23,27 @@ durum: buoys = OAK node'unun yayın-anı saati; obstacle_map = Livox sürücü
 stamp'i (config'e göre sistem saati ya da sensör zamanı olabilir). Sapma >
 sync_slop_s ise eşleşme HİÇ oluşmaz. Bu yüzden `_sync_watchdog` var: iki
 girdi de akarken sync `sync_watchdog_s` boyunca hiç ateşlemediyse WARN basar
-(sahada sessiz ölüm yerine görünür arıza). Kalıcı çözüm: Livox sürücüsünü
-sistem saatine ayarla ya da slop'u ölçülen sapmaya göre büyüt.
+(sahada sessiz ölüm yerine görünür arıza).
+
+🔴 EŞLEŞME HİÇ OLMUYORSA ÖNCE `sync_queue_size`'A BAK, `sync_slop_s`'E DEĞİL
+(2026-07-09 tezgah ölçümü, gerçek Livox + OAK ile; 09.08'de algı ekibi
+düzeltmenin bu hatta hiç taşınmadığını bulup raporladı):
+    Ham sensör damgaları AYNI TABANDA — ölçülen fark ~27 ms, yani slop=0,1 s
+    fazlasıyla yetiyor. **Saat sorunu yoktu, gecikme sorunu vardı.** Kapalı
+    alanda ~20k yoğun nokta → clustering 1-3,3 s/kare → `obstacle_map`
+    damgası DOĞRU ama GEÇ varıyor. Kuyruk, aynı damgalı kamera karesini o
+    gecikme boyunca elde tutamazsa kare düşer ve eşleşme hiç oluşmaz →
+    `/perception/classified_obstacles` ÜRETİLMEZ.
+    Ölçülen: queue=10 (~0,6 s) hiç tutmuyor · queue=50 (~2,9 s) KIL PAYI
+    yetmedi · **queue=100 (~6 s) ile füzyon üretmeye başladı.**
+    Slop'u büyütmek yanlış ilaçtır: eşleşmeyi zamanca yanlış hâle getirir
+    (farklı anların karesi ile bulutu eşlenir), kuyruğu büyütmek eşleşmeyi
+    zamanca DOĞRU tutar, yalnız gecikmeli sunar.
+    ⚠ Sonucun bedeli tüm P1+P2: sınıf gelmezse `planning_node._edge_buoys`
+    boş kalır, kapı takibi ham GPS noktasına düşer.
+    ⚖ Bu gecikme kapalı-alan artefaktı olabilir (açık suda seyrek nokta →
+    clustering ms'ler); ama açık suda ölçülmedi, o yüzden ölçülmüş değer
+    varsayılan bırakıldı.
 
 Subscribed:
     /perception/obstacle_map   geometry_msgs/PoseArray        (RELIABLE)
@@ -77,6 +96,11 @@ class PerceptionFusionNode(Node):
         self.declare_parameter("camera_image_width_px", 1280)
         self.declare_parameter("camera_image_height_px", 720)
         self.declare_parameter("sync_slop_s", 0.1)
+        # LiDAR clustering gecikince obstacle_map GEÇ varır (damgası doğru ama
+        # geç). Sync'in aynı-damgalı kamera karesini o gecikme boyunca elde
+        # tutabilmesi için kuyruk derinliği yeterli olmalı (kamera Hz × gecikme
+        # sn). Slop'u DEĞİL bunu büyüt — modül docstring'indeki ölçüme bak.
+        self.declare_parameter("sync_queue_size", 100)
         self.declare_parameter("log_period_s", 5.0)
 
         p = self.get_parameter
@@ -103,7 +127,7 @@ class PerceptionFusionNode(Node):
         )
         self._sync = message_filters.ApproximateTimeSynchronizer(
             [self._lidar_sub, self._camera_sub],
-            queue_size=10,
+            queue_size=int(p("sync_queue_size").value),
             slop=float(p("sync_slop_s").value),
         )
         self._sync.registerCallback(self._on_sync)
@@ -124,7 +148,8 @@ class PerceptionFusionNode(Node):
             "classified_obstacles "
             f"(bearing_tol={self._cfg.bearing_tolerance_rad} rad, "
             f"hfov={self._cfg.camera_hfov_rad} rad, "
-            f"slop={p('sync_slop_s').value} s)"
+            f"slop={p('sync_slop_s').value} s, "
+            f"queue={p('sync_queue_size').value})"
         )
 
     # ------------------------------------------------------------- watchdog
@@ -165,11 +190,18 @@ class PerceptionFusionNode(Node):
                 "perception_lidar_node/Livox sürücüsü çalışmıyor olabilir"
             )
         elif self._n_sync == 0:
+            # ⚠ Reçetenin sırası ÖLÇÜMDEN gelir (2026-07-09 tezgahı): damgalar
+            # aynı tabandaydı (~27 ms), arıza kuyruk derinliğiydi. Bu satır
+            # eskiden önce slop'u işaret ediyordu — sahada yanlış yere baktırır.
             self.get_logger().warn(
                 f"sync bekçisi: {self._n_lidar_in} lidar + "
                 f"{self._n_camera_in} kamera mesajı geldi ama eşleşme SIFIR — "
-                "stamp tabanları uyumsuz olabilir (docstring: STAMP SÖZLEŞMESİ); "
-                "sync_slop_s'i büyütmeyi ya da Livox saat kaynağını denetle"
+                f"ÖNCE sync_queue_size'a bak (şu an "
+                f"{self.get_parameter('sync_queue_size').value}): LiDAR "
+                "clustering gecikirse kamera karesi kuyruktan düşer, tezgahta "
+                "10 ve 50 yetmemiş 100 tutmuştu. Ancak bu da olmazsa stamp "
+                "tabanlarını denetle (docstring: STAMP SÖZLEŞMESİ) — slop'u "
+                "büyütmek son çare, eşleşmeyi zamanca yanlış hâle getirir"
             )
         self._n_lidar_in = self._n_camera_in = self._n_sync = 0
 
