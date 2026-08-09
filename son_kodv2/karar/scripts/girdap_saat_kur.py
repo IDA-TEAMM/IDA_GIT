@@ -171,6 +171,17 @@ def gps_saati_al(port: str, baud: int, zaman_asimi: float, log):
         log("pymavlink kurulu degil: pip3 install pymavlink")
         return None, 4
 
+    # Portun BELIRMESINI bekle. Acilista udev/FTDI enumerate'i gecikebilir ve
+    # `mavlink_connection` yok olan porta istisna atar. systemd device unit'ine
+    # (`After=dev-...device`) guvenmek yerine burada bekliyoruz: symlink
+    # kullanildiginda o unit adi da degisir, bu yontem ikisinde de calisir.
+    _bekleme_bitis = time.monotonic() + min(30.0, zaman_asimi / 3)
+    while not os.path.exists(port) and time.monotonic() < _bekleme_bitis:
+        time.sleep(0.5)
+    if not os.path.exists(port):
+        log(f"port belirmedi: {port} — kablo/udev kurali? (ls -l /dev/serial/by-id)")
+        return None, 1
+
     log(f"FC'ye baglaniliyor: {port} @ {baud}")
     try:
         m = mavutil.mavlink_connection(port, baud=baud)

@@ -1,0 +1,47 @@
+# GİRDAP İDA — Pixhawk TELEM2 (FTDI) için SABİT isim: /dev/pixhawk_telem2
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# 🔴 NEDEN GEREKLİ
+# `hardware.yaml` `fcu_url` bugün `/dev/ttyUSB0`'a bakıyor ve o ad KIRILGAN:
+# Jetson'da İKİ FTDI var (Pixhawk TELEM2 + telemetri radyosu). `ttyUSBn`
+# numarası **enumerate sırasına** göre verilir; reboot'ta ya da kablolar farklı
+# sırayla takılırsa **yer değiştirebilirler**.
+#
+# Sonucu sessizdir ve kötüdür: MAVROS telemetri radyosuna bağlanır, FC'yi hiç
+# bulamaz → arm olmaz, GUIDED gelmez, `girdap-saat.service` de GPS saatini
+# alamaz (md 4.2 damgaları güvenilmez kalır). Hiçbir yerde "yanlış cihaz"
+# yazmaz, yalnız heartbeat gelmez.
+#
+# Bu kural cihazı **seri numarasından** tanır → isim artık takma sırasına
+# bağlı değil.
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# ⚠️ SERİ NUMARASI DOĞRULANMALI
+# Aşağıdaki `DU0EFEA7` değeri `hardware.yaml` yorumundan alındı (FT231X).
+# Kurmadan ÖNCE gerçek cihazda teyit et — yanlış seri no ile kural hiçbir şey
+# yapmaz ve symlink oluşmaz:
+#
+#   ls -l /dev/serial/by-id/            # iki FTDI'yi ve seri nolarını gösterir
+#   udevadm info -a -n /dev/ttyUSB0 | grep -E 'ATTRS\{(serial|idVendor|idProduct)\}' | head
+#
+# Hangisinin Pixhawk olduğunu ayırt etmek için (heartbeat dinle):
+#   python3 -c "from pymavlink import mavutil; m=mavutil.mavlink_connection('/dev/ttyUSB0',baud=57600); print(m.wait_heartbeat(timeout=10))"
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# KURULUM
+#   sudo cp 99-girdap-pixhawk.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   ls -l /dev/pixhawk_telem2          # -> ../ttyUSBn gostermeli
+#
+# SONRA (symlink DOĞRULANDIKTAN sonra, önce değil):
+#   hardware.yaml → fcu_url: "serial:///dev/pixhawk_telem2:57600"
+#   girdap-saat.service → --port /dev/pixhawk_telem2
+#
+# ⚠️ Symlink OLUŞMADAN config'i değiştirmek yığını tamamen kapatır.
+#    Sıra: kural kur → symlink'i gör → sonra config.
+#
+# NOT: `TAG+="systemd"` sayesinde systemd bu symlink için de bir device unit
+# uretir (`dev-pixhawk_telem2.device`) — istenirse `After=` ile kullanılabilir.
+# `girdap_saat_kur.py` buna güvenmiyor, portun belirmesini kendisi bekliyor.
+
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6015", ATTRS{serial}=="DU0EFEA7", SYMLINK+="pixhawk_telem2", TAG+="systemd", MODE="0666"
