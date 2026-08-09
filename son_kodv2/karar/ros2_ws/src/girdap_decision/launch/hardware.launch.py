@@ -776,6 +776,25 @@ def generate_launch_description() -> LaunchDescription:
         "parameters": [params_file, {"use_sim_time": use_sim_time}],
         "output": "screen",
     }
+    # --- Saat güveni (md 4.2) — TEK yerde hesaplanır, ÜÇ teslime birlikte geçer.
+    # 🔴 09.08'e kadar bu tesisat YARIM BAĞLIYDI: local_map_node ve
+    # lidar_kayit_node `saat_guvenilir`i OKUYOR ama hiçbir yerden
+    # BESLENMİYORDU → varsayılan True'da kalıyor, yani sistem saat 3 saat
+    # yanlışken de "güvenilir" diyordu (Jetson 06.08'de ~15 sa, 07.08'de ~3 sa
+    # geri açıldı — ölçüldü). telemetry_node'da (Dosya-2) parametre HİÇ yoktu.
+    # Ölçüt `prototype/telemetry/saat_guveni.py`de (çekirdek STA_UNSYNC bayrağı);
+    # saati GPS'ten KURAN taraf `scripts/girdap_saat_kur.py` + girdap-saat.service.
+    try:
+        from prototype.telemetry.saat_guveni import saat_guvenilir_mi
+        _saat_ok, _saat_neden = saat_guvenilir_mi()
+    except Exception as _e:  # PYTHONPATH kırıksa yığın zaten çalışmaz (F2.3)
+        _saat_ok, _saat_neden = False, f"olcut yuklenemedi ({_e})"
+    # Teslim node'larına ayrı sözlük: `common` başka node'larca da kullanılıyor,
+    # onları gereksiz parametreyle kirletmiyoruz.
+    teslim_common = {
+        "parameters": common["parameters"] + [{"saat_guvenilir": _saat_ok}],
+        "output": "screen",
+    }
     # mavros_bridge: hardware.yaml güvenlik değerleri params.yaml'ı override eder.
     bridge_params = [
         params_file,
@@ -905,6 +924,8 @@ def generate_launch_description() -> LaunchDescription:
             ),
             "fc_thrust_left_ch": int(hw["telemetry"]["fc_thrust_left_ch"]),
             "fc_thrust_right_ch": int(hw["telemetry"]["fc_thrust_right_ch"]),
+            # Dosya-2: saat doğrulanamadıysa CSV adına yazılır (bkz. node).
+            "saat_guvenilir": _saat_ok,
         },
     ]
     # perception: launch-arg'lar tip korunarak node parametresine geçer.
@@ -963,13 +984,13 @@ def generate_launch_description() -> LaunchDescription:
              output="screen"),
         # Dosya-3 (md 4.2): /girdap/map/local → zaman damgalı mp4 + PNG yedeği.
         Node(package=_PKG, executable="local_map_node",
-             name="local_map_node", **common),
+             name="local_map_node", **teslim_common),
         # Dosya-1'in "Diğer Otonomi Sensörleri" ayağı (md 487-493): LiDAR
         # kümeleme videosu. 🔴 Bu teslim 07.08.2026'ya kadar HİÇ üretilmiyordu
         # (eksik dosya = 5 ceza, md 5.5.4.3.5). Kamera mp4'ünden AYRI dosya
         # olmak zorunda: "her bir sensör tipi için ayrı ayrı".
         Node(package=_PKG, executable="lidar_kayit_node",
-             name="lidar_kayit_node", **common),
+             name="lidar_kayit_node", **teslim_common),
         # Video: 4-nokta waypoint görevi → /girdap/mission/current_target.
         Node(package=_PKG, executable="mission_manager_node",
              name="mission_manager_node", parameters=mission_params,
@@ -1030,6 +1051,16 @@ def generate_launch_description() -> LaunchDescription:
                 " | with_mavros=", LaunchConfiguration("with_mavros"),
                 " (false=masa testi, mock_sensors besler)",
             ]),
+            # md 4.2: saat güveni ÜÇ teslimi birden etkiliyor → operatör bunu
+            # kaçırmasın. Güvenilmezse damga iddiası düşer (veri kaybolmaz).
+            LogInfo(msg=(
+                f"[hardware] SAAT: {'GUVENILIR' if _saat_ok else '!! GUVENILMEZ !!'}"
+                f" — {_saat_neden}"
+                + ("" if _saat_ok else
+                   " | Dosya-1/2/3 damgalari 'guvenilmez' isaretlenecek."
+                   " Duzeltme: sudo systemctl start girdap-saat"
+                   " (GPS'ten kurar; fix sart)")
+            )),
             mavros,
             mock_sensors_node,
             *static_tfs,

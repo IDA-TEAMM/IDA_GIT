@@ -18,6 +18,13 @@
 [Unit]
 Description=GIRDAP IDA karar yigini (mavros + FSM + planning + telemetri, mission_source=fc)
 After=network.target
+# md 4.2: saat, teslim node'lari dosya adlarini uretmeden ONCE dogru olmali
+# (telemetry/local_map/lidar_kayit oturum adini BASLANGICTA uretiyor; saat
+# sonradan duzelse bile dosya adlari yanlis kalir). Kurulum: girdap-saat.service
+# Wants (Requires DEGIL): saat kurulamazsa gorev YINE baslamali — gorev
+# baslamazsa hic puan yok. O durumda teslimler saat_guvenilir=false damgalanir.
+After=girdap-saat.service
+Wants=girdap-saat.service
 
 [Service]
 Type=simple

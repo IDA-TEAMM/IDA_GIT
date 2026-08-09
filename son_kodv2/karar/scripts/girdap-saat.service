@@ -1,0 +1,73 @@
+# GİRDAP İDA — Jetson sistem saatini Pixhawk'ın GPS saatinden kurar.
+#
+# Açılışta BİR KEZ koşar, saati kurar, çıkar. `girdap-karar.service`'ten ÖNCE.
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# NEDEN — md 4.2 teslimleri "zaman etiketli" olmak zorunda, geçersiz dosya
+# başına 5 ceza puanı (md 5.5.4.3.5). Jetson yanlış saatle açılıyor: ÖLÇÜLDÜ,
+# 06.08'de ~15 saat, 07.08'de ~3 saat geri. Yanlış saat SESSİZDİR.
+# NTP çözüm değil: md 4.1 WiFi'yi yasaklıyor → yarışma günü internet YOK.
+# gpsd+chrony de çalışmaz: F9P'nin bağımsız UART'ı yok, yalnız Pixhawk GPS1'e
+# bağlı. Zaman ancak FC üzerinden alınabilir. Ayrıntı:
+# docs/saat_gps_senkron_plani.md
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# 🔴 NEDEN girdap-karar'DAN ÖNCE (sıra bir tercih değil, ZORUNLULUK)
+#   telemetry_node · local_map_node · lidar_kayit_node oturum dizinini ve
+#   dosya adını BAŞLANGIÇTA üretiyor (datetime.now().strftime(...)). Saat
+#   sonradan düzelse bile DOSYA ADLARI YANLIŞ KALIR.
+#
+# 🔴 NEDEN Type=oneshot (seri port tekildir)
+#   MAVROS /dev/ttyUSB0'ı açık tutar; iki süreç aynı portu açamaz. Bu servis
+#   MAVROS'tan ÖNCE koşar, portu bırakır, çıkar. Ayrıca saat kurucu MAVROS'u
+#   bekleyemez: MAVROS'u girdap-karar başlatıyor → dairesel bağımlılık olurdu.
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# KURULUM (tek sefer, sudo ister)
+#   sudo cp girdap-saat.service /etc/systemd/system/
+#   sudo cp girdap_saat_kur.py /usr/local/bin/ && sudo chmod +x /usr/local/bin/girdap_saat_kur.py
+#   sudo apt install -y python3-pymavlink        # yoksa
+#   sudo systemctl daemon-reload && sudo systemctl enable girdap-saat
+#
+#   girdap-karar.service'e de şu satır eklenmeli ([Unit] altına):
+#       After=girdap-saat.service
+#       Wants=girdap-saat.service
+#   (Wants, Requires DEĞİL: saat kurulamazsa görev yine başlamalı — görev
+#    başlamazsa hiç puan yok. Teslimler saat_guvenilir=false damgalanır.)
+#
+# ELLE KOŞ / TEST (saati DEĞİŞTİRMEDEN ölçmek için --kuru):
+#   sudo systemctl start girdap-saat && journalctl -u girdap-saat -n 30 --no-pager
+#   sudo /usr/local/bin/girdap_saat_kur.py --kuru        # yalnız fark bildirir
+#
+# DOĞRULAMA:
+#   timedatectl                 # "System clock synchronized: yes" görmeli
+#   date -u                     # GPS UTC ile tutmalı
+#
+# ⚠️ GPS FIX ŞART: kapalı alanda fix gelmez → servis 90 s bekler, kuramaz,
+#    sıfır dışı kodla çıkar. Bu bir arıza DEĞİL; teslimler "güvenilmez"
+#    damgalanır ve veri kaybolmaz. Dışarıda/suda tekrar koştur.
+
+[Unit]
+Description=GIRDAP IDA — sistem saatini Pixhawk GPS saatinden kur (md 4.2)
+# Saat, teslim node'lari dosya adlarini uretmeden ONCE dogru olmali.
+Before=girdap-karar.service
+# Seri port (FTDI/USB) enumerate olmus olsun.
+After=dev-ttyUSB0.device
+Wants=dev-ttyUSB0.device
+# NTP ile yarismasin: internet varsa (gelistirme) timesyncd zaten kurar.
+Conflicts=systemd-timesyncd.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# root SART: clock_settime + adjtimex(ADJ_STATUS) CAP_SYS_TIME ister.
+User=root
+ExecStart=/usr/local/bin/girdap_saat_kur.py --port /dev/ttyUSB0 --baud 57600 --zaman-asimi 90
+# Kurulamazsa (GPS fix yok) yigin YINE baslamali -> basarisizlik yutulur.
+SuccessExitStatus=0 1 2 3 4
+TimeoutStartSec=120
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

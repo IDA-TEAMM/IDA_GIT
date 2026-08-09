@@ -1,7 +1,31 @@
 # Jetson saatini GPS'ten kurmak — araştırma ve plan
 
-**Tarih:** 2026-08-09 · **Alan:** Alt Alan B (FC/navigasyon) · **Durum:** plan,
-uygulanmadı
+**Tarih:** 2026-08-09 · **Alan:** Alt Alan B (FC/navigasyon)
+**Durum:** ✅ **KOD YAZILDI** — Jetson'da kurulum + GPS'li doğrulama bekliyor
+
+## ✅ Ne yazıldı (2026-08-09)
+
+| Dosya | Ne yapar |
+|---|---|
+| `scripts/girdap_saat_kur.py` | pymavlink ile seri porttan `SYSTEM_TIME` **ister** (MAVROS'a bağlı değil), makul aralık kontrolünden geçirir, `clock_settime` ile saati kurar, `STA_UNSYNC`'i temizler, `hwclock --systohc` ile RTC'ye yazar |
+| `scripts/girdap-saat.service` | Açılışta oneshot, `Before=girdap-karar.service` · `SuccessExitStatus=0 1 2 3 4` (kurulamazsa yığın **yine** başlar) |
+| `scripts/girdap-karar.service` | `After=`/`Wants=girdap-saat.service` eklendi (**Requires değil** — görev başlamazsa hiç puan yok) |
+| `prototype/telemetry/saat_guveni.py` | ROS-bağımsız ölçüt (çekirdek `STA_UNSYNC`). Hata hâlinde **güvenilmez** döner (fail-safe) |
+| `prototype/tests/test_saat_guveni.py` | 5 test: çekirdek sabitleri + `struct timex` **208 byte** hizalaması (yanlış hizalama `status`'u kaydırır → sessizce yanlış sonuç) |
+| `hardware.launch.py` | Ölçütü **TEK yerde** çağırır, `saat_guvenilir`'i **üç teslim node'una** geçirir + `LogInfo` ile operatöre basar |
+| `telemetry_node.py` | `saat_guvenilir` parametresi (önceden **hiç yoktu**); güvenilmezse Dosya-2 adı `..._SAAT-GUVENILMEZ.csv` + WARN |
+
+**Yahya'nın `local_map_node`/`lidar_kayit_node` dosyalarına DOKUNULMADI** —
+ikisi `saat_guvenilir`'i zaten okuyordu, launch'tan beslenince kendiliğinden
+çalışıyor. Yarım tesisat böylece bağlandı.
+
+**Dosya-2'de neden kolon değil dosya adı:** `CSV_HEADER` md 4.2 alan
+sözleşmesi ve `test_telemetry_logger` onu **birebir** çiviliyor; kolon eklemek
+şemayı bozar. Dosya adı hiçbir toplayıcıdan kaçmaz. Saat güvenilirse ad
+**değişmez** → sıfır regresyon.
+
+Testler: **520 geçti** (`test_p1_saha_senaryolari`'ndaki 1 hata önceden vardı,
+bu işle ilgisiz).
 
 > **Neden:** md 4.2 teslimleri (Dosya-1/2/3) **zaman etiketli** olmak zorunda,
 > geçersiz dosya başına **5 ceza puanı** (md 5.5.4.3.5). Jetson 06.08'de

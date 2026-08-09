@@ -115,13 +115,36 @@ class TelemetryNode(Node):
         # veri hâlâ canlıymış izlenimi. F-V.2'nin setpoint kapılama desenini
         # sensör alanlarına da uygular. <=0 → bekçi kapalı (mock/masa testi).
         self.declare_parameter("source_timeout_s", 3.0)
+        # 🔴 SAAT GÜVENİ (md 4.2) — 2026-08-09'da eklendi, ÖNCESİNDE HİÇ YOKTU.
+        # Dosya-2'nin dosya adı VE her satırın `zaman` sütunu doğrudan
+        # `datetime.now(timezone.utc)`'ten geliyor. Jetson 06.08'de ~15 saat,
+        # 07.08'de ~3 saat GERİ açıldı (ölçüldü) → damgalar sessizce yanlış
+        # olurdu, hiçbir uyarı basılmadan. Yanlış damgalı teslim = 5 ceza puanı
+        # (md 5.5.4.3.5). Değeri `hardware.launch.py` TEK yerde hesaplayıp üç
+        # teslim node'una birlikte geçirir (ölçüt:
+        # `prototype/telemetry/saat_guveni.py`, çekirdek STA_UNSYNC bayrağı).
+        self.declare_parameter("saat_guvenilir", True)
 
         out_dir = str(self.get_parameter("csv_output_dir").value)
         if not out_dir:
             out_dir = str(Path.home() / "girdap_logs" / "telemetry")
+        self._saat_guvenilir = bool(self.get_parameter("saat_guvenilir").value)
+        # Neden DOSYA ADI, neden CSV'ye kolon DEĞİL: `CSV_HEADER` md 4.2 alan
+        # sözleşmesi ve `test_telemetry_logger` onu BİREBİR çiviliyor; kolon
+        # eklemek şemayı bozar. Dosya adı ise hiçbir toplayıcıdan/gözden
+        # kaçmaz. Saat güvenilirse ad DEĞİŞMEZ → sıfır regresyon.
+        _ad = f"telemetri_{utc_timestamp()}.csv" if self._saat_guvenilir else (
+            f"telemetri_{utc_timestamp()}_SAAT-GUVENILMEZ.csv"
+        )
         # DİKKAT: rclpy Node dahili logger'ını `self._logger`'da tutar; bu isimle
         # CSV logger'ı atamak get_logger()'ı ezer → `self._csv` kullanılır.
-        self._csv = TelemetryCsvLogger(out_dir)
+        self._csv = TelemetryCsvLogger(out_dir, filename=_ad)
+        if not self._saat_guvenilir:
+            self.get_logger().warn(
+                "SAAT GUVENILMEZ — Dosya-2 damgalari dogrulanamadi, dosya adina "
+                "islendi. Veri GECERLI, yalniz mutlak saat iddia edilmiyor. "
+                "Duzeltme: sudo systemctl start girdap-saat (GPS fix sart)."
+            )
 
         # Grafik CSV ayrı dizinde — Dosya-2 teslim klasörüne karışmasın
         # (USB'ye yalnız telemetry/ kopyalanır, grafik yarışma çıktısı değil).
