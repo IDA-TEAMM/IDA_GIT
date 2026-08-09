@@ -1,7 +1,39 @@
 # Jetson saatini GPS'ten kurmak — araştırma ve plan
 
 **Tarih:** 2026-08-09 · **Alan:** Alt Alan B (FC/navigasyon)
-**Durum:** ✅ **KOD YAZILDI** — Jetson'da kurulum + GPS'li doğrulama bekliyor
+**Durum:** ✅ Kod yazıldı · ✅ **Jetson'da KURULDU** · ✅ **emniyet yolu ÖLÇÜLDÜ ve GEÇTİ**
+· ⏳ yalnız GPS'li "mutlu yol" doğrulaması kaldı (dışarıda)
+
+## ✅ EMNİYET YOLU TESTİ — 2026-08-09/10, GEÇTİ
+
+**Neden bu test mutlu yoldan önemli:** emniyet yolu bozuksa **yığın hiç
+başlamaz** ve bu ancak yarışma sabahı fark edilir. FC kapalıyken (GPS yok)
+tam o durum taklit edildi: `sudo systemctl start girdap-saat`.
+
+| Ölçüt | Beklenen | Ölçülen | |
+|---|---|---|---|
+| Süre sınırlı mı | ≈45 s | **`real 0m45.127s`** | ✅ |
+| Servis durumu | `failed` DEĞİL | **`active (exited)`**, `status=2` | ✅ |
+| Düzgün pes | açık mesaj | `SAAT KURULMADI (kod 2) — teslimler saat_guvenilir=false ile damgalanmali` | ✅ |
+| systemd sonucu | Finished | `Finished GIRDAP IDA — sistem saatini…` | ✅ |
+| Karar yığını | ayakta | `active`, node'lar koşuyor | ✅ |
+| Sistem saati | DEĞİŞMEMİŞ | `Sat Aug 8 22:28` (öncesiyle aynı) | ✅ |
+
+`SuccessExitStatus=0 1 2 3 4` fiilen çalıştı: çıkış kodu 2 olduğu hâlde unit
+`failed` olmadı → `Wants=` zinciri kırılmadı → **GPS gelmese de görev başlar.**
+
+Log ayrıca bağımsız yolun devreye girdiğini kanıtladı:
+`pymavlink yok → bagimsiz ayristirici kullaniliyor (SR2_EXTRA3=10, SYSTEM_TIME
+kendiliginden akiyor; istek gerekmez)`.
+
+🔎 Yan gözlem: MAVROS portu açık tutarken `pyserial` aynı portu **açabildi**
+(hata yok). Açılışta çakışma zaten olmaz (`Before=girdap-karar` → saat servisi
+MAVROS'tan önce koşup portu bırakıyor), ama elle test ederken iki okuyucunun
+birbirinden bayt kaçırabileceği akılda tutulmalı.
+
+⏳ **Kalan tek doğrulama:** tekne dışarıda, FC beslenmiş ve GPS fix'liyken
+`sudo systemctl start girdap-saat` → beklenen `SAAT KURULDU: … (duzeltme
++9xxxx.x s)` ve ardından `timedatectl` → `System clock synchronized: yes`.
 
 ## ✅ Ne yazıldı (2026-08-09)
 
