@@ -153,3 +153,54 @@ python3 scripts/param_kiyasla.py \
 | `fc_mevcut_parametreler_2026-08-10.param` | Değiştirildikten sonraki canlı hâl |
 | `fc_hedef_parametreler_2026-08-10.param` | **Yazılacak olan** (canlı + 5 düzeltme) |
 | `scripts/param_kiyasla.py` | Kıyas aracı; kritik listeyi ve "bozulursa ne olur"u ayrı raporlar |
+
+---
+
+# ✅ RC FAILSAFE TESTİ — 2026-08-10, GEÇTİ (ama yarışma için karar gerekiyor)
+
+**Ayar:** `FS_THR_ENABLE 0 → 1`, `FS_ACTION 0 → 2` (Hold). `FS_THR_VALUE=975`
+zaten doğruydu (SERVO min 1000'in altında).
+
+**Koşullar:** pervaneler sökülü, ESC'ler beslenmiyor → sıfır riskli ölçüm.
+
+## Ölçümler
+
+| Test | `ch3in` | `ch1out`/`ch3out` | Mod | |
+|---|---|---|---|---|
+| Kumanda kapalı, gaz **ortada** (13:25) | 1499 | 1487 | Manual | ⚠️ failsafe tetiklenmedi |
+| Kumanda kapalı, gaz **açık** (13:33) | **1811** | **1487** | **Hold** | ✅ **GEÇTİ** |
+
+🔴 **Kritik senaryo doğrulandı:** *tam gazda giderken kumanda koptu.* Alıcı
+gaz kanalını **1811'de tutmasına rağmen** FC çıkışı **1487'ye (nötr)** çekti ve
+**Hold**'a geçti. 1000 (TAM GERİ) görülMEDİ — çift yönlü ESC'de aranan buydu.
+
+## 🔎 Yol boyunca çıkan bulgu: alıcı SON DEĞERİ TUTUYOR
+
+Kumanda kapalıyken tüm girişler duruyor (`ch1in=1506`, `ch3in=1811`,
+`ch5in=2000`, `ch10in=1005`). Yani **link kaybı ≠ alıcı susar**; alıcı son
+komutu yollamaya devam ediyor.
+
+Sonucu: `FS_THR_ENABLE`'ın klasik tetikleyicisi (gaz < `FS_THR_VALUE`) **hiç
+devreye girmiyor** — eşik 975, alıcı 1811 yolluyor. Failsafe'i tetikleyen şey
+ArduPilot'un **RC çerçevesi zaman aşımı** (`FS_TIMEOUT=1.5`).
+⚠️ 13:25 ölçümünde mod `Manual` kalmıştı — muhtemelen ekran görüntüsü o 1,5
+saniyelik zaman aşımından ÖNCE alındı. Su testinde tekrar bakılacak.
+
+> 💡 Daha sağlam olurdu: **alıcının kendi failsafe'ini** (R9DS F/S tuşu) gaz
+> 975'in altına gelecek şekilde ayarlamak → iki bağımsız tetikleyici olurdu.
+> Şu an tek tetikleyici çerçeve zaman aşımı; o da çalışıyor ama tek nokta.
+
+## 🔴 YARIŞMA İÇİN KARAR GEREKİYOR — bu ayar görevi ENGELLER
+
+Yarışmada RC seti **kullanılmayacak** (2.4 GHz, md 4.1 yasağı) → verici
+**kapalı** olacak. Ölçtük: **verici kapalı = Hold.** Yani tekne suya bırakılır,
+Jetson görevi başlatmak ister, FC **Hold'da oturur ve hiç hareket etmez.**
+
+| Seçenek | Artı | Eksi |
+|---|---|---|
+| **A. Yarışma sabahı `FS_THR_ENABLE=0`** | Kanıtlanmış, basit | Unutulursa görev hiç başlamaz → kontrol listesine ŞART |
+| **B. `FS_OPTIONS`'ta "AUTO/GUIDED'da devam et" biti** | İkisi birden: testte koruma, yarışmada engel yok | Bit doğrulanmadı + test edilmedi; körlemesine açılmaz |
+
+**Şimdilik A benimsendi** (kanıtlanmış). B araştırılıp test edilirse daha temiz.
+Her iki hâlde de **kontrol listesine "yarışma sabahı" adımı** girmeli — WiFi
+kapatma ve `girdap-karar-yarisma.conf` drop-in'i gibi.
