@@ -122,3 +122,40 @@ yapıyordu; hata yalnız deploy node'undaydı.
 <sub>Hazırlayan: algı ekibi (Eyüp). Kanıtların tamamı bu repoda ve
 `girdap-ida-algi` commit geçmişinde. Sorular için: bulguların her biri
 dosya:satır ile verildi, tekrar üretilebilir.</sub>
+
+---
+
+## `models/best.pt` KALDIRILDI (2026-08-10) — Sude'nin onayıyla
+
+**Ne:** `son_kodv2/karar/ros2_ws/src/girdap_decision/models/best.pt`
+(6.242.993 bayt · sha256 `047017d657ea50db…`) depodan çıkarıldı.
+Eyüp bildirdi, Sude *"sen bilirsin"* dedi.
+
+**Neden:** dosya **tek sınıflı** (`names={0:'duba'}`, yolov8n, imgsz 640,
+2026-04-11). Bizim algı node'u sınıfları **isimden** çözüyor
+(`_sinif_indeksleri_coz`, "kenar"/"engel" alt dizgisi). `{0:'duba'}` ile çözüm
+tutmaz → yedek sabite düşer → **her duba "kenar" sayılır** → sarı engel dubası
+geçit direği sanılır → yanlış kapı → **Ç2 çarpma cezası**, hata basılmadan.
+Yani depoda duran bir tuzaktı.
+
+**Silmeden önce doğrulandı — hiçbir şey kırılmıyor (4 kanıt):**
+1. `setup.py` → `glob("models/*.pt")` boş dönerse setuptools **hata vermiyor**
+   (test edildi). `setup.py`'ye **dokunulmadı**; ileride model eklenirse yine kurar.
+2. `hardware.launch.py:45-58` `_default_localizer_model()` → dosya yoksa `""`
+   döndürüyor. Kendi yorumu birebir: *"Model kurulu değilse … BuoyLocalizer
+   güvenli mock'a düşer, **davranış bozulmaz**"*.
+3. `perception_camera_node` modeli **yüklemiyor** — HSV kullanıyor, YOLO katmanı
+   zaten **MOCK** (dosyanın kendi yorumu, `:12`).
+4. `ida_topics/perception_node.py:13` → `YOLO('/root/best.pt')` — **mutlak yol**,
+   depodaki dosya değil. Ondan etkilenmiyor.
+
+**🔴 DİKKAT — asıl risk bu DEĞİL, hâlâ açık:**
+İkinci yayıncı riskini kapatan şey bu dosya değil, **`use_onboard_camera`
+bayrağı**. `hardware.launch.py:488` varsayılanı `"false"` ve
+`perception_camera_node` `IfCondition` ile sarılı ✅ — ama bayrak `true` gelirse
+o node `/perception/buoys`'a **HSV ile** basar (`:30`, `:153`) ve bizim
+YOLO+stereo yayınımızla çakışır. `best.pt` olsun olmasın bu risk aynı.
+⇒ **`use_onboard_camera` her zaman `false` kalmalı.** Sahada doğrulama:
+```bash
+ros2 topic info /perception/buoys      # Publisher count: 1 OLMALI
+```
