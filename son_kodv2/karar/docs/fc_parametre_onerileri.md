@@ -365,3 +365,119 @@ PWM'in 1000'e düşmesi bu maddenin kanıtı DEĞİLDİR.
    DEVAM etmeli (Dosya-2 kesilmemeli). Bkz. runbook ADIM 6B.
 5. Sonuçları `docs/olcum_formu.md` FC bölümüne işleyip geri gönderin —
    masa runbook M4-M6 bu değerlerle tekrarlanacak.
+
+---
+
+# 6. 🔴 İÇ DÖNGÜ TUNING — `ATC_STR_*` / `ATC_SPEED_*` / `CRUISE_*` (B-1)
+
+> **Yapılacaklar belgesi (Alt Alan B, 1. satır):** *"`ATC_STR_*`, `CRUISE_SPEED`,
+> `WP_SPEED`, `TURN_MAX_G` hiç ele alınmamış — iki parm dokümanında da satırı
+> yok."* Şartname bağı: **md 5.5.4.2 (kapı geçişi puanı) + çarpma cezası.**
+> Kapatma ölçütü: **suda tuning turu + sonuçların buraya yazılması.**
+>
+> **Durum:** hazırlık ✅ (bu bölüm) · suda tuning ⏳
+
+## 6.1 Neden önemli — MPPI'nin çıktısı buraya giriyor
+
+```
+MPPI  →  /cmd_vel  →  mavros_bridge  →  /mavros/setpoint_velocity/cmd_vel
+                                              ↓  ArduPilot içinde
+                    linear.x  →  istenen HIZ    →  ATC_SPEED_*  (iç döngü)
+                    angular.z →  istenen DÖNÜŞ  →  ATC_STR_RAT_* (iç döngü)
+                                              ↓
+                                        SERVO1 / SERVO3
+```
+
+İç döngüler tune edilmemişse **MPPI ne emrederse etsin tekne onu takip
+etmez** — belgenin kendi ifadesiyle *"cmd_vel bu iç döngüye gidiyor, tune
+edilmemişse MPPI'nin çıktısı boşa gider."*
+
+Kapı ortalama hassasiyeti doğrudan buna bağlı: MPPI 0,3 m'lik bir düzeltme
+isteyip tekne 1 m sapıyorsa, algoritmanın doğruluğu puana dönüşmez.
+
+## 6.2 MEVCUT DURUM — 2026-08-10 canlı dökümü
+
+🔴 **Hepsi ArduPilot varsayılanında. Hiçbiri ölçümle belirlenmemiş.**
+
+| Parametre | Mevcut | Varsayılan | Not |
+|---|---|---|---|
+| `ATC_STR_RAT_FF` | **0.2** | 0.2 | 🔴 **EN ÖNEMLİSİ** — ileri besleme, ilk bu ayarlanır |
+| `ATC_STR_RAT_P` | 0.2 | 0.2 | |
+| `ATC_STR_RAT_I` | 0.2 | 0.2 | |
+| `ATC_STR_RAT_D` | 0 | 0 | Rover'da genelde 0 kalır |
+| `ATC_STR_RAT_IMAX` | 1 | 1 | |
+| `ATC_STR_RAT_FLTE` | 10 | 10 | hata filtresi (Hz) |
+| `ATC_SPEED_P` | 0.2 | 0.2 | |
+| `ATC_SPEED_I` | 0.2 | 0.2 | |
+| `ATC_SPEED_D` | 0 | 0 | |
+| `CRUISE_SPEED` | **1** | 2 | ✅ **doğru** — ölçülen gerçek seyir 1,05 m/s; belge "~1.0-1.5" istiyor |
+| `WP_SPEED` | **1** | 2 | ✅ `hardware.yaml telemetry.fc_cruise_setpoint_mps: 1.0` ile **senkron** |
+| `CRUISE_THROTTLE` | 25 | 50 | ⚠️ **HİÇ ÖLÇÜLMEDİ** — hız döngüsünün ileri beslemesi, yanlışsa hız kontrolü hep geç kalır |
+| `ATC_TURN_MAX_G` | 0.6 | 0.6 | 1 m/s'de dönüş yarıçapı sınırı 0,17 m → **hiç devreye girmiyor**, dokunma |
+| `ATC_ACCEL_MAX` | 1 | 0 (sınırsız) | 1 m/s²; 1 m/s'ye 1 saniyede çıkar, makul |
+| `MOT_SLEWRATE` | 100 | 100 | %100/s |
+
+> ✅ `CRUISE_SPEED`/`WP_SPEED` **zaten doğru** — bunlar 10.08'de doğrulandı ve
+> kodla senkron. B-1'in tuning ayağı `ATC_*` ve `CRUISE_THROTTLE`'da.
+
+## 6.3 SUDA TUNING PROSEDÜRÜ — sırayla, atlanmaz
+
+### Önkoşullar
+- ✅ İvmeölçer + **pusula** kalibre *(pusula 11.08 itibarıyla AÇIK)*
+- GPS **3D Fix**, açık su, kıyıdan uzak
+- 🔴 **İpe bağlı** (kaçma emniyeti)
+- `LOG_DISARMED=1` açık → tüm koşu kaydediliyor, sonradan PlotJuggler ile
+  incelenebilir (`bin2csv.py` → `t` zaman sütunu)
+
+### ADIM 1 — `CRUISE_THROTTLE` + `CRUISE_SPEED` (ileri besleme)
+**En büyük tek kazanç bu.** Hız döngüsüne doğru başlangıç tahmini verir.
+
+1. **MANUAL** modda gazı sabit bir değerde tut (örn. %50)
+2. Hız oturunca HUD'daki **`GS`**'i oku
+3. `CRUISE_THROTTLE` = kullandığın gaz yüzdesi · `CRUISE_SPEED` = ölçülen hız
+4. ⚠️ Ölçümü **düz çizgide, akıntısız** yap; rüzgâr/akıntı varsa iki yönde
+   ölçüp ortalama al
+
+**Kaydet:** gaz % → hız (m/s) tablosu, en az 3 nokta (örn. %25/%50/%75).
+
+### ADIM 2 — `ATC_SPEED_P` / `I`
+1. **GUIDED** (ya da AUTO) modda sabit bir hız komutu ver
+2. Hedef hıza **oturma süresi** ve **aşım** gözle
+3. `ATC_SPEED_P`'yi kademeli artır → **salınım başlayınca %60'ına çek**
+4. `I` genelde `P`'nin yarısı civarı iyi başlangıç
+
+### ADIM 3 — `ATC_STR_RAT_FF` (dönüş ileri beslemesi) 🔴 **ÖNCE BU**
+Rover'da dönüş kontrolünün **en belirleyici** parametresi FF'dir, P değil.
+
+1. **ACRO** modda sabit bir dönüş hızı komutu ver
+2. **İstenen** ile **gerçekleşen** dönüş hızını karşılaştır
+   *(MP → Tuning grafiği, ya da log'da `ATRC` mesajı: `DesRate` ↔ `Rate`)*
+3. Gerçekleşen < istenen → `FF`'yi **artır** · tersi → azalt
+4. İkisi çakışana kadar tekrarla
+
+### ADIM 4 — `ATC_STR_RAT_P` / `I`
+1. `P`'yi kademeli artır
+2. Tekne **kuyruk sallamaya** (salınım) başlayınca dur, **%60'ına çek**
+   — belgenin istediği yöntem bu
+3. `I` sabit hatayı (sürekli bir yana kayma) kapatır, küçük başla
+
+### ADIM 5 — Doğrula ve YAZ
+- Kapı benzeri bir geçit kurup 3 kez geç, yanal sapmayı ölç
+- Nihai değerleri ve gözlemleri **§6.4**'e yaz
+- Taze param dökümü al, repoya commit et
+
+## 6.4 SONUÇLAR — suda ölçülünce doldurulacak
+
+| Parametre | Öncesi | Sonrası | Gözlem |
+|---|---|---|---|
+| `CRUISE_THROTTLE` | 25 | `____` | gaz %→hız tablosu: `____` |
+| `CRUISE_SPEED` | 1 | `____` | ölçülen: `____` m/s |
+| `ATC_SPEED_P` | 0.2 | `____` | oturma süresi: `____` s |
+| `ATC_SPEED_I` | 0.2 | `____` | |
+| `ATC_STR_RAT_FF` | 0.2 | `____` | istenen↔gerçek dönüş hızı: `____` |
+| `ATC_STR_RAT_P` | 0.2 | `____` | salınım eşiği: `____` |
+| `ATC_STR_RAT_I` | 0.2 | `____` | |
+| Kapı yanal sapması | — | `____` m | 3 geçişin en kötüsü |
+
+> ⚠️ **Bu tablo doldurulmadan B-1 KAPANMAZ** — belge açıkça *"sonuçları
+> `fc_parametre_onerileri.md`'ye yeni bölüm olarak yaz"* diyor.
