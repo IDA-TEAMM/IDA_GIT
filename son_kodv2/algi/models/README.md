@@ -1,12 +1,64 @@
 # Modeller
 
-Bu klasöre model dosyaları konur. Büyük oldukları için git'e dahil edilmez
-(`.gitignore`).
+> ## ✅ 2026-08-10 — YARIŞMA MODELİ BURADA, REPODA
+> `yolo11n_duba_rvc2.blob` + `config.json` **git'e dâhil edildi** (`.gitignore`'da
+> istisna). Gerekçe: yarışma alanında **internet YOK** (md 4.1) ve `blobconverter`
+> **bulut** ⇒ blob sahada üretilemez; ayrıca *"teknede hangi blob koşuyor?"*
+> sorusunun izlenebilir cevabı olmalı.
+>
+> **Jetson'a kurulum:** iki dosyayı `/home/girdap/models/` altına kopyala
+> (`MODEL_BLOB` oraya bakıyor, `config.json` blob'un **yanında** olmalı).
 
-> ⚠️ **A-1 hâlâ AÇIK:** `MODEL_BLOB`'un işaret ettiği
-> `/home/girdap/models/yolo11n_duba_rvc2.blob` bu makinede **yok** — gerçek
-> duba modeli veri seti → eğitim → export zincirini bekliyor. Ayrıntı:
-> [`../docs/bekleyen_girdiler.md`](../docs/bekleyen_girdiler.md) §B1.
+## Bu blob nereden geldi (provenance)
+
+```
+kaynak .pt : girdap_EGITIM_HATTI/runs/detect/girdap_ince3_1053/weights/last.pt
+             (best.pt DEGIL — olculdu: Ultralytics mAP'e bakiyor, bizim metrigimiz
+              sinif hatasi; son epoch'lar 52 -> 47 iyilestirdi)
+zincir     : ana egitim 208 ep (en iyi 158)  ->  dikissiz ton kopyalariyla
+             ince ayar 162 ep (en iyi 132)
+egitim     : YOLO11n · imgsz 416 · 300 ep tavan/patience · hsv_h 0.015 · hsv_s 0.35
+             scale 0.5 · perspective 0 · flipud 0 · degrees 0 · negatif kare %8
+veri       : 7.546 train (416x416 EZILMIS) + 2.087 valid · sizintisiz blok bolme
+export     : tools --imgsz 416 --use-rvc2  ->  ONNX
+             blobconverter FP16 · shaves=4 · OpenVINO 2022.1
+             optimizer_params: --scale_values=[255,255,255] --mean_values=[0,0,0]
+                               --reverse_input_channels        <-- 🔴 ZORUNLU
+sha256 blob  : 5726819a101eb4f62dd8ad65cdd302f980b349c0fa448190264d412031871b9c
+sha256 config: 79f6e174bc9f175a580b03068d74202d78a50c5276ac1bec017a3d5ae0660d0c
+```
+
+### 🔴 `--reverse_input_channels` NEDEN ZORUNLU
+Ultralytics modeli **RGB** bekler (`augment.py Format._format_img -> img[::-1]`),
+`ColorCamera` ise **BGR** gönderir (`duba_gecis_navigator.py:406`). Arada çeviren
+olmazsa kanallar ters gider. **Ölçüldü (PC, .pt ile, 600 kare):**
+doğru sıra recall **%96,8** ↔ ters sıra **%43,0**. Luxonis dokümanı da bu iki
+çözümü veriyor; biz (A)'yı seçtik çünkü kamera BGR kalınca **şartname Dosya-1
+mp4'ü** (kutu çizimli kayıt) doğru renkte olur.
+⚠️ **(A) ve (B) birlikte uygulanmaz** — çift çevirme geri alır.
+🚨 Saha kurtarma: blob yeniden üretilemezse `setColorOrder(RGB)` tek satırlık,
+internetsiz alternatiftir.
+
+## Ölçülen başarım (2.087 karelik sızıntısız valid)
+| val | recall | küçük <12px | sınıf hatası | yanlış kutu |
+|---|---|---|---|---|
+| temiz | **%97,7** | %95,9 | 8 | 155 |
+| soluk (UV/pus) | %96,9 | %94,4 | — | — |
+| yarışma tonu (dikişsiz benzetim) | **%96,8** | %95,2 | **47** | 231 |
+
+Mesafeye göre (yarışma tonu): 4,5-7,5 m **%98,6** · 7,5-10 m **%99,1** ·
+10-13 m %98,2 · 13 m+ %89,7.
+⚠️ **Val aynı oturumdan** (tek göl, tek gün) ⇒ bu sayılar **ÜST SINIR**.
+
+## Cihazda yapılacak kabul testi
+```bash
+python3 ~/girdap_EGITIM_HATTI/3_kabul_testi.py \
+    --blob models/yolo11n_duba_rvc2.blob --config models/config.json
+```
+1. `numShaves == 4` ✅ (PC'de geçti) — fazlası model **hiç yüklenmez**
+2. `config.json` sınıf isimleri kanonik ✅ (PC'de geçti)
+3. 🔬 **Cihazda:** passthrough'dan kare al → aynı kareyi PC'de `.pt` ile koştur.
+   Tespit sayısı yarı yarıya düşüyorsa **kanal sırası ters**.
 
 ## Kodun beklediği (🔴 2026-08-05'te DEĞİŞTİ — depthai v2'ye geçiş)
 

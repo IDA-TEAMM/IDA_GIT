@@ -15,6 +15,14 @@ log/
 *.onnx
 *.pt
 
+# 🔴 ISTISNA (2026-08-10): YARISMA BLOB'U REPODA TASINIR.
+# Gerekce: yarisma alaninda internet YOK (sartname md 4.1) ve blobconverter
+# BULUT -> blob sahada uretilemez. Ayrica "teknede hangi blob kosuyor?"
+# sorusunun izlenebilir cevabi olmali (bayat-ayna hatasinin dogus sebebi).
+# Boyut 5,5 MB - git icin onemsiz.
+!models/yolo11n_duba_rvc2.blob
+!models/config.json
+
 # Editor / OS
 .vscode/
 .idea/
