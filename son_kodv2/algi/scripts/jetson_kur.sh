@@ -141,9 +141,23 @@ PY
         && echo "   config.json yanında ✓ (sınıf isimleri buradan okunuyor)" \
         || echo "   !! config.json YOK — sınıf çözümü yedek sabite düşer (kenar=0/engel=1)"
 else
-    echo "   !! Model eksik: $MODEL"
-    echo "      Gereken: DÜZ .blob (≤4 shave) + yanında config.json — git'te YOK, elle taşınır."
-    echo "      NNArchive (.tar.xz) v2.30'da YÜKLENMEZ: 'tar -xJf' ile içinden blob çıkar."
+    echo "   Model hedefte yok: $MODEL"
+    # 🔴 2026-08-10 DÜZELTMESİ: burada "git'te YOK, elle taşınır" yazıyordu —
+    # ARTIK BAYAT. `cb1773d` ile blob + config.json REPOYA girdi (.gitignore
+    # istisnası; gerekçe: yarışma alanında internet YOK (md 4.1) ve blobconverter
+    # bulut ⇒ blob sahada üretilemez). Kod yolu sabit olduğu için tek eksik
+    # KOPYALAMA adımıydı ve o adım insan hafızasına bırakılmıştı.
+    REPO_MODELS="$WS/src/girdap-ida-algi/models"
+    if [ -f "$REPO_MODELS/yolo11n_duba_rvc2.blob" ]; then
+        echo "      Blob REPODA var → $(dirname "$MODEL")/ altına kopyalanıyor"
+        mkdir -p "$(dirname "$MODEL")"
+        cp "$REPO_MODELS/yolo11n_duba_rvc2.blob" "$REPO_MODELS/config.json" \
+           "$(dirname "$MODEL")/" && echo "      ✓ kopyalandı"
+        echo "      sha256: $(sha256sum "$MODEL" 2>/dev/null | cut -c1-16)…  (beklenen 5726819a101eb4f6…)"
+    else
+        echo "      !! Repoda da yok. Gereken: DÜZ .blob (≤4 shave) + yanında config.json."
+        echo "      NNArchive (.tar.xz) v2.30'da YÜKLENMEZ: 'tar -xJf' ile içinden blob çıkar."
+    fi
 fi
 
 # --- opsiyonel: açılışta otomatik başlatma ---

@@ -31,6 +31,18 @@ User=__USER__
 # boot'ta/servis olarak coker. Duzeltme veri setinde `a622c3f`.
 WorkingDirectory=/home/__USER__
 Environment=HOME=/home/__USER__
+# 🔴🔴 SART — 2026-08-10 bulgusu: karar yigininin servisi
+# `Environment=ROS_DOMAIN_ID=42` ile kosuyor (son_kodv2/karar/scripts/
+# girdap-karar.service), bizde bu satir YOKTU => varsayilan domain 0.
+# Iki taraf FARKLI DDS domain'inde kalkar, ikisi de "calisiyor" gorunur ama
+# BIRBIRINI HIC GORMEZ: /perception/buoys yayinlanir, fuzyon dinler, bulusmazlar
+# => tum LiDAR kumeleri CLASS_UNKNOWN => gate_follower ham GPS'e duser =>
+# P1 (G1/KD1>=0,5) ve P2 (>=2 ikili) GIDER, tek satir hata basilmadan.
+# `bash -lc` bunu KURTARMAZ: Ubuntu'nun ~/.bashrc'si etkilesimsiz kabukta ilk
+# satirda `return` eder (karar tarafi ayni dersi 2026-07-13'te yasamis ve kendi
+# servisine ayni satiri yazmis: "systemd .bashrc okumaz").
+# ⚠️ Deger karar tarafiyla AYNI olmak zorunda — onlar degistirirse burasi da degisir.
+Environment=ROS_DOMAIN_ID=42
 # Login shell: ROS + workspace ortamini yukle, launch'i kostur.
 # Launch respawn'li - node cokerse launch toparlar; launch'in kendisi cokerse
 # systemd 10 sn sonra yeniden dener.

@@ -212,3 +212,7 @@ dolduruyor: **8,1 FPS**. `setOutputSize(640,400)` ile **14,7 FPS**.
 `scripts/oak_derinlik_termal_testi.py` · `scripts/duba_kamera_test.py`
 (deploy pipeline'ının aynası) · `scripts/depthai_api_denetimi.py` (AST ile
 v2/v3 kaçak çağrı avcısı — taşımalarda ÖNCE bu koşulur).
+
+## 🚀 Jetson kurulumu
+Teknedeki Jetson'a kurulum sırası: **`JETSON-KURULUM.md`** (11 adım, her adımın gerekçesiyle).
+🔴 En kritik: servis `ROS_DOMAIN_ID=42` ile kalkmalı — karar yığını 42'de, aksi hâlde iki taraf birbirini HİÇ görmez.
