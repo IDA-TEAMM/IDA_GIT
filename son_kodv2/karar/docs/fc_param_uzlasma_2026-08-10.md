@@ -204,3 +204,41 @@ Jetson görevi başlatmak ister, FC **Hold'da oturur ve hiç hareket etmez.**
 **Şimdilik A benimsendi** (kanıtlanmış). B araştırılıp test edilirse daha temiz.
 Her iki hâlde de **kontrol listesine "yarışma sabahı" adımı** girmeli — WiFi
 kapatma ve `girdap-karar-yarisma.conf` drop-in'i gibi.
+
+## ✅ KARAR VERİLDİ ve UYGULANDI — `FS_THR_ENABLE = 0` (yarışma önceliği)
+
+**Kullanıcı kararı (2026-08-10):** *"su testlerinde gemiye uzun bir ip
+bağlıyoruz; önemli olan yarışma durumu, ona göre yapalım."*
+
+Gerekçe sağlam — **ip fiziksel bir emniyet ağı** ve yazılım failsafe'inden daha
+güvenilir. Üstelik güvenlik kapsaması **boşluksuz** kalıyor:
+
+| Durum | Koruma |
+|---|---|
+| Kumanda **bağlı**, tekne ters gidiyor | **Acil stop tuşu** (ch10, ölçüldü: 1005 çalışır / 2005 durur) |
+| Kumanda **koptu** | **İp** (su testi) |
+| Batarya biter | `BATT_FS_LOW_ACT=2` / `BATT_FS_CRT_ACT=3` — **aktif kalıyor** |
+
+Yani `FS_THR_ENABLE=0`'ın açtığı tek boşluk (link kaybı) ipe düşüyor.
+
+**Son hâl (dökümle doğrulandı):** `FS_THR_ENABLE=0` · `FS_ACTION=2` ·
+`FS_GCS_ENABLE=0` · `FS_THR_VALUE=975` · `FS_TIMEOUT=1.5`
+
+`FS_ACTION` bilerek **2'de bırakıldı**: şu an atıl (tetikleyen failsafe yok),
+ama ileride biri bir failsafe açarsa davranış "hiçbir şey yapma" değil **Hold**
+olur. `0`'da bırakmak sessiz bir tuzak olurdu.
+
+> 📌 **Bu turun asıl kazancı parametre değil BİLGİ.** FC'de net değişiklik
+> yalnız `FS_ACTION 0→2`. Ama suya inmeden önce bilinmesi gereken üç şey
+> öğrenildi: alıcı sinyal kesilince **susmuyor** · failsafe'i tetikleyen şey gaz
+> eşiği değil **çerçeve zaman aşımı** · çıkış **nötre (1487)** çekiliyor, tam
+> geriye (1000) değil.
+
+## 🔴 SONRAKİ AÇIK — yarışma günü alıcı sökülürse arm reddedilebilir
+
+Şartname md 4.1 2.4 GHz'i yasakladığı için RC seti yarışmada
+kullanılmayacak — alıcı **sökülebilir**. Ama `ARMING_CHECK=1` RC kontrollerini
+de kapsıyor → **arm reddedilebilir** ("RC not calibrated" vb.).
+
+Yarışma sabahı tekne arm olmazsa iş biter. **Önceden test edilmeli:** alıcıyı
+çıkar, arm etmeyi dene. Reddederse `ARMING_CHECK`'ten RC biti düşürülecek.
