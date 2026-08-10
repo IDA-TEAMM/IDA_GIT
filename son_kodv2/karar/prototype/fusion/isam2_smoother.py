@@ -70,6 +70,13 @@ class ISAM2SmootherConfig:
     # RTK GPS — tipik fix doğruluğu ~2 cm; biraz pesimistik tutuyoruz
     gps_sigma_xy: float = 0.05            # m
 
+    # Mutlak yön düzeltmesi (FC'nin AHRS'i: pusula+jiroskop+ivmeölçer füzyonu,
+    # /mavros/imu/data orientation alanı). Kalibre edilmiş bir AHRS için
+    # tipik yaw doğruluğu birkaç derece — 0.05 rad ≈ 2.9°, saha testinde
+    # tune edilecek (diğer sigma'larla aynı statüde: ölçülmüş sabit değil,
+    # başlangıç tahmini).
+    heading_sigma_psi: float = 0.05       # rad
+
     # GPS outlier reddi (Huber M-estimator). False → eski saf Gauss davranışı.
     gps_robust_enabled: bool = True
     # Huber eşiği, whitened hata birimi (σ katı). 1.345 literatürdeki standart
@@ -297,6 +304,40 @@ class ISAM2Smoother:
                 X(key_index), gps_pose, self._gps_noise_for(sigma_xy)
             )
         )
+
+    def add_heading(
+        self,
+        key_index: int,
+        psi: float,
+        sigma_psi: Optional[float] = None,
+    ) -> None:
+        """
+        Mutlak yön (heading) düzeltmesi ekle — FC'nin AHRS'i (pusula+jiroskop+
+        ivmeölçer füzyonu, /mavros/imu/data orientation) kaynaklı.
+
+        GPS prior'unun aynasıdır: orada (x,y) ölçülür heading serbest
+        bırakılır (_HEADING_FREE_SIGMA); burada TERSİ — yalnız psi ölçülür,
+        (x,y) kanalı _HEADING_FREE_SIGMA ile serbest bırakılır (whitened
+        katkısı ~0, x,y için gerçek değer önemsiz).
+
+        Neden gerekli: add_odometry yalnız jiroskop yaw rate'ini entegre
+        eder — hiçbir mutlak referansı yoktur, sınırsız kayabilir (20 dk'lık
+        görevde jiroskop bias'ı birikir). GPS prior'u yalnızca (x,y)'yi
+        düzeltir, heading kanalı bilerek serbesttir. Bu metod olmadan
+        smoother'ın psi çıktısı zamanla FC'nin gerçek AHRS'inden ayrışabilir.
+        """
+        if key_index < 0 or key_index > self._latest_key:
+            raise ValueError(f"Geçersiz key_index={key_index}")
+        sp = sigma_psi if sigma_psi is not None else self.cfg.heading_sigma_psi
+        if not sp > 0.0:
+            raise ValueError(f"heading sigma_psi pozitif olmalı, geldi: {sp}")
+        # x,y placeholder (0,0) — sigma=_HEADING_FREE_SIGMA olduğu için
+        # whitened katkıları ~0, gerçek değerleri fark etmez.
+        heading_pose = gtsam.Pose2(0.0, 0.0, psi)
+        noise = gtsam.noiseModel.Diagonal.Sigmas(
+            np.array([_HEADING_FREE_SIGMA, _HEADING_FREE_SIGMA, sp])
+        )
+        self._graph.add(gtsam.PriorFactorPose2(X(key_index), heading_pose, noise))
 
     # ----- optimizer -----
 

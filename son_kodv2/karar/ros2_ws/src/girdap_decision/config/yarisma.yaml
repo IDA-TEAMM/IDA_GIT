@@ -63,10 +63,22 @@ telemetry:
 
 # --- Tam algoritma yığını ---
 algorithm:
-  # ⚠️ use_isam2 BİLİNÇLİ OLARAK false BIRAKILDI: iSAM2 gerçek GPS/IMU ile hiç
-  # doğrulanmadı (dogrulama_matrisi 🔴). MAVROS EKF pass-through kanıtlanmış
-  # yol. Suda doğrulanırsa true yapılır — kod yolu hazır.
-  use_isam2: false
+  # 11.08.2026 (gece) — true YAPILDI (§0.33). Önceki gerekçe (aşağıda
+  # korundu) hâlâ kısmen geçerli: iSAM2 gerçek GPS/IMU ile SUDA hiç
+  # doğrulanmadı. Ama açılmadan önce bulunan gerçek bir boşluk kapatıldı:
+  # smoother'ın hiçbir MUTLAK yön referansı yoktu (yalnız jiroskop entegre
+  # ediyordu, GPS prior'u da yalnız x,y'yi düzeltiyordu, sınırsız kayabilirdi).
+  # FC AHRS'inin (/mavros/imu/data orientation) periyodik heading prior'u
+  # olarak eklenmesi (add_heading, ISAM2Smoother) bunu kapattı — sentetik
+  # gyro-bias senaryosunda kayma 0.6 rad'dan <0.1 rad'a indi (bkz.
+  # prototype/tests/test_isam2_heading.py). Gerçek bu Jetson'da gerçek
+  # GTSAM 4.3a1 ile duman testi de yapıldı (fusion_node use_isam2:=true,
+  # çökme yok). ⚠️ HÂLÂ AÇIK: gerçek suda, gerçek GPS+IMU ile uçtan uca
+  # HİÇ koşulmadı — yarınki test bunun İLK denemesi. Sorun görülürse
+  # (poz sıçraması, tutarsız davranış): bu satırı false'a çevir +
+  # `sudo systemctl restart girdap-karar` — MAVROS EKF pass-through yoluna
+  # anında geri dönülür, kod yolu hâlâ orada.
+  use_isam2: true
   # RRT* global planlama açık: Parkur-2'de engel dubaları arasından geçerken
   # düz çizgi referansı yetmez.
   use_rrt: true

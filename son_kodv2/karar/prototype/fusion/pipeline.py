@@ -69,6 +69,13 @@ class FusionPipelineConfig:
     gps_robust_enabled: bool = True
     gps_huber_k: float = 1.345
 
+    # Mutlak yön düzeltmesi (ISAM2Smoother.add_heading'e geçer). True →
+    # her keyframe'de en son FC AHRS örneği (varsa) heading prior'u olarak
+    # eklenir — jiroskop-yalnız entegrasyonun sınırsız kaymasını (drift)
+    # önler. False → eski davranış (yalnız jiroskop, hiç mutlak referans yok).
+    heading_correction_enabled: bool = True
+    heading_sigma_psi: float = 0.05       # rad, bkz. ISAM2SmootherConfig
+
     @property
     def keyframe_period_s(self) -> float:
         """Etkin key periyodu: throttle ile odom_period_s'in büyüğü.
@@ -102,6 +109,7 @@ class FusionPipeline:
                 odom_sigma_psi=self.cfg.odom_sigma_psi,
                 gps_robust_enabled=self.cfg.gps_robust_enabled,
                 gps_huber_k=self.cfg.gps_huber_k,
+                heading_sigma_psi=self.cfg.heading_sigma_psi,
             )
         )
         self._sm.initialize(gtsam.Pose2(0.0, 0.0, 0.0))
@@ -111,6 +119,11 @@ class FusionPipeline:
         self._vy_body: float = 0.0
         self._last_imu_t: Optional[float] = None
         self._t_since_flush: float = 0.0
+        # En son görülen mutlak yön örneği (FC AHRS) — her keyframe flush'ında
+        # heading prior'u olarak eklenir. None = hiç örnek gelmedi (heading
+        # düzeltmesi o key'de atlanır, sistem eski jiroskop-yalnız davranışına
+        # sessizce düşer — sert hata değil, kademeli bozulma).
+        self._last_psi_sample: Optional[float] = None
         # Keyframe'ler arası birikmiş göreli poz (body frame). Ara IMU
         # adımları Pose2 kompozisyonuyla eklenir → dönüş sırasında bile
         # doğru; skaler toplam olsaydı yaw değişimi ihmal edilirdi.
@@ -128,12 +141,23 @@ class FusionPipeline:
         self._vx_body = vx_body
         self._vy_body = vy_body
 
-    def on_imu(self, t: float, omega_z: float) -> bool:
+    def on_imu(
+        self, t: float, omega_z: float, psi: Optional[float] = None
+    ) -> bool:
         """
         IMU mesajı: yaw rate'i güncelle, ara adımı biriktir, keyframe periyodu
         dolduğunda birikmiş deltayı TEK BetweenFactor olarak smoother'a gönder.
+
+        psi: FC AHRS'inin o anki MUTLAK yön tahmini (rad, varsa —
+            /mavros/imu/data orientation'dan). heading_correction_enabled
+            açıksa bir sonraki flush'ta heading prior'u olarak eklenir
+            (en son örnek kullanılır — IMU rate'inde her mesajda GRAF
+            BÜYÜMEZ, yalnız keyframe kadansında). None → o flush'ta heading
+            düzeltmesi atlanır (eski davranış).
         Dönüş: True ise smoother'a yeni key yazıldı.
         """
+        if psi is not None:
+            self._last_psi_sample = psi
         if self._last_imu_t is None:
             self._last_imu_t = t
             return False
@@ -198,6 +222,12 @@ class FusionPipeline:
         sigma_scale = math.sqrt(period / nominal) if nominal > 0.0 else 1.0
 
         self._sm.add_odometry(self._acc_delta, sigma_scale=sigma_scale)
+        # Aynı key'e, aynı update() içinde: FC AHRS'inin en son mutlak yön
+        # örneği varsa heading prior'u ekle. add_odometry'den SONRA çünkü
+        # add_heading key_index'in (self._sm.latest_key) zaten var olmasını
+        # ister — add_odometry az önce onu oluşturdu.
+        if self.cfg.heading_correction_enabled and self._last_psi_sample is not None:
+            self._sm.add_heading(self._sm.latest_key, self._last_psi_sample)
         self._sm.update()
         self._acc_delta = gtsam.Pose2()
         self._t_since_flush = 0.0
