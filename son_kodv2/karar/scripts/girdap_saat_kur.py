@@ -99,9 +99,26 @@ import time
 from datetime import datetime, timezone
 
 # --- adjtimex(2) sabitleri (çekirdek: include/linux/timex.h) ---
+ADJ_MAXERROR = 0x0004
+ADJ_ESTERROR = 0x0008
 ADJ_STATUS = 0x0010
 STA_UNSYNC = 0x0040
 TIME_ERROR = 5
+
+#: `clock_settime` sonrası çekirdek `time_maxerror`'u AZAMİYE çıkarır
+#: (`NTP_PHASE_LIMIT` = 16.000.000 µs). O sınırın üstünde kaldığı sürece
+#: `second_overflow()` her saniye `STA_UNSYNC`'i GERİ KOYAR — yani bayrağı
+#: tek başına temizlemek İŞE YARAMAZ (2026-08-11'de sahada ölçüldü: bit
+#: temizlendi, `timedatectl` yine "synchronized: no" dedi, `maxerror` tam
+#: 16.000.000'daydı). chrony/ntpd de bu yüzden `maxerror`'u birlikte yazar.
+#:
+#: Değer GPS zamanının GERÇEK belirsizliğini yansıtmalı — sıfır yazmak yalan
+#: olur. MAVLink `SYSTEM_TIME` 57600 baud seri hat üzerinden geliyor; çerçeve
+#: gecikmesi + FC'nin kendi damgalama gecikmesi ~onlarca ms. 100 ms dürüst bir
+#: üst sınır. Yan fayda: 500 µs/s büyüme hızıyla
+#: (16.000.000 − 100.000) / 500 ≈ 31.800 s ≈ **8,8 saat** boyunca "senkron"
+#: kalır — belgelediğimiz ~8,9 saatlik pencereyle birebir tutuyor.
+MAXERROR_US = 100_000
 
 #: Makul zaman penceresi. GPS'ten gelen değer bunun dışındaysa GÜVENİLMEZ:
 #: FC fix'siz iken 0 ya da çöp gönderebilir, ve yanlış saati "GPS'ten geldi"
@@ -149,28 +166,45 @@ def _libc() -> ctypes.CDLL:
 
 
 def sta_unsync_temizle(log) -> bool:
-    """Çekirdeğin STA_UNSYNC bayrağını temizler. Root ister.
+    """`STA_UNSYNC`'i temizler **ve `maxerror`'u sıfırlar**. Root ister.
 
-    Önce salt-okunur (`modes=0`) mevcut status alınır, sonra yalnız o bit
-    düşürülüp `ADJ_STATUS` ile geri yazılır — diğer bitlere dokunulmaz.
+    🔴 İKİSİ BİRLİKTE YAPILMAK ZORUNDA. İlk sürüm yalnız biti temizliyordu ve
+    2026-08-11'de sahada işe yaramadığı ölçüldü: bit temizlendi ama
+    `clock_settime`'ın azamiye çıkardığı `maxerror` (16.000.000 µs) sınırın
+    üstünde kaldığı için çekirdek bayrağı bir sonraki saniyede geri koydu.
+    `timedatectl` "synchronized: no" demeye devam etti → Eyüp'ün `saat.py`'si
+    teslimleri "güvenilmez" damgalayacaktı, saat DOĞRU olduğu hâlde.
+
+    Sonra da **doğrular** — yazıp sonucuna bakmamak bugünün dersi.
     """
     try:
         libc = _libc()
         tx = _Timex()
         tx.modes = 0
         libc.adjtimex(ctypes.byref(tx))
-        if not (tx.status & STA_UNSYNC):
-            log("STA_UNSYNC zaten temiz, dokunulmadi")
-            return True
+
         yeni = _Timex()
-        yeni.modes = ADJ_STATUS
+        yeni.modes = ADJ_STATUS | ADJ_MAXERROR | ADJ_ESTERROR
         yeni.status = tx.status & ~STA_UNSYNC
+        yeni.maxerror = MAXERROR_US
+        yeni.esterror = MAXERROR_US
         rc = libc.adjtimex(ctypes.byref(yeni))
         if rc < 0:
-            log(f"STA_UNSYNC temizlenemedi (adjtimex rc={rc}, errno="
-                f"{ctypes.get_errno()}) — saat DOGRU ama bayrak kirli kalir")
+            log(f"adjtimex yazilamadi (rc={rc}, errno={ctypes.get_errno()}) — "
+                "saat DOGRU ama bayrak kirli kalir")
             return False
-        log("STA_UNSYNC temizlendi (saat GPS ile disipline edildi)")
+
+        # --- DOGRULAMA: gerçekten tuttu mu? ---
+        kon = _Timex()
+        kon.modes = 0
+        rc2 = libc.adjtimex(ctypes.byref(kon))
+        if (kon.status & STA_UNSYNC) or rc2 == TIME_ERROR:
+            log(f"STA_UNSYNC GERI GELDI (status=0x{kon.status:04x} rc={rc2} "
+                f"maxerror={kon.maxerror} us) — saat dogru ama 'guvenilir' "
+                "damgalanmayacak")
+            return False
+        log(f"STA_UNSYNC temizlendi + maxerror={kon.maxerror} us "
+            "(saat GPS ile disipline edildi, DOGRULANDI)")
         return True
     except Exception as e:  # pragma: no cover - platforma bagli
         log(f"STA_UNSYNC temizleme hatasi: {e}")
@@ -434,16 +468,22 @@ def main(argv=None) -> int:
         return 3
     log(f"SAAT KURULDU: {_iso(time.time())} (duzeltme {fark:+.1f} s)")
 
-    sta_unsync_temizle(log)
-
     # RTC'ye de yaz: pil varsa saat guc kesintisini ATLATIR, boylece bir
     # sonraki acilista GPS fix'ini beklemek zorunda kalmayiz.
     # (Orin Nano BBAT pini CR1225 SARJ EDILEMEZ pil ister; sarjli ML1220 +
     #  sarj devresi uyumsuz — bkz. docs/saat_gps_senkron_plani.md.)
+    # 🔴 2026-08-11'de olculdu: RTC PILSIZ — guc kesilince saat 1970'e dustu.
+    # Yani bu yazma su an yalniz ayni guc oturumu icinde ise yariyor.
     if os.system("hwclock --systohc >/dev/null 2>&1") == 0:
         log("RTC guncellendi (hwclock --systohc)")
     else:
         log("RTC yazilamadi — pil yoksa beklenen, saat yine de dogru")
+
+    # 🔴 SIRA ONEMLI: bayrak temizleme EN SONDA. `clock_settime` maxerror'u
+    # azamiye cikariyor, `hwclock` da cekirdegin saat durumuna dokunabiliyor;
+    # ikisinden ONCE temizlemek bosa gider. 2026-08-11'de ilk surumde
+    # temizleme ortada yapiliyordu ve bayrak geri geliyordu.
+    sta_unsync_temizle(log)
     return 0
 
 
