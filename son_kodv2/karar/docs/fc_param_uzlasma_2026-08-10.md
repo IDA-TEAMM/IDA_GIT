@@ -242,3 +242,84 @@ de kapsıyor → **arm reddedilebilir** ("RC not calibrated" vb.).
 
 Yarışma sabahı tekne arm olmazsa iş biter. **Önceden test edilmeli:** alıcıyı
 çıkar, arm etmeyi dene. Reddederse `ARMING_CHECK`'ten RC biti düşürülecek.
+
+---
+
+# 🔴 KÖK NEDEN BULUNDU: "Kotu AHRS" = kalibrasyonlar GEÇERSİZ (2026-08-10)
+
+Alıcısız arm testine hazırlanırken arm reddedildi. Mesajlar:
+
+```
+18:53:47 : Arm: Compass not calibrated
+18:53:47 : Arm: 3D Accel calibration needed
+18:53:50 : EKF variance
+18:53:44 : EKF failsafe cleared
+```
+
+## Zincir
+
+```
+ivmeölçer + pusula kalibrasyonu GEÇERSİZ
+        ↓
+EKF tutarlı çözüm üretemiyor  →  "EKF variance"
+        ↓
+EKF failsafe  →  HUD'da FAILSAFE
+        ↓
+"Kotu AHRS"
+```
+
+**Oturumlardır açık duran "Kotu AHRS" maddesinin sebebi buymuş.** Ayrıca
+`FS_ACTION` ile ilgisi YOK (kullanıcı haklı olarak şüphelenmişti) — kaynak EKF.
+
+## ⚠️ İLK RAPOR YANLIŞTI: "hiç yapılmamış" DEĞİL, "geçersiz sayılıyor"
+
+İlk okumada "kalibrasyonlar hiç yapılmamış" denildi. **Yanlış.** Veri duruyor:
+
+| | Değer | |
+|---|---|---|
+| `COMPASS_OFS_*` | 22.87 / 25.06 / 2.65 | gerçek kalibrasyon |
+| `COMPASS_DIA_*` | 0.979 / 0.942 / 1.014 | elipsoid düzeltmesi var |
+| `COMPASS_ODI_*` | sıfır değil | var |
+| `COMPASS_DEV_ID` ↔ `PRIO1_ID` | 658953 = 658953 | eşleşiyor |
+| `INS_ACCOFFS/SCAL_*` | 0.017/0.027/0.041 · ≈1.000 | kalibre |
+| `INS_ACC2OFFS/SCAL_*` | 0.036/0.007/0.077 · ≈0.995 | kalibre |
+
+⇒ Kalibrasyon **geçmişte yapılmış**, ArduPilot **artık kabul etmiyor**.
+Tipik sebepler: firmware güncellemesi sensör kimliklerini değiştirmiş ·
+parametrelerin bir kısmı geri yüklenmiş/sıfırlanmış · sensör değişmiş.
+Son günlerde FC'de çok sayıda parametre değiştirildiği biliniyor.
+
+**Eski veriyi kabul ettirmenin yolu yok — kalibrasyon YENİLENMELİ.**
+
+## 🔴 Ama asıl engel kalibrasyon değil: BİLEŞENLER SABİTLENMEMİŞ
+
+Kullanıcı: *"tekneyi çeviremeyiz, içindeki pil veya diğer komponentler
+sabitlenmedi daha."* Doğru — 35 Ah'lik paket serbestken tekneyi ters çevirmek
+hem tehlikeli hem her şeye zarar verir.
+
+📌 **O sabitleme zaten yapılmak zorunda** (dalgada kayan batarya = kayan ağırlık
+merkezi + kopan kablolar). Yani kalibrasyon ek iş değil, **sabitlemenin
+arkasına düşen** iş. Sıra kendiliğinden belli:
+
+```
+1. Batarya + bileşenleri SABİTLE        ← mekanik ekip, zaten şart
+2. İvmeölçer kalibrasyonu (6 konum)      ← tekneyi çevirerek
+3. Pusula kalibrasyonu
+4. Arm testi — alıcılı ve alıcısız
+```
+
+⚠️ İvmeölçer için kısa yol YOK (6 konum zorunlu). Pusula için Mission
+Planner'ın **`Large Vehicle MagCal`**'i çevirmeden yapılabilir.
+⚠️ Tekneyi çevirirken **Livox kubbesi** ve pruvadaki kamera kaidesi üstüne
+ağırlık binmemeli — ya sökülmeli ya elde tutulmalı.
+
+## Neden ÖNCELİKLİ
+
+- **Force arm bir çözüm değil** — hakem karşısında kullanılamaz, ve kalibresiz
+  EKF ile tekne yönünü doğru bilmez.
+- **Parkur puanını doğrudan etkiliyor:** kapı ortalama hassasiyeti EKF'in tutum
+  çözümüne bağlı (md 5.5.4.2 geçiş puanı). `Kotu AHRS` + `EKF variance` varken
+  kapı ortasını tutturmak zorlaşır.
+- Pixhawk'ı söküp masada kalibre etmek **önerilmez**: tam aynı yönde geri
+  takmak zorunlu (2-3° eğim kalıcı tutum hatası), kablo demeti kısaysa zaten
+  çevrilemez, USB-C soketi de arızalı (F-M.9). Riski kazancından fazla.
