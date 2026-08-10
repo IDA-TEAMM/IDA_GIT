@@ -267,12 +267,18 @@ topics:
 #   Pixhawk tabandan 6.0 (3D baskı platform) → Pixhawk masadan 15.5
 #   Pixhawk, LiDAR'dan 7 cm KIÇA ve 13.75 cm İSKELEYE kayık
 #
-# 🔴 AÇIK — ODOM İLE HENÜZ HİZALI DEĞİL: bu blok base_link'i gövde merkezine
-#    koyuyor, ama /mavros/local_position/odom hâlâ ArduPilot'un raporladığı
-#    noktayı veriyor ve GPS_POS1_*/INS_POS1_* parametreleri SIFIR olduğu
-#    sürece o nokta pratikte GPS ANTENİ'dir. İkisi ancak o parametreler
-#    girilince çakışır. Girilene kadar sistemde bilinen bir sabit ofset var.
-#    Bkz. olcum_formu.md "Gövde merkezi ofseti".
+# ✅ ODOM İLE HİZALANDI — 2026-08-10 (`d431da7`). Bu blok base_link'i gövde
+#    merkezine koyuyor; ArduPilot'a da sensörlerin nerede olduğu SÖYLENDİ:
+#      INS_POS1_X/Y/Z = -0.055 / -0.1375 / -0.155   (Pixhawk)
+#      GPS1_POS_X/Y/Z = -0.035 / -0.16   / -0.365   (F9P anteni)
+#    (ArduPilot ekseninde Y sancak+, Z aşağı+ olduğu için iskele/yukarı
+#     bileşenler NEGATİF yazılır.)
+#    Öncesinde bu altı parametre SIFIRDI, dolayısıyla
+#    /mavros/local_position/odom pratikte GPS ANTENİNİN konumunu veriyordu ve
+#    base_link tanımıyla çakışmıyordu — sistemde bilinen sabit bir ofset vardı.
+#    ⏳ Kalan doğrulama: ArduPilot'un ofseti FİİLEN uyguladığı masa/su
+#       testinde gözle görülmeden "tamam" denmeyecek.
+#    Bkz. docs/sensor_konumlari_base_link.md · olcum_formu.md §0.
 tf:
   # LiDAR: enine tam merkezde, boyuna ortadan 1.5 cm pruvada.
   # ⏳ yaw: ampirik kalibre edilecek (olcum_formu §0.5 — merkez hattına 10 m

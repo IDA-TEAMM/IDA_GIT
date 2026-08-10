@@ -7,8 +7,17 @@ gerçek MAVROS + sensör sürücülerinden gelir.
 Bileşenler:
     - MAVROS (mavros/apm.launch include) — Pixhawk MAVLink köprüsü, fcu_url
       config/hardware.yaml'dan.
-    - Static TF (kalibre EDİLMEMİŞ, 0,0,0): base_link → livox_frame / oak_frame
-      / imu_link. Gerçek ölçümler mekanik ekipten gelince güncellenir.
+    - Static TF: base_link → livox_frame / oak_frame / imu_link. Değerler
+      `config/hardware.yaml` `tf:` bloğundan okunur (tek doğruluk kaynağı).
+      ✅ **ÖTELEMELER ÖLÇÜLDÜ** (2026-08-04 LiDAR/IMU/GPS · 2026-08-09 kamera;
+      `docs/olcum_formu.md` §0-§3, `docs/sensor_konumlari_base_link.md`).
+      ⏳ Kalan: **LiDAR `yaw`** (ampirik, §0.5 — merkez hattına 10 m ileriye
+      hedef, `/perception/obstacle_map`'te `position.y ≈ 0` olmalı) ve kamera
+      `yaw`'ının suda teyidi.
+      ⚠️ Bu satır 2026-08-11'e kadar "kalibre EDİLMEMİŞ, 0,0,0" diyordu ve
+      **bayattı** — yapılacaklar belgesi (Alt Alan A, TF ağacı) tam bu cümleyi
+      kanıt gösteriyordu. Ölçümler girildiği hâlde launch dosyası kendini
+      kalibrasyonsuz ilan etmeye devam ediyordu.
     - Karar yığını: fusion, planning, mavros_bridge, fsm, telemetry.
     - Sensör sürücüleri (Livox / OAK-D) BU LAUNCH'TA YOK — sensör bring-up'ı
       başka ekip üyesinde (aşağıdaki işaretli yorum).
