@@ -355,3 +355,32 @@ failsafe` → `FAILSAFE` zinciri de birlikte çözüldü. Tahmin değil, ölçü
 
 ⏳ **Kalan:** pusula (`Large Vehicle MagCal`, **dışarıda** — bina demiri
 kalibrasyona karışmasın) → sonra arm testi (alıcılı + alıcısız).
+
+### Seviye kalibrasyonu — iki kez yapıldı, ikincisi geçerli
+
+İlk deneme yanıltıcı çıktı: `Trim OK: roll=1.53 pitch=-4.82` (20:43). **4,82°
+büyük bir değer** — 103 cm teknede uçtan uca ~8,7 cm. Telefon su terazisiyle
+güverte ölçüldü: **öne-arkaya 3,8°** → tekne masada eğik duruyormuş, yani
+kalibrasyon teknenin **eğik duruşunu** "düz" diye kaydetmişti.
+
+Burnun altına takoz konup güverte **1,0°**'ye getirildi ve tekrarlandı:
+
+| | Eğik masada (20:43) | **Düzlenmiş (21:08)** |
+|---|---|---|
+| `roll` | 1.53° | **1.17°** |
+| `pitch` | **−4.82°** | **−2.50°** |
+
+Güverte 3,8° → 1,0° inince trim 4,82° → 2,50° indi — **tutarlı**, düzeltme
+gerçekten işe yaradı. Kalan −2,50° = yuvanın güverteye göre kendi eğimi
+(~1,5°) + güvertede kalan 1,0°; ikisi de trim'e doğru kaydedildi.
+Artık ~1°'lik referans hatası kovalanmadı: teknenin sudaki yüzme trimi zaten
+birkaç derece, 1° onun içinde kaybolur.
+
+> 🔑 **Kullanıcı sorusu ve cevabı (kayda değer):** *"Tekne suda burnu hafif
+> yukarı yüzüyor, bunu hesaba katalım mı?"* **Hayır — ve sebebi ters gibi
+> görünüyor:** `AHRS_TRIM`'in işi eğimi GİZLEMEK değil, DOĞRU RAPORLAMAK.
+> Kalibrasyon suda yüzdüğü açıda yapılsaydı FC o eğimi **sıfır** sayardı, yani
+> teknenin gerçek duruşunu yalan söylerdi. Doğru referans **geometrik düz**
+> (güverte yatay); o zaman tekne suda burnu kalkınca FC dürüstçe "burnum X°
+> yukarıda" der. **Bonus:** suya inince HUD'daki pitch okunursa teknenin
+> gerçek yüzme trimi ÖĞRENİLMİŞ olur (şu an bilinmeyen bir sayı).
