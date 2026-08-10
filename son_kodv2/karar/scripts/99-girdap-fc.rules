@@ -1,0 +1,46 @@
+# GİRDAP İDA — Pixhawk bağlantı udev kuralları (F-M.8 + F-M.9 kalıcı isim)
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# 🔴 BU DOSYA 2026-08-10'DA KURTARILDI — HİÇBİR REPODA YOKTU
+# Kural yalnızca Jetson'ın SSD'sinde yaşıyordu. SSD arızalandı (10.08) ve dosya
+# **tamamen kayboldu**. İçeriği o gün eski SSD'den okunmuş olduğu için yeniden
+# yazıldı ve buraya alındı.
+#
+# ⚠️ **Özgün sahibi Eyüp** (girdap-video / girdap-ida-algi tarafı). Ama dosya
+# `fcu_url`'i (→ `karar/.../hardware.yaml`) doğrudan etkilediği için Alt Alan B
+# de ona bağımlı; iki tarafta da kaybolmaması için karar reposunda tutuluyor.
+# Eyüp'e bildirilecek: kaynak repoda da bulunsun.
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# NE YAPAR
+#   1) TELEM2 FTDI kablosu (FT231X, seri no DU0EFEA7) → **/dev/pixhawk** sabit
+#      ismi. Jetson'da İKİ FTDI var ve `ttyUSBn` numarası **enumerate sırasına**
+#      göre verilir → reboot'ta takas olabilir. Takas olursa MAVROS telemetri
+#      radyosuna bağlanır, FC'yi hiç bulamaz: arm olmaz, GUIDED gelmez,
+#      `girdap-saat` GPS saatini alamaz. **Belirtisi yok**, yalnız heartbeat
+#      gelmez. `fcu_url` bu symlink'e bağlanınca isim kırılganlığı biter.
+#   2) `ID_MM_DEVICE_IGNORE=1` → ModemManager bu portları problamaz. (F-M.8:
+#      boot'ta ACM'leri yoklayıp ~30 sn mavros gecikmesine yol açıyordu.)
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# KURULUM
+#   sudo cp 99-girdap-fc.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   ls -l /dev/pixhawk        # → ttyUSBx'e işaret etmeli (FTDI TAKILIYKEN)
+#
+# KURULUMDAN SONRA (sıra önemli):
+#   1) hardware.yaml: fcu_url "serial:///dev/pixhawk:57600" (zaten öyle)
+#   2) sudo systemctl restart girdap-karar → connected + IMU ~8 Hz doğrula
+#
+# ⚠️ Seri numarası doğrulanmıştı (2026-08-09, eski SSD'de):
+#   ls -l /dev/serial/by-id/
+#     usb-FTDI_FT231X_USB_UART_DU0EFEA7-if00-port0 -> ../../ttyUSB0
+#   Kablo/adaptör değişirse teyit et:
+#   udevadm info -a -n /dev/ttyUSB0 | grep '{serial}'
+
+# 1) TELEM2 FTDI FT231X (DU0EFEA7) → /dev/pixhawk + ModemManager dokunmasın
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6015", ATTRS{serial}=="DU0EFEA7", SYMLINK+="pixhawk", ENV{ID_MM_DEVICE_IGNORE}="1"
+
+# 2) Pixhawk 6C'nin kendi USB-C'si (ttyACM*, Holybro idVendor 3162) —
+#    ModemManager problamasın (F-M.8; USB-C onarılırsa da geçerli kalır)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="3162", ENV{ID_MM_DEVICE_IGNORE}="1"
