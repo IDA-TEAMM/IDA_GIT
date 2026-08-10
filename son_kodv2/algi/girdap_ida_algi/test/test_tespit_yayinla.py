@@ -110,3 +110,39 @@ def test_frame_id_sozlesmesi():
 def test_score_conf_ile_ayni():
     arr, _ = _yayinla([_duba(0, 0.0, 5.0, 0.5, 0.5, 0.05, 0.07, conf=0.73)])
     assert arr.detections[0].results[0].hypothesis.score == pytest.approx(0.73)
+
+
+# ==========================================================================
+# `_blob_denetle()` — yanlış model AÇILIŞTA yakalanmalı (10.08 derin taraması)
+# Blob `/home/girdap/models/` altına ELLE kopyalanıyor ⇒ yanlış/eski blob
+# konması gerçek bir dağıtım hatası; sonucu SESSİZ çöp tespit (sınıf karışması
+# ⇒ yanlış kapı ⇒ Ç2). Blob başlığı bilgiyi taşıyor, kontrol bedava.
+_BLOB = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))), "models", "yolo11n_duba_rvc2.blob")
+
+
+@pytest.mark.skipif(not os.path.exists(_BLOB), reason="blob repoda yok")
+def test_dogru_blob_temiz_gecer():
+    assert dgn._blob_denetle(_BLOB, ["kenar_dubasi", "engel_dubasi"]) == []
+
+
+@pytest.mark.skipif(not os.path.exists(_BLOB), reason="blob repoda yok")
+def test_sinif_sayisi_uyusmazsa_yakalanir():
+    sorun = dgn._blob_denetle(_BLOB, ["a", "b", "c"])
+    assert sorun and "DECODE KAYAR" in sorun[0]
+
+
+def test_olmayan_blob_cokmez_sorun_dondurur():
+    """Tanı kodu node'u ÖLDÜRMEMELİ — istisna değil, liste döner (09.08 dersi)."""
+    sorun = dgn._blob_denetle("/olmayan/model.blob", ["a", "b"])
+    assert sorun and "okunamadı" in sorun[0]
+
+
+@pytest.mark.skipif(not os.path.exists(_BLOB), reason="blob repoda yok")
+def test_giris_boyutu_uyusmazsa_yakalanir(monkeypatch):
+    """Elimizde yanlış boyutlu blob yok ⇒ NN_GIRIS'i geçici değiştirip sınarız.
+    (10.08 mutasyon testi bu boşluğu yakaladı: kontrol kapatılınca kimse
+    fark etmiyordu.)"""
+    monkeypatch.setattr(dgn, "NN_GIRIS", 640)
+    sorun = dgn._blob_denetle(_BLOB, ["kenar_dubasi", "engel_dubasi"])
+    assert sorun and "NN_GIRIS" in sorun[0], sorun

@@ -376,6 +376,45 @@ def _model_siniflarini_oku(blob_yolu: str):
     return []
 
 
+def _blob_denetle(blob_yolu: str, siniflar, logger=None):
+    """Blob ↔ config.json ↔ koddaki NN_GIRIS uyumunu AÇILIŞTA doğrula.
+
+    🔴 NEDEN (2026-08-10 derin tarama): blob `/home/girdap/models/` altına
+    ELLE kopyalanıyor (JETSON-KURULUM adım 2). Yanlış/eski blob konursa:
+      · giriş boyutu tutmazsa  -> preview 416 ↔ blob 640 => çöp tespit
+      · sınıf sayısı tutmazsa  -> decode kayar => turuncu↔sarı KARIŞIR => Ç2
+    İkisi de **belirti vermeden** olur. Blob başlığı bu bilgiyi taşıyor
+    (giriş dims + çıkış kanal sayısı = 5 + nc, yolov6r2 kafası) ⇒ bedava kontrol.
+
+    Uyarı basar, ASLA yükseltmez: tanı kodu node'u öldürmemeli
+    (09.08 dersi — teşhis için eklenen satır node'u öldürmüştü).
+    Döner: sorun listesi (boşsa temiz).
+    """
+    sorunlar = []
+    try:
+        b = dai.OpenVINO.Blob(blob_yolu)
+        giris = list(next(iter(b.networkInputs.values())).dims)[:2]
+        if giris != [NN_GIRIS, NN_GIRIS]:
+            sorunlar.append(f"blob girişi {giris} ≠ NN_GIRIS {NN_GIRIS}×{NN_GIRIS}")
+        kanallar = {list(v.dims)[2] for v in b.networkOutputs.values()}
+        if len(kanallar) == 1:
+            nc = kanallar.pop() - 5          # yolov6r2: x,y,w,h,obj + nc
+            if siniflar and nc != len(siniflar):
+                sorunlar.append(
+                    f"blob {nc} sınıf ↔ config.json {len(siniflar)} sınıf "
+                    f"({list(siniflar)}) — DECODE KAYAR, sınıflar karışır")
+        if b.numShaves > 4:
+            sorunlar.append(f"numShaves={b.numShaves} > 4 — cihaz REDDEDER")
+    except Exception as e:                    # blob okunamadı: pipeline zaten patlar
+        sorunlar.append(f"blob başlığı okunamadı: {type(e).__name__}: {e}")
+    if sorunlar and logger is not None:
+        for s in sorunlar:
+            logger.error(f"🔴 MODEL DENETİMİ: {s}")
+        logger.error("🔴 Yanlış model BELİRTİ VERMEDEN çöp tespit üretir — "
+                     "doğru blob: models/yolo11n_duba_rvc2.blob (+ config.json)")
+    return sorunlar
+
+
 def pipeline_kur():
     """OAK-D Lite üzerinde çalışan pipeline: RGB + Stereo + YOLO (VPU'da).
 
@@ -386,6 +425,7 @@ def pipeline_kur():
     RGB sensör modu (aşağıda).
     """
     siniflar = _model_siniflarini_oku(MODEL_BLOB)
+    _blob_denetle(MODEL_BLOB, siniflar)      # logger yok: node __init__'te tekrar basılır
 
     pipeline = dai.Pipeline()
 
@@ -571,6 +611,8 @@ class DubaNavigator(Node):
                 f"USB = {str(self.dev.getUsbSpeed()).rsplit('.', 1)[-1]} [HIGH istendi]")
         except Exception:
             self.get_logger().info(f"OAK-D Lite hazır — YOLO VPU'da. MOD = {MOD}")
+        for _s in _blob_denetle(MODEL_BLOB, self._siniflar, self.get_logger()):
+            pass                      # logger içinde basıldı; node'u ÖLDÜRMEZ
         self.kenar_cls, self.engel_cls, isimle = _sinif_indeksleri_coz(self._siniflar)
         self.sinif_esleme = {self.kenar_cls: "0", self.engel_cls: "1"}
         if isimle:
