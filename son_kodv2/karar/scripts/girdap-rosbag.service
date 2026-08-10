@@ -1,0 +1,59 @@
+# GİRDAP İDA — rosbag2 otomatik kayıt servisi (Jetson açılışında otomatik başlar)
+#
+# 11.08.2026: kaptan "gemide iken Jetson'a bağlanmayacağım, otomatik açılsın"
+# dedi — elle `bash rosbag_kaydet.sh` komutu tekneye binince kimse
+# çalıştıramaz, o yüzden systemd servisi.
+#
+# 🔑 NEDEN "GUIDED moduna girince başlasın" DEĞİL, AÇILIŞTAN İTİBAREN:
+# Yarınki testin bir parçası Motor Test + RC failsafe doğrulaması (§0.30b/c)
+# — bunların İKİSİ DE GUIDED'dan ÖNCE, Manual modda oluyor. Kayıt yalnız
+# GUIDED'dan başlarsa tam da o testlerin verisi KAÇAR. Açılıştan itibaren
+# sürekli kaydetmek hem daha basit (ROS içi bir moda abone olup tetikleyen
+# ek bir bileşen gerekmiyor, tek hata noktası az) hem daha güvenli (hiçbir
+# şey kaçmaz) — ros2 bag record zaten topic'ler henüz akmıyorken de sorunsuz
+# bekler, yayıncı çıkınca kaydetmeye başlar.
+#
+# KURULUM
+#   sudo cp girdap-rosbag.service /etc/systemd/system/
+#   sudo sed -i "s|__USER__|$USER|g; s|__WS__|$HOME/IDA_GIT/son_kodv2/karar|g" \
+#        /etc/systemd/system/girdap-rosbag.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now girdap-rosbag
+#
+# DOĞRULAMA
+#   systemctl status girdap-rosbag
+#   ls ~/girdap_logs/rosbag/                    # session_<damga>/ oluşmalı
+#   journalctl -fu girdap-rosbag
+#
+# DURDUR (saha müdahalesi, disk doluyorsa vb.)
+#   sudo systemctl stop girdap-rosbag
+#
+# ⚠️ Her yeniden başlamada (reboot ya da Restart=on-failure) YENİ bir
+# session_<damga>/ klasörü açılır — eskisi bozulmaz, yalnız birden çok
+# parça dosya oluşur. Disk: 11.08 itibarıyla ~400+ GB boş (§0.28h), ama
+# LiDAR dahil gerçek boyut ölçülmedi — uzun bekleme (saatlerce açık kalma)
+# sonrası `df -h ~` ile kontrol edilmesi önerilir.
+
+[Unit]
+Description=GIRDAP IDA — rosbag2 otomatik kaydi (setpoint/RC/state/diagnostics dahil tam liste)
+After=network.target girdap-karar.service
+# Requires DEGIL: karar yigini gecikse/coksa bile kayit YINE baslamali,
+# en azindan IMU/GPS/LiDAR ham verisi kacmasin.
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=/home/__USER__
+Environment=ROS_DOMAIN_ID=42
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && exec bash __WS__/scripts/rosbag_kaydet.sh --tam'
+# rosbag_kaydet.sh'in kendi notu: "Ctrl+C ile durdur (metadata düzgün
+# yazılır)" — Ctrl+C = SIGINT. systemd varsayılanı SIGTERM'dir; SIGINT'e
+# çevrilmezse `systemctl stop`/reboot mcap dosyasını YARIM/BOZUK bırakabilir.
+KillSignal=SIGINT
+Restart=on-failure
+RestartSec=10
+# StartLimit BİLEREK YOK (girdap-algi.service ile aynı gerekçe): geçici bir
+# aksaklıkta kayıt kalıcı olarak durmasın, yarış ortasında bir daha
+# denenmeden ölmesin.
+
+[Install]
+WantedBy=multi-user.target
