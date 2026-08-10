@@ -1,0 +1,57 @@
+# GİRDAP İDA — Livox Mid-360 sürücüsü (livox_ros_driver2) systemd servisi
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# 🔴 NEDEN VAR — 2026-08-10'da bulundu: LiDAR'ı BAŞLATAN HİÇBİR ŞEY YOKTU.
+# `livox_ros_driver2` Jetson'da derliydi ve `MID360_config.json` bizim ağa
+# ayarlıydı (host 192.168.117.60 · LiDAR 192.168.117.100), ama ne systemd
+# servisi ne launch çağrısı vardı. Yani tekne açılışta ayağa kalksa bile
+# **`/livox/lidar` hiç akmayacaktı** → `perception_lidar_node` boş →
+# `obstacle_map` boş → **Parkur-2 engel kaçınması imkânsız.**
+# Belirtisi yok: yığın sağlıklı görünür, sadece engel görmez.
+#
+# 🔑 HANGİ SÜRÜCÜ — karar kanıtla verildi: `MID360_config.json` git'te
+# **değiştirilmiş** ve bizim IP'lerimize ayarlanmış. Yani resmî SDK sürücüsü
+# (`livox_ros_driver2`) bilinçli seçim. `ida_topics/livox_driver_node` (saf
+# Python UDP) ALTERNATİFTİR ve `hardware.launch.py`'da `with_drivers:=true`
+# ile açılır — **İKİSİ AYNI ANDA AÇILMAZ**, ikisi de `/livox/lidar`'a yayın
+# yapar ve nokta bulutu bozulur.
+#
+# ⚠️ ÖNKOŞUL — JETSON'IN IP'Sİ: config host IP'sini **192.168.117.60** olarak
+# sabit yazıyor. Jetson'ın IP'si kalıcı değilse sürücü porta bağlanamaz ve
+# sessizce veri üretmez. `jetson_kur_ag.sh` bu IP'yi NetworkManager'da kalıcı
+# yapar; bu servis onu bekler (`After=network-online.target`).
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# KURULUM
+#   sudo cp girdap-livox.service /etc/systemd/system/
+#   sudo sed -i "s|__USER__|$USER|g; s|__LWS__|$HOME/livox_ws|g" \
+#        /etc/systemd/system/girdap-livox.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now girdap-livox
+#
+# DOĞRULAMA (Jetson'da, ROS ortamı source'lu):
+#   ros2 topic hz /livox/lidar          # ~10 Hz beklenir
+#   journalctl -fu girdap-livox
+#
+# ⚠️ LiDAR beslenmiyorsa/ağ yoksa sürücü çalışır ama veri gelmez — `topic hz`
+#    boş kalır. `ros2 topic list` ile teşhis ETME (keşif eksikliği yanıltır,
+#    bkz. jetson_deployment.md), `hz` kullan.
+
+[Unit]
+Description=GIRDAP IDA — Livox Mid-360 surucusu (livox_ros_driver2)
+# Config host IP'yi sabit yaziyor -> ag AYAKTA olmali.
+After=network-online.target
+Wants=network-online.target
+# Karar yigini bunun urettigi /livox/lidar'i tuketiyor; once bu kalksin.
+Before=girdap-karar.service
+
+[Service]
+Type=simple
+User=__USER__
+Environment=ROS_DOMAIN_ID=42
+WorkingDirectory=/home/__USER__
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source __LWS__/install/setup.bash && exec ros2 launch livox_ros_driver2 msg_MID360_launch.py'
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
