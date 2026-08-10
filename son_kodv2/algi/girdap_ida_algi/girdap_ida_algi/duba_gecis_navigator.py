@@ -649,6 +649,9 @@ class DubaNavigator(Node):
         # ve HİÇBİR hata basılmadan puan kaybediyoruz. Sahada SSH yok, bu yüzden
         # sayaçlar journal'a periyodik basılır. (Fikir: ekibin GateDiagnostics'i.)
         self._tani = {"dar": 0, "dizili": 0, "arada_duba": 0, "menzil_celiski": 0,
+                      # P3 hedef dubası (Ø0,64 m) sanılıp yayından SÜZÜLEN tespit.
+                      # Sahada P2 boyunca 0, P3'e yaklaşınca artıyorsa DOĞRU çalışıyor.
+                      "buyuk_cisim": 0,
                       # Stereo ölçemeyip pinhole yedeğine düşülen tespit sayısı.
                       # Sahada YÜKSEK çıkarsa stereo suda çalışmıyor demektir —
                       # SSH olmadığı için tek görünürlük kanalı bu sayaç.
@@ -885,6 +888,22 @@ class DubaNavigator(Node):
         arr3d.header.frame_id = BASE_FRAME
 
         for d in self.dubalar:
+            # 🔴 BÜYÜK CİSİM SÜZGECİ (2026-08-11) — P3 hedef dubası bizim
+            # sınıflarımızdan biri sanılıp yayınlanırsa füzyon `EdgeBuoyMemory`'ye
+            # KALICI kenar kaydı yazar (orada unutma YOK) → iki hedef arasında
+            # hayalet kapı → P2'de rota bozulur, P3'te angajman kaçar.
+            # Hedefler parkurun SONUNDA ama 64 cm 25 m'den 7,7 px eder ⇒ tekne
+            # daha P2'nin İÇİNDEYKEN görüyor. Bu yüzden süzgeç parkurdan
+            # BAĞIMSIZ, her zaman açık: mod yok, tetik yok, kilitlenme yok.
+            if getattr(d, "kaynak", "stereo") != "mono" and gm.buyuk_cisim_mi(
+                    d.z, d.w, self._f_norm):
+                self._tani["buyuk_cisim"] += 1
+                self.get_logger().warn(
+                    f"Tespit SÜZÜLDÜ — stereo {d.z:.1f} m ile bbox genişliği "
+                    f"uyuşmuyor: cisim Ø0,30 m'den büyük (P3 hedef dubası?). "
+                    "Kenar/engel olarak YAYINLANMADI.",
+                    throttle_duration_sec=5.0)
+                continue
             det = Detection2D()
             det.header = arr.header
             # Piksel uzayı = tüketicinin beklediği uzay (BBOX_W/BBOX_H

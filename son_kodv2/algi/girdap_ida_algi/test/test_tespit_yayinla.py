@@ -22,9 +22,14 @@ pytest.importorskip("rclpy", reason="rclpy kurulu değil")
 pytest.importorskip("vision_msgs", reason="vision_msgs kurulu değil")
 
 from girdap_ida_algi import duba_gecis_navigator as dgn  # noqa: E402
+from girdap_ida_algi import gecit_mantik as gm  # noqa: E402
 
 
-def _duba(cls, x, z, cx, cy, w, h, conf=0.9):
+def _duba(cls, x, z, cx, cy, w=None, h=0.07, conf=0.9):
+    """w verilmezse 0,30 m'lik duba için stereo ile TUTARLI genişlik üretilir —
+    yoksa büyük cisim süzgeci (11.08) testleri kazara eler."""
+    if w is None:
+        w = gm.DUBA_CAP_M * gm.odak_px(1.0) / z
     return dgn.Duba(cls=cls, x=x, z=z, conf=conf, cx=cx, cy=cy, w=w, h=h)
 
 
@@ -43,6 +48,11 @@ def _yayinla(dubalar, kenar_cls=0, engel_cls=1, lb_pay=0.0):
         dubalar=dubalar, _lb_pay=lb_pay,
         sinif_esleme={kenar_cls: "0", engel_cls: "1"},
         buoys_pub=_Pub("2d"), buoys3d_pub=_Pub("3d"),
+        _f_norm=gm.odak_px(1.0),
+        _tani={"buyuk_cisim": 0},
+        get_logger=lambda: types.SimpleNamespace(
+            warn=lambda *a, **k: None, info=lambda *a, **k: None,
+            error=lambda *a, **k: None),
         get_clock=lambda: types.SimpleNamespace(
             now=lambda: types.SimpleNamespace(
                 to_msg=lambda: dgn.Detection2DArray().header.stamp)),
@@ -54,7 +64,8 @@ def _yayinla(dubalar, kenar_cls=0, engel_cls=1, lb_pay=0.0):
 # --------------------------------------------------------------------------
 # 🔴 E-1 REGRESYONU: bbox 1280×720 uzayında yayınlanmalı (fusion böyle bekliyor)
 def test_bbox_1280x720_uzayinda_yayinlanir():
-    arr, _ = _yayinla([_duba(0, 0.0, 5.0, cx=0.5, cy=0.5, w=0.1, h=0.1)])
+    # w verilmiyor → 0,30 m dubayla tutarlı genişlik (büyük cisim süzgeci elemesin)
+    arr, _ = _yayinla([_duba(0, 0.0, 5.0, cx=0.5, cy=0.5)])
     d = arr.detections[0]
     assert d.bbox.center.position.x == pytest.approx(dgn.BBOX_W / 2, abs=1.0)
     assert d.bbox.center.position.y == pytest.approx(dgn.BBOX_H / 2, abs=1.0)
@@ -146,3 +157,63 @@ def test_giris_boyutu_uyusmazsa_yakalanir(monkeypatch):
     monkeypatch.setattr(dgn, "NN_GIRIS", 640)
     sorun = dgn._blob_denetle(_BLOB, ["kenar_dubasi", "engel_dubasi"])
     assert sorun and "NN_GIRIS" in sorun[0], sorun
+
+
+# ══ BÜYÜK CİSİM SÜZGECİ (11.08) — P3 hedefi kenar dubası sanılmasın ═══════
+def _tutarli_w(cap, z):
+    """`cap` çapındaki cismin `z` metrede kapladığı normalize genişlik."""
+    return cap * gm.odak_px(1.0) / z
+
+
+def test_p3_hedefi_yayindan_suzulur():
+    """🔴 Ø0,64 m hedef `/perception/buoys`'a girerse EdgeBuoyMemory KALICI
+    kenar kaydı açar (unutma yok) → iki hedef arasında hayalet kapı."""
+    arr, arr3d = _yayinla([_duba(0, 0.0, 10.0, 0.5, 0.5, w=_tutarli_w(0.64, 10.0))])
+    assert arr.detections == [] and arr3d.poses == []
+
+
+def test_gercek_duba_suzulmez():
+    """Ø0,30 m duba 2 kat payla geçer — P1/P2 etkilenmez."""
+    arr, _ = _yayinla([_duba(0, 0.0, 10.0, 0.5, 0.5, w=_tutarli_w(0.30, 10.0))])
+    assert len(arr.detections) == 1
+
+
+@pytest.mark.parametrize("z", [3.0, 6.0, 12.0, 20.0])
+def test_suzgec_mesafeden_bagimsiz(z):
+    """Oran ölçütü olduğu için her mesafede aynı davranmalı."""
+    kucuk, _ = _yayinla([_duba(0, 0.0, z, 0.5, 0.5, w=_tutarli_w(0.30, z))])
+    buyuk, _ = _yayinla([_duba(0, 0.0, z, 0.5, 0.5, w=_tutarli_w(0.64, z))])
+    assert len(kucuk.detections) == 1 and buyuk.detections == []
+
+
+def test_mono_menzilde_suzgec_UYGULANMAZ():
+    """Menzil bbox'tan geldiyse çapraz kontrol anlamsız (aynı sayıyı kendisiyle
+    karşılaştırır) — kör eleme yapmayız (08.08 kuralı)."""
+    d = _duba(0, 0.0, 10.0, 0.5, 0.5, w=_tutarli_w(0.64, 10.0))
+    d.kaynak = "mono"
+    arr, _ = _yayinla([d])
+    assert len(arr.detections) == 1
+
+
+def test_suzulen_tespit_SAYACA_islenir():
+    """Sahada SSH yok — sessiz eleme görünmez arıza olur (06.08 dersi)."""
+    kutu = {}
+
+    class _Pub:
+        def __init__(self, ad): self.ad = ad
+        def publish(self, msg): kutu[self.ad] = msg
+
+    tani = {"buyuk_cisim": 0}
+    ns = types.SimpleNamespace(
+        dubalar=[_duba(0, 0.0, 10.0, 0.5, 0.5, w=_tutarli_w(0.64, 10.0))],
+        _lb_pay=0.0, sinif_esleme={0: "0", 1: "1"},
+        buoys_pub=_Pub("2d"), buoys3d_pub=_Pub("3d"),
+        _f_norm=gm.odak_px(1.0), _tani=tani,
+        get_logger=lambda: types.SimpleNamespace(
+            warn=lambda *a, **k: None, info=lambda *a, **k: None,
+            error=lambda *a, **k: None),
+        get_clock=lambda: types.SimpleNamespace(
+            now=lambda: types.SimpleNamespace(
+                to_msg=lambda: dgn.Detection2DArray().header.stamp)))
+    dgn.DubaNavigator.tespit_yayinla(ns)
+    assert tani["buyuk_cisim"] == 1

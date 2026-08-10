@@ -326,3 +326,41 @@ def p2_gecit_sarti(g, min_gecit: int = 2) -> bool:
     işidir, algı yalnız geçit ayağını raporlar.
     """
     return g >= min_gecit
+
+# ── P3 hedef dubası: yayından SÜZÜLECEK büyük cisim ───────────────────────
+#: Şartname s.18: hedef dubası Ø640 mm (kenar/engel Ø300 mm'nin 2,13 katı).
+HEDEF_CAP_M = 0.64
+#: Bir tespit "bizim duba değil, daha BÜYÜK bir cisim" sayılma eşiği.
+#: Türetim — 0,30 m varsayarak hesaplanan pinhole menzilin stereo menzile oranı:
+#:     gerçek çap 0,30 m → 1,00   ·   0,50 m → 0,60   ·   0,64 m → 0,47
+#: Eşik 0,60 ⇒ **≥0,50 m** cisimler süzülür; gerçek kenar dubası (1,00) **2 kat
+#: payla** geçer. Tek yönlü: yalnız "olduğundan BÜYÜK" olanı eler, küçüğe dokunmaz.
+BUYUK_CISIM_ORANI = 0.60
+
+
+def buyuk_cisim_mi(z_stereo, w_norm, f_px_norm, cap_m: float = DUBA_CAP_M,
+                   esik: float = BUYUK_CISIM_ORANI) -> bool:
+    """Bu tespit, kenar/engel dubasından BELİRGİN BÜYÜK bir cisim mi?
+
+    🔴 NEDEN (2026-08-11): P3 hedef dubaları (Ø0,64 m) parkurun SONUNDA duruyor
+    ama 64 cm'lik cisim 25 m'den 7,7 px eder — yani tekne daha **Parkur-2'nin
+    içindeyken** onları görüyor. Modelimiz 2 sınıflı: kırmızı hedefi
+    `kenar_dubasi` sanıyor (ölçüm 11.08: 793/909). O tespit `/perception/buoys`'a
+    girerse füzyon → `EdgeBuoyMemory` **kalıcı kenar kaydı** açar (o hafızada
+    unutma YOK) → iki hedef arasında **hayalet kapı** kurulur → tekne kapı sanıp
+    aralarından geçer. P2'de rotayı bozar, P3'te angajmanı kaçırtır.
+
+    Ölçüt ayarlanabilir bir tahmin değil, FİZİK: bilinen çapla hesaplanan menzil
+    ile stereo menzil aynı cisimde örtüşmek zorundadır. Cisim varsayılandan
+    büyükse pinhole menzil orantılı olarak KISA çıkar.
+
+    Ölçemediğimiz durumda İDDİA ETMEYİZ → False (kör eleme yok):
+    stereo yoksa, genişlik yoksa ya da menzil mono'dan geldiyse çağıran atlar.
+    """
+    if z_stereo is None or z_stereo <= 0.0:
+        return False
+    d_pin = mesafe_genislikten(w_norm, cap_m, f_px_norm)
+    if d_pin is None or d_pin <= 0.0:
+        return False
+    return (d_pin / z_stereo) < esik
+
