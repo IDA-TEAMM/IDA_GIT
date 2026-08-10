@@ -1,8 +1,56 @@
 # Jetson saatini GPS'ten kurmak — araştırma ve plan
 
 **Tarih:** 2026-08-09 · **Alan:** Alt Alan B (FC/navigasyon)
-**Durum:** ✅ Kod yazıldı · ✅ **Jetson'da KURULDU** · ✅ **emniyet yolu ÖLÇÜLDÜ ve GEÇTİ**
-· ⏳ yalnız GPS'li "mutlu yol" doğrulaması kaldı (dışarıda)
+**Durum:** ✅ **KAPANDI — 2026-08-11.** Kod yazıldı · Jetson'da kuruldu ·
+emniyet yolu ölçüldü ve geçti · **GPS'li mutlu yol gerçek donanımda geçti**
+
+## ✅ MUTLU YOL — 2026-08-11 02:44, GEÇTİ
+
+Tekne beslenmiş, FC bağlı, GPS fix'li. Jetson boot'ta **1970-01-01**'den geldi
+(RTC pilsiz — aşağıya bak), yani düzeltme gerçek ve azami büyüklükte oldu:
+
+| Ölçüt | Beklenen | Ölçülen | |
+|---|---|---|---|
+| Ayrıştırıcı yolu | bağımsız (pymavlink yok) | `pymavlink yok → bagimsiz ayristirici` | ✅ |
+| SYSTEM_TIME akıyor mu | istek gerekmeden | `GPS saati alindi: 2026-08-10T23:39:42+00:00` | ✅ |
+| Saat kuruldu mu | evet | `SAAT KURULDU (duzeltme +1786404608.4 s = 56,6 yıl)` | ✅ |
+| GPS saati **doğru** mu | senkron laptopla uyumlu | **27 s fark** (= ölçüm/kontrol arası geçen süre) | ✅ |
+| RTC | yazıldı | `RTC guncellendi (hwclock --systohc)` | ✅ |
+| `timedatectl` | `synchronized: yes` | **`yes`** (iki hata düzeltildikten SONRA — aşağıda) | ✅ |
+| Eyüp'ün ölçütü | `True` | `saat_guvenilir_mi -> (True, 'cekirdek senkron')` | ✅ |
+| İkinci koşu (saat zaten doğru) | dokunmaz | `fark 2.0 s toleransinin altinda — saate DOKUNULMADI`, GPS farkı **0.0 s** | ✅ |
+
+Son satır bağımsız bir çapraz doğrulama: 8 dakika sonra FC'nin GPS saatiyle
+sistem saati arasındaki fark **0.0 s** — hem çözücü hem kurulum doğru.
+
+### 🔴 Mutlu yol iki gerçek hata ortaya çıkardı (emniyet yolu göstermemişti)
+
+**Hata 1 — `STA_UNSYNC` bitini temizlemek YETMİYOR.** İlk koşuda saat **doğru**
+olduğu hâlde `timedatectl` `synchronized: no` demeye devam etti. Ölçüm:
+`status=0x0040`, `maxerror=16000000 us` = **tam `NTP_PHASE_LIMIT`**.
+`clock_settime` çekirdeğin `maxerror`'unu azamiye çıkarıyor; sınırın üstünde
+kaldığı sürece `second_overflow()` bayrağı **her saniye geri koyuyor.**
+Sonucu önemli: teslim dosyaları saat doğruyken `_SAAT-GUVENILMEZ` damgası
+alacaktı — md 4.2'de kaçınmaya çalıştığımız yanlış-negatifin tam kendisi.
+Düzeltme: `ADJ_STATUS | ADJ_MAXERROR | ADJ_ESTERROR` birlikte yazılıyor,
+`maxerror = 100 000 us`. **Sıfır yazılmadı** — yalan olurdu: SYSTEM_TIME 57600
+baud seri hattan geliyor, gecikme onlarca ms. Yan fayda: 500 µs/s büyümeyle
+(16 000 000 − 100 000)/500 = **8,8 saat** senkron kalır.
+
+**Hata 2 — sıra yanlıştı.** Temizleme `clock_settime` ile `hwclock` **arasında**
+yapılıyordu; ikisi de çekirdeğin saat durumuna dokunuyor. Artık **en sonda**.
+
+Ayrıca temizleme artık **kendini doğruluyor** (`adjtimex` geri okunup
+`STA_UNSYNC`'in gerçekten düştüğü kontrol ediliyor) — "yazdım, sonucuna
+bakmadım" hatasını bir daha yapmamak için.
+
+### 🔴 RTC PİLSİZ — kesinleşti
+
+Güç kesilince Jetson `1970-01-01`'e döndü (`RTC time: 1970-01-01`). Bir gün
+önce RTC'nin doğru görünmesi, gücün hiç kesilmemiş olmasındanmış. Sonuç:
+**her açılışta GPS fix'i beklemek zorunlu.** CR1225 (şarj edilemez) tedarik
+listesinde kalıyor; takılırsa bu bekleme kalkar, kalkmazsa sistem yine çalışır
+(emniyet yolu bunu zaten karşılıyor).
 
 ## ✅ EMNİYET YOLU TESTİ — 2026-08-09/10, GEÇTİ
 
@@ -31,9 +79,13 @@ kendiliginden akiyor; istek gerekmez)`.
 MAVROS'tan önce koşup portu bırakıyor), ama elle test ederken iki okuyucunun
 birbirinden bayt kaçırabileceği akılda tutulmalı.
 
-⏳ **Kalan tek doğrulama:** tekne dışarıda, FC beslenmiş ve GPS fix'liyken
-`sudo systemctl start girdap-saat` → beklenen `SAAT KURULDU: … (duzeltme
-+9xxxx.x s)` ve ardından `timedatectl` → `System clock synchronized: yes`.
+✅ **Bu doğrulama 2026-08-11'de yapıldı ve geçti** — yukarıdaki "MUTLU YOL"
+bölümüne bak. Bu maddede açık iş kalmadı.
+
+⚠️ **Yarışma sabahı tek kontrol:** yığını başlatmadan önce
+`timedatectl | grep synchronized` → `yes` görülmeli. `no` ise
+`sudo systemctl restart girdap-saat` (FC beslenmiş olmalı). 8,8 saatlik pencere
+yüzünden Jetson sabah açılıp akşam koşuyorsa **tekrar** koşturmak gerekir.
 
 ## ✅ Ne yazıldı (2026-08-09)
 
