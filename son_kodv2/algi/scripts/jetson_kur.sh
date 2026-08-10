@@ -8,8 +8,10 @@
 #   bash scripts/jetson_kur.sh --servis   # + açılışta otomatik başlatma (systemd)
 #
 # NOT: ROS 2 Humble'ın kendisini KURMAZ (büyük ve tek seferlik iş) — yoksa
-# adımları yazdırıp çıkar. Karar stack'i (girdap-decision) da klonlanır;
-# onun GTSAM/numpy bağımlılıkları kendi README'sinin işi.
+# adımları yazdırıp çıkar.
+# 🔴 2026-08-10: karar stack'i ARTIK KLONLANMIYOR (bkz. 5/6). Klonlanan repo
+# BAYATTI ve içinde gate_follower.py YOKTU ⇒ kurulsaydı P1/P2 sessizce giderdi.
+# Karar yığınının kurulumu sahibine ait; biz yalnız var mı/sağlam mı diye bakarız.
 
 set -euo pipefail
 
@@ -17,7 +19,10 @@ WS=~/ros2_ws
 REPO_ALGI="https://github.com/EyupEker1/girdap-ida-algi.git"
 # Karar yığını BİZİM FORK'tan: tüm denetim düzeltmeleri (F12.1, F14.x, T0-j
 # GUIDED tetiği...) orada; vistastris/girdap-decision BAYAT kalır.
-REPO_KARAR="https://github.com/EyupEker1/girdap-decision.git"
+# 🔴 KULLANILMIYOR (2026-08-10) — bu repo 17.07'de donmuş; canlı karar kodu
+# IDA-TEAMM/IDA_GIT → son_kodv2/karar. Silinmedi ki "neden yok" sorusu
+# cevapsız kalmasın. Klonlama kaldırıldı, yerine sağlamlık kontrolü kondu.
+REPO_KARAR_BAYAT="https://github.com/EyupEker1/girdap-decision.git"
 
 echo "== 1/6 ROS 2 Humble kontrolü =="
 if [ ! -d /opt/ros/humble ]; then
@@ -92,8 +97,30 @@ cd "$WS/src"
 # gh auth login (bkz. docs/jetson_kurulum_rehberi.md §1)
 [ -d girdap-ida-algi ]   || git clone "$REPO_ALGI" || {
     echo "!! klon başarısız — repolar private, önce 'gh auth login' (rehber §1)"; exit 1; }
-[ -d girdap-decision ]   || git clone "$REPO_KARAR" || {
-    echo "!! klon başarısız — repolar private, önce 'gh auth login' (rehber §1)"; exit 1; }
+# 🔴🔴 2026-08-10 DÜZELTMESİ — KARAR REPOSU ARTIK KLONLANMIYOR.
+# Eskiden burada `git clone $REPO_KARAR` vardı ve BAYAT kodu kuruyordu:
+#     EyupEker1/girdap-decision : son push 2026-07-17 · 136 dosya
+#     IDA_GIT/son_kodv2/karar   : CANLI            · 220 dosya
+#   fsm_node 18.572 B ↔ 29.380 B · fusion 9.709 B ↔ 19.522 B
+#   sync_queue_size YOK · 🔴 gate_follower.py HİÇ YOK (404)
+# gate_follower olmadan kapı orta noktası ÜRETİLMEZ ⇒ bizim tespitlerimiz akar
+# ama kimse kullanamaz ⇒ P1 (G1/KD1≥0,5) ve P2 (≥2 ikili) SIFIR — hata basılmadan.
+# Karar yığınının kurulumu SAHİBİNE aittir (kapsam kuralı); biz yalnız kontrol
+# edip uyarıyoruz. Beklenen konum karar servisinin kendi PYTHONPATH'i:
+#   Environment=PYTHONPATH=<ws>/src/girdap-decision
+if [ -d girdap-decision ]; then
+    _gf="girdap-decision/prototype/mission/gate_follower.py"
+    if [ -f "$_gf" ]; then
+        echo "   girdap-decision var ve gate_follower.py YERİNDE ✓"
+    else
+        echo "   !! girdap-decision var ama gate_follower.py YOK —"
+        echo "      BAYAT kopya olabilir (EyupEker1/girdap-decision, 17.07)."
+        echo "      Doğrusu: IDA-TEAMM/IDA_GIT → son_kodv2/karar içeriği."
+        echo "      Bu hâliyle kapı takibi ÇALIŞMAZ ⇒ P1/P2 gider. Karar ekibine sor."
+    fi
+else
+    echo "   (girdap-decision yok — karar yığınını sahibi kuracak, biz klonlamıyoruz)"
+fi
 cd "$WS"
 colcon build --symlink-install --packages-select girdap_ida_algi || {
     echo "!! girdap_ida_algi derlenemedi"; exit 1; }
