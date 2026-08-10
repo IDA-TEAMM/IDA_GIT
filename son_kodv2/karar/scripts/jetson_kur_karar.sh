@@ -31,12 +31,35 @@ say "1) Yolları bul"
 [[ -f "$WS/install/setup.bash" ]] || { ht "$WS/install/setup.bash yok — workspace derlenmemiş"; exit 1; }
 ok "workspace: $WS"
 
-PROTO="$(find "$EV" -maxdepth 6 -type d -name prototype -path '*karar*' 2>/dev/null | head -1)"
-[[ -n "$PROTO" ]] || { ht "prototype/ bulunamadı — node'lar import edemez, kurulum ANLAMSIZ"; exit 1; }
-PP="$(dirname "$PROTO")"
+# 🔴 PROTOTYPE'I ARAMIYORUZ, SYMLINK'İ TAKİP EDİYORUZ.
+# İlk sürüm `find ... | head -1` kullanıyordu ve 10.08'de **yanlış kopyayı**
+# seçti: `~/IDA_GIT/son_kod/karar/prototype` (ESKİ sürüm), çünkü alfabetik
+# olarak `son_kod` < `son_kodv2`. Servis yanlış PYTHONPATH ile yazıldı —
+# yığın ESKİ kodla koşacaktı, üstelik sessizce.
+# Doğrusu: workspace'in FİİLEN derlediği paketi bul (symlink'i çöz), repo
+# kökünü ondan türet. Tahmin yok, gerçek ne ise o.
+PKG="$(readlink -f "$WS/src/girdap_decision" 2>/dev/null)"
+[[ -d "$PKG" ]] || { ht "$WS/src/girdap_decision çözülemedi — workspace bozuk"; exit 1; }
+ok "derlenen paket: $PKG"
+# .../<repo>/karar/ros2_ws/src/girdap_decision  →  üç seviye yukarısı = karar kökü
+PP="$(cd "$PKG/../../.." && pwd)"
+PROTO="$PP/prototype"
+[[ -d "$PROTO" ]] || { ht "prototype/ yok: $PROTO — node'lar import edemez"; exit 1; }
 ok "prototype: $PROTO"
 ok "PYTHONPATH: $PP"
-python3 -c "import sys; sys.path.insert(0,'$PP'); import prototype.telemetry.saat_guveni as m; print('   ✓ prototype import DENENDI ve calisti:', m.saat_guvenilir_mi()[1])" 2>&1 | tail -1
+
+# 🔴 IMPORT TESTİ ARTIK DURDURUCU. Önceki sürümde yalnız RAPORLUYORDU ve
+# hata görüldüğü hâlde kurulum devam etti (10.08'de tam bu oldu). Doğrulama
+# başarısızsa yanlış servis yazmaktansa HİÇ yazmamak doğrudur.
+if PYTHONPATH="$PP" python3 -c "import prototype.telemetry.saat_guveni as m; print('   ✓ import DOGRULANDI:', m.saat_guvenilir_mi()[1])" 2>/dev/null; then
+  :
+else
+  ht "prototype import BASARISIZ ($PP)"
+  ht "Bu yol yanlış ya da repo bayat. Servis YAZILMADI — yanlış yolla"
+  ht "yazmak yığını ESKİ kodla koşturur ve fark edilmez."
+  uy "Kontrol: ls $PP/prototype/telemetry/"
+  exit 1
+fi
 
 say "2) Servisi yaz"
 cat > /etc/systemd/system/girdap-karar.service <<UNIT
