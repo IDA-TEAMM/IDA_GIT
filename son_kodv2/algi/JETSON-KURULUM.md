@@ -106,6 +106,24 @@ ROS_DOMAIN_ID=42 ros2 topic hz /perception/classified_obstacles  # ← ASIL KANI
 İkincisi akıyorsa algı **gerçekten** karar tarafına ulaşıyor demektir.
 PC'de ölçülen: `/perception/buoys` 10,6-10,9 Hz · `buoys_3d` 10,9-11,2 Hz.
 
+## 10b. 🔴 TEK YAYINCI — `/perception/buoys`'a başka kimse basmıyor mu
+```bash
+ROS_DOMAIN_ID=42 ros2 topic info /perception/buoys     # Publisher count: 1 OLMALI
+grep -n use_onboard_camera .../hardware.launch.py      # default_value="false"
+grep -n with_oak_driver    .../hardware.launch.py      # default_value="false"
+```
+**Neden:** karar tarafında `perception_camera_node` da `/perception/buoys`'a
+basabiliyor (HSV + eskiden `best.pt`). İki yayıncı olursa sarı engel "kenar
+dubası" sanılabilir → yanlış kapı → **Ç2 çarpma**, belirti vermeden.
+
+✅ **Bugün ölçüldü, risk ÇİFT KİLİTLİ:** (1) `girdap-karar.service` yalnız
+`mission_source:=fc` geçiyor ⇒ `use_onboard_camera` varsayılan **false**, node
+açılmıyor; (2) açılsa bile `/oak/rgb/image_raw`'a abone ve o topic'i yalnız
+`oakd_driver_node` yayınlar — o da `with_oak_driver` **false** arkasında, üstelik
+kamerayı biz tuttuğumuz için sürücü açamaz.
+📌 `best.pt` 10.08'de depodan kaldırıldı (Sude onayı) ama **asıl koruma bayraklar**.
+`Publisher count: 1` çıktısı bunun **çalışırken** kanıtıdır — tek gerçek kontrol bu.
+
 ## 11. Dosya-1 (md 4.2) — GERÇEKTEN oynuyor mu
 ```bash
 ls -la ~/girdap_logs/kamera/session_*/
