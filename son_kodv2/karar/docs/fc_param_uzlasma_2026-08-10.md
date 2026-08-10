@@ -323,3 +323,35 @@ ağırlık binmemeli — ya sökülmeli ya elde tutulmalı.
 - Pixhawk'ı söküp masada kalibre etmek **önerilmez**: tam aynı yönde geri
   takmak zorunlu (2-3° eğim kalıcı tutum hatası), kablo demeti kısaysa zaten
   çevrilemez, USB-C soketi de arızalı (F-M.9). Riski kazancından fazla.
+
+## ✅ İVMEÖLÇER KALİBRASYONU YAPILDI — "Kotu AHRS" VE "FAILSAFE" GİTTİ (20:48)
+
+**Yöntem (kaptanın yöntemi — tekne çevrilmedi):** Pixhawk yuvasından çıkarılıp
+**elde 6 konuma çevrildi**. Geçerli, çünkü ivmeölçer kalibrasyonu **sensörün
+kendi iç düzeltmesidir** (ofset + ölçek), montaj yönünden bağımsız.
+Bağlantı için geçici olarak **USB** kullanıldı (`/dev/ttyACM0` @ 115200) —
+kablo demeti 6 konuma çevirmeye yetmedi.
+
+Sonra Pixhawk **yuvasına** geri takıldı (yuva tam oturuyor, zemine paralel, ok
+pruvaya bakıyor → yön garantili), **`Seviye Kalibrasyonu`** yapıldı ve FC
+`Ctrl+F → Reboot Pixhawk` ile yeniden başlatıldı.
+
+### Reboot sonrası ölçüm
+
+| Uyarı | Önce | Sonra |
+|---|---|---|
+| `3D Accel calibration needed` | var | ✅ **GİTTİ** |
+| **`Kotu AHRS`** | var | ✅ **GİTTİ** |
+| **`FAILSAFE`** (EKF) | var | ✅ **GİTTİ** |
+| `Compass not calibrated` | var | ⏳ kaldı (dışarıda yapılacak) |
+
+🎯 **TEŞHİS KANITLANDI.** Oturumlardır açık duran "Kotu AHRS" maddesinin sebebi
+geçersiz ivmeölçer kalibrasyonuymuş; düzeltilince `EKF variance` → `EKF
+failsafe` → `FAILSAFE` zinciri de birlikte çözüldü. Tahmin değil, ölçüm.
+
+> 💡 **Ders:** kalibrasyon verisi parametre dosyasında **duruyor olabilir ama
+> ArduPilot onu geçersiz sayabilir.** `INS_ACCOFFS/SCAL` dolu diye "kalibrasyon
+> var" denmez — pre-arm mesajı esastır.
+
+⏳ **Kalan:** pusula (`Large Vehicle MagCal`, **dışarıda** — bina demiri
+kalibrasyona karışmasın) → sonra arm testi (alıcılı + alıcısız).
