@@ -89,6 +89,28 @@ class ISAM2SmootherConfig:
     relinearize_skip: int = 1
 
 
+#: GTSAM tekilleşmeyi ayrı bir istisna sınıfı olarak VERMİYOR (Python
+#: binding'inde düz `RuntimeError`), o yüzden tek ayırt edici şey mesaj metni.
+#: İki varyant da sahada görüldü: uzun açıklamalı hâli ve sınıf adı hâli.
+_TEKILLESME_IZLERI = (
+    "indeterminant linear system",
+    "indeterminantlinearsystemexception",
+)
+
+
+def _is_indeterminant(exc: BaseException) -> bool:
+    """İstisna GTSAM tekilleşmesi mi — kurtarılabilir tek hata sınıfı.
+
+    Dar tutulması KASITLI: burası genişletilirse gerçek arızalar da
+    "kurtarılır" ve araç bozuk tahminle sürmeye devam eder. Metin eşleşmesi
+    kırılgan görünür ama alternatifi yok; GTSAM ayrı sınıf sunmuyor.
+    """
+    if not isinstance(exc, RuntimeError):
+        return False
+    mesaj = str(exc).lower()
+    return any(iz in mesaj for iz in _TEKILLESME_IZLERI)
+
+
 class ISAM2Smoother:
     """
     GTSAM iSAM2 sarmalayıcısı — Pose2 inkremental smoother.
@@ -106,6 +128,7 @@ class ISAM2Smoother:
 
     def __init__(self, cfg: Optional[ISAM2SmootherConfig] = None) -> None:
         self.cfg = cfg or ISAM2SmootherConfig()
+        self._recovery_count = 0
 
         # k<=0'da Huber ağırlığı (k/|e|) her ölçüm için 0 olur → GPS TAMAMEN
         # yok sayılır ve araç yalnız IMU ölü-hesabıyla seyreder. yaml'daki bir
@@ -115,11 +138,7 @@ class ISAM2Smoother:
                 f"gps_huber_k pozitif olmalı, geldi: {self.cfg.gps_huber_k}"
             )
 
-        params = gtsam.ISAM2Params()
-        params.setRelinearizeThreshold(self.cfg.relinearize_threshold)
-        # NOT: GTSAM 4.x Python binding'inde setter yok; attribute olarak atanır
-        params.relinearizeSkip = self.cfg.relinearize_skip
-        self._isam = gtsam.ISAM2(params)
+        self._isam = gtsam.ISAM2(self._isam_params())
 
         # Pending faktörler & başlangıç değerleri (her update'te boşaltılır)
         self._graph = gtsam.NonlinearFactorGraph()
@@ -161,6 +180,30 @@ class ISAM2Smoother:
         self._odom_noise_cache: Dict[float, Any] = {}
 
     # ----- gürültü modeli fabrikaları -----
+
+    def _isam_params(self) -> Any:
+        """ISAM2Params — hem kuruluşta hem tekilleşme kurtarmasında kullanılır.
+
+        Ayrı fonksiyon olmasının sebebi: kurtarma yeni bir ISAM2 kurar ve
+        parametreler AYNI olmak zorunda. Kopyalanmış iki blok, birinde yapılan
+        ayarın diğerine geçmemesiyle sonuçlanırdı.
+        """
+        params = gtsam.ISAM2Params()
+        params.setRelinearizeThreshold(self.cfg.relinearize_threshold)
+        # NOT: GTSAM 4.x Python binding'inde setter yok; attribute olarak atanır
+        params.relinearizeSkip = self.cfg.relinearize_skip
+        return params
+
+    @property
+    def recovery_count(self) -> int:
+        """Kaç kez tekilleşmeden kurtarıldı (0 = hiç yaşanmadı).
+
+        Saha teşhisi: sıfırdan büyükse graf düzenli olarak çözülemez hâle
+        geliyor demektir; sebebi genelde yetersiz kısıt (uzun süre GPS yok)
+        ya da çelişkili ölçümdür. Kurtarma aracı KURTARIR ama kök nedeni
+        gizlemesin diye sayaç dışarı açık.
+        """
+        return self._recovery_count
 
     def _make_gps_noise(self, sigma_xy: float) -> Any:
         """(x, y) sigma'sından GPS prior gürültü modeli üret.
@@ -346,13 +389,71 @@ class ISAM2Smoother:
         self._flush(n_extra_iters)
 
     def _flush(self, n_extra_iters: int = 0) -> None:
+        """Pending faktörleri ISAM2'ye gönder; tekilleşmede KURTAR, ölme.
+
+        🔴 SAHA OLAYI (11.08.2026, Jetson): `calculateEstimate()` gerçek GPS
+        akışında `Indeterminant linear system ... (Symbol: x1569)` fırlattı.
+        İstisna `rclpy.spin`'e kadar çıktı, **fusion_node öldü ve geri
+        gelmedi** → poz yayını kesildi → planning_node F-P.1 ile MPPI'yi
+        durdurdu → araç sessizce sürmez oldu. Zincirin tamamı tek bir
+        yakalanmamış istisnadan.
+
+        Tekilleşme, grafın o anda çözülemez olması demektir (yetersiz kısıt,
+        çelişkili ölçüm). Kalıcı bir bozulma DEĞİL — son iyi pozu çapa alıp
+        yeni bir ISAM2 kurmak akışı sürdürür.
+
+        ⚠ Yalnız tekilleşme kurtarılır. Başka bir `RuntimeError` yutulursa
+        gerçek arıza gizlenir ve bu, öldüren istisnadan daha kötüdür — araç
+        bozuk bir tahminle sürmeye DEVAM eder.
+        """
+        try:
+            self._isam.update(self._graph, self._initial)
+            for _ in range(n_extra_iters):
+                self._isam.update()
+            # GTSAM Python: graph.resize(0) yerine yeni instance — taşınabilir
+            self._graph = gtsam.NonlinearFactorGraph()
+            self._initial = gtsam.Values()
+            self._latest_estimate = self._isam.calculateEstimate()
+        except RuntimeError as exc:
+            if not _is_indeterminant(exc):
+                raise
+            if self._latest_estimate is None:
+                # Çözülmüş tek bir tahmin bile yok → çapa yok. Buradan
+                # "kurtarmak" uydurma bir poz üretmek olurdu; sessiz yanlış
+                # veri, gürültülü çökmeden daha tehlikelidir.
+                raise
+            self._tekillesmeden_kurtar()
+
+    def _tekillesmeden_kurtar(self) -> None:
+        """Son ÇÖZÜLMÜŞ pozu çapa alıp grafı yeniden kur.
+
+        `_latest_key` geri sarılmak ZORUNDA: `add_odometry` anahtarı çözüm
+        gerçekleşmeden önce ilerletmiş olabilir. Geri sarılmazsa bir sonraki
+        `add_odometry` var olmayan bir `prev_key`'e compose etmeye çalışır ve
+        node İKİNCİ kez ölür — yani kurtarma, kurtardığı arızayı bir adım
+        öteler.
+        """
+        son = self._latest_key
+        while son >= 0 and not self._latest_estimate.exists(X(son)):
+            son -= 1
+        if son < 0:
+            raise RuntimeError(
+                "tekillesme kurtarilamadi: cozulmus hicbir anahtar yok"
+            )
+
+        capa = self._latest_estimate.atPose2(X(son))
+        self._isam = gtsam.ISAM2(self._isam_params())
+        self._graph = gtsam.NonlinearFactorGraph()
+        self._initial = gtsam.Values()
+        self._latest_key = son                      # GERİ SAR
+
+        self._graph.add(gtsam.PriorFactorPose2(X(son), capa, self._prior_noise))
+        self._initial.insert(X(son), capa)
         self._isam.update(self._graph, self._initial)
-        for _ in range(n_extra_iters):
-            self._isam.update()
-        # GTSAM Python: graph.resize(0) yerine yeni instance — daha taşınabilir
         self._graph = gtsam.NonlinearFactorGraph()
         self._initial = gtsam.Values()
         self._latest_estimate = self._isam.calculateEstimate()
+        self._recovery_count += 1
 
     # ----- queries -----
 

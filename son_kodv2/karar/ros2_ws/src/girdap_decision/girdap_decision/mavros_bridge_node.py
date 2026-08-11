@@ -89,6 +89,17 @@ class MavrosBridgeNode(Node):
 
         # --- Parametreler ---
         self.declare_parameter("heartbeat_timeout_s", 5.0)
+        # 🔴 PAR-04: `/mavros/state` **0,17 Hz** (≈6 s aralık) ölçüldü; eşik
+        # 5,0 s olduğu için HER aralıkta aşıldı → köprü KILL'e latch'ledi ve
+        # oturumun %86'sı ölü geçti. Kaynakta bu risk zaten yazılıydı
+        # (`hardware.yaml`: "5 Hz'in altına İNME") ama kimse ÖLÇMÜYORDU:
+        # akış hızı isteği bir kez gönderiliyor, uygulanıp uygulanmadığı
+        # hiç teyit edilmiyordu.
+        #
+        # Operatör tarafındaki karşılığı: "kod değiştirip düğümleri yeniden
+        # başlatınca sistem anında KILL verdi" — taze bağlantıda ArduPilot
+        # SR0_* varsayılanıyla ~1 Hz yayınlar, eşik hemen aşılır.
+        self.declare_parameter("akis_denetim_pencere", 5)
         self.declare_parameter("mode_name", "GUIDED")   # ArduRover mod ismi
         self.declare_parameter("monitor_rate_hz", 2.0)
         self.declare_parameter("auto_guided", True)
@@ -148,6 +159,19 @@ class MavrosBridgeNode(Node):
         # Latching durumlar
         self._killed = False
         self._was_armed = False
+        # PAR-04 akış ölçümü
+        self._akis_pencere = max(2, int(self.get_parameter("akis_denetim_pencere").value))
+        self._son_state_t: Optional[float] = None
+        self._state_araliklari: list[float] = []
+        self._akis_uyarildi = False
+        # 🔴 KAR-02: KILL'e NEDEN girildiği hiçbir yere yazılmıyordu. Kaptanın
+        # ifadesiyle "en büyük teşhis boşluğu bu": bir oturumun %82'si KILL'de
+        # geçti, RC kanal 8 tüm oturum boyunca sabit 1000 (yani kill-switch HİÇ
+        # tetiklenmedi) — demek ki yazılım içinden geldi, ama hangisinden
+        # geldiği bag'den ayırt edilemedi.
+        self._pub_kill_reason = self.create_publisher(
+            String, "/girdap/mission/kill_reason", 10
+        )
         self._mode_req_pending = False
         # F-P.15 (robustness taraması, 2026-07-15): _mode_req_pending
         # yalnız /mavros/set_mode'un done-callback'inde (_on_mode_result)
@@ -242,12 +266,61 @@ class MavrosBridgeNode(Node):
     # ----- /mavros/state callback -----
 
     def _on_state(self, msg: MavState) -> None:
+        self._akis_periyodunu_olc()
         self._bridge.update_state(
             self._now(), msg.connected, msg.armed, msg.guided, msg.mode
         )
         self._check_mode_ack_effect(msg.mode)         # F-P.25
         self._maybe_request_stream_rate()
         self._maybe_auto_guided()
+
+    def _akis_periyodunu_olc(self) -> None:
+        """PAR-04: `/mavros/state` GERÇEK periyodunu ölç ve eşikle karşılaştır.
+
+        Akış hızı isteği (`REQUEST_DATA_STREAM`) bir kez gönderiliyor ve
+        **uygulanıp uygulanmadığı hiç teyit edilmiyordu**. FC isteği yok
+        sayarsa (SR0_* EEPROM değerleri baskın, hat 57600 baud dolmuş,
+        istek servisi hiç hazır olmamış) sistem sessizce yanlış varsayımla
+        koşuyor — ta ki heartbeat eşiği aşılıp KILL gelene kadar.
+
+        Ölçüt `timeout / 2`: periyot bunun üstündeyse tek bir gecikmiş mesaj
+        bile eşiği aşmaya yeter, yani sistem KILL'e bir adım uzakta demektir.
+        Medyan kullanılıyor — tek bir sıçrama (DDS keşfi, düğüm başlangıcı)
+        yanlış alarm basmasın.
+        """
+        simdi = self._now()
+        onceki = self._son_state_t
+        self._son_state_t = simdi
+        if onceki is None:
+            return
+        self._state_araliklari.append(simdi - onceki)
+        if len(self._state_araliklari) < self._akis_pencere:
+            return
+
+        medyan = sorted(self._state_araliklari)[len(self._state_araliklari) // 2]
+        self._state_araliklari.clear()
+        sinir = self._bridge.config.heartbeat_timeout_s / 2.0
+        if medyan <= sinir:
+            if self._akis_uyarildi:
+                self._akis_uyarildi = False
+                self.get_logger().info(
+                    f"/mavros/state periyodu normale dondu ({medyan:.2f}s)"
+                )
+            return
+
+        if not self._akis_uyarildi:
+            self._akis_uyarildi = True
+            self.get_logger().error(
+                f"🔴 /mavros/state periyodu {medyan:.2f}s — heartbeat esiginin "
+                f"YARISINDAN buyuk ({sinir:.2f}s). Tek bir gecikmis mesaj "
+                "KILL'e yeter. FC akis hizi istegi UYGULANMAMIS olabilir "
+                "(SR0_* EEPROM baskin / 57600 baud hatti dolu). PAR-04: bu "
+                "durumda bir oturumun %86'si KILL'de gecti. Istek "
+                "tekrarlaniyor; duzelmezse FC'de SR0_EXTRA1/SR0_EXT_STAT "
+                "kalici yazilmali."
+            )
+        # Isteği TEKRARLA — tek seferlik istek yeterli olmadığı ölçüldü.
+        self._bridge.note_stream_rate_failed()      # bayrağı düşür → yeniden iste
 
     def _on_mission_state(self, msg: String) -> None:
         self._bridge.set_mission_state(msg.data)
@@ -257,7 +330,7 @@ class MavrosBridgeNode(Node):
         # idempotent).
         if msg.data == "KILL" and not self._killed:
             self.get_logger().error("FSM KILL gözlendi → FCU disarm (F-M.3)")
-            self._trigger_kill()
+            self._trigger_kill("fsm_kill:operator_veya_yki")
             return
         # PARKUR1'e girişte /mavros/state'i (~1 Hz) beklemeden hemen dene —
         # görev başlar başlamaz cmd_vel'in kabulü için mod hazır olsun.
@@ -286,7 +359,9 @@ class MavrosBridgeNode(Node):
                 f"RC KILL ANAHTARI AKTİF (kanal {idx + 1}, PWM={channel_pwm}) "
                 f"→ FCU disarm (F-S.1)"
             )
-            self._trigger_kill()
+            # ⚠ RC kaynaklı KILL TEK YÖNLÜ kalmalı — donanım her zaman kazanır.
+            # Sebep etiketinde de ayrı, çünkü kurtarma politikası farklı.
+            self._trigger_kill(f"rc_kill:kanal{idx + 1}_pwm{channel_pwm}")
             return
         self._on_rc_manual_check(msg)
 
@@ -441,7 +516,7 @@ class MavrosBridgeNode(Node):
             self.get_logger().error(
                 f"FAILSAFE — heartbeat kaybı ({dt:.1f}s) → KILL"
             )
-            self._trigger_kill()
+            self._trigger_kill(f"heartbeat_kaybi:{dt:.1f}s")
             return
 
         # 2) Beklenmedik disarm (arm True→False) = failsafe. Ama KOMUTLU disarm
@@ -449,7 +524,7 @@ class MavrosBridgeNode(Node):
         armed = self._bridge.is_armed()
         if self._bridge.is_unexpected_disarm(self._was_armed, armed):
             self.get_logger().error("FAILSAFE — beklenmedik disarm → KILL")
-            self._trigger_kill()
+            self._trigger_kill("beklenmedik_disarm")
             return
         # F-M.2: _was_armed = ÖNCEKİ tick'in değeri (kenar takibi). Eski
         # `or armed` latch'i disarm kenarını her tick yeniden "görüyordu";
@@ -601,7 +676,7 @@ class MavrosBridgeNode(Node):
         else:
             self.get_logger().warn(f"DISARM reddedildi (result={res.result})")
 
-    def _trigger_kill(self) -> None:
+    def _trigger_kill(self, sebep: str = "bilinmiyor") -> None:
         """KILL: FCU'yu disarm et + FSM üzerinden sıfır thrust yay. Latching.
 
         F14.1: Önceki sürüm yalnız FSM→sıfır-thrust yapıyordu; araç ARMED kalıyor
@@ -612,6 +687,10 @@ class MavrosBridgeNode(Node):
         otomatik disarm/hold), FC parametresi olarak ayrı doğrulanmalı.
         """
         self._killed = True
+        # KAR-02: sebebi ÖNCE yayınla — disarm çağrısı hat kopukken bloke
+        # olabilir, teşhis onun arkasında kalmasın.
+        self._pub_kill_reason.publish(String(data=sebep))
+        self.get_logger().error(f"KILL SEBEBI: {sebep}")
         # 1) FCU disarm (hat canlıysa kesin motor kesme). _killed=True olduğundan
         #    bu disarm _on_monitor'da failsafe döngüsüne girmez (erken dönüş).
         if self._cli_arm.service_is_ready():

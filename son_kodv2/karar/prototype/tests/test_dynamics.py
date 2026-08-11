@@ -220,3 +220,42 @@ def test_wave_yaml_roundtrip() -> None:
     # Tipler doğru
     assert isinstance(params.wave.enabled, bool)
     assert isinstance(params.wave.Fx_amp, (int, float))
+
+def test_pid_kazanclari_dynamics_yaml_ile_TUTARLI() -> None:
+    """🔴 PAR-08 drift kapısı — bu testin var olma sebebi somut bir arıza.
+
+    2026-08-05'te `max_thrust` 30,0 → 1,455 N düşürüldü (log 58 sistem
+    tanılaması). MPPI tarafı güncellendi (`sigma_u` 5,0 → 0,364), PID dosyası
+    ATLANDI ve üç ay boyunca doygunluğun 10 katı komut üreten bir yedek
+    kontrolcüyle yaşadık. Kimse fark etmedi çünkü varsayılan `control_mode`
+    "mppi" — yani PID yolu ancak MPPI başarısız olduğunda, yani EN KÖTÜ ANDA
+    devreye girecekti.
+
+    Bu test o ayrışmayı bir daha sessiz bırakmıyor: `max_thrust` değişirse
+    PID kazançları da değişmek zorunda.
+
+    Tasarım niyeti: cruise = doygunluğun yarısı, dönüş farkı diğer yarısı →
+    `cruise + max_diff` tam olarak max_thrust'a oturur (tek motor doygunluğu).
+    """
+    import yaml
+    from pathlib import Path
+    from prototype.planning.pid_controller import PidControllerConfig
+
+    yol = Path(__file__).resolve().parents[1] / "configs" / "dynamics.yaml"
+    max_thrust = float(yaml.safe_load(yol.read_text(encoding="utf-8"))
+                       ["catamaran"]["max_thrust"])
+    cfg = PidControllerConfig()
+
+    assert cfg.cruise_thrust_n == pytest.approx(max_thrust / 2.0, rel=1e-3), (
+        f"cruise_thrust_n={cfg.cruise_thrust_n} ile max_thrust={max_thrust} "
+        "ayristi (PAR-08)"
+    )
+    assert cfg.max_diff_thrust_n == pytest.approx(max_thrust / 2.0, rel=1e-3), (
+        f"max_diff_thrust_n={cfg.max_diff_thrust_n} ile max_thrust={max_thrust} "
+        "ayristi (PAR-08)"
+    )
+    # En kötü hâl doygunluğu AŞMAMALI: nav_angular ∈ [-1, 1] olduğu için
+    # t_right = cruise + max_diff (bkz. pid_controller.step).
+    assert cfg.cruise_thrust_n + cfg.max_diff_thrust_n <= max_thrust * 1.001, (
+        "PID en kotu halde tek motor doygunlugunu asiyor"
+    )

@@ -71,6 +71,15 @@ ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && exec bash __KARAR_
 # yazılır)" — Ctrl+C = SIGINT. systemd varsayılanı SIGTERM'dir; SIGINT'e
 # çevrilmezse `systemctl stop`/reboot mcap dosyasını YARIM/BOZUK bırakabilir.
 KillSignal=SIGINT
+# 🔴 PAR-10 (12.08): 14 bag'in 13'u SONLANDIRILMAMIS bulundu (footer/indeks
+# yok) — yani surec SIGKILL ile olmustu. Sebep KillSignal degil, SURE:
+# systemd'nin TimeoutStopSec varsayilani 90 s ve `--compression-mode file`
+# kapanista zstd sikistirmasi yapiyor; 13,6 GB'lik bir oturum 90 saniyeye
+# sigmaz, systemd araya girip SIGKILL basar ve dosya yarim kalir.
+#
+# Bedeli olculdu: indeks olmadan her okuma TAM DOSYA TARAMASI gerektiriyor —
+# kaptanin analizinde tek bir 13,6 GB'lik oturum ~20 dakika surdu.
+TimeoutStopSec=300
 Restart=on-failure
 RestartSec=10
 # StartLimit BİLEREK YOK (girdap-algi.service ile aynı gerekçe): geçici bir

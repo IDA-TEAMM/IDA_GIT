@@ -121,7 +121,7 @@ def test_fm3_fsm_kill_gozlenince_fcu_disarm_tetiklenir(ros_context) -> None:  # 
     try:
         calls = []
         orijinal = n._trigger_kill
-        n._trigger_kill = lambda: (calls.append(1), orijinal())[1]  # type: ignore[method-assign]
+        n._trigger_kill = lambda *a, **k: (calls.append(a[0] if a else ""), orijinal(*a, **k))[1]  # type: ignore[method-assign]
 
         n._on_state(_state(armed=True))
         n._on_monitor()
@@ -311,7 +311,7 @@ def test_fs1_rc_kill_kanali_esik_alti_disarm_tetikler(ros_context) -> None:  # n
     try:
         calls = []
         orijinal = n._trigger_kill
-        n._trigger_kill = lambda: (calls.append(1), orijinal())[1]  # type: ignore[method-assign]
+        n._trigger_kill = lambda *a, **k: (calls.append(a[0] if a else ""), orijinal(*a, **k))[1]  # type: ignore[method-assign]
 
         # 8 kanal, index 7 (RC kanal 8) = 900 → eşiğin (1500) altı → KILL.
         n._on_rc_in(_rc([1500, 1500, 1500, 1500, 1500, 1500, 1500, 900]))
@@ -346,7 +346,7 @@ def test_fs1_zaten_killed_iken_tekrar_tetiklemez(ros_context) -> None:  # noqa: 
     try:
         calls = []
         orijinal = n._trigger_kill
-        n._trigger_kill = lambda: (calls.append(1), orijinal())[1]  # type: ignore[method-assign]
+        n._trigger_kill = lambda *a, **k: (calls.append(a[0] if a else ""), orijinal(*a, **k))[1]  # type: ignore[method-assign]
 
         n._on_rc_in(_rc([1500] * 7 + [900]))
         assert len(calls) == 1
@@ -595,7 +595,7 @@ def test_fs12_kill_kanali_negatifse_hic_tetiklenmez(ros_context) -> None:  # noq
     )
     try:
         calls = []
-        n._trigger_kill = lambda: calls.append(1)  # type: ignore[method-assign]
+        n._trigger_kill = lambda *a, **k: calls.append(a[0] if a else "")  # type: ignore[method-assign]
         # Son kanal 900 — eski kod channels[-1]'i okuyup KILL basardı.
         n._on_rc_in(_rc([1500, 1500, 1500, 1500, 1500, 1500, 1500, 900]))
         assert calls == [], "kanal -1 (kapalı) iken RC KILL tetiklendi (F-S.12)"
@@ -630,8 +630,110 @@ def test_fs12_varsayilan_kanallar_bozulmadi(ros_context) -> None:  # noqa: ANN00
     n = girdap.MavrosBridgeNode()
     try:
         calls = []
-        n._trigger_kill = lambda: calls.append(1)  # type: ignore[method-assign]
+        n._trigger_kill = lambda *a, **k: calls.append(a[0] if a else "")  # type: ignore[method-assign]
         n._on_rc_in(_rc([1500, 1500, 1500, 1500, 1500, 1500, 1500, 900]))
         assert calls, "varsayılan kanal 8 ile RC KILL artık tetiklenmiyor"
+    finally:
+        n.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# PAR-04 / KAR-02 (2026-08-12) — akış hızı doğrulaması + KILL sebebi.
+# --------------------------------------------------------------------------- #
+
+
+def _akis_node(ros_context, pencere=3):  # noqa: ANN001, ANN201
+    from rclpy.parameter import Parameter
+    return girdap.MavrosBridgeNode(parameter_overrides=[
+        Parameter("akis_denetim_pencere", value=pencere),
+    ])
+
+
+def test_PAR04_yavas_akis_yakalaniyor(ros_context) -> None:  # noqa: ANN001
+    """🔴 Ölçülen `/mavros/state` periyodu 6 s, eşik 5 s → HER aralıkta aşıldı
+    ve oturumun %86'sı KILL'de geçti.
+
+    Akış hızı isteği bir kez gönderiliyor, uygulanıp uygulanmadığı HİÇ teyit
+    edilmiyordu. Operatör tarafındaki karşılığı: "kod değiştirip düğümleri
+    yeniden başlatınca sistem anında KILL verdi".
+    """
+    n = _akis_node(ros_context)
+    try:
+        hatalar = []
+        n.get_logger().error = lambda m, **kw: hatalar.append(m)  # type: ignore[method-assign]
+        t = [0.0]
+        n._now = lambda: t[0]                        # type: ignore[method-assign]
+        # timeout 5.0 → sınır 2.5 s; 6 s'lik periyot ölçülüyor
+        for _ in range(4):
+            n._akis_periyodunu_olc()
+            t[0] += 6.0
+        assert hatalar and "periyodu" in hatalar[-1], f"yakalanmadi: {hatalar}"
+    finally:
+        n.destroy_node()
+
+
+def test_PAR04_normal_akis_sessiz(ros_context) -> None:  # noqa: ANN001
+    """1 Hz (1 s periyot) eşiğin (2,5 s) altında — yanlış alarm basılmamalı."""
+    n = _akis_node(ros_context)
+    try:
+        hatalar = []
+        n.get_logger().error = lambda m, **kw: hatalar.append(m)  # type: ignore[method-assign]
+        t = [0.0]
+        n._now = lambda: t[0]                        # type: ignore[method-assign]
+        for _ in range(6):
+            n._akis_periyodunu_olc()
+            t[0] += 1.0
+        assert not hatalar, f"yanlis alarm: {hatalar}"
+    finally:
+        n.destroy_node()
+
+
+def test_PAR04_tek_sicrama_yanlis_alarm_uretmez(ros_context) -> None:  # noqa: ANN001
+    """🔑 Medyan kullanılmasının sebebi: DDS keşfi ya da düğüm başlangıcı tek
+    bir uzun aralık üretir. Ortalama alsaydık bu tek sıçrama alarmı tetikler,
+    operatör de kısa sürede uyarıyı yok saymayı öğrenirdi."""
+    n = _akis_node(ros_context, pencere=5)
+    try:
+        hatalar = []
+        n.get_logger().error = lambda m, **kw: hatalar.append(m)  # type: ignore[method-assign]
+        t = [0.0]
+        n._now = lambda: t[0]                        # type: ignore[method-assign]
+        araliklar = [1.0, 1.0, 20.0, 1.0, 1.0, 1.0]  # bir tanesi 20 s
+        n._akis_periyodunu_olc()
+        for a in araliklar:
+            t[0] += a
+            n._akis_periyodunu_olc()
+        assert not hatalar, f"tek sicrama alarm uretti: {hatalar}"
+    finally:
+        n.destroy_node()
+
+
+def test_KAR02_kill_sebebi_yayinlaniyor(ros_context) -> None:  # noqa: ANN001
+    """🔴 Kaptan: "en büyük teşhis boşluğu bu". Bir oturumun %82'si KILL'de
+    geçti; RC kanal 8 tüm oturum boyunca sabit 1000 (kill-switch HİÇ
+    tetiklenmedi), yani yazılım içinden geldi — ama hangisinden geldiği
+    bag'den ayırt edilemedi."""
+    n = girdap.MavrosBridgeNode()
+    try:
+        sebepler = []
+        n._pub_kill_reason.publish = lambda m: sebepler.append(m.data)
+        n._trigger_kill("heartbeat_kaybi:6.2s")
+        assert sebepler == ["heartbeat_kaybi:6.2s"], f"gelen: {sebepler}"
+    finally:
+        n.destroy_node()
+
+
+def test_KAR02_sebep_disarm_cagrisindan_ONCE_yayinlanir(ros_context) -> None:  # noqa: ANN001
+    """Hat kopukken disarm çağrısı bloke olabilir; teşhis onun arkasında
+    kalmamalı — heartbeat kaybı senaryosu tam olarak hattın kopuk olduğu
+    durumdur, yani en çok ihtiyaç duyulan anda kaybolurdu."""
+    n = girdap.MavrosBridgeNode()
+    try:
+        sira = []
+        n._pub_kill_reason.publish = lambda m: sira.append("sebep")
+        n._cli_arm.service_is_ready = lambda: True   # type: ignore[method-assign]
+        n._cli_arm.call_async = lambda r: sira.append("disarm")  # type: ignore[method-assign]
+        n._trigger_kill("test")
+        assert sira[0] == "sebep", f"sira yanlis: {sira}"
     finally:
         n.destroy_node()

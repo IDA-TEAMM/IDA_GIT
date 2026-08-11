@@ -54,8 +54,25 @@ class PidControllerConfig:
     inner_kd: float = 0.0
     max_yaw_rate: float = 1.0        # rad/s
     max_angular: float = 1.0         # normalize açısal komut sınırı
-    cruise_thrust_n: float = 15.0    # sabit ileri itki (N, max_thrust'ın yarısı)
-    max_diff_thrust_n: float = 15.0  # dönüş için ayrılabilecek maks fark (N)
+    # 🔴 PAR-08 (12.08 DÜZELTİLDİ): bu ikisi 15,0 N idi ve gerçek doygunluğun
+    # (`configs/dynamics.yaml` max_thrust = **1,455 N**) ~10 KATI komut
+    # üretiyordu; en kötü hâlde `cruise + max_diff` = 30 N, yani doygunluğun
+    # **20 katı**. Değerler 30 N'lik ESKİ tekneden kalmaydı (30/2 = 15).
+    #
+    # 2026-08-05'te log 58 sistem tanılamasıyla max_thrust 30,0 → 1,455 N
+    # düşürüldü ve MPPI tarafı buna göre güncellendi (`sigma_u` 5,0 → 0,364),
+    # ama bu dosya atlandı. Bugün canlı bir arıza DEĞİL çünkü varsayılan
+    # `control_mode="mppi"`; ama F-S.10 bu yolu açıkça "MPPI saha
+    # kalibrasyonu tamamlanana kadar yedek" diye tanımlıyor — yani ihtiyaç
+    # duyulduğu an, en kötü anda, çalışmayacaktı.
+    #
+    # Tasarım niyeti KORUNDU: cruise = doygunluğun yarısı, dönüş farkı da
+    # diğer yarısı → `cruise + max_diff` tam olarak max_thrust'a oturur.
+    # `test_pid_kazanclari_dynamics_yaml_ile_TUTARLI` bu bağı donduruyor;
+    # max_thrust bir daha değişirse CI kırmızıya döner (bu sefer sessizce
+    # ayrışmasın diye).
+    cruise_thrust_n: float = 0.7275   # N = max_thrust / 2
+    max_diff_thrust_n: float = 0.7275 # N = max_thrust / 2
     target_smoothing: float = 0.15   # ida_topics smoothed_target_yaw katsayısı
     # F-S.10: LiDAR engel kaçınma (potansiyel alan) — girdap'ın CircleObstacle
     # verisiyle, kamera bbox sezgisinin (ida_topics) yerini alır. Kapalı-döngü
