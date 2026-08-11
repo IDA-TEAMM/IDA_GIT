@@ -808,22 +808,38 @@ class PlanningNode(Node):
         )
 
     def _obstacles_stale(self) -> bool:
-        """F-P.2: son obstacle_map `obstacle_timeout_s`'ten eski mi?
+        """F-P.2: son obstacle_map `obstacle_timeout_s`'ten eski mi? 0 → kapalı.
 
-        obstacle_map HİÇ gelmediyse False — perception henüz açılmamış
-        olabilir (boot), yanlış alarm basmanın anlamı yok. 0 → bekçi kapalı.
+        🔴 KAR-03 (12.08) — odomdaki ile AYNI kör nokta buradaydı ve burada
+        sonucu daha ağır: engel haritası hiç gelmediyse MPPI'nin engel torbası
+        BOŞTUR, yani "önüm tamamen açık" demektir. Eski kod bunu bekçiye
+        göstermiyordu → algı düğümü hiç açılmamışken araç, engel görme
+        yeteneği olmadığından habersiz, tam güvenle ilerlerdi. Algı çöktükten
+        SONRAKİ 2 saniye korunuyordu ama HİÇ açılmamış olması korunmuyordu.
         """
-        if self._obstacle_timeout <= 0.0 or self._last_obstacle_t is None:
+        if self._obstacle_timeout <= 0.0:
             return False
+        if self._last_obstacle_t is None:
+            return True
         return (self._now() - self._last_obstacle_t) > self._obstacle_timeout
 
     def _warn_stale_obstacles(self) -> None:
-        """Bayatlık uyarısını saniyede bir bas (10 Hz döngüde spam olmasın)."""
+        """Bayatlık uyarısı — "hiç gelmedi" ve "eskidi" ayrı (bkz. `_warn_stale_odom`)."""
         now = self._now()
+        if self._last_obstacle_t is None:
+            if now - self._obstacle_stale_warn_t < 5.0:
+                return
+            self._obstacle_stale_warn_t = now
+            self.get_logger().error(
+                "engel haritası HİÇ gelmedi → MPPI DURDURULDU, thrust sıfır. "
+                "Algı düğümü ayakta mı, LiDAR veri veriyor mu? "
+                "(F-P.2/KAR-03: engel torbası boşken 'önüm açık' sanılmaz)"
+            )
+            return
         if now - self._obstacle_stale_warn_t < 1.0:
             return
         self._obstacle_stale_warn_t = now
-        age = now - (self._last_obstacle_t or now)
+        age = now - self._last_obstacle_t
         self.get_logger().error(
             f"engel haritası {age:.1f}s'dir gelmiyor → MPPI DURDURULDU, "
             "thrust sıfır (F-P.2: bayat engel bilgisiyle kör sürme yok)"
@@ -1081,22 +1097,58 @@ class PlanningNode(Node):
     # ----- kontrol döngüsü -----
 
     def _odom_stale(self) -> bool:
-        """F-P.1: son odom `odom_timeout_s`'ten eski mi?
+        """F-P.1: son odom `odom_timeout_s`'ten eski mi? 0 → bekçi kapalı.
 
-        odom HİÇ gelmediyse False — MPPI zaten kontrol üretmez (durum yok),
-        boot'ta yanlış alarm basmanın anlamı yok. 0 → bekçi kapalı.
+        🔴 KAR-03 (12.08) — "HİÇ GELMEDİ" ARTIK BAYAT SAYILIR.
+        Eskiden `_last_odom_t is None` → `False` dönüyordu, gerekçesi
+        *"MPPI zaten kontrol üretmez (durum yok)"* idi. **Bu gerekçe yanlıştı:**
+        `PlanningPipeline.__init__` durumu `np.zeros(6)` ile başlatır, yani
+        "durum yok" diye bir hal YOKTUR — poz hiç gelmemişken de tam geçerli
+        görünen bir (0,0,0) pozu vardır. FSM aktif duruma geçtiği anda MPPI o
+        UYDURMA ORİJİNDEN gerçek thrust üretir, üstelik F-P.1 bekçisi tam da bu
+        sırada susar. KAR-01'de `ARM ↔ PARKUR2` salınımı odometri (0,0,0)
+        iken gerçekleşti — yani bu yol kuramsal değil, o oturumda yaşandı.
+        Bekçinin amacı "bayat pozla kör sürme yok" idi; poz hiç gelmemesi
+        bayat pozdan DAHA KÖTÜ bir durumdur, bekçinin kapsadığı ilk hal olmalı.
+
+        (KAR-05'te füzyondaki, F8.2'deki aynı `is not None` kör noktası
+        düzeltilmişti — desen tekrar ediyor: *bir bekçi yazarken "hiç olmadı"yı
+        "eskidi"den AYRI ele al; sessiz arızaların çoğu birincisidir.*)
         """
-        if self._odom_timeout <= 0.0 or self._last_odom_t is None:
+        if self._odom_timeout <= 0.0:
             return False
+        if self._last_odom_t is None:
+            return True
         return (self._now() - self._last_odom_t) > self._odom_timeout
 
     def _warn_stale_odom(self) -> None:
-        """Bayatlık uyarısını saniyede bir bas (10 Hz döngüde spam olmasın)."""
+        """Bayatlık uyarısını bas. İki hal AYRI: "hiç gelmedi" ve "eskidi".
+
+        KAR-03: eski kod `age = now - (self._last_odom_t or now)` yazıyordu;
+        poz hiç gelmemişken bu **0.0** verir ve log'a *"poz 0.0s'dir gelmiyor"*
+        gibi kendi kendini yalanlayan bir satır düşerdi. "Hiç gelmedi" halinde
+        yaş diye bir büyüklük yoktur — operatöre söylenmesi gereken şey yaş
+        değil, NE YAPACAĞI.
+
+        Cadans da ayrı: "hiç gelmedi" boot'ta dakikalarca sürebilir (MAVROS
+        bağlanana kadar), saniyede bir ERROR log'u boğar → 5 s. "Eskidi" ise
+        uçuş ortasında ani bir kayıptır, saniyede bir uyarılmalı.
+        """
         now = self._now()
+        if self._last_odom_t is None:
+            if now - self._stale_warn_t < 5.0:
+                return
+            self._stale_warn_t = now
+            self.get_logger().error(
+                "poz HİÇ gelmedi → MPPI DURDURULDU, thrust sıfır. "
+                "/girdap/fusion/odom akmıyor: MAVROS bağlı mı, füzyon düğümü "
+                "ayakta mı? (F-P.1/KAR-03: uydurma orijinden sürme yok)"
+            )
+            return
         if now - self._stale_warn_t < 1.0:
             return
         self._stale_warn_t = now
-        age = now - (self._last_odom_t or now)
+        age = now - self._last_odom_t
         self.get_logger().error(
             f"poz {age:.1f}s'dir gelmiyor → MPPI DURDURULDU, thrust sıfır "
             "(F-P.1: bayat pozla kör sürme yok)"

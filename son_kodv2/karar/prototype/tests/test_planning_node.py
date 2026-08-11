@@ -68,15 +68,28 @@ def test_fp1_bayat_odom_bayati_isaretlenir(ros_context) -> None:  # noqa: ANN001
         node.destroy_node()
 
 
-def test_fp1_odom_hic_gelmediyse_bayat_degil(ros_context) -> None:  # noqa: ANN001
-    """Görev öncesi odom hiç gelmediyse 'bayat' alarmı basılmaz (boot gürültüsü).
+def test_KAR03_odom_HIC_gelmediyse_BAYAT_sayilir(ros_context) -> None:  # noqa: ANN001
+    """🔴 BEKLENTİ 12.08'de TERSİNE ÇEVRİLDİ (KAR-03) — bilerek.
 
-    Durum yok → MPPI zaten kontrol üretmez (compute_control None döner);
-    burada bayat işaretlemek yanlış alarmdır.
+    Bu test eskiden `is False` bekliyordu; gerekçesi *"durum yok → MPPI zaten
+    kontrol üretmez"* idi. Gerekçe YANLIŞTI: `PlanningPipeline.__init__`
+    durumu `np.zeros(6)` ile kurar, yani "durum yok" diye bir hal yoktur —
+    poz hiç gelmemişken bile tam geçerli görünen bir (0,0,0) pozu vardır.
+    FSM aktif duruma geçtiği an MPPI o uydurma orijinden GERÇEK thrust üretir
+    ve tam o anda bekçi susardı.
+
+    Kaptanın bag analizinde bu yol kuramsal değil: KAR-01'de `ARM ↔ PARKUR2`
+    salınımı odometri (0,0,0) iken yaşandı.
+
+    Yanlış alarm endişesi geçerliydi ama çözümü bekçiyi kapatmak DEĞİL,
+    uyarıyı ayırmaktı (`_warn_stale_odom` "hiç gelmedi" kolunu 5 s'de bir ve
+    farklı metinle basar).
     """
     node = pn.PlanningNode()
     try:
-        assert node._odom_stale() is False
+        assert node._odom_stale() is True, (
+            "poz hic gelmemisken bekci susarsa MPPI uydurma orijinden surer"
+        )
     finally:
         node.destroy_node()
 
@@ -144,12 +157,19 @@ def test_fp2_bayat_engel_haritasi_isaretlenir(ros_context) -> None:  # noqa: ANN
         node.destroy_node()
 
 
-def test_fp2_engel_hic_gelmediyse_bayat_degil(ros_context) -> None:  # noqa: ANN001
-    """Perception henüz hiç veri göndermediyse 'bayat' alarmı basılmaz
-    (boot gürültüsü — F-P.1'deki aynı prensip)."""
+def test_KAR03_engel_HIC_gelmediyse_BAYAT_sayilir(ros_context) -> None:  # noqa: ANN001
+    """🔴 BEKLENTİ 12.08'de TERSİNE ÇEVRİLDİ (KAR-03) — odomdakiyle aynı gerekçe.
+
+    Burada sonuç daha ağır: engel haritası hiç gelmediyse MPPI'nin engel
+    torbası BOŞTUR, yani maliyet fonksiyonu için "önüm tamamen açık" demektir.
+    Algı çöktükten SONRAKİ 2 saniye korunuyordu ama algının HİÇ açılmamış
+    olması korunmuyordu — yani en tehlikeli hâl bekçinin dışındaydı.
+    """
     node = pn.PlanningNode()
     try:
-        assert node._obstacles_stale() is False
+        assert node._obstacles_stale() is True, (
+            "engel haritasi hic gelmemisken 'onum acik' varsayilamaz"
+        )
     finally:
         node.destroy_node()
 
@@ -869,3 +889,42 @@ def test_B3_sayac_FSMe_BAGLANMADI_kasitli(ros_context) -> None:  # noqa: ANN001
         "fsm_node geçiş sayacına abone olmuş — Parkur-2 ilk kapıda kesilir "
         "(önce §0.6d'deki A/B kararı verilmeli)"
     )
+
+
+# --------------------------------------------------------------------------- #
+# KAR-03 (2026-08-12) — "sahte yeşil": sistem BOOT'ta kilitliyken 25 dakika
+# boyunca 10 Hz yayın yaptı, operatör `ros2 topic hz` ile sağlıklı gördü.
+# Aşağıdaki test, tehlikeli hâli DAVRANIŞ seviyesinde dondurur: görev aktif
+# olsa bile poz gelmemişken thrust sıfır kalmalı.
+# --------------------------------------------------------------------------- #
+
+
+def test_KAR03_gorev_AKTIFken_poz_yoksa_thrust_SIFIR(ros_context) -> None:  # noqa: ANN001
+    """🔴 En kritik KAR-03 testi — bekçilerin birim testi değil, SONUCU.
+
+    Senaryo: FSM aktif parkura geçti (KAR-01'de bu, odometri (0,0,0) iken
+    saniyede 10 kez oldu) ama `/girdap/fusion/odom` hiç akmadı. Boru hattının
+    iç durumu `np.zeros(6)` olduğu için MPPI'nin *kontrol üretmemesi* için
+    hiçbir sebep yok — üretirse tekne, nerede olduğunu bilmediği hâlde
+    "orijindeyim" varsayımıyla waypoint'e doğru gaz verir.
+
+    Bu test bekçilere DEĞİL, yayınlanan thrust'a bakar: iç mantık nasıl
+    yeniden yazılırsa yazılsın, sonuç sıfır olmak zorunda.
+    """
+    node = pn.PlanningNode()
+    try:
+        node._pipe.set_mission_state("PARKUR1")       # görev aktif
+        assert node._last_odom_t is None               # ama poz HİÇ gelmedi
+
+        yayinlanan = []
+        node._pub_thrust.publish = lambda m: yayinlanan.append(list(m.data))
+
+        node._on_control_step()
+
+        assert yayinlanan, "thrust hic yayinlanmadi — test kurulumu bozuk"
+        assert yayinlanan[-1] == [0.0, 0.0], (
+            f"poz yokken thrust {yayinlanan[-1]} — uydurma orijinden sürüş "
+            "(KAR-03). Bekçi ya kapalı ya da 'hic gelmedi' halini atliyor."
+        )
+    finally:
+        node.destroy_node()

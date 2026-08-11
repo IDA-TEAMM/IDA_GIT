@@ -48,6 +48,33 @@ def _load_module():
     return mod
 
 
+
+def _anahtar_metni(k) -> str:  # noqa: ANN001
+    """Launch parametre anahtarını düz metne çevir.
+
+    🔴 12.08 — bu iki testin AYLARDIR sessizce KIRIK olmasının sebebi.
+    `Node(parameters=[{...}])` verildiğinde launch, sözlüğün DEĞERLERİNİ değil
+    **ANAHTARLARINI da** normalleştirir: `"mount_z"` → `(TextSubstitution(
+    text="mount_z"),)`. Testler `"mount_z" in block` / `str(k)` yazdığı için
+    hiçbir anahtar eşleşmiyordu; `str(tuple)` nesne repr'i verir.
+
+    Sonuç: iki nöbetçi de **hiçbir zaman** iddia ettiği şeyi doğrulamadı —
+    parametre gerçekten geçmemiş olsa da test aynı hatayı verirdi. Kırık
+    nöbetçi, olmayan nöbetçiden kötüdür: yeşil sanılır (KAR-03'teki "sahte
+    yeşil"in test tarafındaki karşılığı).
+    """
+    if isinstance(k, str):
+        return k
+    if isinstance(k, (tuple, list)):
+        return "".join(getattr(x, "text", str(x)) for x in k)
+    return getattr(k, "text", str(k))
+
+
+def _param_anahtarlari(blok) -> set:  # noqa: ANN001, ANN201
+    """Bir parametre sözlüğünün anahtarlarını düz metin kümesi olarak ver."""
+    return {_anahtar_metni(k) for k in blok}
+
+
 def test_config_okunamazsa_uyari_basar_ve_varsayilana_duser(
     monkeypatch, capsys
 ) -> None:
@@ -310,7 +337,7 @@ def test_isam2_launch_argumanlari_fusion_nodea_gecer() -> None:
     param_keys: set[str] = set()
     for block in fusion_nodes[0]._Node__parameters or []:
         if isinstance(block, dict):
-            param_keys |= {str(k) for k in block}
+            param_keys |= _param_anahtarlari(block)
     for key in mod._ISAM2_DEFAULTS:
         assert key in param_keys, f"{key} fusion_node parametrelerine geçmiyor"
 
@@ -384,7 +411,11 @@ def test_B0_montaj_parametreleri_lidar_nodeun_EN_SONUNDA() -> None:
     ]
     assert len(lidar) == 1
     params = getattr(lidar[0], "_Node__parameters")
-    assert isinstance(params[-1], dict) and "mount_z" in params[-1]
+    assert isinstance(params[-1], dict), "son parametre blogu sozluk degil"
+    assert "mount_z" in _param_anahtarlari(params[-1]), (
+        f"mount_z son blokta yok — bulunan anahtarlar: "
+        f"{sorted(_param_anahtarlari(params[-1]))}"
+    )
 
 
 # --------------------------------------------------------------------------
