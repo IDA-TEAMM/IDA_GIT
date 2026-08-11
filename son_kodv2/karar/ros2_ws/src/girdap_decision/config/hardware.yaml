@@ -364,6 +364,18 @@ tf:
   #   kadar tersini yazıyordu, düzeltildi.
   # yaw = 0: mekanik (kaide düzgün vidalı). ⏳ Suda ampirik doğrulanacak —
   #   merkez hattına 10 m ileriye duba, görüntünün TAM ortasında olmalı.
-  oak_frame:   {x: 0.185, y: 0.0, z: 0.28, yaw: 0.0, pitch: 0.0, roll: 0.0}
+  # 🔴 yaw ÖLÇÜLDÜ 2026-08-11: +0.0415 rad (+2.38°, İSKELEYE dönük).
+  #    Yöntem: duba 5,20 m ileride, merkez hattının 15 cm SOLUNDA (şeritle).
+  #      gerçek yön   = atan2(0.15, 5.20)            = +1.65°
+  #      kamera dedi  = (0.5 − 653.5/1280) × 69°     = −0.73°
+  #      fark = kamera yaw                            = +2.38°
+  #    Aynalama kontrolü yapıldı (kişi gövdenin sağında → görüntünün sağında).
+  #    Belirsizlik ~±0.6° (15 cm ölçümü ±3 cm + ana nokta ~±0.5°) → sinyal gerçek.
+  #    ⚠️ DEĞER HENÜZ TÜKETİLMİYOR: `bearing_from_camera` yalnız
+  #    (0.5 − bbox_cx) × hfov hesaplıyor, yaw terimi YOK. Buraya yazmak tek
+  #    başına DAVRANIŞI DEĞİŞTİRMEZ — fusion.py'ye ofset eklenmeli.
+  #    Etkisi: tolerans 8.6°'nin %28'i; kapı ayrımı 10 m'de 7.7° (hata %31),
+  #    15 m'de 5.2° (hata %46) → uzakta yanlış duba eşleşmesi riski.
+  oak_frame:   {x: 0.185, y: 0.0, z: 0.28, yaw: 0.0415, pitch: 0.0, roll: 0.0}
   # Pixhawk 6C (IMU): ortadan 5.5 cm kıçta, 13.75 cm iskelede, tabandan 15.5 cm.
   imu_link:    {x: -0.055, y: 0.1375, z: 0.155, yaw: 0.0, pitch: 0.0, roll: 0.0}

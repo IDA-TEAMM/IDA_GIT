@@ -565,3 +565,57 @@ Mission Planner → Config → Full Parameter List → Save to file
 | §4 akım | Kontaktör seçimi |
 | §5 | `fc_parametre_onerileri.md` "Mevcut" sütunları |
 | §6 | `BATT_*` failsafe parametreleri |
+
+---
+
+## §3b — KAMERA YAW ÖLÇÜLDÜ (2026-08-11, kapalı alan)
+
+**Sonuç: +2,38° (+0,0415 rad), İSKELEYE (sola) dönük.** Sıfır değil.
+
+### Yöntem — "mükemmel yerleştir" yerine "nerede olduğunu ölç"
+
+Dubayı merkez hattına tam oturtmaya çalışmak yerine, **nereye düştüğü ölçüldü**
+ve gerçek yön hesaba katıldı. Yerleştirme hatası böylece sonuçtan düşer.
+
+| | |
+|---|---|
+| Duba mesafesi | **5,20 m** (şeritle) |
+| Duba yanal konumu | merkez hattının **15 cm SOLUNDA** |
+| Gerçek yön | `atan2(0,15 ; 5,20)` = **+1,65°** |
+| Görüntüdeki merkezi | x = **653,5** px (1280 geniş, merkez 640) |
+| Kameranın bildirdiği | `(0,5 − 653,5/1280) × 69°` = **−0,73°** |
+| **Kamera yaw** | **+2,38°** |
+
+Duba fiziksel olarak merkez hattının **solunda** ama görüntüde merkezin
+**sağında** çıkıyor → optik eksen dubadan da daha sola bakıyor.
+
+### Doğrulamalar
+
+- **Aynalama kontrolü:** kişi gövdenin sağ tarafına geçti → görüntünün sağında
+  çıktı ⇒ aynalama YOK, işaret doğru. (DepthAI RGB çıkışı zaten varsayılan
+  olarak aynalamaz; iki kanıt örtüşüyor.)
+- **Maske teyidi:** turuncu gövde bağlantılı bileşenle ayıklandı, satırlar arası
+  orta eksen saçılması **0,6 px** — ölçüm kararlı. Bayrak/koni hariç tutuldu.
+- ⚠️ İlk denemede kendi çizdiğim kırmızı merkez çizgisi turuncu maskesine
+  takılıp sonucu bozdu; ölçüm **ham** karelerden alındı. Kareler:
+  `~/Masaüstü/oak_kareler/`.
+
+### Belirsizlik
+
+15 cm ölçümü ±3 cm → ±0,33° · merceğin ana noktasının görüntü merkeziyle tam
+çakışmaması ~±0,5°. Toplam ~**±0,6°**. Ölçülen 2,38° bunun ~4 katı → **gerçek**.
+
+### 🔴 KALAN İŞ — değer henüz TÜKETİLMİYOR
+
+`prototype/perception/fusion.py`:
+```python
+return (0.5 - det.bbox_cx) * hfov      # yaw terimi YOK
+```
+`hardware.yaml`'a yazılan yaw **hiçbir şeyi değiştirmez**; `oak_frame` yalnız
+static TF'e gidiyor, füzyon onu okumuyor. Düzeltme için `bearing_from_camera`'ya
+config'ten beslenen bir ofset eklenmeli:
+`return (0.5 - det.bbox_cx) * hfov + yaw_offset`
+
+**Neden önemli:** eşleşme toleransı 8,6°; bu hata onun %28'i. Kapı dubalarının
+açısal ayrımı 10 m'de 7,7° (hata %31), 15 m'de 5,2° (**hata %46**) — yani tam
+tespitin zorlaştığı uzak mesafede yanlış dubaya renk yapışabilir.
