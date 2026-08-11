@@ -47,6 +47,14 @@ zaten kuruluysa zararı yok; algı aşamasına geçerken lazım olacak.
 bash scripts/jetson_kur.sh --veriseti-servis
 ```
 
+⚠️ **`jetson_kontrol.sh` model maddesi 11.08'de düzeltildi:** eski hâli artık var
+olmayan `MODEL_NNARCHIVE` değişkenini arıyordu (depthai v3 kalıntısı) ve model
+**doğru yerdeyken bile KIRMIZI basıyordu**. Şimdi `MODEL_BLOB`'u okuyor, yanında
+`config.json` var mı bakıyor ve yol bu kullanıcının ev dizininde değilse uyarıyor.
+🔴 `MODEL_BLOB` **kodda sabit** (`/home/girdap/models/...`): yeni kartın kullanıcı
+adı `girdap` değilse node modeli bulamaz ve **hiç açılmaz** — kontrol betiği bunu
+artık söylüyor. (Veri toplama için model gerekmez; bu, algı aşamasına geçerken lazım.)
+
 Bu bayrak (11.08'de eklendi) üç şeyi birden yapar:
 1. `girdap-veriseti.service`'i kurar ve **enable** eder → boot'ta kendi başlar,
 2. `girdap-algi.service`'i **disable --now** eder → tek OAK'ı iki süreç açamaz,

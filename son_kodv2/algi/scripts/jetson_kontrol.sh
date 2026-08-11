@@ -126,13 +126,34 @@ else
     sari "rfkill yok — WiFi durumunu elle doğrula (teknik kontrol maddesi)"
 fi
 
-# --- 9) Model dosyası (yol koddaki MODEL_NNARCHIVE'dan okunur) ---
-MODEL=$(grep -oP 'MODEL_NNARCHIVE\s*=\s*"\K[^"]+' \
-    "$(dirname "$0")/../girdap_ida_algi/girdap_ida_algi/duba_gecis_navigator.py" 2>/dev/null || true)
-if [ -n "$MODEL" ] && [ -f "$MODEL" ]; then
-    yesil "NN Archive yerinde: $MODEL"
+# --- 9) Model dosyası (yol koddaki MODEL_BLOB'dan okunur) ---
+# 🔴 2026-08-11 DÜZELTMESİ: burası `MODEL_NNARCHIVE` arıyordu — o değişken
+#    depthai v3 döneminden kalma ve canlı kodda ARTIK YOK (yalnız eski
+#    build/lib/ kopyasında duruyor). Sonuç: model DOĞRU yerdeyken bile bu
+#    madde her seferinde KIRMIZI basıyordu. Yanlış alarm, kontrol betiğinin
+#    kırmızısını görmezden gelmeyi öğretir — asıl tehlike bu.
+KOD="$(dirname "$0")/../girdap_ida_algi/girdap_ida_algi/duba_gecis_navigator.py"
+MODEL=$(grep -oP 'MODEL_BLOB\s*=\s*"\K[^"]+' "$KOD" 2>/dev/null || true)
+if [ -z "$MODEL" ]; then
+    kirmizi "MODEL_BLOB kodda okunamadı — $KOD değişti mi?"
+elif [ ! -f "$MODEL" ]; then
+    kirmizi "Blob YOK: '$MODEL' — kopyala: cp models/yolo11n_duba_rvc2.blob models/config.json $(dirname "$MODEL")/"
 else
-    kirmizi "NN Archive YOK: '${MODEL:-okunamadı}' — HubAI'den indirilen tar.xz'yi bu yola koy veya koddaki MODEL_NNARCHIVE'ı düzelt"
+    yesil "Blob yerinde: $MODEL"
+    # config.json blob'un YANINDA olmak ZORUNDA: sınıflar oradan İSİMLE
+    # çözülüyor. Yoksa yedek sabitlere düşer ve turuncu↔sarı SESSİZCE takas
+    # olabilir (eğitilmiş modelin sırası yedek sabitlerin TERSİ) ⇒ P2 çöker.
+    if [ -f "$(dirname "$MODEL")/config.json" ]; then
+        yesil "config.json blob'un yanında"
+    else
+        kirmizi "config.json YOK ($(dirname "$MODEL")/) — sınıflar yedek sabitlere düşer, turuncu↔sarı takas riski (⇒ P2)"
+    fi
+    # 🔴 Yol KODDA SABİT (/home/girdap/...). Yeni kart farklı kullanıcı adıyla
+    #    kurulursa node modeli bulamaz ve HİÇ açılmaz.
+    case "$MODEL" in
+        "$HOME"/*) : ;;
+        *) sari "Model yolu bu kullanıcının ev dizininde değil (MODEL_BLOB=$MODEL, HOME=$HOME) — kod bu yolu SABİT tutuyor, kullanıcı adı 'girdap' değilse düzelt" ;;
+    esac
 fi
 
 echo "=================================================="
