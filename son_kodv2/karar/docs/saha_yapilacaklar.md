@@ -55,8 +55,30 @@ Yan bulgu: bu mesajın çıkması `ARMING_CHECK`'in artık **0 olmadığının k
 — 0 olsaydı pre-arm hiç koşmaz, mesaj da çıkmazdı. Yani bizim param yazımımız
 tuttu, kaptanın §0.41③ endişesi kapandı.
 
-**Yapılacak:** SD kartı çıkar → kart var mı, doluysa temizle, bozuksa FAT32
-formatla ya da yenisiyle değiştir → FC'yi yeniden başlat.
+#### Sebep daraltıldı — kart bozuk olmayabilir, DOLMUŞ olabilir
+
+FC'den gelen **tek** pre-arm hatası bu (15 dakikada 37 kez); pusula, AHRS,
+GPS hatası **yok** — yani kart düzelirse araç arm olur.
+
+| Parametre | 07.08 | şimdi | etkisi |
+|---|---|---|---|
+| `LOG_DISARMED` | 0 | **1** | araç ARM EDİLMEDEN de log yazıyor |
+| `LOG_FILE_DSRMROT` | 0 | **1** | her disarm'da yeni dosya |
+| `LOG_BITMASK` | 65535 | 65535 | **her şey** loglanıyor |
+| `LOG_BACKEND_TYPE` | 1 | 1 | hedef = SD kart (ayar DOĞRU) |
+| `LOG_FILE_MB_FREE` | 500 | 500 | boş alan 500 MB altına düşerse **loglama reddedilir** |
+
+Muhtemel zincir: araç 14 oturumdur arm edilemiyor ama `LOG_DISARMED=1`
+yüzünden her açılışta yine de log yazılıyor → kart doluyor → 500 MB eşiği
+aşılıyor → `Logging failed`. Yani donanım arızası değil, **kendi ayarımızın
+yan etkisi** olabilir. `LOG_DISARMED=1` muhtemelen bilinçliydi (araç hiç arm
+olmadığı için elde hiç log kalmıyordu) — mantıklıydı, bedeli görülmemişti.
+
+**Yapılacak (sırayla, ilki çözerse diğerine gerek yok):**
+1. Mission Planner → DataFlash Logs → **kart doluluğuna bak, eski logları sil.**
+2. Çözmezse kartı çıkar: var mı, FAT32 mi, bozuk mu → formatla / değiştir.
+3. FC'yi yeniden başlat.
+4. Yarışma öncesi `LOG_DISARMED` **0**'a dönsün.
 
 **Kapatma ölçütü:** `PreArm: Logging failed` mesajı KESİLDİ (MAVROS log'unda
 ya da Mission Planner Messages'ta bir daha görünmüyor).
