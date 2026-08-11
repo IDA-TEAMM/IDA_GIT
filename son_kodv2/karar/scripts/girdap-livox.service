@@ -49,8 +49,21 @@ Type=simple
 User=__USER__
 Environment=ROS_DOMAIN_ID=42
 WorkingDirectory=/home/__USER__
+# 🔴 11.08.2026 — AÇILIŞ YARIŞI (canlı ölçüldü, sahte-yeşil).
+# Açılışta sürücü "bind failed / Failed to init livox lidar sdk" verip öldü ve
+# /livox/lidar 1,5 saat HİÇ akmadı. Buna rağmen `systemctl is-active` = active,
+# NRestarts = 0: ölen ROS düğümü launch sürecini düşürmediği için aşağıdaki
+# Restart=always hiç tetiklenmez. Yani belirti yok — LiDAR sıfır, her şey yeşil.
+# Kök neden: `network-online.target` arayüze ADRESİN atandığını garanti etmiyor;
+# sürücü 192.168.117.60'a adres yokken bind etmeye kalkışıyor. (Yukarıdaki
+# "önkoşul" notu IP'nin KALICI olmasını söylüyordu; kalıcı olması yetmiyor,
+# o an ATANMIŞ olması gerekiyor.)
+# Çözüm: LiDAR ping'e cevap verene kadar bekle — cevap geldiği an hem adres
+# hazırdır hem LiDAR ayaktadır. 60 sn'de cevap yoksa servis düzgünce başarısız
+# olur (sessizce yanlış çalışmaktansa gürültülü ölmek yeğdir).
+ExecStartPre=/bin/bash -c 'for i in $(seq 1 60); do ping -c1 -W1 192.168.117.100 >/dev/null 2>&1 && exit 0; sleep 1; done; echo "LiDAR 192.168.117.100 60 sn icinde cevap vermedi"; exit 1'
 ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source __LWS__/install/setup.bash && exec ros2 launch livox_ros_driver2 msg_MID360_launch.py'
-Restart=on-failure
+Restart=always
 RestartSec=10
 
 [Install]
