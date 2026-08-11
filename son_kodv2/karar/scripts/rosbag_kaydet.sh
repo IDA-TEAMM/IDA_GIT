@@ -45,6 +45,14 @@ VARSAYILAN=(
 # --tam: + algı/karar arayüz topic'leri (bu oturumda doğrulanan zincir).
 # /mavros/state artık VARSAYILAN'da (11.08) — burada tekrarlanmıyor, aksi
 # halde ros2 bag record'a aynı topic iki kez verilir.
+# 11.08.2026 (öğleden sonra) — GUIDED görev denemesi için EKLENENLER:
+# kayıt "tekne gitmeye çalıştı mı" sorusuna cevap veremiyordu. Komut zinciri
+# FSM durumu → hedef → thrust şeklinde ilerliyor; ortadaki iki halka
+# (current_target, control/thrust) hiç kaydedilmiyordu, yani tekne kıpırdamazsa
+# zincirin NEREDE koptuğu sonradan anlaşılamıyordu. MP'den yüklenen ham görev
+# (/mavros/mission/waypoints) ve karar katmanının onu nasıl okuduğu
+# (/girdap/mission/waypoints) de kayda girdi — ikisi arasındaki fark
+# mission_manager'ın görevi doğru sindirip sindirmediğini gösterir.
 EK_TAM=(
     /perception/buoys
     /perception/buoys_3d
@@ -53,7 +61,17 @@ EK_TAM=(
     /perception/gate_passed
     /perception/gate_count
     /girdap/planning/gate
+    /girdap/planning/gate_count
+    /girdap/planning/edge_buoys
     /girdap/mission/state
+    /girdap/mission/current_target
+    /girdap/mission/waypoints
+    /girdap/mission/waypoint_reached
+    /girdap/mission/complete
+    /girdap/control/thrust
+    /girdap/parkur/state
+    /mavros/mission/waypoints
+    /mavros/mission/reached
 )
 
 if [ "${1:-}" = "--tam" ]; then
