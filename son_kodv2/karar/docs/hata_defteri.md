@@ -641,3 +641,89 @@ izlenmeli** — `N` sabitlenmeli, `M` artmalı.
 **Kök neden hâlâ açık:** odometri sıçraması (KAR-05/06). Unutma semptomu
 sınırlıyor, mükerrer kayıt açılmasını engellemiyor. Kalıcı çözüm füzyon
 tarafında.
+
+---
+
+## 2026-08-12 — KAR-11'in kökü ÖLÇÜLDÜ: hafıza değil, ODOMETRİ. Kendi düzeltmemi de düzelttim.
+
+### A/B ile kanıt: yavaşlamanın sebebi kenar hafızası
+
+Canlı Jetson, tek değişken hafıza (LiDAR ikisinde de takılı DEĞİL):
+
+| durum | `/girdap/control/thrust` | `/girdap/fusion/odom` |
+|---|---|---|
+| hafıza dolu (~1574 kayıt) | **2,487 Hz** | 7,62 Hz |
+| yığın yeniden başlatıldı (hafıza boş) | **10,022 Hz** | 9,96 Hz |
+
+Kontrol döngüsü **4 kat** hızlanıp hedefi tam tutturdu. Bu, ikinci ihtimali
+(`PAR-05`: MPPI K=1000 taban maliyeti) **eliyor** — aynı MPPI, aynı K, hafıza
+boşken 10 Hz rahat. **`K` düşürmeye gerek yok.**
+
+Yan bulgu: füzyon da 7,62 → 9,96 Hz. Tek düğümün O(n) taraması tüm yığını
+aşağı çekiyor.
+
+### 🔴 KENDİ DÜZELTMEM YETERSİZDİ — ölçümle görüldü
+
+Bir önceki turda menzil tabanlı **unutma** eklemiştim. Canlı ölçüm:
+
+```
+t+0:30 → 964 kayıt … unutulan 0
+t+4:00 → 1574 kayıt … unutulan 0
+```
+
+**Hiç tetiklenmedi.** Sebep: atölye **13 m**, yayım menzili 25 m, unutma
+menzilim 50 m. Kayıtlar uzakta değil — **aynı yerde birikiyor**. Kaptanın
+verisi zaten "tekne hareketsizken bile büyüyordu" diyordu; menzil filtresinin
+üst üste binen kopyaları temizleyemeyeceğini görmem gerekirdi.
+(Değişiklik yanlış değil, **yetersiz**: araç parkurda ilerlerken geride kalan
+kayıtlar için işe yarayacak. Ama baskın mekanizma o değil.)
+
+### Kök neden: konum gürültüsü. Tolerans ÖLÇÜLDÜ.
+
+İlk hipotezim "tek-eşleşme kısıtı" (`kullanilan` seti) idi — **yanlış çıktı**:
+sabit sahne 100 kez işlenince hafıza 30'da sabit kalıyor. Asıl değişken
+konum oynaması:
+
+| konum gürültüsü | 100 karede hafıza (30 cisim) |
+|---|---:|
+| ±0,00 – 0,20 m | 30 ✅ |
+| ±0,30 m | 59 |
+| **±0,50 m** | **132** ← patlama |
+| ±1,00 m | 259 |
+| ±2,00 m | 357 |
+
+Tolerans ≈ cisim yarıçapı (0,3 m). **KAR-06 ise 25 ms'de 6,54 m sıçrama
+belgeliyor — toleransın 20 katı.**
+
+### ⇒ KAR-11 ile KAR-05/06 TEK ZİNCİR
+
+```
+bozuk odometri (KAR-05/06) → dünya konumları metrelerce oynar
+→ aynı cisim her karede YENİ kayıt → hafıza büyür (1574)
+→ tarama maliyeti artar → kontrol döngüsü 10 → 2,5 Hz (KAR-11)
+```
+
+Kaptan bunları ayrı bulgular olarak listelemiş; ölçüm tek arıza olduklarını
+gösteriyor. **Gerçek çözüm füzyon tarafında** — hafızaya yama yapmak semptomu
+gizler.
+
+### Eklenen nöbetçiler
+
+- `test_SABIT_sahne_100_karede_hafizayi_BUYUTMEZ` — tekilleştirme bozulursa CI kırmızı
+- `test_kucuk_gurultu_TOLERE_EDILIYOR` — ±0,2 m'ye kadar dayanmalı
+- `test_BUYUK_gurultu_hafizayi_PATLATIYOR_belgelenmis_kisit` — kısıtı **dondurur**;
+  biri hafızaya yama yapıp "çözdüm" sanmasın
+
+⚠️ Test yardımcısında bir tuzağa düştüm ve düzelttim: her karede `Random(tohum)`
+yeniden kurulursa her kare **aynı** gürültüyü alır, konum hiç oynamaz ve test
+ölçmek istediğini ölçmez. RNG kareler arası **paylaşılmalı**.
+
+### Ölçüm yöntemi dersi
+
+Atölyede kablo değiştirerek yapılan topic ölçümleri hep boş çıktı. Sebep:
+**ethernet çıkınca `enP8p1s0` düşüyor ve DDS keşfi o arayüze bağlı** — yeni
+başlayan bir süreç mevcut node'ları bulamıyor. `journalctl` DDS kullanmadığı
+için hafıza satırları geliyordu; topic hızları gelmiyordu. CLAUDE.md zaten
+"DDS arayüzleri katılımcı oluşturulurken bağlar" diyor, baştan bilmeliydim.
+**Kural: LiDAR takılıyken topic ölçümü yapılamaz; ölçüm ya Jetson'ın kendi
+ekranından ya journalctl üzerinden yapılır.**

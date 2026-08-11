@@ -329,3 +329,83 @@ def test_unutma_torbayi_SINIRLIYOR() -> None:
         m.hatirlananlar((0.0, 0.0), 10.0, unutma_menzili=20.0)
     assert m.boyut == 0, f"torba sinirlanmadi: {m.boyut} kayit"
     assert m.unutulan >= 60
+
+
+# ------------------------------- KAR-11 kök neden: konum gürültüsü toleransı
+
+
+def _sahne(n: int = 30, gurultu: float = 0.0, rnd=None):
+    """n cisimli sabit sahne; `gurultu` kadar konum oynaması eklenir.
+
+    ⚠️ `rnd` KARELER ARASI PAYLAŞILMALI. Her çağrıda yeni bir `Random(tohum)`
+    kurulursa her kare AYNI gürültüyü alır, konumlar hiç oynamaz ve test
+    ölçmek istediği şeyi ölçmez (12.08'de bu hataya düşüldü).
+    """
+    import random
+    rnd = rnd or random.Random(1)
+    return [
+        (float(i % 6) * 2.0 + rnd.uniform(-gurultu, gurultu),
+         float(i // 6) * 2.0 + rnd.uniform(-gurultu, gurultu),
+         0.3, CLASS_UNKNOWN)
+        for i in range(n)
+    ]
+
+
+def test_SABIT_sahne_100_karede_hafizayi_BUYUTMEZ() -> None:
+    """🔴 NÖBETÇİ: aynı sahne tekrar tekrar işlenince hafıza sabit kalmalı.
+
+    12.08'de canlı Jetson'da hafıza 4 dakikada 964→1574 kayda çıkmıştı ve
+    kontrol döngüsü 10 Hz'den **2,49 Hz**'e düşmüştü (A/B ile kanıtlandı:
+    hafıza boşaltılınca 10,02 Hz'e döndü). Bu test o davranışın temel hâlini
+    dondurur — tekilleştirme bozulursa CI kırmızı.
+    """
+    import random
+    rnd = random.Random(1)
+    m = EdgeBuoyMemory()
+    for _ in range(100):
+        m.siniflandir(_sahne(rnd=rnd), edge_class_id=0)
+    assert m.boyut == 30, f"sabit sahnede hafiza buyudu: {m.boyut}"
+
+
+def test_kucuk_gurultu_TOLERE_EDILIYOR() -> None:
+    """Ölçülen tolerans: cisim yarıçapı (0,3 m) mertebesine kadar dayanıyor."""
+    import random
+    for g in (0.05, 0.1, 0.2):
+        rnd = random.Random(1)
+        m = EdgeBuoyMemory()
+        for _ in range(100):
+            m.siniflandir(_sahne(gurultu=g, rnd=rnd), edge_class_id=0)
+        assert m.boyut <= 40, f"gurultu ±{g} m'de hafiza {m.boyut} kayda cikti"
+
+
+def test_BUYUK_gurultu_hafizayi_PATLATIYOR_belgelenmis_kisit() -> None:
+    """🔴 BİLİNEN KISIT — düzeltme burada DEĞİL, odometride.
+
+    Ölçüm (12.08, laptop, 30 cisim / 100 kare):
+        ±0,00-0,20 m →  30 kayıt   (kararlı)
+        ±0,30 m      →  59
+        ±0,50 m      → 132   ← patlama başlıyor
+        ±1,00 m      → 259
+        ±2,00 m      → 357
+
+    Tolerans ~cisim yarıçapı kadar. KAR-06 ise **25 ms'de 6,54 m** sıçrama
+    belgeliyor — toleransın **20 katı**. Yani hafızanın patlaması KAR-05/06'nın
+    (füzyonun geçersiz/ışınlanan odometri yayınlaması) **semptomudur**;
+    kaptanın ayrı listelediği KAR-11 ile KAR-05/06 tek zincirdir:
+
+        bozuk odometri → dünya konumları metrelerce oynar → aynı cisim her
+        karede yeni kayıt → hafıza büyür → tarama maliyeti artar →
+        kontrol döngüsü 10 Hz'i tutturamaz
+
+    Bu test kısıtı **dondurur**: birisi hafızaya yama yapıp "çözdüm" sanmasın.
+    Gerçek çözüm füzyon tarafında.
+    """
+    import random
+    rnd = random.Random(1)
+    m = EdgeBuoyMemory()
+    for _ in range(100):
+        m.siniflandir(_sahne(gurultu=1.0, rnd=rnd), edge_class_id=0)
+    assert m.boyut > 100, (
+        "buyuk gurultude hafiza artik patlamiyor — odometri duzeldiyse bu test "
+        "guncellenmeli, yoksa tekillestirme sessizce degismis olabilir"
+    )
