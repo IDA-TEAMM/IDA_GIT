@@ -270,6 +270,22 @@ perception:
     max_range: 25.0         # yatay menzil filtresi (m)
     voxel_size: 0.1         # m, clustering öncesi downsample (F5.3; 0=kapalı)
     log_period_s: 5.0       # "K engel" INFO log periyodu
+    # 🔑 F-L.3 (11.08, Jetson'da GERÇEK donanımla ölçüldü) — PAKET BİRLEŞTİRME.
+    # livox_ros_driver2 bu sürümde `publish_freq`'i mesaj birleştirmede
+    # KULLANMIYOR (`Lddc::publish_period_ns_` ölü kod; her ethernet paketi ayrı
+    # ROS mesajı olarak yayınlanıyor). Ölçüm: /livox/lidar ~475 Hz, width=96 —
+    # publish_freq=10.0 olmasına rağmen. Kümeleme mesaj başına koştuğu için
+    # 30 cm'lik duba tek pakette min_cluster_size'ı toplayamaz → obstacle_map
+    # "akar" ama İÇİ BOŞTUR. Birleştirme bu yüzden BİZİM tarafta yapılır.
+    # 0 = kapalı (eski davranış birebir). ⚠ Büyütmek iz yayılmasını da büyütür
+    # (1 m/s × 0,1 s = 10 cm; duba çapı 30 cm) — 0,1 bilinçli üst sınır.
+    # ⚠ 11.08.2026 (öğleden sonra) — 0.1'DEN 0.0'A ÇEKİLDİ.
+    # Yama 96-nokta paket arızası için yazılmıştı; sürücü yeniden başlatılınca
+    # /livox/lidar ÖLÇÜLDÜ: 10 Hz × ~20 000 nokta, yani zaten doğru kare.
+    # Birleştirme açıkken 2-3 tam kare üst üste bindi → 40-60 bin nokta,
+    # kümeleme 172-300 ms (bütçe 100 ms), obstacle_map 10 Hz yerine 2,2 Hz.
+    # Kazanç yok, bedel kesin. 96-nokta hali geri gelirse tek sayıyla açılır.
+    birlestirme_s: 0.0      # s, kümeleme öncesi paket biriktirme penceresi (0 = kapalı)
   # Kamera duba tespiti (Sprint 2) — HSV aralıkları dizi olduğundan yalnız
   # params.yaml'da; buradakiler launch-arg olarak açılır (skaler ayarlar).
   camera:

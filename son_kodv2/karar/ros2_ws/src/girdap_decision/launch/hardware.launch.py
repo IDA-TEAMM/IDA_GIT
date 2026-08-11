@@ -130,6 +130,9 @@ _LIDAR_DEFAULTS: dict[str, tuple[float | int, type]] = {
     "max_range": (25.0, float),
     "voxel_size": (0.1, float),         # F5.3: clustering öncesi downsample
     "log_period_s": (5.0, float),
+    # F-L.3: sürücü her ethernet paketini ayrı mesaj yayınlıyor (96 nokta,
+    # ~475 Hz) → kümeleme öncesi biriktirme. 0 = kapalı. Ayrıntı hardware.yaml.
+    "birlestirme_s": (0.0, float),
 }
 # perception.camera skaler varsayılanları (HSV dizileri yalnız params.yaml'da).
 _CAMERA_DEFAULTS: dict[str, tuple[object, type]] = {

@@ -61,6 +61,29 @@ class PerceptionLidarNode(Node):
         self.declare_parameter("max_range", 25.0)
         self.declare_parameter("voxel_size", 0.1)   # F5.3; 0 = kapalı
         self.declare_parameter("log_period_s", 5.0)
+        # F-L.3 (11.08.2026, GERÇEK donanımda ölçüldü) — PAKET BİRLEŞTİRME.
+        # livox_ros_driver2 bu sürümde `publish_freq`'i mesaj birleştirmede
+        # KULLANMIYOR: `Lddc::publish_period_ns_` hesaplanıp hiçbir yerde
+        # okunmuyor (ölü kod), `PublishPointcloud2` kuyruktaki HER paketi tek
+        # tek yayınlıyor. Ölçüm: /livox/lidar ~475 Hz, her mesaj width=96
+        # (tek Livox ethernet paketi), publish_freq=10.0 olmasına rağmen.
+        # Sonuç: kümeleme mesaj başına koştuğu için 30 cm'lik bir duba tek
+        # pakette min_cluster_size eşiğini pratikte HİÇ toplayamaz — paketin
+        # açısal dilimi çok dar. "obstacle_map akıyor" ama içi boş.
+        # Bu yüzden birleştirme BİZİM tarafta yapılır (sürücü başkasının alanı).
+        # 0.0 → kapalı, eski davranış BİREBİR (her mesaj ayrı kümelenir).
+        # ⚠ VARSAYILAN 0.1 → 0.0 (11.08.2026 öğleden sonra, ölçümle).
+        # Yukarıdaki 96-nokta teşhisi sürücünün ARIZALI bir örneğine aitmiş:
+        # `girdap-livox` açılışta "bind failed" ile ölmüş, ölçüm o sırada
+        # koşan eski örnekten alınmış. Servis düzgün başlatılınca ölçülen
+        # /livox/lidar = 10 Hz × ~20 000 nokta, yani sürücü ZATEN doğru kare
+        # üretiyor. Birleştirme bu kareler üstünde 2-3 kareyi üst üste bindirdi:
+        # 40-60 bin nokta → kümeleme 172-300 ms (bütçe 100 ms) → obstacle_map
+        # 9,3 Hz yerine 2,2 Hz. Kazanç yok, bedel kesin; üstelik açıkken
+        # kuyruk derinliği 1 → 60 olduğu için F7.3'ün bayat-tarama koruması
+        # da kalkıyor. Mekanizma DURUYOR — 96-nokta hali geri gelirse tek
+        # parametreyle (>0) açılır, davranışı testlerle kilitli.
+        self.declare_parameter("birlestirme_s", 0.0)
         # B0/F5.1 — montaj ofseti = livox_frame'in base_link İÇİNDEKİ konumu
         # (nokta dönüşümü ters yönde: p_base = R(yaw)·p_livox + t).
         # Değerleri hardware.launch `tf.livox_frame` bloğundan geçirir; bu
@@ -92,6 +115,11 @@ class PerceptionLidarNode(Node):
         self._beklenen_hz = 10.0
         self._last_log_t: Optional[float] = None
 
+        # F-L.3 birleştirme durumu
+        self._birlestirme_s = float(p("birlestirme_s").value)
+        self._biriken: list = []          # bekleyen (N,3) nokta dizileri
+        self._biriktirme_t0: Optional[float] = None
+
         # --- I/O ---
         self._pub = self.create_publisher(
             PoseArray, "/perception/obstacle_map", 10
@@ -99,8 +127,19 @@ class PerceptionLidarNode(Node):
         # F7.3: depth=1 — kümeleme (F5.3) 10 Hz'e yetişemezse kuyrukta bayat
         # taramalar birikmesin; her callback ELDEKİ EN YENİ taramayı işlesin.
         # depth=10 ile ~1 s gecikmiş bulutla plan yapılıyordu.
+        #
+        # F-L.3: birleştirme AÇIKKEN depth=1 YANLIŞ olur — sürücü ~475 Hz'te
+        # paket bastığı için pencerenin paketlerinin çoğu kuyruktan DÜŞER ve
+        # birleştirme hiçbir şey kazandırmaz. Pencereyi taşıyacak kadar derin
+        # kuyruk verilir (475 Hz × pencere, üstüne pay). Bayatlık riski yok:
+        # biriken paketler ZATEN aynı pencerenin içindeki taramalardır.
+        if self._birlestirme_s > 0.0:
+            derinlik = max(10, int(500.0 * self._birlestirme_s) + 10)
+        else:
+            derinlik = 1
         self._sub = self.create_subscription(
-            PointCloud2, "/livox/lidar", self._on_cloud, sensor_data_qos(depth=1)
+            PointCloud2, "/livox/lidar", self._on_cloud,
+            sensor_data_qos(depth=derinlik),
         )
 
         self.get_logger().info(
@@ -149,14 +188,40 @@ class PerceptionLidarNode(Node):
                 msg, field_names=("x", "y", "z"), skip_nans=True
             )
             points = structured_to_unstructured(structured).reshape(-1, 3)
+        except Exception as exc:
+            self.get_logger().error(
+                f"bozuk PointCloud2, bu tarama atlandı: {exc!r}",
+                throttle_duration_sec=5.0,
+            )
+            return
+
+        # F-L.3: pencere dolana kadar biriktir, kümelemeyi ERTELE.
+        # ⚠ Biriken paketler sensör çerçevesinde toplanır; pencere boyunca
+        # tekne hareket ederse iz hafifçe yayılır (1 m/s × 0,1 s = 10 cm,
+        # duba çapı 30 cm → kabul edilebilir). Pencereyi büyütmek bu
+        # yayılmayı da büyütür; 0,1 s bilinçli üst sınır.
+        if self._birlestirme_s > 0.0:
+            simdi = time.perf_counter()
+            if self._biriktirme_t0 is None:
+                self._biriktirme_t0 = simdi
+            self._biriken.append(points)
+            if simdi - self._biriktirme_t0 < self._birlestirme_s:
+                return
+            points = np.vstack(self._biriken) if self._biriken else points
+            self._biriken = []
+            self._biriktirme_t0 = None
+
+        try:
             t0 = time.perf_counter()
             obstacles = detect_obstacles(
                 np.asarray(points, dtype=np.float64), self._cfg
             )
             sure_ms = (time.perf_counter() - t0) * 1000.0
         except Exception as exc:
+            # Birikim ZATEN boşaltıldı (yukarıda) — hatalı pencere bir
+            # sonrakine taşınmaz, tampon sınırsız büyüyemez.
             self.get_logger().error(
-                f"bozuk PointCloud2, bu tarama atlandı: {exc!r}",
+                f"kümeleme başarısız, bu pencere atlandı: {exc!r}",
                 throttle_duration_sec=5.0,
             )
             return
