@@ -17,8 +17,17 @@ Sıra ÖNEMLİ: pusula düzelmeden arm denemesi anlamsız, arm olmadan da geri k
 
 ### A1 · Pusula kalibrasyonu — Large Vehicle MagCal
 
-Kaptan bunu **kapalı alanda** denemiş; atölyedeki çelik/elektrik alanı sonucu
-bozar, çıkan ofsetler sahada daha kötü davranır.
+⚠️ **12.08 DÜZELTMESİ (kaptanın `girdap-durum` §0.41/§0.42 kaydından):** pusula
+**zaten kalibre edildi** (11.08 akşamı, kapalı alanda). Ölçüm: `PreArm: Compass
+not calibrated` 15:07:21'de kesildi, `EKF3 MAG0 initial yaw alignment complete`,
+`GPS and AHRS differ` **0 kez**, `/mavros/state` → `mode: GUIDED, guided: true`.
+
+Yani bu madde artık *"kalibrasyon yok"* değil, **"kalibrasyon kapalı alanda
+yapıldı, kalitesi şüpheli"**. Bugün force ile arm edilince görülen `Kotu AHRS`
++ failsafe bununla tutarlı: kalibrasyon geçerli sayılıyor ama ofsetler
+atölyenin çelik/elektrik alanını taşıyor.
+
+⇒ Yapılacak: **açık alanda YENİDEN** kalibrasyon (üzerine yazar).
 
 - Mission Planner → Setup → Mandatory Hardware → Compass → **Large Vehicle MagCal**
 - Teknenin gerçek pruva yönünü (derece) gir — **tekneyi döndürmek gerekmez**,
@@ -27,7 +36,8 @@ bozar, çıkan ofsetler sahada daha kötü davranır.
 
 **Kapatma ölçütü:** `COMPASS_OFS_X/Y/Z` yazıldı ve kaydedildi; Mission Planner
 HUD'da heading gerçek yönle ±5° içinde. Değerleri bana söyle, param dökümüne
-işlerim.
+işlerim. Ayrıca **eski ofsetlerle karşılaştıracağız** — fark büyükse kapalı
+alan kalibrasyonunun gerçekten bozuk olduğu kanıtlanmış olur.
 
 ### A2 · ARM denemesi — `force` KULLANMADAN  🔴 PAR-03
 
@@ -37,6 +47,11 @@ hiçbirinde `armed=true` yok; 11.08'de force ile arm edildiğinde `Kotu AHRS`
 
 - Mission Planner → ARM (force **yok**).
 - Reddedilirse **Messages sekmesindeki ret sebebini birebir yaz** — kısaltma.
+- 🔴 `ARMING_CHECK` bizim son param dökümümüzde **1**, ama kaptanın 11.08
+  ölçümünde FC'de **0**'dı ve *"tüm ön-kontroller kapalı, tekne bozuk
+  kestirimle arm oluyor, her şey yeşil görünüyor"* diye kaydetmiş (§0.41).
+  Mission Planner'da FC'deki GERÇEK değerin 1 olduğunu doğrula — 0 ise bu
+  test hiçbir şey kanıtlamaz.
 - Artık `/mavros/statustext/recv` rosbag'e kaydediliyor, yani sebep bu kez
   kaybolmayacak (12.08'de eklendi).
 

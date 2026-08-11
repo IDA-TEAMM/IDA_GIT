@@ -62,7 +62,35 @@ Environment=PYTHONPATH=__WS__/src/girdap-decision
 Environment=ROS_DOMAIN_ID=42
 # F4.1/F15.1 dersi: cwd=/ olmasin — goreli yol kazalarina karsi HOME'dan kos.
 WorkingDirectory=/home/__USER__
+# 🔴🔴 §0.42 (11.08 akşam, ÖLÇÜLDÜ) — ÇİFT YIĞIN KORUMASI.
+# `girdap-karar` altında AYNI ANDA İKİ TAM YIĞIN koştu (eski PID 2054, yeni
+# 2583). Yeni yığının tüm ağacı 20 dakika tek satır log basmadı; eski yığın
+# ölüp de canlanınca BEŞ BEKÇİ aynı saniyede ~1195 s bayatlık ölçtü →
+# `FAILSAFE — heartbeat kaybı (1195.6s)` → FSM KILL → F-M.3 köprüsü FC'yi
+# DISARM etti. Kaptan "GUIDED'a çektim hâlâ KILL attı" dedi; ölçüm KILL'in
+# GUIDED'dan **3 dakika ÖNCE** attığını gösterdi (16:05:17 ↔ 16:08:38).
+# Yani o akşamki GUIDED testi bu yüzden boşa gitti.
+#
+# Kaptanın kuralı: *"`systemctl restart` eski yığını her zaman düşürmüyor —
+# restart sonrası `pgrep -af hardware.launch.py` TEK satır vermeli."*
+# Kural artık elle denetlenmiyor, servis kendi zorluyor:
+#
+#   ExecStartPre  → başlamadan ÖNCE kalıntı yığını kesin olarak düşür.
+#                   `-` öneki: kalıntı yoksa pkill 1 döner, başlatmayı
+#                   engellemesin diye hata yok sayılır.
+#   KillMode      → varsayılan zaten control-group ama AÇIKÇA yazılıyor:
+#                   `ros2 launch` çocuklarını her zaman düzgün toplamıyor.
+#   TimeoutStopSec→ süre dolunca cgroup'un tamamına SIGKILL (yoksa yavaş
+#                   kapanan bir düğüm kalıntı yığının ta kendisi olur).
+#
+# Çalışma zamanı ikinci katmanı: fsm_node `count_publishers` ile
+# /girdap/mission/state üzerinde birden fazla yayıncı görürse bağırır
+# (KAR-01) — servis kaçırırsa orada yakalanır.
+ExecStartPre=-/usr/bin/pkill -9 -f "hardware\.launch\.py"
+ExecStartPre=/bin/sleep 2
 ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source __WS__/install/setup.bash && exec ros2 launch girdap_decision hardware.launch.py mission_source:=fc'
+KillMode=control-group
+TimeoutStopSec=30
 Restart=on-failure
 RestartSec=10
 
