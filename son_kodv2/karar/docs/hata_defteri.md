@@ -851,3 +851,75 @@ Aynı bilgiyi aynı kişiye 60 s içinde ve **sebebiyle birlikte** veren bir yol
 zaten kuruldu. Başlatmayı durduran ikinci bir mekanizma, yarışma günü
 MAVROS bir-iki saniye geç bağlandığında sistemi hiç açmama riski getirirdi.
 Yarışma koşusunda "geç açıl" > "hiç açılma".
+
+---
+
+## 2026-08-12 — KAR-01/04/07/09/10 KAPANDI: kaptanın karar listesinde açık madde kalmadı
+
+### KAR-04 — "komut sıfır" ≠ "komut yok"
+
+30.874 thrust mesajının tamamı `[0,0]` idi ve **her oturumda başka bir kilit**
+devredeydi. Bag'e bakan kişi bunu ancak dört ayrı topic'i çapraz okuyarak
+çıkarabildi. Sebep artık komutun yanında: `/girdap/control/inhibit_reason`.
+
+Sebepler **sırayla** toplanıyor — bir komutu birden fazla kilit sıfırlayabilir;
+yalnız ilkini yazmak, operatör birini düzeltince "hâlâ sıfır" sürprizi üretirdi.
+
+🔴 **Testin yakaladığı kendi kusurum:** ilk yazdığımda FSM `PARKUR1`'deyken bile
+`FSM-DISI(PARKUR1)` yazıyordu. `compute_control` **iki ayrı sebeple** `None`
+döner ve bunlar operatör için hiç benzemez: (a) görev başlamadı, (b) görev
+başladı ama **kontrolcü kurulu değil** (referans yok) — yani araç kıpırdamıyor.
+Ayrıldı; sıra artık `compute_control`'ün kendi mantığını yansıtıyor.
+
+### KAR-07 — sürüklenme metriği ve iki beklenmedik ölçüm
+
+| gps_sigma | yol (m/dk, araç SABİT) |
+|---|---|
+| 0.05 (RTK) | **3,84** |
+| 0.50 | 2,71 |
+| 2.50 | 1,11 |
+
+**Sigma büyüdükçe sürüklenme azalıyor** — büyük sigma = az güven = çok
+yumuşatma. Yani en kötü hâl RTK sigmasıdır; *"RTK aldık, artık sorun yok"*
+sezgisinin tersi.
+
+Asıl tehlike, bildirilen sigma ile gerçek gürültünün ayrışması:
+
+| bildirilen | gerçek | yol (m/dk) |
+|---|---|---|
+| 0.05 | 0.05 | 3,84 |
+| 0.05 | 2.50 | **104,30** (94×) |
+| 2.50 | 2.50 | 1,11 |
+
+Bu, KAR-06'nın (sıfır kovaryans = sonsuz güven) genel hâli ve
+`gps_sigma_by_status` tablosunun neden kritik olduğunun sayısal kanıtı.
+
+🔑 Üçüncü test metriğin **gerçekten hassas** olduğunu gösteriyor. Kırmızıya
+dönemeyen bir regresyon testi hiçbir şey doğrulamaz.
+
+### KAR-09 — kaptanın önerisi BİLEREK tersine çevrildi
+
+Öneri: *"kritik düğümleri gerçek zamanlı önceliğe al."* MPPI adımı ~100 ms
+sürer; RT thread'de koşan böyle bir döngü sistemin geri kalanını aç bırakır —
+donmayı çözmek yerine **garanti ederdi**.
+
+Bunun yerine **suçlu** geri plana alındı: `rosbag` `Nice=10` +
+`IOSchedulingClass=idle`, karar yığını `Nice=-5`. Kayıt gecikirse yalnızca
+kayıt gecikir; kontrol döngüsü ve MAVLink heartbeat'i etkilenmez.
+
+Ayrıca `/livox/lidar` varsayılan kayıt listesinden çıkarıldı (`--lidar` ile
+opt-in): 14 GB'lik bag'in 3,6 milyon mesajı bu tek topic'tendi ve ham bulut
+şartname çıktılarının **hiçbirinde** kullanılmıyor — bedeli görev güvenliği
+olan bir hata ayıklama lüksüydü.
+
+### Bu turda ortaya çıkan genel ders
+
+Beş bulgunun dördü aynı cümleyle özetlenebiliyor: **arıza vardı, kod onu
+biliyordu, ama kimseye söylemiyordu.** `ERROR` log'u sahada "yapılmamış" ile
+aynı şey — operatör Mission Planner'a bakıyor, `journalctl`'e değil.
+
+Kaptanın önerilerinden **üçü** gerekçeli olarak uygulanmadı (KAR-08 #1 seviye
+tetikleme, PAR-09 #1 açılışta ret, KAR-09 #3 RT önceliği). Üçünün de ortak
+sebebi: teşhisi iyileştirmek için güvenliği ya da çalışabilirliği feda
+etmeleri. Sessizliği kaldırmanın bedeli, otomatik çalışan bir motor ya da
+hiç açılmayan bir tekne olmamalı.
