@@ -109,7 +109,7 @@ Ayrıca Mission Planner "Load from file" **yalnız farklı olanları** yazdığ�
 | 🔴 `SERIAL2_BAUD` | **921600** (bizde 57600) | — |
 | ~~`SERIAL2_OPTIONS`~~ | 8 | ✅ **DEĞİŞMEMİŞ — bizde de zaten 8.** İlk raporda yanlış yazıldı (eski dosyada `OPTIONS` satırı grep'lenmemiş, yokluğu 0 sanıldı). TX/RX swap **bizim kendi ayarımız**, kablolama onu gerektiriyor |
 | 🔴 `SERIAL1_BAUD` | **57600** (bizde 19200) | — |
-| ⚠️ `BATT_AMP_PERVLT` | **0.44** (bizde 36.36) | 0.44 A/V ile 3.3 V tam skalada ~1.5 A okunur; sistemde **50 A** kontaktör var → akımı ciddi eksik okur. Nasıl bulundu? |
+| ✅ `BATT_AMP_PERVLT` | **0.44** (bizde 36.36) | **CEVAPLANDI 2026-08-11 — aşağıdaki bölüme bak: sorun `AMP_PERVLT` değil, akım kanalının KENDİSİ ölü.** |
 | ⚪ `COMPASS_MOTCT` | 1 | Motor kompanzasyonu açık ama `COMPASS_MOT_*` katsayıları değişmemiş (muhtemelen 0) → etkisiz. Kalibre edildi mi? |
 
 > 🔴 **SERIAL sorusu her şeyi kilitliyor:** bizim `fcu_url` **57600** diyor ve
@@ -384,3 +384,93 @@ birkaç derece, 1° onun içinde kaybolur.
 > (güverte yatay); o zaman tekne suda burnu kalkınca FC dürüstçe "burnum X°
 > yukarıda" der. **Bonus:** suya inince HUD'daki pitch okunursa teknenin
 > gerçek yüzme trimi ÖĞRENİLMİŞ olur (şu an bilinmeyen bir sayı).
+
+---
+
+## ✅ 2026-08-11 — `BATT_AMP_PERVLT` sorusu KAPANDI: akım kanalı ÖLÜ, parametre masum
+
+Yukarıdaki soru *"0.44 nasıl bulundu?"* diye duruyordu. Ölçümle cevaplandı ve
+cevap beklenenden kötü: **`AMP_PERVLT`'in değeri sorun değil — FC'nin akım
+algılama girişi tam skalada SIKIŞMIŞ, yani hiç ölçüm yapmıyor.**
+
+### Kanıt 1 — iki ayarda da tam skalanın %96'sı okunuyor
+
+| ayar | tam skala (= `AMP_PERVLT` × 3.3 V) | okunan | oran |
+|---|---|---|---|
+| eski `36.36` | 120,0 A | **115,4 A** | **%96,2** |
+| yeni `0.44` | 1,452 A | **1,39 A** | **%95,7** |
+
+Ham ADC gerilimi iki durumda da ~3,17 V. Yani `AMP_PERVLT`'i değiştirmek
+**anlamsız bir sayıyı yeniden etiketlemekten** başka bir şey yapmadı. 0.44
+muhtemelen "ekranda makul bir sayı çıksın" diye geriye doğru uydurulmuş —
+tek noktaya oturtma, kalibrasyon değil.
+
+### Kanıt 2 — gerçek yük değişimine tepki YOK (kontrollü deney)
+
+Jetson'ın 6 çekirdeğine yük bindirildi; Jetson'ın **kendi** INA3221'i çekişi
+doğruladı, FC'nin `BATTERY_STATUS`'u aynı anda okundu:
+
+| aşama | Jetson çekişi | FC akımı | FC gerilimi |
+|---|---|---|---|
+| rölanti | 12 117 mW | **−1,390 A** | 16,177 V |
+| yük altında | 16 961 mW | **−1,390 A** | 16,173 V |
+| yük altında | 16 803 mW | **−1,390 A** | 16,177 V |
+| yük bitti | 10 312 mW | **−1,390 A** | 16,179 V |
+
+(`loadavg 9,73` → yük gerçekti.) Jetson çekişi **6,6 W** oynadı = pakette
+**+0,41 A**; bu, telemetrinin 10 mA çözünürlüğünün **41 katı** ve bildirilen
+toplamın ~%30'u. FC akımı **tek sayım bile** kıpırdamadı — üstelik altı
+okumada 16 anlamlı hanesine kadar birebir aynı (`-1.3899999856948853`).
+Karşılaştırma için **gerilim** kanalı gerçek ADC gürültüsü gösteriyor
+(16,173–16,181) → **gerilim kanalı ÇALIŞIYOR, akım kanalı ölü.**
+
+### 🔴 Asıl tehlike akım göstergesi değil, KALAN YÜZDE
+
+`BATT_MONITOR=4` (gerilim+akım) iken ArduPilot kalan yüzdeyi **tüketilen
+mAh**'tan hesaplar, o da bu sıkışmış akımdan gelir:
+
+> 1,39 A × 0,33 h = **463 mAh** / `BATT_CAPACITY` 35 000 = **%1,3**
+
+Yani 20 dakikalık yarışma koşusunda motorlar onlarca amper çekerken ekran
+`%85 → ~%84` gösterir. **Operatöre yanlış güven veren kalem bu.** 11.08'de MP
+HUD'unda görülen `85%` de bu yüzden anlamsız.
+
+### Ne etkilenmiyor (ölçüldü)
+
+- **Hiçbir md 4.2 teslimi etkilenmiyor:** `CSV_HEADER`'da akım/batarya sütunu
+  YOK (`zaman, lat, lon, hiz, roll, pitch, heading, hiz_setpoint,
+  yon_setpoint, mission_state`), `GRAPH_CSV_HEADER`'da da yok.
+- **Karar yığınının hiçbir yeri bataryayı okumuyor** (grep: `BatteryState`
+  hiçbir node'da geçmiyor). Sahte sayı yalnız FC'nin kendi telemetrisinde.
+- **mAh failsafe zaten kapalı** (`BATT_LOW_MAH=0`, `BATT_CRT_MAH=0`) → sahte
+  akıma bağlı bir failsafe **tetiklenmiyor**. Bu şans değil, doğru ayardı.
+- **Gerilim failsafe'i gerçek ve çalışıyor** (`BATT_LOW_VOLT 13,2` → act 2,
+  `BATT_CRT_VOLT 12,4` → act 3) — `BATT_VOLT_MULT` düzeltmesinden beri.
+  Gerçek emniyet ağı bu.
+
+### 👉 ÖNERİ: `BATT_MONITOR` 4 → **3** (yalnız gerilim)
+
+**Gerekçe:** akım kanalı ölü olduğu sürece `4`, ArduPilot'a var olmayan bir
+sensörü okuduruyor ve **uydurma akım + uydurma tüketilen mAh + uydurma kalan
+yüzde** üretiyor. `3` bunların üçünü de kaldırır; kalan yüzde gerilim
+eğrisinden tahmin edilir (kusurlu ama **dürüst**), gerilim failsafe'i aynen
+çalışmaya devam eder, pre-arm batarya kontrolü de gerilimden yürür.
+
+Alternatif olarak `AMP_PERVLT`'i 36.36'ya geri almak da düşünüldü ("saçma
+görünen sayı fark edilir, makul görünen yalan fark edilmez"). Reddedildi:
+o durumda tüketilen mAh 115 A'dan birikip yüzdeyi hızla sıfıra çeker, koşu
+sırasında MP alarmları yaratır ve biri `LOW_MAH`'ı açarsa anında yanlış
+failsafe olur. `3` daha az riskli.
+
+**Mission Planner adımları:** Config → Full Parameter List → `BATT_MONITOR`
+= `3` → Write Params → **güç kes/aç** (batarya monitörü tipi açılışta okunur).
+
+### ⏳ Kalan iş — DONANIM (yazılım değil)
+
+1. PM07'nin akım algılama hattını ölç: FC'nin batarya konnektöründeki akım
+   pini gerilimi. **~3,17 V sabit** çıkıyorsa hat ya kopuk (giriş yüzüyor,
+   yukarı çekili) ya kısa devre.
+2. Onarıldıktan sonra: `BATT_MONITOR=4`, sonra **pens ampermetreyle bilinen
+   yük altında** `AMP_PERVLT` kalibrasyonu (`gerçek_A / okunan_A × mevcut
+   değer`). Tek noktaya uydurma DEĞİL, en az iki yükte doğrulanmalı.
+3. Ancak o zaman `BATT_LOW_MAH`/`BATT_CRT_MAH` açılabilir.
