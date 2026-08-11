@@ -179,6 +179,17 @@ class FusionNode(Node):
         rate = float(self.get_parameter("publish_rate_hz").value)
         self._timer = self.create_timer(1.0 / rate, self._on_publish_timer)
         self._hic_girdi_uyarildi = False   # KAR-05
+        self._sifir_kov_uyarildi = False   # KAR-06
+        # KAR-06: fiziksel ust sinir. Teknenin seyir hizi ~1 m/s (log 58'den
+        # olculdu, CLAUDE.md); 10 m/s cok genis pay birakir ve yalniz gercekten
+        # imkansiz olani eler. 0 -> kapi kapali (geriye tam uyum).
+        self.declare_parameter("gps_max_hiz_mps", 10.0)
+        self.declare_parameter("gps_kapi_pencere_s", 2.0)
+        self.declare_parameter("gps_kapi_min_dt_s", 0.02)
+        self._gps_max_hiz = float(self.get_parameter("gps_max_hiz_mps").value)
+        self._gps_kapi_pencere_s = float(self.get_parameter("gps_kapi_pencere_s").value)
+        self._gps_kapi_min_dt_s = float(self.get_parameter("gps_kapi_min_dt_s").value)
+        self._son_gps = None
         self._diag_timer = self.create_timer(5.0, self._log_diag)
 
         mode = "iSAM2" if self._use_isam2 else "MAVROS EKF geçişi (video)"
@@ -307,6 +318,34 @@ class FusionNode(Node):
         koordinat alanı fix yokken tanımsızdır (0/0 ya da son geçerli
         değer olabilir), prior olarak eklenmesi grafiği bozar.
         """
+        # 🔴 KAR-06 (12.08) — SIFIR KOVARYANS KAPISI.
+        # Kaptanin bag analizi: ayni oturumda GPS'e 24.430 SAHTE mesaj enjekte
+        # edilmis (PAR-01, test sizintisi) ve hepsinin kovaryansi TAM SIFIRDI.
+        # Fuzyon sifir kovaryansi "sonsuz guven" diye okuyup poz tahminini
+        # oraya cekiyordu -> 25 ms'de 6,54 m sicrama (257 m/s), yaw'la birlikte
+        # 60+ kez. Su ustu araci icin fiziksel olarak imkansiz.
+        # Kok neden PAR-01'di ve conftest izolasyonuyla kapatildi; bu kapi
+        # SAVUNMA KATMANI: gecerli bir GPS alicisi ASLA sifir kovaryans
+        # bildirmez (belirsizligi olmayan olcum yoktur). Disaridan gelen boyle
+        # bir mesaj ya testtir ya bozuk surucudur — ikisi de reddedilmeli.
+        # ⚠ COVARIANCE_TYPE_UNKNOWN (0) ayri bir durum: alici "bilmiyorum"
+        # diyor, "sifir" demiyor. Onu reddetmiyoruz, yalnizca kovaryans
+        # DEGERLERI sifirken reddediyoruz.
+        if msg.position_covariance_type != NavSatFix.COVARIANCE_TYPE_UNKNOWN:
+            kov = msg.position_covariance
+            if kov[0] == 0.0 and kov[4] == 0.0:
+                self._n_gps_rejected += 1
+                if not self._sifir_kov_uyarildi:
+                    self._sifir_kov_uyarildi = True
+                    self.get_logger().error(
+                        "GPS mesaji SIFIR KOVARYANSLA geldi ve REDDEDILDI — "
+                        "gecerli bir alici bunu uretmez. Muhtemel sebep: canli "
+                        "domaine sizan test yayini (PAR-01) ya da bozuk surucu. "
+                        "Kabul edilseydi fuzyon sonsuz guven atfedip poz "
+                        "tahminini isinlatirdi (KAR-06)."
+                    )
+                return
+
         sigma_xy = sigma_for_status(
             msg.status.status, self._gps_sigma_by_status
         )
@@ -326,6 +365,41 @@ class FusionNode(Node):
                 f"GPS fix geri geldi ({status_name(msg.status.status)}, "
                 f"σ={sigma_xy} m)"
             )
+        # 🔴 KAR-06 — YENILIK (innovation) KAPISI.
+        # Sifir kovaryans kapisi "kotu niyetli" olcumu eler; bu kapi FIZIKSEL
+        # olarak imkansiz olani eler. Kaptanin olcumu: 25 ms'de 6,54 m = 257 m/s.
+        # Su ustu araci icin ust sinir cok altinda; boyle bir olcum ne olursa
+        # olsun gercek degildir.
+        # ⚠ ILK olcumde kapi UYGULANMAZ (referans yok) ve uzun sessizlikten
+        # sonra da uygulanmaz — arac gercekten hareket etmis olabilir. Kapi
+        # yalniz ARDISIK ve YAKIN zamanli olcumler arasinda anlamlidir.
+        if self._gps_max_hiz > 0.0:
+            simdi = self.get_clock().now().nanoseconds * 1e-9
+            onceki = getattr(self, "_son_gps", None)
+            if onceki is not None:
+                ox, oy, ot = onceki
+                dt = simdi - ot
+                # ⚠ COK KUCUK dt'de kapi UYGULANMAZ. Testte gorulду:
+                # iki olcum ayni ms'de gelince 0,11 m -> 832 m/s cikip gecerli
+                # GPS reddediliyordu. Olculemeyecek kadar kisa bir araliktan
+                # hiz cikarmak yanlis; kapi ancak anlamli bir dt'de karar
+                # verebilir. Gercek sistemde GPS 10 Hz (dt~100 ms), yani bu
+                # alt sinir normal akisi hic etkilemez.
+                if self._gps_kapi_min_dt_s < dt <= self._gps_kapi_pencere_s:
+                    from prototype.mission.mission_manager import latlon_to_enu
+                    dx, dy = latlon_to_enu(ox, oy, msg.latitude, msg.longitude)
+                    mesafe = math.hypot(dx, dy)
+                    if mesafe > self._gps_max_hiz * dt:
+                        self._n_gps_rejected += 1
+                        self.get_logger().warn(
+                            f"GPS sicramasi REDDEDILDI: {mesafe:.2f} m / "
+                            f"{dt*1000:.0f} ms = {mesafe/dt:.0f} m/s "
+                            f"(ust sinir {self._gps_max_hiz:.0f} m/s). KAR-06.",
+                            throttle_duration_sec=5.0,
+                        )
+                        return
+            self._son_gps = (msg.latitude, msg.longitude, simdi)
+
         self._source.on_gps(msg.latitude, msg.longitude, sigma_xy=sigma_xy)
         self._n_gps += 1
 

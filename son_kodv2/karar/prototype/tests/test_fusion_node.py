@@ -346,3 +346,75 @@ def test_KAR05_girdi_HIC_gelmeden_odom_YAYINLANMAZ(ros_context) -> None:  # noqa
         )
     finally:
         node.destroy_node()
+
+
+# --------------------------------- KAR-06: sıfır kovaryans + yenilik kapısı
+
+
+def _fix(lat: float, lon: float, status: int = 0, kov0: float = 4.0,
+         kov_tipi: int = 2) -> NavSatFix:
+    m = NavSatFix()
+    m.status.status = status
+    m.latitude, m.longitude = lat, lon
+    m.position_covariance = [kov0, 0.0, 0.0, 0.0, kov0, 0.0, 0.0, 0.0, kov0]
+    m.position_covariance_type = kov_tipi
+    return m
+
+
+def test_KAR06_SIFIR_kovaryansli_GPS_reddediliyor(ros_context) -> None:  # noqa: ANN001
+    """🔴 Geçerli bir GPS alıcısı ASLA sıfır kovaryans bildirmez.
+
+    Kaptanın analizinde canlı domaine sızan 24.430 sahte GPS mesajının hepsi
+    sıfır kovaryanslıydı; füzyon bunu "sonsuz güven" okuyup pozu ışınlatıyordu
+    (25 ms'de 6,54 m = 257 m/s, 60+ kez).
+    """
+    node, _ = _gps_node(ros_context)
+    try:
+        onceki = node._n_gps
+        node._on_gps(_fix(36.85, 28.27, kov0=0.0))
+        assert node._n_gps == onceki, "sifir kovaryansli GPS kabul edildi"
+    finally:
+        node.destroy_node()
+
+
+def test_KAR06_bilinmeyen_kovaryans_tipi_REDDEDILMEZ(ros_context) -> None:  # noqa: ANN001
+    """`COVARIANCE_TYPE_UNKNOWN` "bilmiyorum" demek, "sıfır" demek değil —
+    onu elemek gerçek alıcıları da elerdi."""
+    node, _ = _gps_node(ros_context)
+    try:
+        onceki = node._n_gps
+        node._on_gps(_fix(36.85, 28.27, kov0=0.0, kov_tipi=0))
+        assert node._n_gps == onceki + 1, "bilinmeyen kovaryans tipi elenmemeli"
+    finally:
+        node.destroy_node()
+
+
+def test_KAR06_imkansiz_SICRAMA_reddediliyor(ros_context) -> None:  # noqa: ANN001
+    """Su üstü aracı 25 ms'de 6,5 m gidemez. Ardışık ölçüm arası hız kapısı."""
+    node, _ = _gps_node(ros_context)
+    try:
+        # Referansi ELLE 100 ms geriye koyuyoruz: gercek sistemde GPS 10 Hz'dir.
+        # Iki cagriyi arka arkaya yapmak dt~0 uretir ve kapi (dogru olarak)
+        # uygulanmaz — olculemeyecek araliktan hiz cikarilmaz.
+        simdi = node.get_clock().now().nanoseconds * 1e-9
+        node._son_gps = (36.85, 28.27, simdi - 0.1)
+        n0 = node._n_gps
+        # ~0.01 derece enlem ≈ 1,1 km / 100 ms = 11 km/s — imkansiz
+        node._on_gps(_fix(36.86, 28.27))
+        assert node._n_gps == n0, "imkansiz sicrama kabul edildi"
+    finally:
+        node.destroy_node()
+
+
+def test_KAR06_makul_hareket_GECIYOR(ros_context) -> None:  # noqa: ANN001
+    """Kapı gerçek hareketi engellememeli — yoksa tekne ilerleyemez."""
+    node, _ = _gps_node(ros_context)
+    try:
+        simdi = node.get_clock().now().nanoseconds * 1e-9
+        node._son_gps = (36.85, 28.27, simdi - 0.1)
+        n0 = node._n_gps
+        # ~1e-6 derece ≈ 11 cm / 100 ms = 1,1 m/s — teknenin seyir hizi
+        node._on_gps(_fix(36.850001, 28.27))
+        assert node._n_gps == n0 + 1, "makul hareket reddedildi"
+    finally:
+        node.destroy_node()
