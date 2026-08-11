@@ -618,32 +618,38 @@ donduruyor — biri işareti ters çevirirse CI kırmızı.
 ⚠️ **Overlay kontrolü yapıldı:** `tf` bloğunu hiçbir overlay ezmiyor
 (`video.yaml`, `yarisma.yaml` dahil) → düzeltme her iki modda geçerli.
 
-### 🔴 KALAN İŞ — ALGI TARAFI (Eyüp)
+### 🟢 ALGI TARAFI — İZ SÜRÜLDÜ, SÜRÜŞ YOLU ETKİLENMİYOR
 
-**Düzeltme yalnız bizim füzyon yolumuzda.** `algi/girdap_ida_algi/
-gecit_mantik.py` kendi yanal konumunu doğrudan bbox'tan üretiyor:
+⚠️ İlk değerlendirmemde bunu **abartmıştım** ("10 m'de 42 cm, kapı payını
+aşıyor"). Topic izi sürülünce tablo değişti.
 
-```python
-x = z * (cx - 0.5) / f        # yaw terimi YOK
-```
+**Aktif mod `MOD = "algi_yayin"`** (Plan A): algı node'u yalnız algı yayınlıyor,
+tekneyi SÜRMÜYOR. `mppi_hedef` (arşiv) ve `dogrudan_surus` (Plan B) kapalı.
 
-Yani **kapı orta noktasını hesaplayan mantık hâlâ 2,38° kayık.**
-
-**Büyüklük: metre başına 4,2 cm.**
-
-| kapı mesafesi | yanal hata |
+| algı yayını | karar tarafında dinleyen |
 |---|---|
-| 3 m | 12 cm |
-| 5 m | 21 cm |
-| **10 m** | **42 cm** |
+| `/perception/buoys` | `perception_fusion_node` ✅ **düzeltilmiş yol** |
+| `/perception/buoys_3d` | `perception_fusion_node` ✅ |
+| `/perception/gate_passed` | `fsm_node` — yalnız **Bool** |
+| `/goal_pose` · `/perception/gate_target` · `/perception/gate_count` | **dinleyen YOK** |
 
-Kapı açıklığı ~1,35 m, tekne 0,785 m → yan boşluk ~28 cm. 10 m'de hata bu payı
-**aşıyor**; yaklaştıkça küçülüyor, yani araç uzaktan yanlış hizalanıp geç
-düzeltiyor.
+`gecit_mantik.py`'nin ürettiği kapı orta noktası **kimsenin dinlemediği**
+topic'lere gidiyor. Direksiyonu bizim `gate_follower`'ımız tutuyor ve o
+`classified_obstacles`'tan besleniyor → **düzeltilmiş bearing kullanılıyor.**
 
-**Eyüp'e iletilecek:** *"Kamera optik ekseni gövde merkez hattına göre
-+2,38° (0,0415 rad) iskeleye dönük ölçüldü (yöntem: §3b). `gecit_mantik.py`'deki
-`x = z·(cx−0.5)/f` hesabına bu ofset girmeli."*
+**Kalan küçük etki:** `/perception/gate_passed` boolean'ı. 2,38°'lik kayma
+"kapıyı geçtim" kararını biraz erken/geç verdirebilir; kaba bir bayrak olduğu
+için etkisi sınırlı.
+
+**Eyüp'e bilgi (acil değil):** *"Kamera optik ekseni +2,38° (0,0415 rad)
+iskeleye dönük ölçüldü (yöntem §3b). `gecit_mantik.py`'deki `x = z·(cx−0.5)/f`
+hesabında ofset yok; şu anki `algi_yayin` modunda sürüşü etkilemiyor ama
+`dogrudan_surus`/`mppi_hedef` açılırsa girmeli."*
+
+**Ayrıca (arşiv yolunda):** `duba_gecis_navigator.py:177`
+`KAMERA_OFSET_ILERI = 0.50  # (ÖLÇ!)` — bizim ölçümümüz **0.185 m**
+(§3, 09.08). **31,5 cm** fark. Sabit `mppi_hedef` bloğunda olduğu için şu an
+etkisiz; o mod açılırsa düzeltilmeli.
 
 ### ⚠️ Bu ölçüm KALICI DEĞİL
 
