@@ -171,6 +171,8 @@ class EdgeBuoyMemory:
         #: çakışma bandını aşıyordur (§0.26b).
         self._acilan_kayit = 0
         self._son_menzil_disi = 0
+        #: KAR-11 (12.08): unutma ile silinen toplam kayit — teshis.
+        self._unutulan = 0
 
     # ------------------------------------------------------------- teşhis
 
@@ -201,6 +203,16 @@ class EdgeBuoyMemory:
         cisim görülmüyor demektir, **duplikasyon** oluyordur (§0.26b).
         """
         return self._acilan_kayit
+
+    @property
+    def unutulan(self) -> int:
+        """Menzil dışına düştüğü için SİLİNEN toplam kayıt (KAR-11 teşhisi).
+
+        `boyut` sabitlenirken bu sayaç artıyorsa unutma çalışıyor demektir.
+        İkisi birlikte artıyorsa unutma menzili çok geniş; `boyut` artarken bu
+        sıfır kalıyorsa unutma hiç devreye girmemiş (parametre verilmemiş).
+        """
+        return self._unutulan
 
     @property
     def son_menzil_disi(self) -> int:
@@ -303,6 +315,7 @@ class EdgeBuoyMemory:
         self,
         arac_xy: Optional[Tuple[float, float]] = None,
         menzil: Optional[float] = None,
+        unutma_menzili: Optional[float] = None,
     ) -> List[Tuple[Tespit, bool]]:
         """🆕 H1 — bu karede GÖRÜLMEYEN kayıtlar `((x, y, r, sınıf), kenar_mı)`.
 
@@ -335,6 +348,29 @@ class EdgeBuoyMemory:
         kesindir. RTK kaybında 2,5 m'ye çıkar; o hâlde eski kayıtla eşleşme
         tutmaz ve **yeni** kayıt açılır (çift kayıt), silme değil.
         """
+        # 🔴 KAR-11 (12.08 ÖLÇÜLDÜ): unutma yoksa torba SINIRSIZ büyür.
+        # Canlı Jetson'da `boyut` **2404 kayıt**a çıkmıştı ve hâlâ artıyordu;
+        # `siniflandir()` her algı karesinde her tespiti HER kayda karşı test
+        # ettiği için maliyet doğrusal büyüyor → kontrol döngüsü 117 ms'den
+        # **1062 ms**'e çıkıyor (9×, ölçüldü). Tekne hareketsizken bile büyümesi,
+        # odometri sıçramasının (KAR-06: 25 ms'de 6,54 m) aynı dubayı tekrar
+        # tekrar kaydettirmesinden.
+        # `unutma_menzili` verilirse o menzilin ÖTESİNDEKİ kayıtlar SİLİNİR —
+        # süzmek yetmez, çünkü maliyet yayımda değil TARAMADA.
+        # ⚠ 09.08'de "unutma YOK" bilinçli bir karardı: duba geçici olarak
+        # görünmez olunca (LiDAR menzili ~8 m) hafıza onu kurtarıyor. O karara
+        # dokunmuyoruz — unutma menzili yayım menzilinden BELİRGİN BÜYÜK
+        # seçilir, yani "hâlâ işimize yarayabilecek" hiçbir kayıt silinmez;
+        # yalnız aracın çok gerisinde kalmış, bir daha kullanılmayacak
+        # kopyalar düşer.
+        if arac_xy is not None and unutma_menzili is not None:
+            ax0, ay0 = arac_xy
+            kalan = [
+                k for k in self._kayitlar
+                if math.hypot(k.x - ax0, k.y - ay0) <= unutma_menzili
+            ]
+            self._unutulan += len(self._kayitlar) - len(kalan)
+            self._kayitlar = kalan
         gorulmeyenler = [k for k in self._kayitlar if not k.taze]
         if arac_xy is None or menzil is None:
             self._son_menzil_disi = 0

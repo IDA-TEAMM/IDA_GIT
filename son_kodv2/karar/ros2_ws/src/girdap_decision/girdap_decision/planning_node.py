@@ -680,8 +680,16 @@ class PlanningNode(Node):
             # (K,T+1,N) engel tensöründe ödeniyor. Yarıçap uydurulmadı: yerel
             # maliyet haritasının kendi penceresi (planlayıcının akıl yürüttüğü
             # alan) ve LiDAR `max_range`'iyle de örtüşüyor.
+            # KAR-11: unutma menzili = yayim menzilinin 2 KATI. Suzmek
+            # yetmiyordu; maliyet yayimda degil TARAMADA (her tespit x her
+            # kayit). Canli olcum: 2404 kayit, dongu 117 -> 1062 ms (9x).
+            # 2x pay birakiliyor ki arac donunce hala isimize yarayabilecek
+            # kayitlar silinmesin (09.08'in "unutma yok" gerekcesi korunuyor);
+            # yalniz cok geride kalmis, bir daha kullanilmayacak kopyalar duser.
             for tespit, kenar in self._edge_memory.hatirlananlar(
-                self._last_xy, self._harita_yaricapi
+                self._last_xy,
+                self._harita_yaricapi,
+                unutma_menzili=self._harita_yaricapi * 2.0,
             ):
                 tespitler.append(tespit)
                 kenar_mi.append(kenar)
@@ -794,6 +802,7 @@ class PlanningNode(Node):
             f"{self._harita_yaricapi:.0f} m menzil dışı → torbaya konmadı), "
             f"rengi görünmezken kurtarılan tespit "
             f"{self._edge_memory.hatirlanarak_kurtarilan}, "
+            f"unutulan {self._edge_memory.unutulan}, "
             f"sınıfı güncellenen {self._edge_memory.celiskiyle_silinen} "
             f"(şu an {len(self._edge_buoys)} kenar / kapı takibi)"
         )

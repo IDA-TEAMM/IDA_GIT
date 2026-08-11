@@ -565,3 +565,79 @@ kümenin yarıçapı 0,87 m çıktı (duba ~0,15–0,25 olmalı) → o duba değ
 **Sonraki oturumda:** teknenin burnunu en boş yöne çevir, dubayı 10 m'ye koy,
 `orientation.z` (= yarıçap) ile dubayı ayıkla. Ölçüt: `position.y ≈ 0`;
 değilse `yaw = -atan2(y, x)` → `hardware.yaml tf.livox_frame.yaw` (RADYAN).
+
+---
+
+## 2026-08-12 — KAR-11'in kök nedeni ÖLÇÜLDÜ ve kapatıldı (kenar hafızası sınırsız büyüyordu)
+
+**Kaptanın bulgusu (`hatalar/karar.md` KAR-11):** kontrol döngüsü 10 Hz bütçesini
+tutturamıyor; periyot oturum boyunca **117 ms → 1062 ms** (9×). Girdi yükü sabit
+(engel 107-130, LiDAR tertemiz 10 Hz), yani yavaşlama **biriken bir iç durumdan**.
+
+**Doğal A/B deneyi** (tek oturum, aynı donanım) bunu kanıtlıyor: algı hattı
+yokken thrust **9,86 → 9,09 Hz**; algı ayağa kalktığı dilimde **3,07 Hz**, bir
+sonrakinde **1,03 Hz**. Algının hiç olmadığı 50 dakikalık oturumda thrust
+**10,00 Hz, sıfır boşluk**.
+
+### 🔴 Kaptanın açık bıraktığı soru — CEVAPLANDI
+
+Kaptan `EdgeBuoyMemory` büyümesini en güçlü aday olarak işaret etmiş ama
+**doğrulayamamış**: `/girdap/planning/edge_buoys` dizisi tüm oturum boyunca
+**1 elemanda sabit** kalırken periyot yine de 9 katına çıkıyordu. Notu:
+*"muhtemel açıklama, torbada asıl büyüyenin YAYINLANMAYAN kısım olması."*
+
+**Doğru çıktı.** Canlı Jetson'da servis log'u okundu:
+
+```
+kalıcı harita: 2392 kayıt → 2393 → 2395 → 2397 → 2399 → 2402 → 2404 …
+```
+
+**2404 kayıt** ve hâlâ artıyor. Yayınlanan dizi 1'de sabit kalıyor çünkü
+`/girdap/planning/edge_buoys` **yalnız sınıf 0'ı (turuncu kenar)** yayınlıyor;
+torbanın geri kalanı `UNKNOWN` sınıflı hatırlanan cisimler.
+
+### Maliyet zinciri
+
+`siniflandir()` her algı karesinde çağrılıyor ve her tespiti hafızadaki **her
+kayda** karşı test ediyor (`_eslesen_kayit` tam tarama). 2404 kayıt × ~120
+tespit = **kare başına ~288.000 karşılaştırma**, saf Python'da. Hafıza
+büyüdükçe maliyet doğrusal artıyor → periyot monoton büyüyor.
+
+⚠️ **Tekne hareketsizken bile büyüyordu.** Yani 2404 kaydın çoğu aynı fiziksel
+cisimlerin tekrar açılmış kopyaları. Kaynağın kendi uyarısı sebebi söylüyor:
+*"konum sıçraması çakışma bandının üçte birini geçince aynı duba ikinci kayıt
+açıyor."* Odometri ışınlanması (**KAR-06: 25 ms'de 6,54 m = 257 m/s**) tam o
+sıçramayı üretiyor → **KAR-06 ile KAR-11 aynı zincirin halkaları.**
+
+### Düzeltme: süzmek değil, UNUTMAK
+
+`hatirlananlar(arac_xy, menzil)` menzil filtresini **yalnız yayım için**
+uyguluyordu; kayıtlar hiç silinmiyordu. Ama maliyet **yayımda değil TARAMADA**.
+
+`unutma_menzili` parametresi eklendi: o menzilin ötesindeki kayıtlar **silinir**.
+`planning_node` bunu **yayım menzilinin 2 katı** olarak besliyor.
+
+**2× payın gerekçesi:** 09.08'de "unutma YOK" *bilinçli* bir karardı — duba
+LiDAR menzilinden (30 cm duba için ~8 m) çıkınca hafıza onu kurtarıyor. O karara
+dokunmuyoruz: unutma menzili yayım menzilinden belirgin büyük seçildiği için
+"hâlâ işimize yarayabilecek" hiçbir kayıt silinmiyor; yalnız aracın çok gerisinde
+kalmış, bir daha kullanılmayacak kopyalar düşüyor.
+
+**Yeni teşhis:** `EdgeBuoyMemory.unutulan` sayacı + `planning_node` log satırı.
+Okuma kılavuzu: `boyut` sabitlenirken `unutulan` artıyorsa unutma çalışıyor;
+ikisi birlikte artıyorsa menzil çok geniş; `boyut` artarken `unutulan` sıfırsa
+unutma hiç devreye girmemiş.
+
+**Testler:** 4 yeni (geriye uyum · silme · pay koruması · torbanın sınırlanması).
+Laptop 569 passed, Jetson 22 passed.
+
+⚠️ **Canlı doğrulama YAPILAMADI:** LiDAR bu oturumda bağlı değildi, engel
+gelmediği için hafıza boş kaldı ve teşhis satırı hiç basılmadı. Mekanizmanın
+kanıtı birim testlerde; **sahada `kalıcı harita: N kayıt … unutulan M` satırı
+izlenmeli** — `N` sabitlenmeli, `M` artmalı.
+
+### Kalan
+
+**Kök neden hâlâ açık:** odometri sıçraması (KAR-05/06). Unutma semptomu
+sınırlıyor, mükerrer kayıt açılmasını engellemiyor. Kalıcı çözüm füzyon
+tarafında.

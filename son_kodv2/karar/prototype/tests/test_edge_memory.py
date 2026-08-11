@@ -273,3 +273,59 @@ def test_H1_temizle_haritayi_da_sifirlar() -> None:
     hafiza.siniflandir([(1.0, 1.0, R, TURUNCU)], TURUNCU)
     hafiza.temizle()
     assert hafiza.hatirlananlar() == []
+
+
+# ------------------------------------------- KAR-11: menzil tabanlı unutma
+
+
+def test_unutma_VERILMEZSE_eski_davranis_BIREBIR() -> None:
+    """Geriye uyum: `unutma_menzili` yoksa hiçbir kayıt silinmez (09.08 kararı)."""
+    m = EdgeBuoyMemory()
+    m.siniflandir([(0.0, 0.0, 0.15, 0), (100.0, 0.0, 0.15, 0)], edge_class_id=0)
+    n = m.boyut
+    m.hatirlananlar((0.0, 0.0), 10.0)          # yalnız SÜZER
+    assert m.boyut == n, "unutma istenmediği hâlde kayıt silinmiş"
+    assert m.unutulan == 0
+
+
+def test_unutma_menzil_disini_SILIYOR() -> None:
+    """🔴 KAR-11'in düzeltmesi: süzmek yetmiyor, SİLMEK gerekiyor.
+
+    Maliyet yayımda değil TARAMADA: `siniflandir()` her tespiti hafızadaki HER
+    kayda karşı test ediyor. Canlı ölçüm: 2404 kayıt → döngü 117→1062 ms (9×).
+    """
+    m = EdgeBuoyMemory()
+    m.siniflandir(
+        [(0.0, 0.0, 0.15, 0), (5.0, 0.0, 0.15, 0), (100.0, 0.0, 0.15, 0)],
+        edge_class_id=0,
+    )
+    assert m.boyut == 3
+    m.hatirlananlar((0.0, 0.0), 10.0, unutma_menzili=20.0)
+    assert m.boyut == 2, "100 m'deki kayıt unutulmalıydı"
+    assert m.unutulan == 1
+
+
+def test_unutma_menzili_YAKINDAKINI_KORUYOR() -> None:
+    """Pay bırakılıyor: yayım menzilinin ötesindeki ama unutma menzilinin
+    içindeki kayıt YAŞAR — araç dönünce hâlâ işimize yarayabilir. 09.08'in
+    'unutma yok' gerekçesi (LiDAR ~8 m'de dubayı kaybediyor) böyle korunuyor.
+    """
+    m = EdgeBuoyMemory()
+    m.siniflandir([(15.0, 0.0, 0.15, 0)], edge_class_id=0)
+    m.hatirlananlar((0.0, 0.0), 10.0, unutma_menzili=20.0)   # 15 m: yayım DIŞI
+    assert m.boyut == 1, "yayım menzili dışı diye SİLİNMEMELİ"
+    assert m.unutulan == 0
+
+
+def test_unutma_torbayi_SINIRLIYOR() -> None:
+    """Asıl amaç: tekrarlanan çağrılarda torba sınırsız büyümesin.
+
+    Odometri sıçraması (KAR-06: 25 ms'de 6,54 m) aynı dubayı tekrar tekrar
+    kaydettiriyordu; hareketsiz teknede bile 2404 kayda çıkmıştı.
+    """
+    m = EdgeBuoyMemory()
+    for i in range(60):
+        m.siniflandir([(50.0 + i, 0.0, 0.15, 0)], edge_class_id=0)
+        m.hatirlananlar((0.0, 0.0), 10.0, unutma_menzili=20.0)
+    assert m.boyut == 0, f"torba sinirlanmadi: {m.boyut} kayit"
+    assert m.unutulan >= 60
