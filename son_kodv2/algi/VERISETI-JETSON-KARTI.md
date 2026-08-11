@@ -75,6 +75,22 @@ Elle komut çalıştıramayacağımıza göre toplayıcı **açılışta kendi b
 | Disk 10 GB'a iner | Temiz durur (`exit 0`) — systemd yeniden **başlatmaz**, sonsuz döngü olmaz |
 | **Güç kes / kapat / reboot** | systemd SIGTERM → kod bunu `KeyboardInterrupt`'a çevirir → `finally` çalışır → **`dev.close()`** ile OAK temiz kapanır |
 
+### 🔴 "Otomatik geçer mi" — HAYIR, ÖLÇÜLDÜ
+
+Eyüp'ün sorusu: *"kapatma kodu yazılınca otomatik bizim diğer kodlar kamerayı
+kullanacak mı?"* Gerçek systemd unit'leriyle ölçüldü:
+
+| soru | ölçüm | sonuç |
+|---|---|---|
+| Bir kez `enable` → her boot'ta başlar mı | `default.target.wants/` bağlantısı kuruldu | ✅ EVET |
+| Toplayıcıyı durdurunca **algı kendi başlar mı** | `algi: inactive` | 🔴 **HAYIR** |
+| Algıyı başlatınca toplayıcı çekilir mi | `veriseti: TEMIZ BIRAKTI → algi: ACTI` | ✅ EVET (`Conflicts=`) |
+| İkisi de `enable` kalırsa boot'ta ne olur | **3/3 denemede ALGI kazandı, toplayıcı HİÇ çalışmadı** | 🔴 sessiz felaket |
+
+🔑 **Kamerayı bırakma otomatik; kamerayı kim alacağı DEĞİL.** `--veriseti-servis`
+algıyı `disable` ettiği için toplayıcı durunca kamera boşta kalır, kimse almaz.
+Geçiş **komutla**: `jetson_kur.sh --servis`.
+
 ### 🔴 Kapanış neden ayrı bir iş — 11.08'de ÖLÇÜLDÜ
 
 Python'un **SIGTERM varsayılanı süreci ANINDA öldürür, `finally` bloğu
@@ -91,6 +107,61 @@ Düzeltme **iki kat**: koddaki SIGTERM işleyicisi + servis dosyasındaki
 `KillSignal=SIGINT` / `TimeoutStopSec=20` / `SendSIGKILL=yes`.
 Gerçek systemd unit'iyle üçü de ölçüldü — düzeltme öncesi kapanış kayboluyordu,
 sonrasında her iki sinyalde de temiz kapanıyor.
+
+**Gerçek cihazla doğrulandı (11.08 akşamı):** toplayıcı kamerayı açtı → kare
+topladı → SIGTERM → `[✓] Bitti`, çıkış kodu **0** → kamera `X_LINK_UNBOOTED`
+(boşta) → başka süreç hemen açtı, **1352×1014 kare geldi**.
+
+#### ⚠️ AMA: fiş çekmek BAŞKA ŞEY — bu düzeltme onu KURTARMAZ
+SIGTERM düzeltmesi `systemctl stop` / `reboot` / `shutdown` içindir. **Ani güç
+kesintisinde (fiş çekme, pil bitmesi) sürece HİÇBİR sinyal ulaşmaz** —
+yakalanacak bir şey yoktur. Ölçüldü (SIGKILL ile, yakalanamaz sinyal):
+o anda açık olan dosya **44 bayt** kaldı, `moov atom not found`, **açılamıyor**.
+
+🔑 Kaybı sınırlayan şey kayıt tasarımı: mp4 **120 sn'lik segmentler** hâlinde
+yazılıyor (`KAYIT_SEGMENT_SN`), önceki segmentler zaten kapatılmış. ⇒ Fiş
+çekilse bile kayıp **en fazla son 2 dakika**, tüm tur değil.
+⇒ **Kural: mümkünse `sudo systemctl stop girdap-algi` (ya da `sudo poweroff`)
+ile kapat; fişi doğrudan çekme.**
+
+---
+
+## 2b. 🔴 TESLİM — segmentler TEK dosyaya indirilmeli (yeni bulgu, 11.08)
+
+Şartname **tam taraması** (doğrulanmış PDF `sha256 09116afe…`, 29 sayfa) md 4.2:
+> *"Otonomi amacıyla kullanılan aşağıdaki veriler kaydedilecek ve teslim
+> edilecektir. Veriler **3 dosya** olacak şekilde teslim edilecektir."*
+> **Dosya 1: Otonomi Sensörleri Veri seti** — İşlenmiş kamera verisi ·
+> *En az 1 Hz* · *Her bir frame **zaman etiketine** sahip olacak şekilde
+> mp4 formatında* · *Tespit ve takip işlemleri sonucunda **obje çerçeve
+> çizimleri** ve yapıldıysa **tespit sınıf bilgileri görünecek** şekilde*
+
+md 5.5.4.3.5: *"İDA'nın karaya alım anından itibaren **20 dakika** içerisinde,
+her bir takımın kendi USB flash belleği ile birlikte teslim edilmeyen … **her
+bir dosya için 5'er ceza puanı**."*
+
+**Kod bu şartların dördünü de karşılıyor** (denetlendi):
+✅ 2 Hz (≥1) · ✅ her kareye milisaniyeli duvar saati basılıyor · ✅ bbox + sınıf
+adı + güven + mesafe çiziliyor · ✅ mp4.
+🔴 **Ama biz segment yazıyoruz** (20 dk tur ⇒ **10 dosya**), şartname **tek
+dosya** istiyor. Bunun için araç yazıldı:
+
+```bash
+python3 scripts/dosya1_birlestir.py --usb /media/girdap/USB
+```
+
+- `ffmpeg -c copy` — **yeniden kodlama YOK**, saniyeler sürer (20 dk penceresi dar).
+- Overlay'ler karelere gömülü olduğu için kopyalamada **aynen korunur** (doğrulandı).
+- 🔴 **Bozuk son segmenti atlar** ve açıkça söyler — tek bozuk dosya yüzünden
+  teslim edilecek videonun hiç üretilememesi kabul edilemez. (SIGKILL'le gerçek
+  bozuk segment üretilip test edildi: 3 sağlam birleşti, bozuk atlandı, çıktı
+  60 kare / 1352×1014 / 2 FPS ve overlay'ler yerinde.)
+- USB'ye kopyaladıktan sonra `os.sync()` çağırıyor — fişi çekmeden önce
+  gerçekten yazılsın.
+- ⚠️ `ffmpeg` kurulu olmalı: `sudo apt install -y ffmpeg`.
+
+📌 Dosya-2 (telemetri csv) ve Dosya-3 (maliyet haritası) **karar tarafının** işi
+— bizim kapsamımız Dosya-1. Ama üçü birden USB'de olmazsa her eksik dosya 5 puan.
 
 ---
 
@@ -167,6 +238,13 @@ ls ~/girdap_veriseti/images | wc -l                   # sayı KALDIĞI YERDEN AR
 # (e) Kapanış testi — mp4/manifest bütünlüğü
 sudo systemctl stop girdap-veriseti
 journalctl -u girdap-veriseti | tail -5               # "[✓] Bitti. N kare" GÖRMELİ
+```
+
+```bash
+# (f) 🔴 TESLİM PROVASI — yarışma günü ilk kez denenmez (algı aşamasında)
+python3 scripts/dosya1_birlestir.py            # segmentleri TEK mp4'e indir
+#   → "✅ ÜRETİLDİ", kare sayısı segmentlerin toplamına eşit olmalı
+#   → üretilen mp4'ü AÇ ve GÖZLE bak: zaman etiketi + bbox + sınıf adı görünüyor mu
 ```
 
 🔴 **(d) ve (e) görülmeden denize girilmez.** `enable` etmek boot'ta başladığının
