@@ -283,6 +283,12 @@ class PlanningNode(Node):
         # BURADA yapiliyor cunku gecis sayaci GateFollower'in icinde yasiyor.
         self._reset = ResetAbonesi(self, self._yeniden_basla)
         self._edge_mem_log_t = 0.0
+        # Hatırlanan cisimlerin engel torbasına konacağı yarıçap (m) — yeni bir
+        # ayar DEĞİL, yerel maliyet haritası penceresinin yarısı (§0.26c).
+        self._harita_yaricapi = cfg.map_width * cfg.map_resolution / 2.0
+        self._edge_mem_son_acilan = 0        # log penceresi başına yeni kayıt
+        self._son_cmd_vel_t: Optional[float] = None   # çıkış kadansı bekçisi
+        self._backend_loglandi = False       # MPPI hesap yolu bir kez yazılır
         self._gate_post_margin = float(
             self.get_parameter("gate_post_margin_m").value
         )
@@ -445,6 +451,11 @@ class PlanningNode(Node):
             f"planning_node aktif [{planner}] (MPPI K={cfg.mppi_K}, "
             f"T={cfg.mppi_T}, control={rate} Hz, map={map_rate} Hz)"
         )
+        # 🔴 HESAP YOLU (2026-08-10): `backend="auto"` cupy'yi bulamazsa SESSİZCE
+        # numpy'ye iniyor ve N=100 engelde adım 3,7 ms → 144 ms'ye çıkıyor
+        # (10 Hz bütçesi 100 ms). Jetson ekransız koştuğu için belirti vermez →
+        # hangi yola çözüldüğü YAZILIR (MPPI kurulur kurulmaz, `_on_control_step`
+        # içinden). Ayrıntı: `MPPIController.backend_adi`.
         # Saha tuning değerleri log'a — hangi ayarla uçtuğumuz kayıt altında.
         self.get_logger().info(
             f"MPPI tuning: λ={'profil' if mppi_lambda is None else mppi_lambda}, "
@@ -660,7 +671,18 @@ class PlanningNode(Node):
             # (30 cm duba için ~8 m) menzilinden çıkıyor ve kapı ortadan
             # kayboluyordu. UNUTMA YOK — kaptan kararı 09.08 (gerekçe:
             # `EdgeBuoyMemory.hatirlananlar` docstring'i).
-            for tespit, kenar in self._edge_memory.hatirlananlar():
+            # 🔴 YAYIM MENZİLİ (2026-08-10, §0.26b-c): hatırlanan cisimlerin
+            # yalnız yerel harita penceresi içindekiler engel torbasına girer.
+            # Kayıt SİLİNMİYOR (kaptan kararı korunuyor) — araç yaklaşınca geri
+            # gelir. Sebebi ölçüm: konum sıçraması çakışma bandının üçte birini
+            # geçince aynı duba ikinci kayıt açıyor ve torba sınırsız büyüyor;
+            # bedeli `_huni_payi`'nin O(n²) saf Python taramasında ve MPPI'nin
+            # (K,T+1,N) engel tensöründe ödeniyor. Yarıçap uydurulmadı: yerel
+            # maliyet haritasının kendi penceresi (planlayıcının akıl yürüttüğü
+            # alan) ve LiDAR `max_range`'iyle de örtüşüyor.
+            for tespit, kenar in self._edge_memory.hatirlananlar(
+                self._last_xy, self._harita_yaricapi
+            ):
                 tespitler.append(tespit)
                 kenar_mi.append(kenar)
         else:
@@ -760,11 +782,19 @@ class PlanningNode(Node):
         self._edge_mem_log_t = now
         if not self._gate_enabled or self._edge_memory.boyut == 0:
             return
+        # 🔑 Sahada anlamlı olan sayı `boyut` değil **hız**: pencere başına açılan
+        # yeni kayıt. Araç yeni bir bölgeye girmiyorken bu sıfıra inmiyorsa yeni
+        # cisim görülmüyordur, AYNI cisim için ikinci kayıt açılıyordur (§0.26b:
+        # konum sıçraması çakışma bandının üçte birini geçince başlıyor).
+        yeni = self._edge_memory.acilan_kayit - self._edge_mem_son_acilan
+        self._edge_mem_son_acilan = self._edge_memory.acilan_kayit
         self.get_logger().info(
-            f"kenar hafızası: {self._edge_memory.boyut} duba hatırlanıyor, "
+            f"kalıcı harita: {self._edge_memory.boyut} kayıt "
+            f"(son 5 sn'de +{yeni} yeni, {self._edge_memory.son_menzil_disi} tanesi "
+            f"{self._harita_yaricapi:.0f} m menzil dışı → torbaya konmadı), "
             f"rengi görünmezken kurtarılan tespit "
             f"{self._edge_memory.hatirlanarak_kurtarilan}, "
-            f"sınıf çelişkisiyle silinen {self._edge_memory.celiskiyle_silinen} "
+            f"sınıfı güncellenen {self._edge_memory.celiskiyle_silinen} "
             f"(şu an {len(self._edge_buoys)} kenar / kapı takibi)"
         )
 
@@ -841,10 +871,17 @@ class PlanningNode(Node):
         🔑 **MPPI ile birlikte çalışma noktası burası.** Dönen değer doğrudan
         MPPI'nin referansı olur (`set_reference_direct` / `set_waypoints` →
         `PlanningPipeline`). Nişan kör orta nokta DEĞİL, kapı kirişi üzerinde
-        engellerden en açık yerdir: kenar dubaları MPPI'nin engel torbasından
-        çıkarıldığı için (`_on_classified`) geçitte iten tek kuvvet budur —
-        bu yüzden aynı taramadan gelen engel listesi de `GateFollower`'a
-        geçirilir. Engel yoksa nişan tam ortadır (eski davranış birebir).
+        engellerden en açık yerdir; bu yüzden aynı taramadan gelen engel listesi
+        de `GateFollower`'a geçirilir. Engel yoksa nişan tam ortadır (eski
+        davranış birebir).
+
+        ⚠️ **2026-08-10 düzeltmesi — bu docstring bayattı.** Eskiden burada
+        *"kenar dubaları engel torbasından çıkarıldığı için geçitte iten tek
+        kuvvet nişandır"* yazıyordu; **B2 HUNİ'den (§0.18d) beri doğru değil**:
+        direkler torbada KALIYOR, payları ölçülen açıklıktan türüyor
+        (`_huni_payi`). Yani geçitte iki kuvvet var — nişanın çekimi ve huninin
+        itmesi. Ölçüldü: direklerin torbada olması nişanı **kaydırmıyor**
+        (simetrik kapıda kayma 0,000 m), yani iki mekanizma çakışmıyor.
 
         `gate_following_enabled=false` → tamamen devre dışı, eski davranış.
         """
@@ -1074,6 +1111,7 @@ class PlanningNode(Node):
         """
         try:
             gate = self._bridge.control_gate(self._now())
+            self._log_backend()      # MPPI kurulur kurulmaz bir kez yazar
 
             u = self._pipe.compute_control()
             if u is None:                            # FSM parkur dışı → motor stop
@@ -1178,6 +1216,68 @@ class PlanningNode(Node):
             (u[1] - u[0]) * (p.thruster_spacing / 2.0) / max(1e-6, abs(p.Nr))
         )
         self._pub_cmd_vel.publish(twist)
+        self._cmd_vel_kadans_denetle()
+
+    def _log_backend(self) -> None:
+        """MPPI'nin fiilen çözüldüğü hesap yolunu BİR KEZ bas (bkz. çağıran).
+
+        ⚠ MPPI ilk referans gelmeden kurulmuyor, yani açılışta henüz yok →
+        kurulana kadar her kontrol adımında yeniden denenir, kurulunca yazılır
+        ve mandal kapanır. Açılışta tek satır basıp geçmek, tam da görülmesi
+        gereken bilgiyi kaçırırdı.
+        """
+        if self._backend_loglandi:
+            return
+        mppi = getattr(self._pipe, "_mppi", None)
+        ad = getattr(mppi, "backend_adi", None) if mppi is not None else None
+        if ad is None:
+            return
+        self._backend_loglandi = True
+        if ad.startswith("numpy"):
+            self.get_logger().warn(
+                f"MPPI hesap yolu: {ad} — GPU YOK/BULUNAMADI. Engel sayısı "
+                "arttıkça adım süresi hızla büyür (ölçüm: N=100'de 144 ms, "
+                "10 Hz bütçesi 100 ms). Jetson'da bu beklenmiyor: cupy kurulumunu "
+                "kontrol et (cupy-cuda12x + numpy sürüm uyumu)."
+            )
+        else:
+            self.get_logger().info(f"MPPI hesap yolu: {ad}")
+
+    def _cmd_vel_kadans_denetle(self) -> None:
+        """🔴 ArduPilot 3 SANİYE KURALI — çıkış kadansı bekçisi (2026-08-10).
+
+        ArduPilot Rover'ın kendi dokümanı (Rover Commands in Guided Mode):
+        *"velocity commands should be re-sent every second — **the vehicle will
+        stop after 3 seconds** if no command is received."* Yani `cmd_vel`
+        yayınımız 3 sn kesilirse **uçuş kontrolcüsü tekneyi durdurur** ve bunu
+        bize söylemez.
+
+        Bizim en uzun GİRİŞ bekçimiz `heartbeat_timeout_s` = 5,0 s → 3-5 sn
+        arasında bir tıkanmada araç çoktan durmuşken yığın hâlâ "sağlıklı" der.
+        Tıkanma varsayımsal değil: `plan()` hâlâ kontrol timer'ının thread'inde
+        (`rclpy.spin`, tek executor) ve sahada ölçüldü — kontrol döngüsü 10 Hz
+        yerine ~5 Hz koştu (§0.12b: cmd_vel 49 → 100 mesaj/10 s).
+
+        ⚠ **Bu bir ÖNLEME değil, GÖRÜNÜR KILMA.** Aynı executor bloklandığı
+        için ayrı bir timer da ateşlenemezdi; ölçüm ancak tıkanma bittikten
+        sonra, bir sonraki yayımda yapılabilir. Kaydı tutmak yeterli: koşum
+        sonrası logda "FC bu aralıkta durdurmuş olabilir" penceresi görünür.
+        """
+        now = self._now()
+        onceki = self._son_cmd_vel_t
+        self._son_cmd_vel_t = now
+        if onceki is None:
+            return
+        aralik = now - onceki
+        if aralik <= 1.0:
+            return
+        self.get_logger().error(
+            f"cmd_vel yayını {aralik:.1f} sn KESİLDİ (hedef "
+            f"{1.0 / max(1e-6, float(self.get_parameter('control_rate_hz').value)):.2f} sn). "
+            "ArduPilot 3 sn'de hız setpoint'i gelmezse aracı DURDURUR — bu "
+            "aralıkta tekne durmuş olabilir. Sebep neredeyse kesin olarak "
+            "kontrol thread'inin bloklanmasıdır (RRT* replan, §18/P1)."
+        )
 
     def _safe_stop(self) -> None:
         """Fail-safe motor durdurma: kontrol adımı çökerse sıfır thrust + sıfır

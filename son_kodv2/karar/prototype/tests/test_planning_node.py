@@ -416,9 +416,22 @@ def test_obstacle_map_dunya_cercevesine_cevrilir(ros_context) -> None:  # noqa: 
         node.destroy_node()
 
 
-def test_turuncu_kenar_dubasi_engel_torbasindan_cikarilir(ros_context) -> None:  # noqa: ANN001
-    """Kapı dubası ENGEL DEĞİLDİR — engel kalırsa MPPI kapıya girmeyi pahalı
-    bulur (CLAUDE.md 'Emniyet Payları': margin 1.5 m'de geçitten HİÇ geçmiyor)."""
+def test_turuncu_kenar_dubasi_HEM_kapiya_HEM_huniyle_torbaya_gider(ros_context) -> None:  # noqa: ANN001
+    """Kapı direği kenar OLARAK KALIR **ve** engel torbasına HUNİ PAYIYLA girer.
+
+    ⚠️ **2026-08-10: bu testin eski hâli bayattı ve CI'yı kırmızı tutuyordu.**
+    Adı `..._engel_torbasindan_cikarilir` idi ve `len(_obstacles) == 2` bekliyordu
+    — yani direklerin torbadan TAMAMEN çıkarıldığı davranışı donduruyordu. O
+    davranış **B2 HUNİ ile (§0.18d, 09.08) bilerek değiştirildi**: direkleri
+    torbadan çıkarmanın bedeli ölçülmüştü — dubalardan iten hiçbir kuvvet
+    kalmıyor, gövde payı **−0,23 m** (temas) çıkıyordu. Şimdi direkler torbada
+    kalıyor ama payları küresel `obstacle_margin` değil, ölçülen açıklıktan
+    türeyen `_huni_payi`. Kod doğruydu, testi güncellenmemişti.
+
+    Korunan asıl sözleşme değişmedi ve burada da doğrulanıyor: kapı direği
+    `_edge_buoys`'a gider (kapı takibi onu görür) ve payı küresel değerden
+    KÜÇÜKTÜR (yoksa 1,0 m'lik halka dar geçidin içini kaplar).
+    """
     node = pn.PlanningNode()
     try:
         node._on_odom(_odom_poz(0.0, 0.0, 0.0))
@@ -428,9 +441,55 @@ def test_turuncu_kenar_dubasi_engel_torbasindan_cikarilir(ros_context) -> None: 
             (12.0, +1.0, 0.20, 1),      # sarı ENGEL
             (14.0, -1.0, 0.20, 99),     # eşleşmeyen (CLASS_UNKNOWN) → engel KALIR
         ]))
-        # Yalnız sarı + bilinmeyen engel olmalı; iki turuncu kapıya gitmeli.
-        assert len(node._pipe._obstacles) == 2
+        # İki turuncu kapı takibine gider…
         assert len(node._edge_buoys) == 2
+        # …ve torbada 2 normal engel + 2 huni paylı direk bulunur.
+        normal = [o for o in node._pipe._obstacles if o.margin is None]
+        direkler = [o for o in node._pipe._obstacles if o.margin is not None]
+        assert len(normal) == 2, "sarı + UNKNOWN engel kalmalı"
+        assert len(direkler) == 2, "kapı direkleri huni payıyla torbada olmalı"
+        # Huni payı ölçülen açıklıktan türer: 4 m kapıda tavana dayanır.
+        assert all(0.0 < o.margin <= node._gate_post_margin for o in direkler)
+    finally:
+        node.destroy_node()
+
+
+def test_hatirlanan_cisim_MENZIL_DISINDA_engel_torbasina_KONMAZ(ros_context) -> None:  # noqa: ANN001
+    """🔴 YAYIM MENZİLİ nöbetçisi (2026-08-10, §0.26b-c).
+
+    Kalıcı harita hiçbir kaydı silmiyor (kaptan kararı 09.08). Ölçüldü ki konum
+    sıçraması çakışma bandının üçte birini geçince aynı duba için ikinci kayıt
+    açılıyor ve torba sınırsız büyüyor; bedeli `_huni_payi`'nin O(n²) taraması
+    ile MPPI'nin (K,T+1,N) engel tensöründe ödeniyor. Çözüm silme değil, engel
+    torbasına yalnız yerel harita penceresi içindekileri koymak.
+
+    Bu test iki yönü birden donduruyor: uzaktaki kayıt torbaya GİRMEZ, araç
+    yaklaşınca GERİ GELİR (yani unutulmamıştır).
+    """
+    node = pn.PlanningNode()
+    try:
+        yaricap = node._harita_yaricapi
+        assert yaricap > 0.0
+        uzak = yaricap + 20.0                  # 45 m
+        # ⚠ `_classified` GÖVDE çerçevesinde verir; node `_body_to_world` ile
+        # çevirir. Aşağıdaki ofsetler bu yüzden araca GÖRELİ.
+        # 1) Araç (uzak, 0)'da; 5 m ilerideki cismi GÖR → dünya (uzak+5, 0).
+        node._on_odom(_odom_poz(uzak, 0.0, 0.0))
+        node._on_classified(_classified([(5.0, 0.0, 0.15, 1)]))
+        assert node._edge_memory.boyut == 1
+        # 2) Başlangıca dön, BAŞKA bir cisim gör → eski kayıt menzil DIŞI.
+        node._on_odom(_odom_poz(0.0, 0.0, 0.0))
+        node._on_classified(_classified([(5.0, 0.0, 0.20, 1)]))
+        assert node._edge_memory.boyut == 2, "kayıt SİLİNMEMELİ"
+        assert node._edge_memory.son_menzil_disi == 1
+        assert all(abs(o.cx) < yaricap for o in node._pipe._obstacles), \
+            "menzil dışı kayıt engel torbasına konmamalı"
+        # 3) Geri yaklaş → hatırlanan cisim torbaya GERİ GELİR (unutulmamış).
+        node._on_odom(_odom_poz(uzak, 0.0, 0.0))
+        node._on_classified(_classified([(30.0, 0.0, 0.20, 1)]))
+        assert node._edge_memory.son_menzil_disi == 1, "başlangıçtaki cisim geride kaldı"
+        assert any(abs(o.cx - (uzak + 5.0)) < 0.5 for o in node._pipe._obstacles), \
+            "araç yaklaşınca hatırlanan cisim geri gelmeli"
     finally:
         node.destroy_node()
 

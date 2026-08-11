@@ -70,12 +70,35 @@ değiştirebilir"* → turuncu duba kayar, yerine SARI bir engel gelir.
 Kural: **bilinen ve farklı bir sınıf, hafızayı iptal eder.**
 - `CLASS_UNKNOWN` (99) ya da sınıfsız → **çelişki DEĞİL** (zaten düzeltmek
   istediğimiz hâl: LiDAR görüyor, kamera rengi veremiyor).
-- Başka bir bilinen sınıf (sarı engel=1, hedef duba=2) → kayıt **silinir**,
-  tespit engel olur. Kamera "orada sarı var" diyorsa hafızadan daha tazedir.
+- Başka bir bilinen sınıf (sarı engel=1, hedef duba=2) → kaydın **SINIFI
+  GÜNCELLENİR** (H1'den beri; eskiden silinirdi). Cisim hâlâ oradadır, yalnız ne
+  olduğu değişmiştir — silmek onu haritadan düşürürdü.
 
-Hafızada süreye/mesafeye bağlı unutma **yoktur** — ölçülen kol (C) da öyleydi.
-Sınırsız büyüme riski yok çünkü kayıtlar yerinde GÜNCELLENİR: hareket eden duba
-yeni kayıt doğurmaz (`test_hareket_eden_duba_YENI_kayit_dogurmaz`).
+Hafızada süreye bağlı unutma **yoktur** — ölçülen kol (C) da öyleydi.
+
+---
+
+🔴 **YAYIM MENZİLİ (2026-08-10) — `hatirlananlar(arac_xy, menzil)`**
+
+Eski not *"sınırsız büyüme riski yok çünkü kayıtlar yerinde GÜNCELLENİR"* **eksikti**:
+yerinde güncelleme yalnız **eşleşen** kayıt için geçerli. Ölçüldü (GIRDAP_DURUM
+§0.26b): kare arası konum sıçraması çakışma bandının (`r₁+r₂`=0,30 m) üçte birini
+geçince aynı duba için **ikinci kayıt** açılıyor —
+
+    sıçrama 0,08 m → 8 kayıt · 0,10 m → 24 · 0,12 m → **220** · 0,15 m → **1 362**
+
+…ve bedeli iki yerde ödeniyor: `planning_node._huni_payi` **O(n²) saf Python**
+(481 kenarda 10 Hz bütçesinin %25'i, laptopta) ve MPPI'nin `(K, T+1, N)` engel
+tensörü (N=2000'de 1,6 GB — Orin Nano'da bellek işlemciyle PAYLAŞIMLI).
+
+**Çözüm silme DEĞİL, YAYIM MENZİLİ:** kayıt haritada kalır (kaptan kararı korunur),
+yalnız araçtan `menzil` ötesindekiler engel torbasına **konmaz**. Sayı uydurulmadı:
+çağıran `PlanningPipeline`'ın yerel maliyet haritası penceresinin yarıçapını verir
+(`map_width × map_resolution / 2` = 25 m) — planlayıcının zaten akıl yürüttüğü alan.
+Aynı sayı LiDAR'ın `max_range`'i ile de örtüşüyor: o menzilin ötesinde zaten taze
+tespit gelmiyor.
+
+⚠ Geriye tam uyumlu: `menzil=None` → eski davranış (hepsi döner).
 """
 
 from __future__ import annotations
@@ -142,6 +165,12 @@ class EdgeBuoyMemory:
         self._edge_id: Optional[int] = None
         self._hatirlanarak_kurtarilan = 0      # teşhis: hafızanın kazandırdığı
         self._celiskiyle_silinen = 0           # teşhis: sınıf çelişkisi sayısı
+        #: Teşhis (2026-08-10): kaç kayıt AÇILDI ve son yayımda kaçı menzil
+        #: dışında kaldı. Sahada duplikasyonun tek görünürlük kanalı — `boyut`
+        #: sürekli artarken `menzil_ici` sabit kalıyorsa konum sıçraması
+        #: çakışma bandını aşıyordur (§0.26b).
+        self._acilan_kayit = 0
+        self._son_menzil_disi = 0
 
     # ------------------------------------------------------------- teşhis
 
@@ -162,6 +191,22 @@ class EdgeBuoyMemory:
     def celiskiyle_silinen(self) -> int:
         """Bilinen farklı sınıf yüzünden iptal edilen kayıt sayısı."""
         return self._celiskiyle_silinen
+
+    @property
+    def acilan_kayit(self) -> int:
+        """Şimdiye kadar AÇILAN kayıt sayısı (yerinde güncellenenler hariç).
+
+        `boyut` ile aynı büyür; ayrı tutuluyor çünkü sahada anlamlı olan
+        **hız**: iki log penceresi arasındaki fark sıfıra inmiyorsa yeni
+        cisim görülmüyor demektir, **duplikasyon** oluyordur (§0.26b).
+        """
+        return self._acilan_kayit
+
+    @property
+    def son_menzil_disi(self) -> int:
+        """Son `hatirlananlar()` çağrısında menzil dışı kaldığı için engel
+        torbasına KONMAYAN kayıt sayısı."""
+        return self._son_menzil_disi
 
     def kayitlar(self) -> List[Tuple[float, float, float]]:
         """Hatırlanan kenarlar (x, y, r) — RViz/teşhis için kopya."""
@@ -210,13 +255,13 @@ class EdgeBuoyMemory:
                 self._kayitlar.append(
                     HatirlananKenar(x, y, r, sinif=cls, taze=True)
                 )
+                self._acilan_kayit += 1
                 kullanilan.add(len(self._kayitlar) - 1)
             else:
                 self._tasi(j, x, y, r, cls)
                 kullanilan.add(j)
 
         # --- 2. geçiş: renk görünmüyor --------------------------------------
-        silinecek: set[int] = set()
         for i, (x, y, r, cls) in enumerate(tespitler):
             if kenar[i]:
                 continue
@@ -225,7 +270,7 @@ class EdgeBuoyMemory:
                 and cls != edge_class_id
                 and cls != CLASS_UNKNOWN
             )
-            j = self._eslesen_kayit(x, y, r, haric=kullanilan | silinecek)
+            j = self._eslesen_kayit(x, y, r, haric=kullanilan)
             if j is None:
                 # 🆕 H1: eşleşen kayıt yok → YENİ kayıt aç. Hafıza artık yalnız
                 # turuncu direkleri değil GÖRÜLEN HER CİSMİ tutuyor (sarı engel,
@@ -234,6 +279,7 @@ class EdgeBuoyMemory:
                 self._kayitlar.append(
                     HatirlananKenar(x, y, r, sinif=cls, taze=True)
                 )
+                self._acilan_kayit += 1
                 kullanilan.add(len(self._kayitlar) - 1)
                 continue
             if bilinen_farkli:
@@ -253,8 +299,17 @@ class EdgeBuoyMemory:
 
         return kenar
 
-    def hatirlananlar(self) -> List[Tuple[Tespit, bool]]:
+    def hatirlananlar(
+        self,
+        arac_xy: Optional[Tuple[float, float]] = None,
+        menzil: Optional[float] = None,
+    ) -> List[Tuple[Tespit, bool]]:
         """🆕 H1 — bu karede GÖRÜLMEYEN kayıtlar `((x, y, r, sınıf), kenar_mı)`.
+
+        `arac_xy` + `menzil` verilirse yalnız **araçtan `menzil` içindeki**
+        kayıtlar döner (2026-08-10, modül docstring'i "YAYIM MENZİLİ").
+        Kayıt SİLİNMEZ — yalnız engel torbasına konmaz; araç yaklaşınca
+        kendiliğinden geri gelir. İkisinden biri `None` ise eski davranış.
 
         🔴 **Çözdüğü arıza (GIRDAP_DURUM §0.21/H1, ölçüm §0.22d).** `siniflandir`
         yalnız **gelen** tespiti sınıflandırıyordu; **kaybolan** cismi haritada
@@ -280,10 +335,20 @@ class EdgeBuoyMemory:
         kesindir. RTK kaybında 2,5 m'ye çıkar; o hâlde eski kayıtla eşleşme
         tutmaz ve **yeni** kayıt açılır (çift kayıt), silme değil.
         """
+        gorulmeyenler = [k for k in self._kayitlar if not k.taze]
+        if arac_xy is None or menzil is None:
+            self._son_menzil_disi = 0
+            secilen = gorulmeyenler
+        else:
+            ax, ay = arac_xy
+            secilen = [
+                k for k in gorulmeyenler
+                if math.hypot(k.x - ax, k.y - ay) <= menzil
+            ]
+            self._son_menzil_disi = len(gorulmeyenler) - len(secilen)
         return [
             ((k.x, k.y, k.r, k.sinif), k.sinif is not None and k.sinif == self._edge_id)
-            for k in self._kayitlar
-            if not k.taze
+            for k in secilen
         ]
 
     # ------------------------------------------------------------- yardımcı

@@ -538,21 +538,45 @@ def test_capa_kapali_donguda_monoton_ilerler(
 
 
 def test_kenar_durumu_tam_taramaya_duser_ve_capayi_bulur(
-    dyn: CatamaranDynamics, bounds: Bounds, caplog
+    dyn: CatamaranDynamics, bounds: Bounds
 ) -> None:
     """Çapa kilitlenirse (referans yeniden planlandı / poz sıçradı) en yakın
     nokta pencere kenarına yapışır → o adım tam taramaya düşülür, çapa
-    yeniden bulunur, WARN loglanır."""
+    yeniden bulunur, WARN loglanır.
+
+    ⚠️ **2026-08-10 — `caplog` YERİNE KENDİ DİNLEYİCİSİ.** Bu test aylardır
+    "ortamsal kırmızı" diye taşınıyordu ve sebebi pytest sürümü sanılıyordu
+    (§13.3). Ölçüldü: kırılma **yalnız `rclpy` PYTHONPATH'teyken** oluyor,
+    rclpy'siz kolda test geçiyor — yani sebep ROS'un kurduğu logging
+    yönlendiricisinin `caplog`'un propagate yolunu atlaması. Yani süit "ROS
+    ortamında koş" dendiği ANDA bu test kırmızı olmak zorundaydı.
+    İddia ZAYIFLATILMADI: aynı mesaj, aynı seviye, aynı logger — yalnız
+    yakalama yolu `caplog`'a değil doğrudan bir handler'a bağlandı.
+    """
     cfg = _cfg(True)
     ctrl = MPPIController(dyn, bounds, [], cfg)
     ctrl.set_reference(_UZUN_REF, spacing=0.5)
     ctrl._ref_anchor_idx = 300           # tekne 0'da, çapa 150 m ileride (kilitli)
 
-    with caplog.at_level(logging.WARNING, logger="prototype.planning.mppi"):
+    kayitlar: list[str] = []
+
+    class _Yakala(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            kayitlar.append(record.getMessage())
+
+    logger = logging.getLogger("prototype.planning.mppi")
+    h = _Yakala(level=logging.WARNING)
+    eski_seviye = logger.level
+    logger.addHandler(h)
+    logger.setLevel(logging.WARNING)
+    try:
         ctrl.step(np.zeros(6))
+    finally:
+        logger.removeHandler(h)
+        logger.setLevel(eski_seviye)
 
     assert ctrl._ref_window_fallbacks == 1
-    assert "pencere" in caplog.text.lower()
+    assert any("pencere" in m.lower() for m in kayitlar), kayitlar
     # Fallback tam tarama yaptığı için çapa gerçek konuma (indeks ~0) döndü
     assert ctrl._ref_anchor_idx <= 2, f"çapa düzeltilmedi: {ctrl._ref_anchor_idx}"
 

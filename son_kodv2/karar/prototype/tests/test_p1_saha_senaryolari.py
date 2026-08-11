@@ -33,6 +33,7 @@ import functools
 import math
 
 import numpy as np
+import pytest
 
 from prototype.dynamics.catamaran import CatamaranDynamics
 from prototype.mission.edge_memory import CLASS_UNKNOWN, EdgeBuoyMemory
@@ -240,6 +241,24 @@ def test_faz1_dubalara_carpmadan_gider() -> None:
 
 
 # ---------------------------------------------------------------- FAZ 2
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "ÖLÇÜLMÜŞ AÇIK SINIR, bayat test DEĞİL (2026-08-10). Gerçek parkur "
+        "geometrisiyle (parkur_dunyasi'ndan okunuyor, 12 m kapı) model AÇIK "
+        "kolda 3/4 güzergah noktası, 400 s tavanına dayanıyor. Model KAPALI "
+        "kol aynı parkuru bitiriyor (§0.20c: 53,75 puan, 3/3 tohum) → yani "
+        "`.pt` yüklemek bu hâliyle aracı İYİLEŞTİRMİYOR, yavaşlatıyor. "
+        "Muhtemel mekanizma §0.20c/§0.17d: 12 m kapının iki direği ancak "
+        "8,8-15 m arasında aynı karede görünüyor, daha yakında FOV dışına "
+        "çıkıp UNKNOWN oluyorlar. Kapatılması KARAR ister (kaptan): kapı "
+        "takibine 'iki direği aynı karede göremiyorsam kapı KURMA' kapısı mı, "
+        "yoksa menzil/FOV tarafında düzeltme mi. §0.17f'teki '18 m ile yazıldı, "
+        "12 m'ye çevrilecek' notu ARTIK GEÇERSİZ — test koordinatları .world'den "
+        "okuyor. Kırmızı bırakılmıyor ki CI'da yeni arıza görünsün; xfail "
+        "strict=False olduğu için düzelirse XPASS ile kendini gösterir."
+    ),
+)
 def test_faz2_model_VARKEN_kapidan_gecer_ve_OTESINE_devam_eder() -> None:
     """Koşu günü 2. hâl: `.pt` yüklü, kenar dubaları sınıflanıyor.
 

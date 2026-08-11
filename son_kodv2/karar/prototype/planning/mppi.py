@@ -509,6 +509,24 @@ class MPPIController:
         """
         self._load_obstacles(obstacles)
 
+    @property
+    def backend_adi(self) -> str:
+        """Fiilen ÇÖZÜLEN hesap yolu, ör. `"cupy/float32"` — teşhis için.
+
+        🔴 **Neden gerekli (2026-08-10).** `MPPIConfig.backend` varsayılanı
+        `"auto"` ve `_resolve_backend` cupy'yi bulamazsa **hiçbir uyarı
+        basmadan** numpy/float64'e iniyor. İki yol arasındaki fark ölçüldü
+        (GIRDAP_DURUM §0.26c, RTX 4060 Laptop, K=1000/T=50):
+
+            N=100 engel → cupy 3,7 ms · numpy 144 ms  (10 Hz bütçesi 100 ms)
+
+        Yani sessiz düşüş, kontrol döngüsünü bütçe dışına atar. Jetson'da cupy
+        kurulumu kırılgan (cupy 14 numpy≥2 ister, gtsam numpy 1.x ister — §0.8e)
+        ve orada ekransız koştuğumuz için belirti VERMEZ. Açılışta loglanmalı:
+        log yoksa sahada hangi tablonun geçerli olduğunu kimse bilemez.
+        """
+        return f"{getattr(self.xp, '__name__', '?')}/{np.dtype(self._dtype).name}"
+
     def _load_obstacles(self, obstacles: Sequence[CircleObstacle]) -> None:
         """Engel dizilerini backend'e yükle (host→device kopyası seyrek)."""
         if obstacles:
