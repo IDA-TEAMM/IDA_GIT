@@ -38,8 +38,21 @@ ok "workspace: $WS"
 # yığın ESKİ kodla koşacaktı, üstelik sessizce.
 # Doğrusu: workspace'in FİİLEN derlediği paketi bul (symlink'i çöz), repo
 # kökünü ondan türet. Tahmin yok, gerçek ne ise o.
-PKG="$(readlink -f "$WS/src/girdap_decision" 2>/dev/null)"
-[[ -d "$PKG" ]] || { ht "$WS/src/girdap_decision çözülemedi — workspace bozuk"; exit 1; }
+# 🔴 11.08.2026 — İKİ İSİM DE DENENİYOR. Depoda paket dizini `girdap_decision`
+# (alt çizgi) ama algı tarafının kurulum betiği (`algi/scripts/jetson_kur.sh`)
+# workspace'e `girdap-decision` (TİRE) adıyla klonluyor ve repodaki servis
+# şablonu da `PYTHONPATH=__WS__/src/girdap-decision` yazıyor. Tek isme bakan
+# eski hâl, tire ile kurulmuş bir workspace'te "workspace bozuk" deyip
+# çıkıyordu — oysa workspace sağlamdı, yalnız adı farklıydı.
+PKG=""
+for _ad in girdap_decision girdap-decision; do
+  _c="$(readlink -f "$WS/src/$_ad" 2>/dev/null)"
+  [[ -n "$_c" && -d "$_c" ]] && { PKG="$_c"; ok "paket dizini adı: $_ad"; break; }
+done
+[[ -d "$PKG" ]] || {
+  ht "$WS/src/girdap_decision (ve girdap-decision) çözülemedi — workspace bozuk"
+  uy "Kontrol: ls -l $WS/src/"
+  exit 1; }
 ok "derlenen paket: $PKG"
 # .../<repo>/karar/ros2_ws/src/girdap_decision  →  üç seviye yukarısı = karar kökü
 PP="$(cd "$PKG/../../.." && pwd)"
@@ -72,6 +85,15 @@ After=network.target
 # Wants (Requires DEGIL): saat kurulamazsa gorev YINE baslamali.
 After=girdap-saat.service
 Wants=girdap-saat.service
+# 11.08.2026: LiDAR ve algi bagimliliklari. livox tarafindaki `Before=` yalniz
+# SIRA kurar, bagimlilik kurmaz — unit enable degilse karar sessizce LiDAR'siz
+# kalkiyordu (obstacle_map bos). Algi da /perception/buoys'un TEK ureticisi
+# (hardware.launch.py algiyi hic acmiyor). Ikisi de Wants: olmasalar bile
+# gorev BASLAMALI, cunku baslamazsa hic puan yok. Ayrinti: §0.30e.
+After=girdap-livox.service
+Wants=girdap-livox.service
+After=girdap-algi.service
+Wants=girdap-algi.service
 
 [Service]
 Type=simple

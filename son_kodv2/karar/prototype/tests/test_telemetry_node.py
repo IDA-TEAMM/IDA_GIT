@@ -370,14 +370,18 @@ def test_fc_modu_thrust_rc_out_pwm_yuzdesi(ros_context, tmp_path) -> None:
     pytest.importorskip("mavros_msgs", reason="mavros_msgs yok")
     node = _fc_node(tmp_path)
     try:
-        # kanal 1 (sol) = 2000 → +%100 ; kanal 3 (sağ) = 1000 → -%100
+        # 🔴 11.08.2026: kanal eşlemesi DÜZELTİLDİ — kanal 1 = SAĞ, kanal 3 = SOL
+        # (SERVO1_FUNCTION=74=ThrottleRight · SERVO3_FUNCTION=73=ThrottleLeft;
+        # 07.08'de fiziksel olarak ölçüldü, bkz. hardware.yaml telemetry bloğu).
+        # Bu test eskiden ch1'i sol sayıyordu ve ters eşlemeyi DONDURUYORDU.
+        # kanal 1 (SAĞ) = 2000 → +%100 ; kanal 3 (SOL) = 1000 → -%100
         node._on_rc_out(_rc_out([2000, 1500, 1000, 1500]))
         node._on_mission_state(String(data="PARKUR1"))
         node._on_graph_write()
 
         row = _last_graph_row(node)
-        assert float(row[_GRAPH_T_SOL]) == pytest.approx(100.0)
-        assert float(row[_GRAPH_T_SAG]) == pytest.approx(-100.0)
+        assert float(row[_GRAPH_T_SAG]) == pytest.approx(100.0)    # ch1
+        assert float(row[_GRAPH_T_SOL]) == pytest.approx(-100.0)   # ch3
         assert float(row[_GRAPH_HIZ_SP]) == pytest.approx(1.2)
     finally:
         node.destroy_node()
@@ -388,12 +392,13 @@ def test_fc_modu_pwm_kirpilir_ve_bos_kanal_yazilmaz(ros_context, tmp_path) -> No
     pytest.importorskip("mavros_msgs", reason="mavros_msgs yok")
     node = _fc_node(tmp_path)
     try:
+        # kanal 1 = SAĞ, kanal 3 = SOL (11.08 eşleme düzeltmesi, yukarı bkz.)
         node._on_rc_out(_rc_out([2400, 1500, 800, 1500]))   # aralık dışı
         node._on_mission_state(String(data="PARKUR1"))
         node._on_graph_write()
         row = _last_graph_row(node)
-        assert float(row[_GRAPH_T_SOL]) == pytest.approx(100.0)
-        assert float(row[_GRAPH_T_SAG]) == pytest.approx(-100.0)
+        assert float(row[_GRAPH_T_SAG]) == pytest.approx(100.0)    # ch1 kırpıldı
+        assert float(row[_GRAPH_T_SOL]) == pytest.approx(-100.0)   # ch3 kırpıldı
 
         # FC servo çıkışı vermiyor (PWM=0) → sahte -%100 YAZMA, boş bırak.
         node._on_rc_out(_rc_out([0, 0, 0, 0]))

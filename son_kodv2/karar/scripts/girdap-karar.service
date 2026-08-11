@@ -25,6 +25,25 @@ After=network.target
 # baslamazsa hic puan yok. O durumda teslimler saat_guvenilir=false damgalanir.
 After=girdap-saat.service
 Wants=girdap-saat.service
+# 🔴 11.08.2026 EKLENDI — LiDAR bagimliligi TEK YONLU kurulmustu.
+# girdap-livox.service icinde `Before=girdap-karar.service` vardi; `Before=`
+# yalniz SIRA kurar, BAGIMLILIK kurmaz (man systemd.unit). Yani livox unit'i
+# `enable` edilmemisse ya da hic kurulmamissa karar yigini yine de kalkiyordu:
+# /livox/lidar hic akmaz -> perception_lidar_node bos -> obstacle_map bos ->
+# perception_fusion_node'un ApproximateTimeSynchronizer'i tetiklenmez ->
+# classified_obstacles yayinlanmaz -> planning_node._edge_buoys bos ->
+# select_gate None -> KAPI SAYISI YAPISAL OLARAK SIFIR (§0.30e). Tekne
+# sessizce ham gorev noktasina surer, tek satir hata basilmaz.
+# Wants (Requires DEGIL) bilincli: LiDAR olse bile gorev BASLAMALI — gorev
+# baslamazsa hic puan yok. Ayni gerekce girdap-saat.service'te de gecerli.
+After=girdap-livox.service
+Wants=girdap-livox.service
+# 🔴 ALGI da ayni sekilde: /perception/buoys'un TEK ureticisi girdap-algi.
+# hardware.launch.py algiyi HIC acmiyor (use_onboard_camera varsayilani false,
+# perception_camera_node IfCondition ile kapali) — yani HSV yedek kolu da yok.
+# Servis kurulmamissa yukaridaki zincir kirilir, belirti vermez.
+After=girdap-algi.service
+Wants=girdap-algi.service
 
 [Service]
 Type=simple

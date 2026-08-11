@@ -6,15 +6,29 @@
 # 2026-08-10 SSD arızasından sonra yapılan taramada bulunan boşlukların
 # tamamını kapatır. Her adım idempotent — tekrar koşmak zarar vermez.
 #
-#   1. Ağ    → IP'yi KALICI yap (LiDAR config'i sabit IP'ye bağlı)
-#   2. Saat  → udev kuralı (/dev/pixhawk) + GPS'ten saat kuran servis
-#   3. LiDAR → livox_ros_driver2 servisi (BAŞLATAN HİÇBİR ŞEY YOKTU)
-#   4. Karar → girdap-karar.service (yolları kendi bulur)
+#   1. Ağ     → IP'yi KALICI yap (LiDAR config'i sabit IP'ye bağlı)
+#   2. Saat   → udev kuralı (/dev/pixhawk) + GPS'ten saat kuran servis
+#   3. LiDAR  → livox_ros_driver2 servisi (BAŞLATAN HİÇBİR ŞEY YOKTU)
+#   4. ALGI   → girdap-algi.service            🆕 11.08.2026
+#   5. Karar  → girdap-karar.service (yolları kendi bulur)
+#   6. Rosbag → girdap-rosbag.service + mcap paketi   🆕 11.08.2026
+#
+# 🔴 4. ve 6. ADIMLAR NEDEN EKLENDİ (11.08.2026 denetimi):
+# Bu betik "eksik olan HER ŞEYİ kurar" diyordu ama iki servisi hiç kurmuyordu:
+#   · girdap-algi.service  → yalnız `algi/scripts/jetson_kur.sh --servis` ile
+#     kuruluyordu, yani ayrı bir betiği ayrıca koşmayı bilmek gerekiyordu.
+#   · girdap-rosbag.service → HİÇBİR betikte yoktu, elle `cp` gerekiyordu.
+# Algı servisi kurulmazsa `/perception/buoys` HİÇ akmaz — `hardware.launch.py`
+# algıyı açmıyor (`use_onboard_camera` varsayılanı false, HSV yedek kolu da
+# kapalı), yani başka üretici YOK. Zincir: buoys yok → fusion senkronu hiç
+# tetiklenmez → classified_obstacles yok → select_gate None → KAPI SAYISI
+# YAPISAL OLARAK SIFIR (§0.30e). Tekne sessizce ham görev noktasına sürer.
 #
 # Aynı klasörde bulunması gerekenler:
 #   jetson_kur_ag.sh · jetson_kur_saat.sh · jetson_kur_karar.sh
 #   girdap-livox.service · girdap-saat.service · girdap_saat_kur.py
-#   99-girdap-fc.rules
+#   girdap-rosbag.service · rosbag_kaydet.sh · 99-girdap-fc.rules
+# Algı servisi algı deposundan okunur: <repo>/son_kodv2/algi/scripts/
 set -uo pipefail
 K="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KULLANICI="${SUDO_USER:-girdap}"
@@ -54,28 +68,101 @@ if [[ -f "$CFG" ]]; then
      || uy "config host IP = '$HIP' — 192.168.117.60 BEKLENİYOR, LiDAR sessizce veri üretmez"
 fi
 
-bas "4/4 — KARAR YIĞINI"
+bas "4/6 — ALGI (girdap-algi.service)"
+# Algı servisi algı deposunda duruyor. Bu betik karar/scripts/ içinde, yani
+# repo kökü iki seviye yukarısı: <repo>/son_kodv2/karar/scripts → son_kodv2.
+ALGI_S=""
+for _y in "$K/../../algi/scripts/girdap-algi.service" \
+          "$EV/IDA_GIT/son_kodv2/algi/scripts/girdap-algi.service"; do
+  [[ -f "$_y" ]] && { ALGI_S="$(readlink -f "$_y")"; break; }
+done
+AWS="$EV/ros2_ws"
+if [[ -z "$ALGI_S" ]]; then
+  ht "girdap-algi.service bulunamadı — algı deposu yerinde mi?"
+  uy "Aranan: $K/../../algi/scripts/ ve $EV/IDA_GIT/son_kodv2/algi/scripts/"
+  uy "🔴 KURULMAZSA /perception/buoys HİÇ akmaz → kapı sayısı sıfır (§0.30e)"
+elif [[ ! -f "$AWS/install/setup.bash" ]]; then
+  ht "$AWS/install/setup.bash yok — workspace derlenmemiş, algı servisi kurulmadı"
+else
+  sed -e "s|__USER__|$KULLANICI|g" -e "s|__WS__|$AWS|g" \
+      "$ALGI_S" > /etc/systemd/system/girdap-algi.service
+  systemctl daemon-reload
+  systemctl enable girdap-algi >/dev/null 2>&1
+  ok "kuruldu ve enable edildi (kaynak: $ALGI_S)"
+  # Tek OAK var; veri seti toplayıcısı açıkken algı kamerayı alamaz. Unit'ler
+  # `Conflicts=` ile korunuyor ama ikisi de enabled kalırsa boot'ta YARIŞ olur
+  # ve hangisinin kazandığı belirsizdir (girdap-algi.service başlığı, md 4.1).
+  if systemctl is-enabled girdap-veriseti >/dev/null 2>&1; then
+    uy "girdap-veriseti DE enabled — boot'ta ikisi çakışır (tek OAK)."
+    uy "Yarışma/test günü:  sudo bash <algi>/scripts/veriseti_modu.sh kapat"
+  fi
+fi
+
+bas "5/6 — KARAR YIĞINI"
 bash "$K/jetson_kur_karar.sh" || uy "karar adımı sorunlu"
 
+bas "6/6 — ROSBAG KAYDI (girdap-rosbag.service)"
+# rosbag_kaydet.sh `-s mcap` ile çağırıyor; paket yoksa servis her açılışta
+# çöker ve Restart=on-failure 10 sn'de bir yeniden dener (journal şişer, kayıt
+# hiç oluşmaz). Önce paket, sonra servis.
+if dpkg -s ros-humble-rosbag2-storage-mcap >/dev/null 2>&1; then
+  ok "ros-humble-rosbag2-storage-mcap kurulu"
+else
+  uy "mcap depolama paketi yok — kuruluyor (internet gerektirir)"
+  if apt-get install -y ros-humble-rosbag2-storage-mcap >/dev/null 2>&1; then
+    ok "kuruldu"
+  else
+    ht "kurulamadı — YARIŞMA GÜNÜ İNTERNET YOK (md 4.1), şimdi hallet."
+    uy "Aksi hâlde girdap-rosbag sürekli çöker, bant kaydı HİÇ oluşmaz."
+  fi
+fi
+# __KARAR__ = repo karar kökü (bu betiğin bir üstü). Yer tutucu adı bilerek
+# __WS__ DEĞİL: diğer unit'lerde __WS__ = ~/ros2_ws (colcon workspace) demek,
+# aynı adı iki anlamda kullanmak toplu sed'de sessiz yanlış yola bağlardı.
+KARAR_KOK="$(cd "$K/.." && pwd)"
+if [[ ! -f "$K/rosbag_kaydet.sh" ]]; then
+  ht "rosbag_kaydet.sh yok — rosbag servisi kurulmadı"
+elif [[ ! -f "$K/girdap-rosbag.service" ]]; then
+  ht "girdap-rosbag.service şablonu yok"
+else
+  sed -e "s|__USER__|$KULLANICI|g" -e "s|__KARAR__|$KARAR_KOK|g" \
+      "$K/girdap-rosbag.service" > /etc/systemd/system/girdap-rosbag.service
+  systemctl daemon-reload
+  systemctl enable girdap-rosbag >/dev/null 2>&1
+  ok "kuruldu ve enable edildi (karar kökü: $KARAR_KOK)"
+  uy "Her boot YENİ session_<damga>/ açar — uzun beklemede 'df -h ~' ile bak."
+fi
+
 bas "ÖZET"
-for s in girdap-saat girdap-livox girdap-karar; do
+for s in girdap-saat girdap-livox girdap-algi girdap-karar girdap-rosbag; do
   printf '   %-16s enabled=%-10s active=%s\n' "$s" \
     "$(systemctl is-enabled $s 2>&1)" "$(systemctl is-active $s 2>&1)"
 done
 cat <<'SON'
 
    AÇILIŞ SIRASI (systemd kendi çözer):
-     ag(IP) → girdap-saat → girdap-livox → girdap-karar
+     ag(IP) → girdap-saat → girdap-livox + girdap-algi → girdap-karar
+              → girdap-rosbag
+   (girdap-karar artık ikisini de Wants= ediyor; Requires DEĞİL — biri
+    kalkmazsa görev YİNE başlar, çünkü başlamazsa hiç puan yok.)
 
    TEKNE BESLENİNCE DOĞRULAMA:
      ls -l /dev/pixhawk                     # symlink oluşmalı
-     sudo systemctl restart girdap-livox girdap-karar
+     sudo systemctl restart girdap-livox girdap-algi girdap-karar
      source /opt/ros/humble/setup.bash
      export ROS_DOMAIN_ID=42
      ros2 topic hz /livox/lidar             # ~10 Hz
      ros2 topic hz /mavros/imu/data         # ~8 Hz  (FC bağlı demek)
+     ros2 topic hz /perception/buoys        # algı zinciri ayakta mı
+     ls ~/girdap_logs/rosbag/               # session_<damga>/ oluşmalı
      journalctl -u girdap-saat -n 20 --no-pager   # "SAAT KURULDU" bekleniyor
 
-   🔴 YARIŞMA GÜNÜ EK ADIM (unutulursa yığın SESSİZCE video modunda koşar):
-     girdap-karar-yarisma.conf drop-in'i kurulacak.
+   TAM TEYİT (salt okur, sudo istemez):
+     bash scripts/jetson_teyit.sh
+
+   🔴 YARIŞMA GÜNÜ EK ADIM: girdap-karar-yarisma.conf drop-in'i.
+   (11.08'den beri hardware.yaml zaten YARIŞMA tabanı — drop-in unutulursa
+    yığın artık video moduna DÜŞMEZ. Drop-in hâlâ ROS_LOCALHOST_ONLY=1 için
+    gerekli, md 4.1. Parkur-1 tek başına koşulacaksa girdap-karar-parkur1.conf;
+    ikisi AYNI ANDA kurulmaz.)
 SON

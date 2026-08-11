@@ -278,8 +278,11 @@ telemetry_node:
     # AUTO video için hardware.yaml telemetry bloğu "fc" yapar.
     setpoint_source: "girdap"    # "girdap" (MPPI thrust N + cmd_vel) | "fc"
     fc_cruise_setpoint_mps: 1.0  # fc: FC'nin WP_SPEED'i ile SENKRON OLMALI
-    fc_thrust_left_ch: 1         # fc: SERVO1 = sol motor (masa teyidi)
-    fc_thrust_right_ch: 3        # fc: SERVO3 = sağ motor
+    # 🔴 11.08.2026 DÜZELTİLDİ (gerekçe hardware.yaml telemetry bloğunda):
+    # ArduPilot 73=ThrottleLeft · 74=ThrottleRight; SERVO1_FUNCTION=74 → SAĞ.
+    # §0.12c masa teyidi + log 58 + 19.07 param dökümü, üçü de aynı yönde.
+    fc_thrust_left_ch: 3         # fc: SERVO3_FUNCTION=73 (ThrottleLeft) = SOL
+    fc_thrust_right_ch: 1        # fc: SERVO1_FUNCTION=74 (ThrottleRight) = SAĞ
     fc_pwm_center: 1500          # nötr PWM (µs)
     fc_pwm_span: 500             # ±tam yetki (µs) → ±%100
 

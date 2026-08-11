@@ -99,9 +99,13 @@ class TelemetryNode(Node):
         # ⚠ fc modunda FC'nin WP_SPEED parametresiyle SENKRON tutulmalı —
         # farklıysa Ekran-2'deki setpoint çizgisi yalan söyler.
         self.declare_parameter("fc_cruise_setpoint_mps", 1.0)
-        # Skid-steer servo kanalları (masa teyidi: SERVO1=Sol, SERVO3=Sağ).
-        self.declare_parameter("fc_thrust_left_ch", 1)
-        self.declare_parameter("fc_thrust_right_ch", 3)
+        # Skid-steer servo kanalları — 🔴 11.08.2026 DÜZELTİLDİ.
+        # Eski yorum "masa teyidi: SERVO1=Sol" diyordu ama masa teyidinin
+        # kendisi (§0.12c) SERVO1=SAĞ demiş. ArduPilot: 73=ThrottleLeft,
+        # 74=ThrottleRight; log 58 ve 19.07 dökümünde SERVO1_FUNCTION=74.
+        # Ters eşleme aşağıdaki _on_rc_out'ta sol/sağ itkiyi takas ediyordu.
+        self.declare_parameter("fc_thrust_left_ch", 3)   # SERVO3 = SOL
+        self.declare_parameter("fc_thrust_right_ch", 1)  # SERVO1 = SAĞ
         self.declare_parameter("fc_pwm_center", 1500)     # nötr PWM (µs)
         self.declare_parameter("fc_pwm_span", 500)        # ±tam yetki (µs)
         # F-V.7: hedefe bu mesafeden yakınken yon_setpoint GÜNCELLENMEZ.

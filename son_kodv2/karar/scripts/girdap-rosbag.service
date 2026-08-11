@@ -14,10 +14,21 @@
 # bekler, yayıncı çıkınca kaydetmeye başlar.
 #
 # KURULUM
+#   🔑 11.08.2026: yer tutucu `__WS__` idi ve YANILTICIYDI — girdap-karar/
+#   girdap-algi servislerinde `__WS__` = `$HOME/ros2_ws` (colcon workspace),
+#   burada ise `$HOME/IDA_GIT/son_kodv2/karar` (repo karar kökü) demekti.
+#   Aynı ad iki anlamda; toplu `sed` atan biri bu unit'i sessizce yanlış yola
+#   bağlardı (script bulunamaz → kayıt hiç başlamaz, belirti yok).
+#   Ad artık `__KARAR__`. Kurulumu jetson_kur_hepsi.sh yapıyor; elle:
 #   sudo cp girdap-rosbag.service /etc/systemd/system/
-#   sudo sed -i "s|__USER__|$USER|g; s|__WS__|$HOME/IDA_GIT/son_kodv2/karar|g" \
+#   sudo sed -i "s|__USER__|$USER|g; s|__KARAR__|$HOME/IDA_GIT/son_kodv2/karar|g" \
 #        /etc/systemd/system/girdap-rosbag.service
 #   sudo systemctl daemon-reload && sudo systemctl enable --now girdap-rosbag
+#
+#   ⚠️ ÖNKOŞUL: `ros-humble-rosbag2-storage-mcap` paketi kurulu olmalı
+#   (rosbag_kaydet.sh `-s mcap` ile çağırıyor). Yoksa servis her açılışta
+#   çöker ve Restart=on-failure yüzünden 10 sn'de bir yeniden dener.
+#   jetson_kur_hepsi.sh bunu kontrol eder ve eksikse kurar.
 #
 # DOĞRULAMA
 #   systemctl status girdap-rosbag
@@ -44,7 +55,7 @@ Type=simple
 User=__USER__
 WorkingDirectory=/home/__USER__
 Environment=ROS_DOMAIN_ID=42
-ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && exec bash __WS__/scripts/rosbag_kaydet.sh --tam'
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && exec bash __KARAR__/scripts/rosbag_kaydet.sh --tam'
 # rosbag_kaydet.sh'in kendi notu: "Ctrl+C ile durdur (metadata düzgün
 # yazılır)" — Ctrl+C = SIGINT. systemd varsayılanı SIGTERM'dir; SIGINT'e
 # çevrilmezse `systemctl stop`/reboot mcap dosyasını YARIM/BOZUK bırakabilir.
