@@ -182,6 +182,14 @@ class FSMNode(Node):
         # 10 Hz tick'te her tick yollamak MAVLink hattını doldururdu.
         # 0.0 → tazeleme kapalı (eski yalnız-değişimde davranışı).
         self.declare_parameter("statustext_periyot_s", 10.0)
+        # 🔴 KAR-03: BOOT'ta bu süreden uzun kalınırsa YÜKSEK SESLE teşhis.
+        # Kaptanın bag analizi (`session_20260811_171943`): sistem 25 DAKİKA
+        # BOOT'ta kilitli kaldı, bu sırada tüm topic'ler 10 Hz akmaya devam
+        # etti. Operatör `ros2 topic hz` ile "sağlıklı" gördü; gerçek arıza
+        # (MAVROS hiç bağlanmamış) topic akışının altında kayboldu — 25 dakika
+        # ve 18,5 MB bag boşa gitti. Sessiz kalmak burada en pahalı seçenekti.
+        # 0 → bekçi kapalı.
+        self.declare_parameter("boot_uyari_s", 60.0)
         self._armed_watchdog_s = float(
             self.get_parameter("armed_bekleme_watchdog_s").value
         )
@@ -243,6 +251,12 @@ class FSMNode(Node):
         )
         self._statustext_son_gonderim: Optional[float] = None
         self._statustext_abone_uyarildi = False
+        # KAR-03 BOOT bekçisi
+        self._boot_uyari_s = float(self.get_parameter("boot_uyari_s").value)
+        self._boot_baslangic = self.get_clock().now().nanoseconds * 1e-9
+        self._boot_uyarildi = False
+        self._mavros_mesaji_geldi = False   # /mavros/state HİÇ geldi mi
+        self._boot_teshis = ""              # statustext'e eklenecek kısa sebep
 
         # --- Services ---
         self._srv_start = self.create_service(
@@ -338,6 +352,7 @@ class FSMNode(Node):
     # ----- subscriber callback'leri -----
 
     def _on_mav_state(self, msg: MavState) -> None:
+        self._mavros_mesaji_geldi = True
         was_armed = self._mav_armed
         self._mav_armed = msg.armed
         if msg.armed and not was_armed:
@@ -618,8 +633,65 @@ class FSMNode(Node):
         parkur_msg.data = self._parkur.state.value
         self._pub_parkur.publish(parkur_msg)
 
+        # 🔴 KAR-03: BOOT kilitlenmesini TESPİT ET (statustext'ten ÖNCE, çünkü
+        # teşhis metni operatöre BOOT satırıyla birlikte gidiyor).
+        self._boot_kilidi_denetle(new_state)
+
         # YKİ ekranı (şartname md 4.2)
         self._publish_statustext(new_state)
+
+    def _boot_kilidi_denetle(self, state: MissionState) -> None:
+        """BOOT'ta takılı kalındıysa sebebini AYIRT ET ve yüksek sesle söyle.
+
+        KAR-03'ün asıl zararı BOOT'ta kalmak değildi — o, MAVROS bağlı
+        olmadığında **doğru** davranış. Zarar, bunun hiçbir yerde
+        söylenmemesiydi: 25 dakika boyunca her topic 10 Hz aktı, operatör
+        sağlıklı bir sistem gördü.
+
+        İki farklı fiziksel arıza var ve **çözümleri farklı**, bu yüzden tek
+        bir "MAVROS yok" mesajı yetmez:
+
+        - `/mavros/state` HİÇ gelmedi → MAVROS düğümü koşmuyor ya da yanlış
+          ROS_DOMAIN_ID'de. Bakılacak yer: launch/servis, `ros2 node list`.
+        - Mesaj geliyor ama `connected=false` → MAVROS ayakta, FCU hattı ölü.
+          Bakılacak yer: kablo, port (`fcu_url`), baud, Pixhawk güç.
+
+        Kaptanın bag'inde ikincisi vardı ("disconnected" ×1.695, endpoint
+        "closed" ×1.699) — yani mesaj ayrımı sahada doğrudan işe yarardı.
+        """
+        if state is not MissionState.BOOT:
+            # BOOT'tan çıkıldı → sayaç sıfırlanır (yeniden başlama hakkı,
+            # md 5.5.3.1: reset sonrası tekrar BOOT'a düşülürse süre baştan).
+            self._boot_baslangic = self.get_clock().now().nanoseconds * 1e-9
+            self._boot_uyarildi = False
+            self._boot_teshis = ""
+            return
+        if self._boot_uyari_s <= 0.0:
+            return
+        gecen = self.get_clock().now().nanoseconds * 1e-9 - self._boot_baslangic
+        if gecen < self._boot_uyari_s:
+            return
+
+        if not self._mavros_mesaji_geldi:
+            self._boot_teshis = "MAVROS-YOK"
+            ayrinti = (
+                "/mavros/state HIC gelmedi — MAVROS dugumu kosuyor mu, "
+                "ROS_DOMAIN_ID dogru mu? (`ros2 node list`)"
+            )
+        else:
+            self._boot_teshis = "FCU-KOPUK"
+            ayrinti = (
+                "/mavros/state geliyor ama connected=false — MAVROS ayakta, "
+                "FCU hatti olu: kablo / fcu_url portu / baud / Pixhawk gucu"
+            )
+
+        if not self._boot_uyarildi:
+            self._boot_uyarildi = True
+            self.get_logger().error(
+                f"🔴 BOOT'ta {gecen:.0f}s takili kalindi — GOREV BASLAMAZ. "
+                f"{ayrinti} (KAR-03: topic'ler akmaya devam ettigi icin bu "
+                "arizanin 25 dakika fark edilmedigi bir oturum yasandi)"
+            )
 
     def _publish_statustext(self, state: MissionState) -> None:
         """Görev durumunu MAVLink STATUSTEXT ile YKİ'ye bildir (md 4.2).
@@ -662,6 +734,10 @@ class FSMNode(Node):
             MissionState.PARKUR1, MissionState.PARKUR2, MissionState.PARKUR3
         ):
             text = f"GIRDAP {state.value} {self._parkur.state.value}"
+        elif state is MissionState.BOOT and self._boot_teshis:
+            # KAR-03: yalnız "BOOT" yazmak operatöre HİÇBİR ŞEY söylemiyor —
+            # sebebi de aynı satırda gitsin (MAVLink STATUSTEXT 50 karakter).
+            text = f"GIRDAP BOOT TAKILDI {self._boot_teshis}"
         else:
             text = f"GIRDAP {state.value}"
         simdi = self.get_clock().now().nanoseconds * 1e-9
@@ -682,10 +758,15 @@ class FSMNode(Node):
         msg = StatusText()
         msg.header.stamp = self.get_clock().now().to_msg()
         # KILL operatörün ANINDA görmesi gereken tek durum → kırmızı seviye.
-        msg.severity = (
-            StatusText.CRITICAL if state is MissionState.KILL
-            else StatusText.NOTICE
-        )
+        # KILL operatörün ANINDA görmesi gereken tek durum → kırmızı seviye.
+        # KAR-03 BOOT kilidi de görev-durduran bir arıza; NOTICE seviyesinde
+        # Mission Planner mesaj akışında diğer satırların arasında kaybolur.
+        if state is MissionState.KILL:
+            msg.severity = StatusText.CRITICAL
+        elif state is MissionState.BOOT and self._boot_teshis:
+            msg.severity = StatusText.ERROR
+        else:
+            msg.severity = StatusText.NOTICE
         msg.text = text[:50]
         self._pub_statustext.publish(msg)
 

@@ -663,3 +663,127 @@ def test_sok_esigi_node_varsayilani_yaml_ile_AYNI(ros_context) -> None:  # noqa:
         )
     finally:
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# KAR-03 (2026-08-12) — BOOT kilidi teşhisi.
+# Kaptanın bag'inde sistem 25 DAKİKA BOOT'ta kaldı ve hiçbir yerde
+# söylenmediği için "sahte yeşil" üretti. Aşağıdaki testler, teşhisin hem
+# ÜRETİLDİĞİNİ hem de İKİ ARIZAYI AYIRT ETTİĞİNİ dondurur.
+# --------------------------------------------------------------------------- #
+
+
+def _boot_node(ros_context, tmp_path, esik=0.05):  # noqa: ANN001, ANN201
+    return _make_node(
+        ros_context, tmp_path,
+        extra_params=[Parameter("boot_uyari_s", value=float(esik))],
+    )
+
+
+def test_KAR03_BOOTta_kisa_sure_HENUZ_uyarmaz(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Normal açılış birkaç saniye BOOT'tadır — orada alarm basmak yanlış olur.
+
+    Bekçinin değeri eşiğin ÜSTÜNDE; altında sessiz kalmazsa her açılışta
+    yanlış alarm üretir ve operatör kısa sürede tüm uyarıları yok saymayı
+    öğrenir (asıl arıza da o gürültüde kaybolur).
+    """
+    node = _boot_node(ros_context, tmp_path, esik=60.0)
+    try:
+        node._boot_kilidi_denetle(MissionState.BOOT)
+        assert node._boot_teshis == ""
+        assert node._boot_uyarildi is False
+    finally:
+        node.destroy_node()
+
+
+def test_KAR03_mavros_HIC_yayin_yapmadiysa_MAVROS_YOK(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """`/mavros/state` hiç gelmedi → MAVROS düğümü koşmuyor / yanlış domain."""
+    import time
+    node = _boot_node(ros_context, tmp_path)
+    try:
+        time.sleep(0.1)
+        node._boot_kilidi_denetle(MissionState.BOOT)
+        assert node._boot_teshis == "MAVROS-YOK", (
+            f"beklenen MAVROS-YOK, gelen {node._boot_teshis!r}"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_KAR03_mavros_var_ama_FCU_kopuksa_AYRI_teshis(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 Ayrımın bütün değeri burada: iki arızanın ÇÖZÜMÜ farklı.
+
+    MAVROS-YOK → launch/servis/domain'e bak.
+    FCU-KOPUK  → kablo/port/baud/Pixhawk gücüne bak.
+    Tek bir "MAVROS yok" mesajı operatörü yanlış yere gönderirdi. Kaptanın
+    bag'indeki gerçek arıza ikincisiydi ("disconnected" ×1.695).
+    """
+    import time
+    node = _boot_node(ros_context, tmp_path)
+    try:
+        st = MavState()
+        st.connected = False               # MAVROS ayakta, FCU hattı ölü
+        node._on_mav_state(st)
+        time.sleep(0.1)
+        node._boot_kilidi_denetle(MissionState.BOOT)
+        assert node._boot_teshis == "FCU-KOPUK", (
+            f"beklenen FCU-KOPUK, gelen {node._boot_teshis!r}"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_KAR03_BOOTtan_cikilinca_teshis_TEMIZLENIR(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Arıza geçtiyse ekranda asılı kalmamalı; sayaç da baştan başlamalı.
+
+    md 5.5.3.1 yeniden başlama hakkı: reset sonrası tekrar BOOT'a düşülürse
+    süre sıfırdan sayılmalı, yoksa ikinci koşuda anında yanlış alarm basar.
+    """
+    import time
+    node = _boot_node(ros_context, tmp_path)
+    try:
+        time.sleep(0.1)
+        node._boot_kilidi_denetle(MissionState.BOOT)
+        assert node._boot_teshis != ""
+        node._boot_kilidi_denetle(MissionState.ARM)      # bağlantı kuruldu
+        assert node._boot_teshis == ""
+        assert node._boot_uyarildi is False
+        node._boot_kilidi_denetle(MissionState.BOOT)     # tekrar BOOT
+        assert node._boot_teshis == "", "sayac sifirlanmadi — aninda alarm"
+    finally:
+        node.destroy_node()
+
+
+def test_KAR03_teshis_OPERATOR_ekranina_gidiyor(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 En kritik test: teşhis ROS log'unda kalmamalı, YKİ'de GÖRÜNMELİ.
+
+    Operatör sahada `ros2 topic echo` değil Mission Planner'a bakıyor.
+    Yalnız "GIRDAP BOOT" yazmak ona hiçbir şey söylemez; sebep aynı satırda
+    gitmeli ve NOTICE değil ERROR seviyesinde olmalı — yoksa MP mesaj
+    akışında diğer satırların arasında kaybolur.
+    """
+    import time
+    node = _boot_node(ros_context, tmp_path)
+    try:
+        yollanan = []
+        if node._pub_statustext is None:
+            pytest.skip("statustext kapalı")
+        node._pub_statustext.get_subscription_count = lambda: 1
+        node._pub_statustext.publish = lambda m: yollanan.append(m)
+
+        time.sleep(0.1)
+        node._boot_kilidi_denetle(MissionState.BOOT)
+        node._publish_statustext(MissionState.BOOT)
+
+        assert yollanan, "statustext hic yollanmadi"
+        msg = yollanan[-1]
+        assert "TAKILDI" in msg.text and "MAVROS-YOK" in msg.text, (
+            f"operatore sebep gitmiyor: {msg.text!r}"
+        )
+        assert len(msg.text) <= 50, "MAVLink STATUSTEXT 50 karakterle sinirli"
+        from mavros_msgs.msg import StatusText
+        assert msg.severity == StatusText.ERROR, (
+            "BOOT kilidi NOTICE seviyesinde — MP akisinda kaybolur"
+        )
+    finally:
+        node.destroy_node()
