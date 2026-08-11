@@ -165,6 +165,19 @@ class FSMNode(Node):
         # Planner → Messages) yolla. Şartname md 4.2 gereği. Kapatmak için
         # false (ör. mavros'suz masa testi).
         self.declare_parameter("statustext_enabled", True)
+        # 🔴 11.08 SAHADA ÖLÇÜLDÜ — kod doğruydu ama YKİ'de HİÇ görünmüyordu.
+        # Sebep: aşağıdaki `text == self._last_statustext` kapısı mesajı yalnız
+        # DEĞİŞİMDE yolluyor. FSM açılışta BOOT→ARM→BEKLEMEDE(→PARKUR1)
+        # geçişlerini ilk saniyelerde bitirip oturuyor; ondan sonra hat
+        # SONSUZA KADAR sessiz. Canlı ölçüm: yığın koşarken 20 saniye boyunca
+        # `/mavros/statustext/send`'de **sıfır** mesaj, FSM `PARKUR_1`'de.
+        # Operatör MP'yi ne zaman açsa geçişleri kaçırmış oluyor.
+        # 868 MHz telemetride kopma+yeniden bağlanma NORMAL olduğu için bu
+        # yarışmada da tekrarlanır → periyodik tazeleme ZORUNLU.
+        # 10 s: 20 dk görevde ~120 satır (MP Messages sekmesi okunabilir kalır);
+        # 10 Hz tick'te her tick yollamak MAVLink hattını doldururdu.
+        # 0.0 → tazeleme kapalı (eski yalnız-değişimde davranışı).
+        self.declare_parameter("statustext_periyot_s", 10.0)
         self._armed_watchdog_s = float(
             self.get_parameter("armed_bekleme_watchdog_s").value
         )
@@ -220,7 +233,12 @@ class FSMNode(Node):
             if self._statustext_enabled
             else None
         )
-        self._last_statustext = ""      # yalnız DEĞİŞİMDE gönder (10 Hz spam yok)
+        self._last_statustext = ""      # değişimde ANINDA gönder (10 Hz spam yok)
+        self._statustext_periyot_s = float(
+            self.get_parameter("statustext_periyot_s").value
+        )
+        self._statustext_son_gonderim: Optional[float] = None
+        self._statustext_abone_uyarildi = False
 
         # --- Services ---
         self._srv_start = self.create_service(
@@ -565,15 +583,37 @@ class FSMNode(Node):
     def _publish_statustext(self, state: MissionState) -> None:
         """Görev durumunu MAVLink STATUSTEXT ile YKİ'ye bildir (md 4.2).
 
-        Yalnız DEĞİŞİMDE gönderilir — tick 10 Hz, her tick'te yollamak MAVLink
-        hattını doldurur ve Mission Planner'ın mesaj penceresini kullanılamaz
-        hale getirir. STATUSTEXT metni MAVLink'te 50 karakterle sınırlı.
+        İki tetik: (a) durum DEĞİŞTİĞİNDE anında, (b) değişmese de
+        `statustext_periyot_s`'de bir tazeleme. (b) olmadan operatör MP'yi
+        geçişlerden sonra açtığında ekranı boş kalır — 11.08'de sahada tam
+        bu yaşandı (bkz. `statustext_periyot_s` parametresinin gerekçesi).
+        Her tick'te yollamak ise MAVLink hattını doldurur; STATUSTEXT metni
+        MAVLink'te 50 karakterle sınırlı.
 
         Yayın tek yönlüdür (araç → YKİ): md 4.1 telemetriye izin veriyor, md
         5.5.3.1'in yasakladığı şey ters yön (YKİ → araç komut).
         """
         if self._pub_statustext is None:
             return
+
+        # 🔴 ABONESİZ YAYIN SESSİZCE ÇÖPE GİDER. `girdap-karar` fsm_node ile
+        # MAVROS'u birlikte başlatıyor; MAVROS'un `sys` eklentisi bu topic'e
+        # abone olana kadar geçen sürede yollanan her mesaj KAYBOLUR — ve
+        # açılış geçişleri (BOOT→ARM→BEKLEMEDE) tam o pencereye düşüyor.
+        # Gönderilmiş SAYMIYORUZ: `_last_statustext` güncellenmeden dönülüyor,
+        # böylece abone belirdiğinde bir sonraki tick aynı metni tekrar dener.
+        if self._pub_statustext.get_subscription_count() == 0:
+            if not self._statustext_abone_uyarildi:
+                self._statustext_abone_uyarildi = True
+                self.get_logger().warn(
+                    "STATUSTEXT abonesi yok (MAVROS henuz hazir degil?) — "
+                    "YKI ekraninda gorev durumu GORUNMEYECEK. Abone "
+                    "belirince kendiliginden tekrar denenecek."
+                )
+            return
+        if self._statustext_abone_uyarildi:
+            self._statustext_abone_uyarildi = False
+            self.get_logger().info("STATUSTEXT abonesi hazir — YKI ekrani canli.")
         # PARKUR* durumlarında parkur katmanını da göster (ikisi ayrı otorite:
         # MissionFSM görev yaşam döngüsü, ParkurTransitionLogic waypoint
         # ilerlemesi — sahada ayrıştıklarında bunu görmek teşhis için kritik).
@@ -583,9 +623,20 @@ class FSMNode(Node):
             text = f"GIRDAP {state.value} {self._parkur.state.value}"
         else:
             text = f"GIRDAP {state.value}"
-        if text == self._last_statustext:
-            return
+        simdi = self.get_clock().now().nanoseconds * 1e-9
+        degisti = text != self._last_statustext
+        if not degisti:
+            # Değişmedi → yalnız tazeleme periyodu doldu mu diye bak.
+            if self._statustext_periyot_s <= 0.0:
+                return                      # tazeleme kapalı (eski davranış)
+            if (
+                self._statustext_son_gonderim is not None
+                and simdi - self._statustext_son_gonderim
+                < self._statustext_periyot_s
+            ):
+                return
         self._last_statustext = text
+        self._statustext_son_gonderim = simdi
 
         msg = StatusText()
         msg.header.stamp = self.get_clock().now().to_msg()

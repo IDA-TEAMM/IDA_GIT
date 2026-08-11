@@ -45,9 +45,9 @@ def ros_context():                                       # noqa: ANN201
     rclpy.shutdown()
 
 
-def _make_node(ros_context, tmp_path, labels=None, last_wp=None, mission_source=None):  # noqa: ANN001
+def _make_node(ros_context, tmp_path, labels=None, last_wp=None, mission_source=None, extra_params=None):  # noqa: ANN001
     """Parametre enjeksiyonlu FSMNode kur (timer'a spin edilmez)."""
-    overrides = []
+    overrides = list(extra_params) if extra_params else []
     if labels is not None:
         mission = tmp_path / "mission.yaml"
         wps = "\n".join(
@@ -438,12 +438,19 @@ def test_fv6_kenar_tetigi_hala_calisiyor(ros_context, tmp_path) -> None:  # noqa
 # yerde görünmüyordu. fsm_node artık /mavros/statustext/send'e yayın yapıyor.
 
 
-def _statustext_spy(node):                               # noqa: ANN001, ANN202
-    """Gerçek publisher'ı casusla değiştir (DDS'e bağımlı olmadan doğrula)."""
+def _statustext_spy(node, abone_sayisi: int = 1):         # noqa: ANN001, ANN202
+    """Gerçek publisher'ı casusla değiştir (DDS'e bağımlı olmadan doğrula).
+
+    `abone_sayisi` ŞART: fsm_node abonesi olmayan topic'e yayın yapmıyor
+    (abonesiz yayın sessizce çöpe gider — 11.08 bulgusu). Varsayılan 1 =
+    "MAVROS hazır". 0 vererek açılış yarışı taklit edilir.
+    """
     sent = []
     class _Spy:
         def publish(self, msg):                          # noqa: ANN001, ANN202
             sent.append(msg)
+        def get_subscription_count(self) -> int:
+            return abone_sayisi
     node._pub_statustext = _Spy()
     return sent
 
@@ -463,14 +470,82 @@ def test_fa4_durum_degisiminde_statustext_gonderilir(ros_context, tmp_path) -> N
 
 
 def test_fa4_ayni_durumda_tekrar_gondermez(ros_context, tmp_path) -> None:  # noqa: ANN001
-    """10 Hz tick MAVLink hattını doldurmamalı — yalnız DEĞİŞİMDE yayın."""
+    """10 Hz tick MAVLink hattını doldurmamalı — periyot içinde tek yayın."""
     node = _make_node(ros_context, tmp_path, labels=[1, 1, 2])
     try:
+        sent = _statustext_spy(node)                     # casus ÖNCE takılır
         _drive_to_parkur1(node)
-        sent = _statustext_spy(node)                     # casusu ŞİMDİ tak
+        sent.clear()                                     # geçiş mesajlarını at
         for _ in range(20):                              # 2 saniyelik tick
             node._on_tick()
+        # 20 tick gerçek zamanda mikrosaniyeler sürer; tazeleme periyodu
+        # (10 s) dolmadığı için hiçbir şey gitmemeli.
         assert sent == [], f"durum sabitken {len(sent)} gereksiz mesaj gitti"
+    finally:
+        node.destroy_node()
+
+
+def test_fa4_periyot_dolunca_TAZELENIR(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 11.08 SAHA BULGUSU: durum değişmese de periyodik tazeleme ŞART.
+
+    Yalnız-değişimde yayın, FSM açılışta oturduktan sonra hattı sonsuza kadar
+    sessiz bırakıyordu; canlı ölçümde 20 saniyede SIFIR mesaj vardı ve MP'yi
+    sonradan açan operatör hiçbir şey görmüyordu. 868 MHz'de kopma+yeniden
+    bağlanma normal olduğu için bu yarışmada da tekrarlanır.
+    """
+    node = _make_node(ros_context, tmp_path, labels=[1, 1, 2])
+    try:
+        sent = _statustext_spy(node)
+        _drive_to_parkur1(node)
+        sent.clear()
+        # Son gönderimi periyottan daha geriye al = süre geçmiş gibi yap
+        node._statustext_son_gonderim -= node._statustext_periyot_s + 1.0
+        node._on_tick()
+        assert sent, "periyot doldu ama durum TAZELENMEDİ — YKİ ekranı boş kalır"
+        assert "PARKUR1" in sent[0].text, sent[0].text
+    finally:
+        node.destroy_node()
+
+
+def test_fa4_periyot_sifir_ise_yalniz_degisimde(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """`statustext_periyot_s=0` → eski yalnız-değişimde davranışı BİREBİR."""
+    node = _make_node(
+        ros_context, tmp_path, labels=[1, 1, 2],
+        extra_params=[Parameter("statustext_periyot_s", value=0.0)],
+    )
+    try:
+        sent = _statustext_spy(node)
+        _drive_to_parkur1(node)
+        sent.clear()
+        node._statustext_son_gonderim -= 3600.0          # 1 saat geçmiş olsun
+        node._on_tick()
+        assert sent == [], "periyot 0 iken tazeleme YAPILMAMALI"
+    finally:
+        node.destroy_node()
+
+
+def test_fa4_abonesiz_yayin_GONDERILMIS_SAYILMAZ(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 AÇILIŞ YARIŞI: MAVROS abone olmadan yollanan mesaj çöpe gider.
+
+    `girdap-karar` fsm_node ile MAVROS'u birlikte başlatıyor; MAVROS'un `sys`
+    eklentisi abone olana kadarki pencerede açılış geçişleri (BOOT→ARM→
+    BEKLEMEDE) kayboluyordu. Doğru davranış: gönderilmiş SAYMA, abone
+    belirince aynı metni tekrar dene.
+    """
+    node = _make_node(ros_context, tmp_path, labels=[1, 1, 2])
+    try:
+        yok = _statustext_spy(node, abone_sayisi=0)      # MAVROS hazır DEĞİL
+        _drive_to_parkur1(node)
+        assert yok == [], "abonesiz yayın yapılmamalı"
+        assert node._last_statustext == "", (
+            "abonesiz denemede 'gönderildi' diye kaydedilmiş — abone "
+            "belirdiğinde durum bir daha ASLA yollanmaz"
+        )
+        # Abone belirdi → bir sonraki tick mevcut durumu yollamalı
+        var = _statustext_spy(node, abone_sayisi=1)
+        node._on_tick()
+        assert var, "abone belirdi ama durum yollanmadı"
+        assert "PARKUR1" in var[0].text, var[0].text
     finally:
         node.destroy_node()
 
