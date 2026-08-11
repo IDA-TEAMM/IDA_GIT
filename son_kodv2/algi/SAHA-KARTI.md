@@ -108,6 +108,35 @@ Orada **1️⃣ + 2️⃣** yeter (negatif + uzak mesafe).
 
 ---
 
+## 🏷️ DÖNÜŞTE — ETİKETLEME (veri seti baştan kuruluyor)
+
+**Her oturumu AYRI ÖNEKLE aktar** — sonra oturum bazlı bölme yapabilmek için:
+
+```bash
+cd ~/girdap_EGITIM_HATTI
+
+# NORMAL oturumlar (turuncu/sarı duba var) — model ön-etiketler, sen düzeltirsin
+python3 arac/on_etiket_uret.py --kaynak ~/girdap_veriseti/images --onek "o1_"
+
+# 🔴 NEGATİF oturum (kırmızı/beyaz/yeşil cisim) — model KOŞTURULMAZ
+python3 arac/on_etiket_uret.py --kaynak ~/negatif_kareler --onek "neg_" --negatif
+```
+
+🔴 **`--negatif` bayrağını unutma.** Model duba biçimindeki her şeyi duba sanıyor
+(kırmızı %97,4 · beyaz %70,2) — negatif kareleri ön-etiketlersen **binlerce sahte
+kutuyu tek tek silmen gerekir**. Bayrak boş etiket yazar, doğrusu da budur.
+
+Sonra:
+```bash
+labelImg ~/girdap_ON_ETIKET/images ~/girdap_ON_ETIKET/classes.txt ~/girdap_ON_ETIKET/labels
+```
+- 🔴 Format **YOLO** · View → **Auto Save mode AÇIK** (yoksa emek uçar)
+- 🔴 **Önce `zor/` kuyruğu** — modelin hiç kutu bulamadığı kareler. Ya gerçekten
+  boş, ya da **modelin kör olduğu yeni koşul**; ikincisi tam öğrenmesi gereken şey.
+- Negatif karelere **dokunma**, boş kalsınlar.
+
+---
+
 ## ✅ DÖNÜŞTE
 
 ```bash
