@@ -605,17 +605,49 @@ Duba fiziksel olarak merkez hattının **solunda** ama görüntüde merkezin
 15 cm ölçümü ±3 cm → ±0,33° · merceğin ana noktasının görüntü merkeziyle tam
 çakışmaması ~±0,5°. Toplam ~**±0,6°**. Ölçülen 2,38° bunun ~4 katı → **gerçek**.
 
-### 🔴 KALAN İŞ — değer henüz TÜKETİLMİYOR
+### ✅ UYGULANDI — karar tarafı (2026-08-11, `7491c4c`)
 
-`prototype/perception/fusion.py`:
+`bearing_from_camera(det, hfov, yaw_rad=0.0)` → `... + yaw_rad`. Zincir:
+`hardware.yaml tf.oak_frame.yaw` → launch → `perception_fusion_node`
+parametresi → `FusionConfig.camera_yaw_rad` → `bearing_from_camera`.
+Varsayılan `0.0` = eski davranış birebir. Launch bağlantısı canlı doğrulandı
+(`camera_yaw_rad = 0.0415` node parametrelerinde göründü).
+İşaret nöbetçisi: `test_SAHA_OLCUMU_dondurulmus_2026_08_11` bu ölçümü
+donduruyor — biri işareti ters çevirirse CI kırmızı.
+
+⚠️ **Overlay kontrolü yapıldı:** `tf` bloğunu hiçbir overlay ezmiyor
+(`video.yaml`, `yarisma.yaml` dahil) → düzeltme her iki modda geçerli.
+
+### 🔴 KALAN İŞ — ALGI TARAFI (Eyüp)
+
+**Düzeltme yalnız bizim füzyon yolumuzda.** `algi/girdap_ida_algi/
+gecit_mantik.py` kendi yanal konumunu doğrudan bbox'tan üretiyor:
+
 ```python
-return (0.5 - det.bbox_cx) * hfov      # yaw terimi YOK
+x = z * (cx - 0.5) / f        # yaw terimi YOK
 ```
-`hardware.yaml`'a yazılan yaw **hiçbir şeyi değiştirmez**; `oak_frame` yalnız
-static TF'e gidiyor, füzyon onu okumuyor. Düzeltme için `bearing_from_camera`'ya
-config'ten beslenen bir ofset eklenmeli:
-`return (0.5 - det.bbox_cx) * hfov + yaw_offset`
 
-**Neden önemli:** eşleşme toleransı 8,6°; bu hata onun %28'i. Kapı dubalarının
-açısal ayrımı 10 m'de 7,7° (hata %31), 15 m'de 5,2° (**hata %46**) — yani tam
-tespitin zorlaştığı uzak mesafede yanlış dubaya renk yapışabilir.
+Yani **kapı orta noktasını hesaplayan mantık hâlâ 2,38° kayık.**
+
+**Büyüklük: metre başına 4,2 cm.**
+
+| kapı mesafesi | yanal hata |
+|---|---|
+| 3 m | 12 cm |
+| 5 m | 21 cm |
+| **10 m** | **42 cm** |
+
+Kapı açıklığı ~1,35 m, tekne 0,785 m → yan boşluk ~28 cm. 10 m'de hata bu payı
+**aşıyor**; yaklaştıkça küçülüyor, yani araç uzaktan yanlış hizalanıp geç
+düzeltiyor.
+
+**Eyüp'e iletilecek:** *"Kamera optik ekseni gövde merkez hattına göre
++2,38° (0,0415 rad) iskeleye dönük ölçüldü (yöntem: §3b). `gecit_mantik.py`'deki
+`x = z·(cx−0.5)/f` hesabına bu ofset girmeli."*
+
+### ⚠️ Bu ölçüm KALICI DEĞİL
+
+Kamera fiziksel olarak hâlâ dönük — telafi ediyoruz, düzeltmiyoruz. Kaide
+sökülür/çarpılırsa değer bayatlar ve **bunu fark eden hiçbir şey yok** (LiDAR
+kapağı sorununun kardeşi). Kamera her yeniden takıldığında §3b tekrarlanmalı.
+Kalan belirsizlik ~±0,6° (tek ölçüm, kapalı alan, "yaklaşık 15 cm").
