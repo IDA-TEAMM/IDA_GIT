@@ -923,3 +923,52 @@ tetikleme, PAR-09 #1 açılışta ret, KAR-09 #3 RT önceliği). Üçünün de o
 sebebi: teşhisi iyileştirmek için güvenliği ya da çalışabilirliği feda
 etmeleri. Sessizliği kaldırmanın bedeli, otomatik çalışan bir motor ya da
 hiç açılmayan bir tekne olmamalı.
+
+---
+
+## 2026-08-12 (gece) — PAR-03'ün somut cevabı: `PreArm: Logging failed`
+
+Kaptanın PAR-03'ü *"araç 14 oturumun hiçbirinde ARM edilmedi"* diyordu ama
+**sebebi hiçbir kayıtta yoktu** — pre-arm ret metni yalnız operatörün
+ekranında bir an görünüp kayboluyordu.
+
+12.08 gecesi Jetson canlıyken `journalctl`'den okundu. FC'nin gönderdiği
+**tek** pre-arm hatası:
+
+```
+FCU: PreArm: Logging failed        (15 dakikada 37 kez)
+```
+
+Pusula hatası **yok**, AHRS hatası **yok**, GPS hatası **yok**. Yani
+kalibrasyon tartışması bu engelin arkasındaydı: kart düzelmeden araç arm
+olmayacaktı ve pusula ne kadar iyi kalibre edilse de sonuç değişmeyecekti.
+
+### Yan bulgu — `ARMING_CHECK` endişesi kapandı
+
+Kaptan §0.41③'te *"`ARMING_CHECK` hâlâ 0"* diye açık bırakmıştı. Bu mesajın
+çıkması 0 **olmadığının kanıtı**: 0 olsaydı pre-arm kontrolleri hiç koşmaz,
+hiçbir ret mesajı üretilmezdi. Ayrıca doğrulamaya gerek kalmadı.
+
+### Muhtemel kök neden kendi ayarımız
+
+| Parametre | 07.08 | 12.08 |
+|---|---|---|
+| `LOG_DISARMED` | 0 | **1** |
+| `LOG_FILE_DSRMROT` | 0 | **1** |
+
+`LOG_BITMASK=65535` (her şey) + `LOG_DISARMED=1` → araç arm edilmese bile her
+açılışta tam ayrıntılı log yazılıyor; `LOG_FILE_MB_FREE=500` yüzünden boş alan
+500 MB'ın altına düşünce ArduPilot loglamayı reddediyor.
+
+`LOG_DISARMED=1` muhtemelen bilinçliydi (araç hiç arm olmadığı için elde hiç
+log kalmıyordu) — mantıklı bir karardı, bedeli görülmemişti. Bu, "teşhis için
+eklenen şeyin teşhis edilen arızayı üretmesi" örneği; sahada doğrulanacak.
+
+### Ölçüm engeli — tekrar ısırdı
+
+Parametreleri FC'den canlı okumak istedim, `ros2 node list` çöktü. Sebep bu
+oturumda daha önce de teşhis edilmişti: **DDS ağ arayüzünü katılımcı
+oluşturulurken bağlar**; ethernet LiDAR'a takılınca yeni süreçler keşif
+yapamıyor. `journalctl` çalışıyor çünkü DDS kullanmıyor.
+🔑 Kural: Jetson'da ethernet değiştikten sonra `ros2` CLI ile ölçüm yapma —
+çalışan servisin log'undan oku.
