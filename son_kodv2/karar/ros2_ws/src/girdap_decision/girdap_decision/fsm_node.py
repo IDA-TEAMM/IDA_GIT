@@ -71,7 +71,7 @@ from std_srvs.srv import Trigger
 
 from mavros_msgs.msg import State as MavState
 from mavros_msgs.msg import StatusText
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, Path
 from sensor_msgs.msg import Imu
 
 from girdap_decision.qos_profiles import sensor_data_qos
@@ -137,6 +137,22 @@ class FSMNode(Node):
         #     edilirse görev KENDİLİĞİNDEN başlamamalı — MPPI motorları sürerdi.
         #     Kasıtlı mod komutu (kenar) şart kalır.
         self.declare_parameter("start_on_arm_in_mode", False)
+        # 🔴 PAR-09: `mission_source=fc` + çoklu parkur `mission_file`
+        # kombinasyonunda parkur SINIRLARI statik dosyadan, waypoint'lerin
+        # KENDİSİ ise FC'den (YKİ yüklemesi) gelir. İki kaynak senkron
+        # OLMAYABİLİR ve bu, açılışta BİLİNEMEZ — gerçek görev henüz gelmedi.
+        #
+        # Bu yüzden karar açılışa değil, görevin GELDİĞİ ana bırakıldı
+        # (`_on_waypoints`): FC görevinin waypoint SAYISI dosyadaki etiket
+        # sayısıyla eşleşiyorsa index'ler hizalıdır, etiketler benimsenir;
+        # eşleşmiyorsa TEK PARKUR güvenli modunda kalınır.
+        #
+        # ⚠ Neden açılışta RuntimeError ile durdurmuyoruz (kaptanın PAR-09
+        # önerisi #1): `fc` kaynağı md 3.3.1(2) gereği ZORUNLU (görev YKİ'de
+        # tanımlanıp yüklenir) ve `fc` ile parkur geçişi veren BAŞKA bir
+        # yapılandırma yok. Sert ret, çelişkiyi çözmek yerine yarışma yolunu
+        # tamamen kapatırdı — tekne hiç açılmazdı.
+        self.declare_parameter("parkur_senkron_dogrula", True)
 
         self._fsm = MissionFSM()
         self._fsm.P1_TO_P2_DIST = float(
@@ -145,6 +161,11 @@ class FSMNode(Node):
         self._obs = Observation()
 
         # --- Parkur geçiş katmanı (waypoint-index tabanlı, MissionFSM'den ayrı) ---
+        self._senkron_dogrula = bool(
+            self.get_parameter("parkur_senkron_dogrula").value
+        )
+        self._parkur_etiketleri: list[int] = []   # dosyadan; senkron beklemede
+        self._parkur_senkron_sonucu: Optional[bool] = None
         self._parkur = self._build_parkur_logic()
         self._parkur_state_last = self._parkur.state       # geçiş log tespiti
 
@@ -163,8 +184,11 @@ class FSMNode(Node):
         # target/cmd_vel hiç yayınlanmadı — SESSİZCE, hiçbir hata/uyarı
         # basılmadan (F-V.6'nın aynısı, gerçek donanımda fark edilmeden
         # tekrarlandı). Artık armed+BEKLEMEDE X saniyeyi geçerse GÜRÜLTÜLÜ uyarı.
-        self._armed_since: Optional[float] = None
-        self.declare_parameter("armed_bekleme_watchdog_s", 15.0)
+        # `armed_bekleme_watchdog_s` parametresi ve `_armed_since` alanı
+        # 12.08'de KALDIRILDI — F-P.23 bekçisi `_kilit_denetle`'ye taşındı.
+        # Parametreyi geriye uyumluluk için bırakmadım: hiçbir yaml/launch
+        # onu geçmiyordu (arandı), duran bir isim ileride "bu ayar bir şey
+        # yapıyor" yanılgısı üretirdi.
         # F-A.4: görev/parkur durumunu MAVLink STATUSTEXT ile YKİ'ye (Mission
         # Planner → Messages) yolla. Şartname md 4.2 gereği. Kapatmak için
         # false (ör. mavros'suz masa testi).
@@ -190,10 +214,8 @@ class FSMNode(Node):
         # ve 18,5 MB bag boşa gitti. Sessiz kalmak burada en pahalı seçenekti.
         # 0 → bekçi kapalı.
         self.declare_parameter("boot_uyari_s", 60.0)
-        self._armed_watchdog_s = float(
-            self.get_parameter("armed_bekleme_watchdog_s").value
-        )
-        self._armed_watchdog_warned = False
+        # Aynı bekçinin BEKLEMEDE ayağı (KAR-08). Kaptanın önerisi 30 s.
+        self.declare_parameter("bekleme_uyari_s", 30.0)
 
         # --- Subscribers ---
         self._sub_mav = self.create_subscription(
@@ -215,6 +237,10 @@ class FSMNode(Node):
             Bool, "/girdap/mission/complete", self._on_mission_complete, 10
         )
         # Sprint 4 parkur katmanı: waypoint-varış + çarpma placeholder.
+        # PAR-09: gerçek görev geldiğinde parkur senkronunu doğrula.
+        self._sub_waypoints = self.create_subscription(
+            Path, "/girdap/mission/waypoints", self._on_waypoints, 10
+        )
         self._sub_wp_reached = self.create_subscription(
             Int32, "/girdap/mission/waypoint_reached", self._on_waypoint_reached, 10
         )
@@ -253,10 +279,12 @@ class FSMNode(Node):
         self._statustext_abone_uyarildi = False
         # KAR-03 BOOT bekçisi
         self._boot_uyari_s = float(self.get_parameter("boot_uyari_s").value)
-        self._boot_baslangic = self.get_clock().now().nanoseconds * 1e-9
-        self._boot_uyarildi = False
+        self._bekleme_uyari_s = float(self.get_parameter("bekleme_uyari_s").value)
+        self._kilit_baslangic = self.get_clock().now().nanoseconds * 1e-9
+        self._kilit_durum: Optional[MissionState] = None
+        self._kilit_uyarildi = False
         self._mavros_mesaji_geldi = False   # /mavros/state HİÇ geldi mi
-        self._boot_teshis = ""              # statustext'e eklenecek kısa sebep
+        self._kilit_teshis = ""              # statustext'e eklenecek kısa sebep
 
         # --- Services ---
         self._srv_start = self.create_service(
@@ -328,6 +356,15 @@ class FSMNode(Node):
         # operatörü GÜRÜLTÜLÜ uyar.
         source = str(self.get_parameter("mission_source").value).lower()
         if source == "fc" and len(set(labels)) > 1:
+            # 🔴 12.08 (PAR-09/KAR-08): eskiden burada YALNIZ log basılıyor,
+            # sonra senkron OLMADIĞI BİLİNEN etiketler yine de kullanılıyordu.
+            # İki devam seçeneğinin ikisi de kötü, ama eşit değil:
+            #   · senkron olmayan etiketler → parkur geçişi YANLIŞ index'te
+            #     tetiklenir; PARKUR3 profili kamikaze çekicisidir (hedefe
+            #     NEGATİF maliyet), yanlış anda açılması AKTİF TEHLİKEDİR.
+            #   · tek parkur → kamikaze hiç yapılmaz, puan düşer ama güvenli.
+            # Bu yüzden hangi kolda olursak olalım artık senkron olmayan
+            # etiketler ASLA kullanılmıyor.
             self.get_logger().error(
                 "mission_source=fc AMA mission_file ÇOKLU parkur içeriyor "
                 f"({path}, parkurlar={sorted(set(labels))}) — FC'den yüklenen "
@@ -335,7 +372,24 @@ class FSMNode(Node):
                 "(mission_manager.fc_items_to_waypoints), bu dosyanın parkur "
                 "sınırlarıyla SENKRON DEĞİL. Parkur geçişleri (waypoint-index "
                 "tabanlı) YANLIŞ ZAMANDA tetiklenebilir ya da HİÇ tetiklenmez "
-                "— yarışma öncesi QGC görevini bu dosyayla EL İLE doğrula."
+                "— yarışma öncesi YKİ görevini bu dosyayla EL İLE doğrula."
+            )
+            if self._senkron_dogrula:
+                # Etiketleri SAKLA ama HENÜZ KULLANMA: gerçek görev gelince
+                # (`_on_waypoints`) sayı eşleşirse benimsenecek. O ana kadar
+                # tek parkur güvenli modu — yanlış index'te PARKUR3'e (kamikaze
+                # çekicisi, hedefe negatif maliyet) geçmek AKTİF TEHLİKEDİR.
+                self._parkur_etiketleri = list(labels)
+                self.get_logger().warn(
+                    "parkur etiketleri ASKIYA ALINDI — FC gorevi gelince "
+                    f"waypoint sayisi {len(labels)} ile eslesirse benimsenecek. "
+                    "O ana kadar TEK PARKUR guvenli modu."
+                )
+                return ParkurTransitionLogic([])
+            self.get_logger().error(
+                "parkur_senkron_dogrula=false → senkron OLMAYABILECEK "
+                "etiketler dogrudan kullaniliyor. Parkur gecisi yanlis "
+                "index'te tetiklenebilir (PARKUR3 = kamikaze)."
             )
         # F-P.9: ParkurTransitionLogic artık contiguous-olmayan (veri girişi
         # hatası) etiketlerde ValueError fırlatır — burada da yakalanır,
@@ -353,14 +407,7 @@ class FSMNode(Node):
 
     def _on_mav_state(self, msg: MavState) -> None:
         self._mavros_mesaji_geldi = True
-        was_armed = self._mav_armed
         self._mav_armed = msg.armed
-        if msg.armed and not was_armed:
-            self._armed_since = self.get_clock().now().nanoseconds * 1e-9
-            self._armed_watchdog_warned = False
-        elif not msg.armed:
-            self._armed_since = None
-            self._armed_watchdog_warned = False
         # BOOT → ARM: mavros bağlantısı kuruldu
         self._obs.boot_ok = msg.connected
         # md 3.3.1(3): BEKLEMEDE'de operatörün mod komutu görevi başlatır.
@@ -475,6 +522,61 @@ class FSMNode(Node):
         if msg.data:
             self._obs.mission_complete = True
 
+    def _on_waypoints(self, msg: Path) -> None:
+        """PAR-09: FC görevi geldi — parkur etiketleri onunla hizalı mı?
+
+        `mission_source=fc` iken waypoint'ler YKİ yüklemesinden, parkur
+        sınırları ise statik `mission_file`'dan gelir. İki kaynağın hizalı
+        olması, waypoint SAYILARININ eşit olmasına bağlıdır: parkur geçişi
+        `waypoint_reached` **index'i** ile tetiklendiği için, sayı tutuyorsa
+        index'ler de birebir karşılık gelir.
+
+        Sayı tutmuyorsa etiketler benimsenmez — tek parkur güvenli modunda
+        kalınır. Kamikaze yapılmaz (puan kaybı), ama yanlış waypoint'te
+        PARKUR3 profiline geçilmez (aktif tehlike).
+
+        ⚠ Yalnız görev BAŞLAMADAN önce benimsenir. Koşu ortasında parkur
+        mantığını değiştirmek, o ana kadarki ilerlemeyi geçersiz kılardı.
+        """
+        if not self._parkur_etiketleri:
+            return                          # askıda bekleyen etiket yok
+        if self._parkur_senkron_sonucu is not None:
+            return                          # karar bir kez verilir
+        if self._fsm.state not in (
+            MissionState.BOOT, MissionState.ARM, MissionState.BEKLEMEDE
+        ):
+            return                          # görev başladı — geç kalındı
+
+        gelen = len(msg.poses)
+        beklenen = len(self._parkur_etiketleri)
+        if gelen != beklenen:
+            self._parkur_senkron_sonucu = False
+            self.get_logger().error(
+                f"🔴 PARKUR SENKRONU YOK: FC gorevi {gelen} waypoint "
+                f"iceriyor, mission_file {beklenen} etiket. Index'ler "
+                "hizali DEGIL → parkur etiketleri KULLANILMIYOR, TEK PARKUR "
+                "guvenli modunda kalindi. KAMIKAZE (PARKUR3) YAPILMAYACAK. "
+                "COZUM: YKI'ye yuklenen gorevi mission_file ile ayni "
+                "waypoint sayisina getir."
+            )
+            return
+
+        self._parkur_senkron_sonucu = True
+        try:
+            self._parkur = ParkurTransitionLogic(self._parkur_etiketleri)
+        except ValueError as exc:
+            self._parkur_senkron_sonucu = False
+            self.get_logger().error(
+                f"parkur etiketleri gecersiz ({exc}) — tek parkur guvenli modu"
+            )
+            return
+        self._parkur_state_last = self._parkur.state
+        self.get_logger().info(
+            f"✅ PARKUR SENKRONU DOGRULANDI: {gelen} waypoint = {beklenen} "
+            f"etiket, parkur sinirlari benimsendi "
+            f"({self._parkur.last_index_of_parkur})"
+        )
+
     def _on_waypoint_reached(self, msg: Int32) -> None:
         """mission_manager waypoint varış sinyali → parkur geçiş logic'i.
 
@@ -583,25 +685,10 @@ class FSMNode(Node):
         # ARM → BEKLEMEDE: Pixhawk armed → kill switch fiziksel olarak OFF
         self._obs.kill_switch_off = self._mav_armed
 
-        # F-P.23: armed+BEKLEMEDE'de takılı kalma bekçisi (bkz. __init__ notu).
-        if (
-            self._mav_armed
-            and self._armed_since is not None
-            and not self._armed_watchdog_warned
-            and self._fsm.state is MissionState.BEKLEMEDE
-        ):
-            elapsed = self.get_clock().now().nanoseconds * 1e-9 - self._armed_since
-            if elapsed > self._armed_watchdog_s:
-                self._armed_watchdog_warned = True
-                self.get_logger().error(
-                    f"Araç {elapsed:.0f}s'dir ARMED ama görev hâlâ BEKLEMEDE'de "
-                    f"— mevcut mod='{self._last_mode}', beklenen "
-                    f"start_on_mode='{self._start_mode}'. Mod eşleşmiyorsa "
-                    "görev HİÇ başlamaz, current_target/cmd_vel hiç "
-                    "yayınlanmaz (F-P.23 — 2026-07-16 gerçek donanım testinde "
-                    "sessizce yaşanan sorunun aynısı: launch'a doğru "
-                    "fsm.start_on_mode:=<gerçek mod> verildiğinden emin ol)"
-                )
+        # F-P.23'ün eski armed+BEKLEMEDE bekçisi BURADAYDI; `_kilit_denetle`
+        # onun yerini aldı. Sebep: `self._mav_armed` şartına bağlıydı ve
+        # PAR-03'e göre araç 14 oturumun hiçbirinde ARM edilmedi — bekçi bir
+        # kez bile ateşlemedi. Yeni bekçi ARM YOKLUĞUNU da bir sebep sayıyor.
 
         new_state = self._fsm.tick(self._obs)
 
@@ -635,63 +722,111 @@ class FSMNode(Node):
 
         # 🔴 KAR-03: BOOT kilitlenmesini TESPİT ET (statustext'ten ÖNCE, çünkü
         # teşhis metni operatöre BOOT satırıyla birlikte gidiyor).
-        self._boot_kilidi_denetle(new_state)
+        self._kilit_denetle(new_state)
 
         # YKİ ekranı (şartname md 4.2)
         self._publish_statustext(new_state)
 
-    def _boot_kilidi_denetle(self, state: MissionState) -> None:
-        """BOOT'ta takılı kalındıysa sebebini AYIRT ET ve yüksek sesle söyle.
+    def _kilit_denetle(self, state: MissionState) -> None:
+        """Görev İLERLEMİYORSA sebebini AYIRT ET ve operatöre yüksek sesle söyle.
 
-        KAR-03'ün asıl zararı BOOT'ta kalmak değildi — o, MAVROS bağlı
-        olmadığında **doğru** davranış. Zarar, bunun hiçbir yerde
-        söylenmemesiydi: 25 dakika boyunca her topic 10 Hz aktı, operatör
-        sağlıklı bir sistem gördü.
+        KAR-03 + KAR-08 tek bekçide birleşti, çünkü ikisi aynı arızanın iki
+        durağı: FSM bir bekleme durumunda takılıyor, sistemin geri kalanı
+        bunu umursamadan 10 Hz akmaya devam ediyor, operatör sağlıklı bir
+        sistem görüyor. 14 oturumun **hiçbirinde** görev PARKUR'a geçemedi.
 
-        İki farklı fiziksel arıza var ve **çözümleri farklı**, bu yüzden tek
-        bir "MAVROS yok" mesajı yetmez:
+        Takılmanın kendisi çoğu zaman DOĞRU davranıştır (MAVROS yoksa BOOT'ta
+        kalınır, başlat komutu yoksa BEKLEMEDE'de beklenir). Hata, sebebin
+        hiçbir yerde söylenmemesi.
 
-        - `/mavros/state` HİÇ gelmedi → MAVROS düğümü koşmuyor ya da yanlış
-          ROS_DOMAIN_ID'de. Bakılacak yer: launch/servis, `ros2 node list`.
-        - Mesaj geliyor ama `connected=false` → MAVROS ayakta, FCU hattı ölü.
-          Bakılacak yer: kablo, port (`fcu_url`), baud, Pixhawk güç.
+        🔴 Neden F-P.23'ün yerini alıyor: eski BEKLEMEDE bekçisi
+        `self._mav_armed` şartına bağlıydı — yani ancak araç ARM edildikten
+        SONRA konuşabiliyordu. PAR-03: 14 oturumdaki 41.524 `/mavros/state`
+        mesajının **hiçbirinde** `armed=true` yok. Bekçi bir kez bile
+        ateşlemedi; tam olarak teşhis etmesi gereken duruma karşı kördü.
+        (KAR-03'te fuzyon/planlama bekçilerinde bulunan desenin üçüncü örneği:
+        *bekçi, işlerin kısmen yürüdüğü hâli varsayıyor.*)
 
-        Kaptanın bag'inde ikincisi vardı ("disconnected" ×1.695, endpoint
-        "closed" ×1.699) — yani mesaj ayrımı sahada doğrudan işe yarardı.
+        Sebepler ve operatörün bakacağı yer:
+
+        | teşhis | anlamı | nereye bakılır |
+        |---|---|---|
+        | `MAVROS-YOK` | `/mavros/state` hiç gelmedi | launch/servis, ROS_DOMAIN_ID |
+        | `FCU-KOPUK` | geliyor ama `connected=false` | kablo, fcu_url, baud, güç |
+        | `ARM-YOK` | araç ARM edilmemiş | Mission Planner pre-arm uyarıları |
+        | `MOD-YOK` | ARM var, mod `start_on_mode` değil | YKİ'den mod komutu |
+        | `BASLAT-YOK` | ARM + mod doğru, görev yine de başlamadı | anormal, log'a bak |
         """
-        if state is not MissionState.BOOT:
-            # BOOT'tan çıkıldı → sayaç sıfırlanır (yeniden başlama hakkı,
-            # md 5.5.3.1: reset sonrası tekrar BOOT'a düşülürse süre baştan).
-            self._boot_baslangic = self.get_clock().now().nanoseconds * 1e-9
-            self._boot_uyarildi = False
-            self._boot_teshis = ""
-            return
-        if self._boot_uyari_s <= 0.0:
-            return
-        gecen = self.get_clock().now().nanoseconds * 1e-9 - self._boot_baslangic
-        if gecen < self._boot_uyari_s:
+        simdi = self.get_clock().now().nanoseconds * 1e-9
+
+        if state not in (MissionState.BOOT, MissionState.BEKLEMEDE):
+            self._kilit_durum = None
+            self._kilit_baslangic = simdi
+            self._kilit_uyarildi = False
+            self._kilit_teshis = ""
             return
 
-        if not self._mavros_mesaji_geldi:
-            self._boot_teshis = "MAVROS-YOK"
-            ayrinti = (
-                "/mavros/state HIC gelmedi — MAVROS dugumu kosuyor mu, "
-                "ROS_DOMAIN_ID dogru mu? (`ros2 node list`)"
+        # Durum değiştiyse sayaç baştan — BOOT'ta geçen süre BEKLEMEDE'nin
+        # hesabına yazılmaz (md 5.5.3.1 yeniden başlamada da aynı şey geçerli).
+        if state is not self._kilit_durum:
+            self._kilit_durum = state
+            self._kilit_baslangic = simdi
+            self._kilit_uyarildi = False
+            self._kilit_teshis = ""
+            return
+
+        esik = (
+            self._boot_uyari_s if state is MissionState.BOOT
+            else self._bekleme_uyari_s
+        )
+        if esik <= 0.0:
+            return
+        gecen = simdi - self._kilit_baslangic
+        if gecen < esik:
+            return
+
+        teshis, ayrinti = self._kilit_sebebi(state)
+        self._kilit_teshis = teshis
+        if not self._kilit_uyarildi:
+            self._kilit_uyarildi = True
+            self.get_logger().error(
+                f"🔴 {state.value} durumunda {gecen:.0f}s takili kalindi — "
+                f"GOREV ILERLEMIYOR. {ayrinti} (KAR-03/KAR-08: topic'ler "
+                "akmaya devam ettigi icin bu arizanin 25 dakika fark "
+                "edilmedigi bir oturum yasandi)"
             )
-        else:
-            self._boot_teshis = "FCU-KOPUK"
-            ayrinti = (
+
+    def _kilit_sebebi(self, state: MissionState) -> tuple[str, str]:
+        """Takılma sebebini kısa etiket + operatör talimatı olarak ver."""
+        if state is MissionState.BOOT:
+            if not self._mavros_mesaji_geldi:
+                return "MAVROS-YOK", (
+                    "/mavros/state HIC gelmedi — MAVROS dugumu kosuyor mu, "
+                    "ROS_DOMAIN_ID dogru mu? (`ros2 node list`)"
+                )
+            return "FCU-KOPUK", (
                 "/mavros/state geliyor ama connected=false — MAVROS ayakta, "
                 "FCU hatti olu: kablo / fcu_url portu / baud / Pixhawk gucu"
             )
 
-        if not self._boot_uyarildi:
-            self._boot_uyarildi = True
-            self.get_logger().error(
-                f"🔴 BOOT'ta {gecen:.0f}s takili kalindi — GOREV BASLAMAZ. "
-                f"{ayrinti} (KAR-03: topic'ler akmaya devam ettigi icin bu "
-                "arizanin 25 dakika fark edilmedigi bir oturum yasandi)"
+        # BEKLEMEDE
+        if not self._mav_armed:
+            return "ARM-YOK", (
+                "arac ARM edilmemis — gorev ARM olmadan baslamaz. Mission "
+                "Planner'da pre-arm uyarilarina bak (PAR-03: 14 oturumun "
+                "hicbirinde armed=true olmadi, sorun burada dugumleniyor)"
             )
+        if self._start_mode and self._last_mode != self._start_mode:
+            return "MOD-YOK", (
+                f"ARM var ama mod='{self._last_mode}', beklenen "
+                f"start_on_mode='{self._start_mode}' — mod eslesmezse gorev "
+                "HIC baslamaz, current_target/cmd_vel hic yayinlanmaz "
+                "(F-P.23: 16.07 gercek donanim testinde sessizce yasandi)"
+            )
+        return "BASLAT-YOK", (
+            "ARM var, mod dogru, ama gorev yine de baslamadi — beklenmedik "
+            "durum. Waypoint listesi bos olabilir; fsm_node log'una bak"
+        )
 
     def _publish_statustext(self, state: MissionState) -> None:
         """Görev durumunu MAVLink STATUSTEXT ile YKİ'ye bildir (md 4.2).
@@ -734,10 +869,12 @@ class FSMNode(Node):
             MissionState.PARKUR1, MissionState.PARKUR2, MissionState.PARKUR3
         ):
             text = f"GIRDAP {state.value} {self._parkur.state.value}"
-        elif state is MissionState.BOOT and self._boot_teshis:
-            # KAR-03: yalnız "BOOT" yazmak operatöre HİÇBİR ŞEY söylemiyor —
-            # sebebi de aynı satırda gitsin (MAVLink STATUSTEXT 50 karakter).
-            text = f"GIRDAP BOOT TAKILDI {self._boot_teshis}"
+        elif self._kilit_teshis:
+            # KAR-03/KAR-08: yalnız "BOOT" / "BEKLEMEDE" yazmak operatöre
+            # HİÇBİR ŞEY söylemiyor — sebep aynı satırda gitmeli.
+            # ⚠ MAVLink STATUSTEXT 50 karakter: "GIRDAP BEKLEMEDE TAKILDI
+            # BASLAT-YOK" = 41, en uzun kombinasyon sığıyor (test donduruyor).
+            text = f"GIRDAP {state.value} TAKILDI {self._kilit_teshis}"
         else:
             text = f"GIRDAP {state.value}"
         simdi = self.get_clock().now().nanoseconds * 1e-9
@@ -763,7 +900,7 @@ class FSMNode(Node):
         # Mission Planner mesaj akışında diğer satırların arasında kaybolur.
         if state is MissionState.KILL:
             msg.severity = StatusText.CRITICAL
-        elif state is MissionState.BOOT and self._boot_teshis:
+        elif self._kilit_teshis:
             msg.severity = StatusText.ERROR
         else:
             msg.severity = StatusText.NOTICE

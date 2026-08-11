@@ -111,7 +111,7 @@ def test_fp23_armed_bekleme_uzarsa_uyari_basar(ros_context, tmp_path) -> None:  
     node = girdap.FSMNode(
         parameter_overrides=[
             Parameter("start_on_mode", value="GUIDED"),
-            Parameter("armed_bekleme_watchdog_s", value=0.05),
+            Parameter("bekleme_uyari_s", value=0.05),
         ]
     )
     try:
@@ -133,8 +133,12 @@ def test_fp23_armed_bekleme_uzarsa_uyari_basar(ros_context, tmp_path) -> None:  
         assert node._fsm.state is MissionState.BEKLEMEDE, (
             "mod uyuşmuyorken görev başlamamalıydı"
         )
+        # 12.08: bekçi `_kilit_denetle`'ye taşındı; iddia SEBEBE bakıyor.
+        assert node._kilit_teshis == "MOD-YOK", (
+            f"mod uyusmazligi teshis edilmedi: {node._kilit_teshis!r}"
+        )
         assert len(errors) == 1
-        assert "ARMED" in errors[0] and "BEKLEMEDE" in errors[0]
+        assert "BEKLEMEDE" in errors[0]
         assert "GUIDED" in errors[0] and "AUTO" in errors[0]
     finally:
         node.destroy_node()
@@ -153,7 +157,7 @@ def test_fp23_mod_uyusursa_uyari_hic_basmaz(ros_context, tmp_path) -> None:  # n
         parameter_overrides=[
             Parameter("start_on_mode", value="GUIDED"),
             Parameter("start_on_arm_in_mode", value=True),
-            Parameter("armed_bekleme_watchdog_s", value=5.0),
+            Parameter("bekleme_uyari_s", value=5.0),
         ]
     )
     try:
@@ -225,18 +229,31 @@ def test_fp9_bozuk_parkur_dosyasi_node_coker_mi(ros_context, tmp_path) -> None: 
         node.destroy_node()
 
 
-def test_fp8_fc_coklu_parkur_uyarisi_coker_mi(ros_context, tmp_path) -> None:  # noqa: ANN001
-    """F-P.8 (robustness taraması, 2026-07-15): mission_source=fc + çoklu
-    parkur içeren mission_file kombinasyonu KRİTİK bir senkron riski (FC
-    waypoint'leri her zaman parkur=1 sayılır — bkz. kod yorumu). Bu test tam
-    düzeltmeyi (otomatik senkron, kod düzeyinde mümkün değil) DEĞİL, en
-    azından node'un çökmediğini ve parkur logic'inin normal kurulduğunu
-    doğrular (uyarı metni ROS logger'a gider, pytest'te doğrudan yakalanmaz)."""
+def test_fp8_fc_coklu_parkur_ETIKETLERI_ASKIYA_ALIR(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 BEKLENTİ 12.08'de TERSİNE ÇEVRİLDİ (PAR-09) — bilerek.
+
+    Bu test eskiden `last_index_of_parkur == {1: 1, 2: 3, 3: 4}` bekliyordu,
+    yani **senkron olmadığı BİLİNEN etiketlerin gerçekten kullanıldığını**
+    donduruyordu. Amacı "node çökmesin" idi ve o kadarını doğruluyordu; ama
+    donan davranış tehlikeliydi: PARKUR3 profili kamikaze çekicisidir
+    (hedefe negatif maliyet), yanlış waypoint index'inde açılması aktif
+    tehlike demektir.
+
+    F-P.8 uyarısı 2026-07-15'te eklendi ve 14 oturum boyunca ERROR olarak
+    basıldı — kimse görmedi, görev hiç ilerlemedi (PAR-09). Bir arızayı
+    log'a yazıp devam etmek, sahada "yapılmamış" ile aynı şey.
+
+    Etiketler ATILMAZ, ASKIYA ALINIR: gerçek görev gelince sayı eşleşirse
+    benimsenecek (`_on_waypoints`).
+    """
     node = _make_node(
         ros_context, tmp_path, labels=[1, 1, 2, 2, 3], mission_source="fc",
     )
     try:
-        assert node._parkur.last_index_of_parkur == {1: 1, 2: 3, 3: 4}
+        assert node._parkur.last_index_of_parkur == {}, (
+            "senkron dogrulanmadan etiketler kullanildi"
+        )
+        assert node._parkur_etiketleri == [1, 1, 2, 2, 3], "etiketler kayboldu"
     finally:
         node.destroy_node()
 
@@ -676,8 +693,24 @@ def test_sok_esigi_node_varsayilani_yaml_ile_AYNI(ros_context) -> None:  # noqa:
 def _boot_node(ros_context, tmp_path, esik=0.05):  # noqa: ANN001, ANN201
     return _make_node(
         ros_context, tmp_path,
-        extra_params=[Parameter("boot_uyari_s", value=float(esik))],
+        extra_params=[
+            Parameter("boot_uyari_s", value=float(esik)),
+            Parameter("bekleme_uyari_s", value=float(esik)),
+        ],
     )
+
+
+def _kilitte_bekle(node, state, sure=0.1):  # noqa: ANN001, ANN201
+    """Bekçiyi eşiğin ötesine taşı.
+
+    İlk çağrı durumu KAYDEDER (sayaç başlar), süre geçtikten sonraki çağrı
+    ölçer. Bu iki adımlılık bilinçli: BOOT'ta geçen süre BEKLEMEDE'nin
+    hesabına yazılmasın diye sayaç her durum değişiminde sıfırlanıyor.
+    """
+    import time
+    node._kilit_denetle(state)
+    time.sleep(sure)
+    node._kilit_denetle(state)
 
 
 def test_KAR03_BOOTta_kisa_sure_HENUZ_uyarmaz(ros_context, tmp_path) -> None:  # noqa: ANN001
@@ -689,9 +722,9 @@ def test_KAR03_BOOTta_kisa_sure_HENUZ_uyarmaz(ros_context, tmp_path) -> None:  #
     """
     node = _boot_node(ros_context, tmp_path, esik=60.0)
     try:
-        node._boot_kilidi_denetle(MissionState.BOOT)
-        assert node._boot_teshis == ""
-        assert node._boot_uyarildi is False
+        node._kilit_denetle(MissionState.BOOT)
+        assert node._kilit_teshis == ""
+        assert node._kilit_uyarildi is False
     finally:
         node.destroy_node()
 
@@ -701,10 +734,9 @@ def test_KAR03_mavros_HIC_yayin_yapmadiysa_MAVROS_YOK(ros_context, tmp_path) -> 
     import time
     node = _boot_node(ros_context, tmp_path)
     try:
-        time.sleep(0.1)
-        node._boot_kilidi_denetle(MissionState.BOOT)
-        assert node._boot_teshis == "MAVROS-YOK", (
-            f"beklenen MAVROS-YOK, gelen {node._boot_teshis!r}"
+        _kilitte_bekle(node, MissionState.BOOT)
+        assert node._kilit_teshis == "MAVROS-YOK", (
+            f"beklenen MAVROS-YOK, gelen {node._kilit_teshis!r}"
         )
     finally:
         node.destroy_node()
@@ -724,10 +756,9 @@ def test_KAR03_mavros_var_ama_FCU_kopuksa_AYRI_teshis(ros_context, tmp_path) -> 
         st = MavState()
         st.connected = False               # MAVROS ayakta, FCU hattı ölü
         node._on_mav_state(st)
-        time.sleep(0.1)
-        node._boot_kilidi_denetle(MissionState.BOOT)
-        assert node._boot_teshis == "FCU-KOPUK", (
-            f"beklenen FCU-KOPUK, gelen {node._boot_teshis!r}"
+        _kilitte_bekle(node, MissionState.BOOT)
+        assert node._kilit_teshis == "FCU-KOPUK", (
+            f"beklenen FCU-KOPUK, gelen {node._kilit_teshis!r}"
         )
     finally:
         node.destroy_node()
@@ -742,14 +773,13 @@ def test_KAR03_BOOTtan_cikilinca_teshis_TEMIZLENIR(ros_context, tmp_path) -> Non
     import time
     node = _boot_node(ros_context, tmp_path)
     try:
-        time.sleep(0.1)
-        node._boot_kilidi_denetle(MissionState.BOOT)
-        assert node._boot_teshis != ""
-        node._boot_kilidi_denetle(MissionState.ARM)      # bağlantı kuruldu
-        assert node._boot_teshis == ""
-        assert node._boot_uyarildi is False
-        node._boot_kilidi_denetle(MissionState.BOOT)     # tekrar BOOT
-        assert node._boot_teshis == "", "sayac sifirlanmadi — aninda alarm"
+        _kilitte_bekle(node, MissionState.BOOT)
+        assert node._kilit_teshis != ""
+        node._kilit_denetle(MissionState.ARM)      # bağlantı kuruldu
+        assert node._kilit_teshis == ""
+        assert node._kilit_uyarildi is False
+        node._kilit_denetle(MissionState.BOOT)     # tekrar BOOT
+        assert node._kilit_teshis == "", "sayac sifirlanmadi — aninda alarm"
     finally:
         node.destroy_node()
 
@@ -771,8 +801,7 @@ def test_KAR03_teshis_OPERATOR_ekranina_gidiyor(ros_context, tmp_path) -> None: 
         node._pub_statustext.get_subscription_count = lambda: 1
         node._pub_statustext.publish = lambda m: yollanan.append(m)
 
-        time.sleep(0.1)
-        node._boot_kilidi_denetle(MissionState.BOOT)
+        _kilitte_bekle(node, MissionState.BOOT)
         node._publish_statustext(MissionState.BOOT)
 
         assert yollanan, "statustext hic yollanmadi"
@@ -785,5 +814,189 @@ def test_KAR03_teshis_OPERATOR_ekranina_gidiyor(ros_context, tmp_path) -> None: 
         assert msg.severity == StatusText.ERROR, (
             "BOOT kilidi NOTICE seviyesinde — MP akisinda kaybolur"
         )
+    finally:
+        node.destroy_node()
+
+
+def test_KAR08_ARM_YOKKEN_de_teshis_basilir(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 KAR-08'in özü — eski bekçinin GÖREMEDİĞİ tam da bu durumdu.
+
+    Eski F-P.23 bekçisi `self._mav_armed` şartına bağlıydı, yani ancak araç
+    ARM edildikten SONRA konuşabiliyordu. PAR-03: 14 oturumdaki 41.524
+    `/mavros/state` mesajının hiçbirinde `armed=true` yok — bekçi bir kez
+    bile ateşlemedi ve `BEKLEMEDE`'de geçen 6,5 dakika sessizce kaydedildi.
+
+    Sahadaki gerçek durum buydu: pre-arm kontrolleri geçilemiyordu. Bekçi de
+    operatörü oraya yönlendirmeli.
+    """
+    node = _boot_node(ros_context, tmp_path)
+    try:
+        st = MavState()
+        st.connected = True
+        st.armed = False                      # ARM edilememiş — gerçek durum
+        node._on_mav_state(st)
+        _kilitte_bekle(node, MissionState.BEKLEMEDE)
+        assert node._kilit_teshis == "ARM-YOK", (
+            f"ARM yoklugu teshis edilmedi: {node._kilit_teshis!r}"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_KAR08_BOOT_suresi_BEKLEMEDEnin_hesabina_yazilmaz(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Sayaç her durum değişiminde sıfırlanmalı.
+
+    Aksi halde BOOT'ta 60 s bekleyip sonra BEKLEMEDE'ye geçen normal bir
+    açılış, BEKLEMEDE'ye girer girmez anında alarm basardı — yanlış alarm,
+    operatörün uyarıları yok saymayı öğrenmesinin en hızlı yolu.
+    """
+    node = _boot_node(ros_context, tmp_path, esik=10.0)
+    try:
+        node._kilit_denetle(MissionState.BOOT)
+        t_boot = node._kilit_baslangic
+        node._kilit_denetle(MissionState.BEKLEMEDE)      # durum degisti
+        assert node._kilit_baslangic > t_boot, "sayac sifirlanmadi"
+        assert node._kilit_teshis == ""
+    finally:
+        node.destroy_node()
+
+
+def test_KAR08_BEKLEMEDE_teshisi_de_OPERATOR_ekranina_gider(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """BEKLEMEDE kilidi de MP ekranında ve 50 karakter sınırı içinde olmalı."""
+    node = _boot_node(ros_context, tmp_path)
+    try:
+        if node._pub_statustext is None:
+            pytest.skip("statustext kapalı")
+        yollanan = []
+        node._pub_statustext.get_subscription_count = lambda: 1
+        node._pub_statustext.publish = lambda m: yollanan.append(m)
+
+        st = MavState()
+        st.connected = True
+        st.armed = False
+        node._on_mav_state(st)
+        _kilitte_bekle(node, MissionState.BEKLEMEDE)
+        node._publish_statustext(MissionState.BEKLEMEDE)
+
+        assert yollanan, "statustext hic yollanmadi"
+        msg = yollanan[-1]
+        assert "ARM-YOK" in msg.text, f"sebep gitmiyor: {msg.text!r}"
+        assert len(msg.text) <= 50, "MAVLink STATUSTEXT 50 karakterle sinirli"
+        from mavros_msgs.msg import StatusText
+        assert msg.severity == StatusText.ERROR
+    finally:
+        node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# PAR-09 / KAR-08 (2026-08-12) — çelişkili görev yapılandırması.
+# --------------------------------------------------------------------------- #
+
+
+def _celiskili_gorev(tmp_path):  # noqa: ANN001, ANN201
+    """mission_source=fc ile ÇELİŞEN çoklu parkur dosyası."""
+    f = tmp_path / "coklu.yaml"
+    f.write_text(
+        "waypoints:\n"
+        "  - {lat: 0.0, lon: 0.0, parkur: 1}\n"
+        "  - {lat: 0.0, lon: 0.0, parkur: 2}\n"
+        "  - {lat: 0.0, lon: 0.0, parkur: 3}\n",
+        encoding="utf-8",
+    )
+    return f
+
+
+def _fc_node(tmp_path, **kw):  # noqa: ANN001, ANN201
+    ov = [
+        Parameter("mission_source", value="fc"),
+        Parameter("mission_file", value=str(_celiskili_gorev(tmp_path))),
+    ]
+    ov += [Parameter(k, value=v) for k, v in kw.items()]
+    return girdap.FSMNode(parameter_overrides=ov)
+
+
+def _path(n):  # noqa: ANN001, ANN201
+    from nav_msgs.msg import Path as _P
+    from geometry_msgs.msg import PoseStamped
+    m = _P()
+    m.poses = [PoseStamped() for _ in range(n)]
+    return m
+
+
+def test_PAR09_sayi_TUTMAZSA_tek_parkurda_kalinir(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 FC görevi dosyadan farklı sayıda waypoint içeriyorsa index'ler
+    hizalı DEĞİLDİR — etiketler benimsenmemeli.
+
+    Eski kod tam da tehlikeli olanı seçiyordu: uyarıyı basıp senkron
+    olmadığı BİLİNEN etiketleri yine de kullanıyordu. PARKUR3 profili
+    kamikaze çekicisidir (hedefe negatif maliyet); yanlış waypoint'te
+    açılması aktif tehlikedir. Tek parkur yalnız puan kaybettirir.
+    """
+    node = _fc_node(tmp_path)
+    try:
+        node._on_waypoints(_path(5))          # dosyada 3 etiket var
+        assert node._parkur_senkron_sonucu is False
+        node._on_waypoint_reached(Int32(data=0))
+        node._on_waypoint_reached(Int32(data=1))
+        node._on_waypoint_reached(Int32(data=2))
+        assert node._parkur.state.value == "PARKUR_1", (
+            f"hizasiz etiketlerle gecis yapildi: {node._parkur.state.value}"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_PAR09_sayi_TUTARSA_etiketler_BENIMSENIR(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔑 Yarışma yolunun çalışması buna bağlı.
+
+    Sert ret (kaptanın PAR-09 önerisi #1) bu yolu tamamen kapatırdı: `fc`
+    kaynağı md 3.3.1(2) gereği zorunlu ve `fc` ile parkur geçişi veren başka
+    yapılandırma yok. Sayı eşleşmesi, index hizasının doğrulanabilir tek
+    ölçütü — geçiş `waypoint_reached` index'iyle tetiklendiği için sayı
+    tutuyorsa index'ler birebir karşılık gelir.
+    """
+    node = _fc_node(tmp_path)
+    try:
+        node._on_waypoints(_path(3))          # dosyadaki etiket sayisi
+        assert node._parkur_senkron_sonucu is True
+        assert node._parkur.last_index_of_parkur == {1: 0, 2: 1, 3: 2}
+    finally:
+        node.destroy_node()
+
+
+def test_PAR09_gorev_BASLADIKTAN_sonra_benimsenmez(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Koşu ortasında parkur mantığını değiştirmek, o ana kadarki
+    ilerlemeyi geçersiz kılardı — geç gelen görev yok sayılmalı."""
+    node = _fc_node(tmp_path)
+    try:
+        mav = MavState()
+        mav.connected = True
+        mav.armed = True
+        node._on_mav_state(mav)
+        node._on_tick()
+        node._on_tick()
+        node._on_start_srv(Trigger.Request(), Trigger.Response())
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR1
+
+        node._on_waypoints(_path(3))          # sayi TUTUYOR ama gec kaldi
+        assert node._parkur_senkron_sonucu is None, "kosu ortasinda benimsendi"
+        assert node._parkur.last_index_of_parkur == {}
+    finally:
+        node.destroy_node()
+
+
+def test_PAR09_TUTARLI_yapilandirma_engellenmez(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """mission_source=file ile çoklu parkur ÇELİŞKİ DEĞİL — durdurulmamalı.
+
+    Yanlış alarm buradan gelirdi: yarışma dışı/offline geliştirme akışı
+    (araç üstü YAML) tamamen meşru.
+    """
+    node = girdap.FSMNode(parameter_overrides=[
+        Parameter("mission_source", value="file"),
+        Parameter("mission_file", value=str(_celiskili_gorev(tmp_path))),
+    ])
+    try:
+        assert node._parkur.state.value == "PARKUR_1"
     finally:
         node.destroy_node()
