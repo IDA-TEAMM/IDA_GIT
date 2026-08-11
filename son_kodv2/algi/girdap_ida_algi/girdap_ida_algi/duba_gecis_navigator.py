@@ -1328,7 +1328,11 @@ class DubaNavigator(Node):
         # uyarı bir daha susmazdı; sürekli yanan uyarıyı sahada kimse okumaz.
         # Bilgi olarak yine basılıyor: YÜKSEK değeri "stereo suda çalışmıyor"
         # demek ve SSH olmadığı için bunu görebileceğimiz tek kanal bu.
-        RED_KALEMLERI = ("dar", "dizili", "arada_duba", "menzil_celiski", "menzil_yok")
+        # 🔴 11.08: "buyuk_cisim" LİSTEDE YOKTU — büyük cisim süzgeci gerçek
+        # dubayı elese sahada TEK SATIR bile basılmıyordu (SSH yok, journal tek
+        # görünürlük kanalı). 06.08'deki "sessiz ret" hatasının aynısı.
+        RED_KALEMLERI = ("dar", "dizili", "arada_duba", "menzil_celiski",
+                         "menzil_yok", "buyuk_cisim")
         if k >= 2 and self.durum == "ARAMA" and any(self._tani[a] for a in RED_KALEMLERI):
             # ⚠️ TEK KONUMSAL ARGÜMAN — pazarlıksız. rclpy imzası
             # `log(message, severity, **kwargs)`; printf tarzı ek konumsal
