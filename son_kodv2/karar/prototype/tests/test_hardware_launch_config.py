@@ -419,17 +419,62 @@ def test_yarisma_overlayi_tek_basina_competition_gorevini_secer(
     assert cfg["use_rrt"] is True
 
 
-def test_overlaysiz_video_moduna_duser(monkeypatch) -> None:
-    """Overlay YOKSA hardware.yaml = VİDEO senaryosu.
+def test_overlaysiz_YARISMA_moduna_duser(monkeypatch) -> None:
+    """🔄 2026-08-11 TERSİNE ÇEVRİLDİ — overlay YOKSA artık YARIŞMA tabanı.
 
-    Bu testin varlık sebebi: servis dosyası overlay'i set etmeyi unutursa
-    yığın sessizce bu moda düşer (2026-08-08 bulgusu, drop-in ile kapatıldı).
+    **Eski hâli:** *"Overlay YOKSA hardware.yaml = VİDEO senaryosu"* ve testin
+    kendi gerekçesi şuydu: *"servis dosyası overlay'i set etmeyi unutursa yığın
+    sessizce bu moda düşer (2026-08-08 bulgusu)."* Yani test, bilinen bir
+    **saha arızasını** donduruyordu — arızayı belgeliyor ama önlemiyordu.
+
+    O arıza üç ayrı turda tekrarlandı (§0.16b · §0.30d · §0.32/A3): her
+    seferinde systemd drop-in'inin elle kurulması gerekti, kurulmazsa
+    `auto_guided=false` + AUTO ⇒ `cmd_vel` HİÇ yayınlanmaz, GUIDED'a almak
+    hiçbir şey yapmaz, iSAM2 ve RRT* kapalı kalır. **Belirtisi yoktu.**
+
+    **Kaptan kararı (11.08):** taban yarışma olsun, video `video.yaml`
+    overlay'ine taşınsın. Unutulan kurulumun bedeli artık emniyet tarafında —
+    en fazla "masa testinde yarışma ayarları vardı".
+
+    Bu test o kararın nöbetçisi: biri hardware.yaml'ı video değerlerine geri
+    çevirirse CI kırmızı olur.
     """
     mod = _load_module()
     _kaynak_share(monkeypatch, mod)
     monkeypatch.delenv("GIRDAP_CONFIG_OVERLAY", raising=False)
     cfg = mod._load_hardware_config()
-    assert cfg["use_rrt"] is False and cfg["fsm"]["start_on_mode"] == "AUTO"
+    assert cfg["use_rrt"] is True
+    assert cfg["use_isam2"] is True
+    assert cfg["fsm"]["start_on_mode"] == "GUIDED"
+    assert cfg["fsm"]["start_on_arm_in_mode"] is False
+    assert cfg["bridge"]["auto_guided"] is True
+    assert cfg["telemetry"]["setpoint_source"] == "girdap"
+
+
+def test_video_overlayi_eski_hardware_yaml_davranisini_geri_verir(
+    monkeypatch,
+) -> None:
+    """`video.yaml` = 11.08 öncesi `hardware.yaml`'ın senaryo ayarları.
+
+    Video akışı SİLİNMEDİ, tersine çevrildi. Bu test iki şeyi birden koruyor:
+    (a) video senaryosu hâlâ TAM erişilebilir — masa testi/Ekran-2 akışı
+        `GIRDAP_CONFIG_OVERLAY=video.yaml` ile aynen geri gelir;
+    (b) overlay mekanizması iki yönde de çalışıyor (yarışma→video da, video→
+        yarışma da), yani taban değişikliği tek yönlü bir kapı değil.
+    """
+    mod = _load_module()
+    _kaynak_share(monkeypatch, mod)
+    monkeypatch.setenv("GIRDAP_CONFIG_OVERLAY", "video.yaml")
+    cfg = mod._load_hardware_config()
+    assert cfg["use_rrt"] is False
+    assert cfg["use_isam2"] is False
+    assert cfg["fsm"]["start_on_mode"] == "AUTO"
+    assert cfg["fsm"]["start_on_arm_in_mode"] is True
+    assert cfg["bridge"]["auto_guided"] is False
+    assert cfg["telemetry"]["setpoint_source"] == "fc"
+    assert cfg["mission_file"] == "video_mission.yaml"
+    # F-V.7/8: AUTO'da ilerlemeyi FC yapar → bizim dwell'imiz 0 olmalı.
+    assert cfg["mission_timing"]["dwell_time_s"] == 0.0
 
 
 def test_systemd_dropinleri_overlay_ortam_degiskenini_veriyor() -> None:

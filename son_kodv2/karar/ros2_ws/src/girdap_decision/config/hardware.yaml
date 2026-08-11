@@ -26,35 +26,38 @@ mode_name: "GUIDED"               # ArduRover otonomi modu (kök = tek kaynak)
 heartbeat_timeout_s: 5.0          # /mavros/state sessizliği → KILL (~5 heartbeat)
 arming_retry_max: 3               # ArduRover pre-arm reddinde yeniden deneme
 
-# --- Algoritma seçimi (video modu ↔ yarışma modu) ---
-# Video senaryosu: MAVROS EKF pass-through + düz waypoint + MPPI.
-# Yarışma günü: use_isam2=true, use_rrt=true → tam stack aktif.
+# --- Algoritma seçimi ---
+# 🔑 2026-08-11 (kaptan kararı): bu dosya artık **YARIŞMA TABANI**.
+# Eskiden video senaryosuydu ve yarışma değerleri yalnız `yarisma.yaml`
+# overlay'inden geliyordu; overlay/drop-in kurulmazsa yığın SESSİZCE video
+# modunda koşuyordu (§0.16b · §0.30d · §0.32/A3 — üç ayrı turda saha riski
+# olarak kaydedildi, her seferinde elle kurulum gerektirdi).
+# Video akışı SİLİNMEDİ, tersine çevrildi: `video.yaml` overlay'i.
+#   GIRDAP_CONFIG_OVERLAY=video.yaml   → eski video davranışı
+# Varsayılan artık güvenli tarafta: unutulan kurulum yarışma modunu bozmaz.
 algorithm:
-  use_isam2: false   # false: /mavros/local_position/pose pass-through (iSAM2 yok)
-  use_rrt:   false   # false: current_target doğrudan MPPI referansı (RRT* atla)
+  use_isam2: true    # iSAM2/GTSAM füzyon (video: MAVROS EKF pass-through)
+  use_rrt:   true    # RRT* global plan (video: current_target doğrudan MPPI'ye)
   use_mppi:  true    # MPPI her iki modda da lokal kontrolcü
 
-# --- B1: AUTO video modu (2026-07-14) ---
-# Video senaryosunda görevi FC kendi uçurur (QGC'den AUTO). Gerekçe: md 3.3.1
-# MPPI'yi ZORUNLU tutmuyor (4 noktayı otonom tamamlamak yeter) ve AUTO
-# kanıtlanmış bir yol — MPPI suda hiç sürmedi, md 3.3.1.1 "istemsiz hareket =
-# BAŞARISIZ" riskini almaya değmez. YARIŞMA günü geri alınır (P2 kaçınması
-# MPPI'siz olmaz): start_on_mode: "GUIDED" + auto_guided: true + telemetry
-# setpoint_source: "girdap".
+# --- Görev başlatma (YARIŞMA tabanı, 2026-08-11) ---
+# Görev GUIDED mod KENARIYLA başlar: operatör Manual'de ARM eder, sonra
+# Mission Planner'dan GUIDED'a alır (§0.30h). Sıra terse dönerse kenar oluşmaz
+# ve görev HİÇ başlamaz — F-P.23 bekçisi bunu gürültülü basar.
+# Video davranışı (AUTO + start_on_arm_in_mode) için: video.yaml overlay'i.
 fsm:
-  start_on_mode: "AUTO"      # BEKLEMEDE'de QGC'den AUTO'ya geçiş = görev başlar
-  # F-V.6 (VİDEO İÇİN ŞART): operatör önce AUTO'ya alıp SONRA arm ederse
-  # (QGC "Start Mission" akışı) mod kenarı hiç oluşmaz → FSM BEKLEMEDE'de kalır
-  # → Ekran-2'nin ZORUNLU setpoint eğrileri BOŞ çıkar (md 3.3.1.1). Bu bayrak
-  # o durumda da görevi başlatır (FC zaten koşuyor; FSM izler, motor sürmez).
-  # ⚠ YARIŞMA'da false: GUIDED'dayken arm → MPPI kendiliğinden motor sürerdi.
-  start_on_arm_in_mode: true
+  start_on_mode: "GUIDED"    # BEKLEMEDE'de GUIDED'a geçiş = görev başlar
+  # 🔴 YARIŞMA'da false ŞART: true olsaydı GUIDED'dayken ARM etmek de görevi
+  # başlatırdı, yani arm anında MPPI motor sürerdi. Arm ile hareket ayrı kalmalı
+  # (§0.30h, ilk motorlu su testinin gerekçesi).
+  # Video akışının F-V.6 gereksinimi (AUTO'ya alıp sonra arm) video.yaml'de.
+  start_on_arm_in_mode: false
 
 bridge:
-  # AUTO'dayken köprü GUIDED'a ZORLAMAMALI — yoksa FC'yi görevden atar
-  # (mod savaşı). mode_name GUIDED kalır: planning geçidi de GUIDED beklediği
-  # için AUTO'da cmd_vel YAYINLANMAZ → MPPI ile FC birbiriyle kavga etmez.
-  auto_guided: false
+  # Yarışmada köprü GUIDED'ı talep EDER (MPPI'nin cmd_vel'i ancak GUIDED'da
+  # geçer). F14.3 geçidi: yalnız görev zaten aktifken basılır, mod kenarını
+  # kendisi ÇALAMAZ (§0.30h). Video modunda false — FC'yi AUTO görevinden atmasın.
+  auto_guided: true
   # F-M.6: bağlantı kurulunca FC'den istenen MAVLink akış hızı (Hz).
   # 10 Hz = yığının GERÇEK ihtiyacı: MPPI control_rate 10 Hz + Ekran-2 grafik
   # CSV'si 10 Hz. Dünkü elle istek 50 Hz'di (ölçülen 39 Hz) — gereksiz yüktü.
@@ -71,16 +74,28 @@ bridge:
   # değiştirip yeniden derlemek gerekirdi. Kod varsayılanlarıyla AYNI:
   # kill=kanal 8 (0-indeksli 7), PWM<1500 → KILL; manuel=kanal 5
   # (0-indeksli 4), PWM>1700 → manuel override.
-  rc_kill_channel: 7
+  # 🔑 2026-08-11 YARIŞMA TABANI: ikisi de **-1 = KAPALI**. Gerekçe iki katlı:
+  #   (a) Yarışmada kumanda kullanılmayacak (kaptan kararı 04.08, §0.4a①) —
+  #       alıcı yokken kanal boşta okunur ve §0.12/1'de FSM elle launch'ta
+  #       ANINDA KILL'e düştü (kanal 8 = 1000 < 1500).
+  #   (b) F-S.12: `-1` ile "kapalı" YOLU da bir kez KILL basıyordu
+  #       (`len(ch) > -1` hep True, `channels[-1]` = SON kanal) — düzeltildi,
+  #       3 nöbetçi test bekliyor.
+  # Donanım durdurma yolları etkilenmez: mod anahtarı → Manual · RC10_OPTION=31
+  # MotorEStop · Mission Planner HOLD (§0.32/E).
+  # Masa/bench'te RC ile çalışılacaksa: video.yaml overlay'i 7/4 veriyor.
+  rc_kill_channel: -1
   rc_kill_threshold_pwm: 1500
-  rc_manual_channel: 4
+  rc_manual_channel: -1
   rc_manual_threshold_pwm: 1700
 
 # --- B2: Ekran-2 kaynağı (md 3.3.1.1) ---
 # AUTO'da MPPI cmd_vel basmaz → grafikte MPPI thrust'ını göstermek YANILTICI.
 # Gerçek kuvvet isteği FC'nin servo çıkışıdır (/mavros/rc/out PWM → ±%100).
 telemetry:
-  setpoint_source: "fc"          # yarışma: "girdap"
+  setpoint_source: "girdap"      # yarışma tabanı: MPPI'nin kendi isteği
+                                 # (video: "fc" — AUTO'da MPPI cmd_vel basmaz,
+                                 #  gerçek kuvvet isteği FC servo çıkışıdır)
   # ⚠ FC'nin WP_SPEED parametresiyle SENKRON OLMALI — çekimden önce teyit et.
   fc_cruise_setpoint_mps: 1.0
   fc_thrust_left_ch: 1           # SERVO1 = sol motor (masa teyidi)
@@ -139,7 +154,7 @@ planning:
 #   video_mission.yaml       → 4-nokta dikdörtgen, tek parkur (Otonomi videosu)
 #   competition_mission.yaml → Parkur-1/2/3 etiketli waypoint dizisi (yarışma)
 mission:
-  mission_file: "video_mission.yaml"
+  mission_file: "competition_mission.yaml"
   # Görev KAYNAĞI (T0-f):
   #   "file" → araç üstü mission_file YAML (offline/geliştirme).
   #   "fc"   → YKİ→Pixhawk→MAVROS /mavros/mission/waypoints. Şartname
@@ -181,7 +196,7 @@ mission:
   # hedef index'imizi geciktirir → yon_setpoint 2 sn boyunca ARKADA kalan
   # waypoint'i gösterir (Ekran-2b yalan söyler). AUTO'da dwell = 0.
   # ⚠ YARIŞMA (GUIDED+MPPI, tekneyi BİZ sürüyoruz): 2.0 — gerçek bekleme.
-  dwell_time_s: 0.0
+  dwell_time_s: 2.0
   # FC'nin WP_RADIUS'u ile AYNI olmalı (ArduRover varsayılanı 2 m).
   # ⚠ FC ekibinden TEYİT AL — farklıysa hedef index'imiz FC'den ayrışır.
   arrival_radius_m: 2.0

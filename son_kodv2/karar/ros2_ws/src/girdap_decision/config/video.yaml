@@ -1,0 +1,59 @@
+# Girdap İDA — VİDEO / MASA senaryosu overlay'i (2026-08-11)
+#
+#   GIRDAP_CONFIG_OVERLAY=video.yaml ros2 launch girdap_decision hardware.launch.py
+#
+# 🔄 NEDEN VAR: 11.08'e kadar `hardware.yaml`'ın KENDİSİ video senaryosuydu ve
+# yarışma değerleri yalnız `yarisma.yaml` overlay'inden geliyordu. O yerleşimin
+# arızası üç ayrı turda kaydedildi (§0.16b · §0.30d · §0.32/A3): overlay ya da
+# systemd drop-in'i kurulmazsa yığın **sessizce video modunda** koşuyordu —
+# `auto_guided=false` + AUTO ⇒ `cmd_vel` HİÇ yayınlanmaz, GUIDED'a almak hiçbir
+# şey yapmaz, iSAM2 ve RRT* kapalı kalır. Belirtisi yoktu.
+#
+# Kaptan kararı (11.08): taban YARIŞMA olsun, video TERSİNE ÇEVRİLSİN.
+# Unutulan kurulumun bedeli artık "video modunda koştuk" değil, en fazla
+# "masa testinde yarışma ayarları vardı" — yani emniyet tarafında.
+#
+# ⚠ Bu dosya `hardware.yaml`'ın ÜSTÜNE biner ve yalnız FARKLARI içerir; ikinci
+# bir tam kopya bilerek tutulmuyor (drift kaynağı olur). Zincirlenebilir:
+#   GIRDAP_CONFIG_OVERLAY=video.yaml:masa_ozel.yaml   (soldan sağa)
+
+# --- Algoritma: video senaryosunun kanıtlanmış yolu ---
+# Gerekçe (2026-07-14, B1): md 3.3.1 MPPI'yi ZORUNLU tutmuyor — 4 noktayı
+# otonom tamamlamak yetiyor — ve AUTO kanıtlanmış bir yol. MPPI o tarihte suda
+# hiç sürmemişti; md 3.3.1.1'in "istemsiz hareket = BAŞARISIZ" riski alınmadı.
+algorithm:
+  use_isam2: false   # MAVROS EKF pass-through (/mavros/local_position/pose)
+  use_rrt:   false   # current_target doğrudan MPPI referansı
+  use_mppi:  true    # MPPI her iki modda da lokal kontrolcü
+
+# --- Görevi FC uçurur (QGC'den AUTO) ---
+fsm:
+  start_on_mode: "AUTO"
+  # F-V.6 (VİDEO İÇİN ŞART): operatör önce AUTO'ya alıp SONRA arm ederse
+  # (QGC "Start Mission" akışı) mod kenarı hiç oluşmaz → FSM BEKLEMEDE'de kalır
+  # → Ekran-2'nin ZORUNLU setpoint eğrileri BOŞ çıkar (md 3.3.1.1). Bu bayrak
+  # o durumda da görevi başlatır (FC zaten koşuyor; FSM izler, motor sürmez).
+  start_on_arm_in_mode: true
+
+bridge:
+  # AUTO'dayken köprü GUIDED'a ZORLAMAMALI — yoksa FC'yi görevden atar
+  # (mod savaşı). `mode_name` GUIDED kalır: planning geçidi de GUIDED beklediği
+  # için AUTO'da cmd_vel YAYINLANMAZ → MPPI ile FC birbiriyle kavga etmez.
+  auto_guided: false
+  # Masa/bench'te kumanda takılıysa RC kill + manuel override geri açılır.
+  # ⚠ Alıcı YOKKEN bu değerlerle koşma: kanal boşta 1000 okunur ve FSM anında
+  #   KILL'e düşer (§0.12/1'de fiilen yaşandı).
+  rc_kill_channel: 7
+  rc_manual_channel: 4
+
+# --- Ekran-2 kaynağı (md 3.3.1.1) ---
+# AUTO'da MPPI cmd_vel basmaz → grafikte MPPI thrust'ını göstermek YANILTICI.
+# Gerçek kuvvet isteği FC'nin servo çıkışıdır (/mavros/rc/out PWM → ±%100).
+telemetry:
+  setpoint_source: "fc"
+
+mission:
+  mission_file: "video_mission.yaml"
+  # F-V.7/8: AUTO'da ilerlemeyi FC yapar; bizim dwell'imiz varsa hedef index'i
+  # FC'nin gerisinde kalır ve Ekran-2b yanlış waypoint gösterir. AUTO'da dwell=0.
+  dwell_time_s: 0.0
