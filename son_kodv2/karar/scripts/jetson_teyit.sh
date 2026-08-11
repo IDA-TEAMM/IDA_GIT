@@ -104,7 +104,10 @@ bas "8/8 — ORTAMA DUYARLI İKİ TEST (yalnız INSTALL'lu ortamda koşar)"
 # anahtarlarını TextSubstitution'a çeviriyor, testler düz metin arıyor.
 # ⚠ §0.28a'nın "727 geçti / 1 bilinen-bayat kırmızı" kaydıyla ÇELİŞEBİLİR —
 # gerçek Jetson sonucu buradan okunacak.
-KARAR="$(readlink -f "$EV/ros2_ws/src/girdap_decision" 2>/dev/null)"
+# ⚠ $S (satır 64) — bir kez `$EV` yazılmıştı; EV HİÇ TANIMLI DEĞİL, o yüzden
+#   8/8 bölümü Jetson'da sessizce "karar kökü bulunamadı" deyip HİÇ koşmadı
+#   (betik laptopta yazıldı, Jetson'a erişilemediği için fark edilmedi).
+KARAR="$(readlink -f "$S" 2>/dev/null)"
 KARAR="${KARAR%/ros2_ws/src/girdap_decision}"
 if [[ -z "$KARAR" || ! -d "$KARAR/prototype/tests" ]]; then
   uy "karar kökü bulunamadı — testler koşulamadı"
