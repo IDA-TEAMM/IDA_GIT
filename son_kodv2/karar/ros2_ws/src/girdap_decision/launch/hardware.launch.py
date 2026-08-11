@@ -156,6 +156,12 @@ _ISAM2_DEFAULTS: dict[str, tuple[object, type]] = {
     "gps_sigma_gbas_fix": (0.05, float),
     "gps_sigma_sbas_fix": (0.50, float),
     "gps_sigma_fix": (2.50, float),
+    # 11.08.2026: mutlak yön düzeltmesi (FC AHRS'i, /mavros/imu/data
+    # orientation'dan) — bkz. prototype/fusion/pipeline.py
+    # FusionPipelineConfig docstring'i. false → eski davranış (yalnız gyro,
+    # sınırsız kayabilir).
+    "heading_correction_enabled": (True, bool),
+    "heading_sigma_psi": (0.05, float),
 }
 # hardware.yaml `fusion.gps_sigma_by_status.<yaml_key>` → ROS param adı.
 _GPS_SIGMA_STATUS_KEYS = {

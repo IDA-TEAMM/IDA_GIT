@@ -48,6 +48,11 @@ from sensor_msgs.msg import Imu, NavSatFix
 
 from girdap_decision.qos_profiles import sensor_data_qos
 
+# GTSAM'a bağımlı DEĞİL (düz fonksiyon) — heading düzeltmesi için isam2
+# modunda da, bypass'ın kendi kullanımı için de gerekli; ikisi de güvenle
+# import eder (GTSAM burada yüklenmez).
+from prototype.fusion.bypass import quat_to_yaw
+
 # GTSAM'a bağımlı DEĞİL (düz int tablo) → video/bypass modunda da güvenle
 # import edilir; birim testi rclpy'siz .venv'de koşar.
 from prototype.fusion.gps_quality import (
@@ -99,6 +104,12 @@ class FusionNode(Node):
         # GPS outlier reddi (Huber M-estimator). false → eski saf Gauss.
         self.declare_parameter("gps_robust_enabled", True)
         self.declare_parameter("gps_huber_k", 1.345)
+        # Mutlak yön düzeltmesi (FC AHRS'i /mavros/imu/data orientation'dan) —
+        # jiroskop-yalnız entegrasyonun sınırsız kaymasını önler (bkz.
+        # prototype/fusion/pipeline.py FusionPipelineConfig docstring'i).
+        # false → eski davranış (heading hiç düzeltilmez, yalnız gyro).
+        self.declare_parameter("heading_correction_enabled", True)
+        self.declare_parameter("heading_sigma_psi", 0.05)
         # Fix kalitesine göre ölçüm sigma'sı [m] — hardware.yaml
         # `fusion.gps_sigma_by_status` bloğu. ROS parametreleri sözlük
         # taşımadığı için düzleştirilmiş skalerler.
@@ -107,6 +118,9 @@ class FusionNode(Node):
         self.declare_parameter("gps_sigma_fix", 2.50)        # tek nokta
 
         self._use_isam2 = bool(self.get_parameter("use_isam2").value)
+        self._heading_correction_enabled = bool(
+            self.get_parameter("heading_correction_enabled").value
+        )
         sensor_qos = sensor_data_qos()
 
         # Fix kalitesi → sigma tablosu. Moddan bağımsız kurulur ki bypass
@@ -191,6 +205,10 @@ class FusionNode(Node):
                 self.get_parameter("gps_robust_enabled").value
             ),
             gps_huber_k=float(self.get_parameter("gps_huber_k").value),
+            heading_correction_enabled=self._heading_correction_enabled,
+            heading_sigma_psi=float(
+                self.get_parameter("heading_sigma_psi").value
+            ),
         )
         self.get_logger().info(
             f"iSAM2: keyframe≤{cfg.keyframe_rate_hz} Hz "
@@ -199,7 +217,10 @@ class FusionNode(Node):
             f"(Huber k={cfg.gps_huber_k}), "
             f"σ_fix RTK/SBAS/tek={self._gps_sigma_by_status[STATUS_GBAS_FIX]}/"
             f"{self._gps_sigma_by_status[STATUS_SBAS_FIX]}/"
-            f"{self._gps_sigma_by_status[STATUS_FIX]} m"
+            f"{self._gps_sigma_by_status[STATUS_FIX]} m, "
+            f"yön düzeltmesi (FC AHRS)="
+            f"{'AÇIK' if cfg.heading_correction_enabled else 'KAPALI — jiroskop yalnız, kayabilir'} "
+            f"(σ={cfg.heading_sigma_psi} rad)"
         )
         self._source = FusionPipeline(cfg)
         self._sub_imu = self.create_subscription(
@@ -239,9 +260,21 @@ class FusionNode(Node):
             self.get_logger().info("poz kaynağı geri geldi — odom yayını sürüyor")
 
     def _on_imu(self, msg: Imu) -> None:
-        """IMU yaw rate → boru hattına ilet, periyot dolduğunda smoother step."""
+        """IMU yaw rate → boru hattına ilet, periyot dolduğunda smoother step.
+
+        Ayrıca (heading_correction_enabled ise) FC AHRS'inin mutlak yön
+        tahminini (orientation) çıkarıp aynı çağrıya ekler — jiroskop-yalnız
+        entegrasyonun sınırsız kaymasını önlemek için (bkz. pipeline.py).
+        `orientation_covariance[0] == -1` sensor_msgs/Imu'nun standart
+        "orientation mevcut değil" işareti — o durumda psi=None geçilir,
+        sistem eski (yalnız-gyro) davranışına sessizce düşer.
+        """
         t = _stamp_to_seconds(msg.header.stamp)
-        self._source.on_imu(t, msg.angular_velocity.z)
+        psi = None
+        if self._heading_correction_enabled and msg.orientation_covariance[0] != -1.0:
+            q = msg.orientation
+            psi = quat_to_yaw(q.x, q.y, q.z, q.w)
+        self._source.on_imu(t, msg.angular_velocity.z, psi=psi)
         self._n_imu += 1
         self._mark_input()                       # iSAM2 pozunu IMU sürer
 
