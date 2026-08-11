@@ -727,3 +727,70 @@ için hafıza satırları geliyordu; topic hızları gelmiyordu. CLAUDE.md zaten
 "DDS arayüzleri katılımcı oluşturulurken bağlar" diyor, baştan bilmeliydim.
 **Kural: LiDAR takılıyken topic ölçümü yapılamaz; ölçüm ya Jetson'ın kendi
 ekranından ya journalctl üzerinden yapılır.**
+
+---
+
+## 2026-08-12 — KAR-05 + KAR-06 KAPANDI: kök neden TEK satır, kalanı savunma
+
+**Kaptanın bulguları (`hatalar/karar.md`):**
+- **KAR-05** — hız komutu üretilmiyor, `planning_node` sessiz duruyor.
+- **KAR-06** — odometri ışınlanıyor: **25 ms'de 6,54 m = 257 m/s**, 60+ kez.
+
+### KAR-05 — kök neden: nöbetçi kendi kör noktasını yaratmış
+
+F8.2'de "girdi kesildi" nöbetçisi eklenmiş, ama koşul şuydu:
+
+```python
+if self._last_input_t is not None and simdi - self._last_input_t > esik:
+```
+
+`is not None` kapısı, nöbetçinin **hiç girdi gelmemiş** durumunu görmesini
+engelliyor. Yani tam olarak en sık ve en sessiz arıza — MAVROS bağlanmamış,
+topic hiç akmamış — nöbetçinin göremediği tek durumdu. Bir kez bile veri
+gelmiş olsaydı uyarı basılacaktı; hiç gelmeyince düğüm sonsuza kadar sessiz
+bekledi. Log'da tek satır yok, bu yüzden 14 oturum boyunca fark edilmedi.
+
+**Düzeltme:** `_last_input_t is None` ayrı bir kol; "MAVROS bağlı mı?"
+teşhisiyle uyarıyor. Ders: *bir nöbetçi yazarken "hiç olmadı" durumunu
+"eskidi" durumundan AYRI ele al — çoğu sessiz arıza birincisidir.*
+
+### KAR-06 — kök neden KAR-05 ile aynı zincirde değil, PAR-01'de
+
+Kaptanın PAR-01 analizi: canlı domaine **24.430 sahte GPS mesajı** sızmış
+(testler `ROS_DOMAIN_ID=42`'de koşuyormuş). Hepsi **tam sıfır kovaryanslı** →
+füzyon "sonsuz güven" okuyup pozu oraya çekmiş. Işınlanmanın kaynağı bozuk
+alıcı değil, **kendi testlerimiz**.
+
+Kök neden `conftest.py` izolasyonuyla kapandı (domain 91 + nöbetçi test).
+Bu kayıt, kaptanın kalan iki önerisinin uygulanmasıdır — **savunma katmanı**,
+kök neden değil:
+
+1. **Sıfır kovaryans kapısı.** Gerçek bir GPS alıcısı asla sıfır kovaryans
+   bildirmez; belirsizliği olmayan ölçüm yoktur.
+   ⚠ `COVARIANCE_TYPE_UNKNOWN` **ayrı durum**: alıcı "bilmiyorum" diyor,
+   "sıfır" demiyor — reddedilmez, yoksa gerçek alıcılar da elenirdi.
+2. **Yenilik (innovation) kapısı.** Ardışık ölçümler arası örtük hız
+   `gps_max_hiz_mps`'i (10 m/s) aşarsa ölçüm düşürülür. Teknenin gerçek seyir
+   hızı ~1 m/s (log 58), yani 10× pay var.
+
+🔴 **Kapı yazarken KENDİ kusurumu buldum:** iki ölçüm aynı ms'de gelirse
+`dt≈0` oluyor ve **0,11 m'lik tamamen normal bir hareket 832 m/s** gibi
+görünüp reddediliyordu. Mesaj yığılması ya da damga çözünürlüğü bunu sahada
+kolayca tetikler; kapı GEÇERLİ GPS'i elemeye başlardı. Ölçülemeyecek kadar
+kısa bir aralıktan hız çıkarmak zaten yanlış → `gps_kapi_min_dt_s` (20 ms)
+altında kapı **uygulanmaz**. Gerçek GPS 10 Hz (dt≈100 ms), normal akış
+etkilenmiyor.
+
+**Test yazarken dikkat:** iki `_on_gps` çağrısını arka arkaya yapmak dt≈0
+üretir ve kapı (doğru olarak) atlanır — testler `_son_gps` referansını elle
+100 ms geriye koyar. Kapının **makul hareketi GEÇİRDİĞİNİ** doğrulayan test
+en kritik olanı: kapı gerçek hareketi elerse tekne hiç ilerleyemez.
+
+### Zincir özeti
+
+```
+PAR-01 (test izolasyonu yok)
+   └─→ KAR-06 (sıfır kovaryanslı sahte GPS → odometri ışınlanması)
+          └─→ KAR-11 (dünya konumları oynar → kenar hafızası şişer → 10→2,5 Hz)
+KAR-05 (nöbetçi kör noktası) — AYRI arıza, aynı oturumda kapandı
+```
