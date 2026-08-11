@@ -88,29 +88,39 @@ def test_config_normal_yolda_uyari_basmaz(capsys) -> None:
 # ----- B1/B2 + F-M.6: video blokları hardware.yaml'dan node'lara geçmeli -----
 
 
-def test_video_bloklari_yamldan_okunur() -> None:
-    """hardware.yaml fsm/bridge/telemetry blokları AUTO video değerlerini verir."""
+def test_yarisma_bloklari_yamldan_okunur(monkeypatch) -> None:
+    """🔄 2026-08-11: `hardware.yaml` artık YARIŞMA tabanı (eski adı
+    `test_video_bloklari_yamldan_okunur`).
+
+    ⚠️ **Bu test `pytest.skip` ile sessizce atlanıyordu.** Eski hâli gerçek
+    `get_package_share_directory()`'ye bakıyordu; paket install edilmemiş
+    geliştirme ortamında skip oluyor, yani hardware.yaml'a dokunan bir
+    değişikliği YAKALAMIYORDU — ama Jetson gibi install edilmiş bir ortamda
+    kırmızı verirdi. Kardeş testlerin kullandığı `_kaynak_share` yardımcısına
+    çevrildi: artık her ortamda koşuyor ve gerçek dosyayı okuyor.
+    """
     mod = _load_module()
-    try:
-        mod.get_package_share_directory(mod._PKG)
-    except Exception:
-        pytest.skip("girdap_decision share dizini yok — install edilmemiş ortam")
+    _kaynak_share(monkeypatch, mod)
     cfg = mod._load_hardware_config()
 
-    # B1 — görevi FC uçurur: AUTO'da başlar, köprü GUIDED'a zorlamaz.
-    assert cfg["fsm"]["start_on_mode"] == "AUTO"
-    # F-V.6: "önce AUTO sonra ARM" akışında da görev başlamalı (yoksa Ekran-2
-    # setpoint eğrileri boş çıkar).
-    assert cfg["fsm"]["start_on_arm_in_mode"] is True
-    assert cfg["bridge"]["auto_guided"] is False
-    # mode_name GUIDED KALMALI: planning geçidi GUIDED beklediği için AUTO'da
-    # cmd_vel yayınlanmaz (MPPI ile FC kavga etmez).
+    # Görev GUIDED mod kenarıyla başlar; ARM tek başına başlatmaz.
+    assert cfg["fsm"]["start_on_mode"] == "GUIDED"
+    assert cfg["fsm"]["start_on_arm_in_mode"] is False
+    assert cfg["bridge"]["auto_guided"] is True
     assert cfg["mode_name"] == "GUIDED"
 
-    # B2 — Ekran-2 kuvvet isteği FC servo çıkışından.
-    assert cfg["telemetry"]["setpoint_source"] == "fc"
-    assert cfg["telemetry"]["fc_thrust_left_ch"] == 1
-    assert cfg["telemetry"]["fc_thrust_right_ch"] == 3
+    # Ekran-2 kuvvet isteği MPPI'nin kendi thrust'ından.
+    assert cfg["telemetry"]["setpoint_source"] == "girdap"
+
+    # 🔴 SOL/SAĞ KANAL — ters etiketleme nöbetçisi (11.08).
+    # SERVO1_FUNCTION=74=ThrottleRight=SAĞ · SERVO3_FUNCTION=73=ThrottleLeft=SOL.
+    # 07.08'de FİZİKSEL olarak ölçüldü (§0.12c açı taraması + `34ade34`
+    # diferansiyel dönüş + §0.13 A/B/C testi). Bu satırlar o gün güncellenmemiş,
+    # `left=1 / right=3` kalmıştı → Dosya-2 CSV'si ve Ekran-2c sol/sağ itkiyi
+    # ters kaydediyordu (md 4.2 / md 3.3.1.1), üstelik SESSİZCE (değerler makul
+    # görünür). Geri çevrilirse CI kırmızı.
+    assert cfg["telemetry"]["fc_thrust_left_ch"] == 3
+    assert cfg["telemetry"]["fc_thrust_right_ch"] == 1
 
     # F-M.6 — FC 1 Hz sorunu: bağlantıda akış hızı istenir. ALT SINIR 5 Hz:
     # fusion_node pose_timeout_s=1.0 → 1-2 Hz'de odom yayını KESİLİR.
@@ -133,16 +143,24 @@ def test_yaml_okunamazsa_yarisma_varsayilanina_duser(monkeypatch) -> None:
     assert cfg["telemetry"]["setpoint_source"] == "girdap"
 
 
-def test_fv7_auto_videoda_dwell_sifir() -> None:
-    """AUTO'da FC waypoint'te durmaz → sahte bekleme yon_setpoint'i yanıltır."""
+def test_fv7_auto_videoda_dwell_sifir(monkeypatch) -> None:
+    """F-V.7: AUTO'da FC waypoint'te durmaz → sahte bekleme yon_setpoint'i yanıltır.
+
+    🔄 2026-08-11: dwell=0 kuralı artık `video.yaml` overlay'inde (AUTO orada).
+    Yarışma tabanında tekneyi BİZ sürüyoruz, gerçek bekleme 2 s.
+    ⚠️ Bu test de `pytest.skip` ile atlanıyordu — `_kaynak_share`'e çevrildi.
+    """
     mod = _load_module()
-    try:
-        mod.get_package_share_directory(mod._PKG)
-    except Exception:
-        pytest.skip("girdap_decision share dizini yok — install edilmemiş ortam")
+    _kaynak_share(monkeypatch, mod)
+
+    monkeypatch.setenv("GIRDAP_CONFIG_OVERLAY", "video.yaml")
     cfg = mod._load_hardware_config()
     assert cfg["mission_timing"]["dwell_time_s"] == 0.0
     assert cfg["mission_timing"]["arrival_radius_m"] > 0.0
+
+    # Yarışma tabanı (overlay yok): dwell GERÇEK bekleme.
+    monkeypatch.delenv("GIRDAP_CONFIG_OVERLAY", raising=False)
+    assert mod._load_hardware_config()["mission_timing"]["dwell_time_s"] == 2.0
 
 
 def test_with_drivers_node_lari_launch_descriptiona_eklenir() -> None:

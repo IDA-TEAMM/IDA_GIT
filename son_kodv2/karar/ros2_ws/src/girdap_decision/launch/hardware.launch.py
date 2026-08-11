@@ -99,11 +99,16 @@ _BRIDGE_DEFAULTS: dict[str, tuple[object, type]] = {
 _TELEMETRY_DEFAULTS: dict[str, tuple[object, type]] = {
     "setpoint_source": ("girdap", str),
     "fc_cruise_setpoint_mps": (1.0, float),
-    "fc_thrust_left_ch": (1, int),
-    "fc_thrust_right_ch": (3, int),
+    # 🔴 SERVO1=74=ThrottleRight=SAĞ · SERVO3=73=ThrottleLeft=SOL (07.08
+    # fiziksel ölçümü — §0.12c/§0.13/`34ade34`). Eskiden 1/3 idi ve TERSTİ;
+    # yalnız `setpoint_source: "fc"` kolunda okunuyor ama orada Dosya-2 CSV'si
+    # ile Ekran-2c'yi sessizce ters etiketliyordu. hardware.yaml ile aynı.
+    "fc_thrust_left_ch": (3, int),
+    "fc_thrust_right_ch": (1, int),
 }
-# mission bloğu varsayılanı: görev dosyası (video ↔ competition). Sprint 4.
-_MISSION_DEFAULT = "video_mission.yaml"
+# mission bloğu varsayılanı — yaml'da anahtar yoksa bu kazanır.
+# 2026-08-11: taban yarışma olduğu için varsayılan da competition.
+_MISSION_DEFAULT = "competition_mission.yaml"
 # görev kaynağı (T0-f): file (araç üstü YAML) ↔ fc (YKİ→MAVROS WaypointList).
 _MISSION_SOURCE_DEFAULT = "file"
 _SKIP_HOME_DEFAULT = True

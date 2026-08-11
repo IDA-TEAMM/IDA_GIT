@@ -98,8 +98,34 @@ telemetry:
                                  #  gerçek kuvvet isteği FC servo çıkışıdır)
   # ⚠ FC'nin WP_SPEED parametresiyle SENKRON OLMALI — çekimden önce teyit et.
   fc_cruise_setpoint_mps: 1.0
-  fc_thrust_left_ch: 1           # SERVO1 = sol motor (masa teyidi)
-  fc_thrust_right_ch: 3          # SERVO3 = sağ motor
+  # 🔴 2026-08-11 DÜZELTİLDİ — eskiden `left_ch: 1` / `right_ch: 3` idi ve
+  # yorumu "SERVO1 = sol motor (masa teyidi)" diyordu. **TERSİ ölçüldü.**
+  #
+  # Kanıt zinciri (07.08, hepsi FİZİKSEL, parametre okuması değil):
+  #   · §0.12c açı taraması — 80°/95° koşumlarında güçlü basan servo yer
+  #     değiştiriyor; kaptan 80°'de SAĞ motorun daha çok döndüğünü GÖZLEDİ
+  #   · `34ade34` diferansiyel dönüş — SOLA: ch1out=2000 / ch3out=1000
+  #     (skid-steer'de sola dönmek için SAĞ motor hızlanır) → ch1 = SAĞ
+  #   · §0.13 A/B/C geri-gidiş testi tablosu: "SERVO1 (sağ) · SERVO3 (sol)"
+  #   · Fonksiyon numaralarıyla da tutarlı: SERVO1_FUNCTION=74=ThrottleRight,
+  #     SERVO3_FUNCTION=73=ThrottleLeft (10.08 uçuş kontrolcüsü dökümü)
+  #
+  # 🔑 Bu, projenin BİR KEZ DÜZELTİP KODA YANSITMADIĞI hata: 07.08 günlüğünde
+  # *"`SERVO1`'i sol sandım (74 = ThrottleRight = sağ)"* diye kayıtlı, ama bu
+  # satır o gün güncellenmemiş.
+  #
+  # Etkisi: yalnız `setpoint_source: "fc"` kolunda (telemetry_node.py:263 else
+  # dalı — `/mavros/rc/out` aboneliği). Yarışma tabanı "girdap" olduğu için bu
+  # değerler BUGÜN OKUNMUYOR; `video.yaml` overlay'inde okunuyor. Ters kaldığı
+  # sürece Dosya-2 CSV'sinde ve Ekran-2c grafiğinde sol/sağ itki SÜTUNLARI
+  # yer değiştirir (md 4.2 / md 3.3.1.1) — sessiz, çünkü değerler makul görünür.
+  #
+  # ⚠ KALAN BELİRSİZLİK: fonksiyon ataması parametreden okunur, ama o çıkışın
+  # FİZİKSEL olarak hangi motora gittiği okunamaz. §0.30b Motor Test'i
+  # (C=ThrottleLeft → sol motor dönmeli) suya girmeden yine de koşulacak;
+  # sonuç tersse burası ve `planning`/`fsm` tarafı BİRLİKTE gözden geçirilir.
+  fc_thrust_left_ch: 3           # SERVO3 = ThrottleLeft = SOL motor
+  fc_thrust_right_ch: 1          # SERVO1 = ThrottleRight = SAĞ motor
 
 # --- planning_node mod geçidi + MPPI saha tuning ---
 # planning cmd_vel'i yalnız bu modda yayınlar; kök mode_name ile AYNI olmalı.
