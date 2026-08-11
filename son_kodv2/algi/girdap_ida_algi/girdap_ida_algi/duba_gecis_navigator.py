@@ -1350,7 +1350,29 @@ class DubaNavigator(Node):
                 throttle_duration_sec=10.0)
 
 
+def _sigterm_kur():
+    """SIGTERM'i KeyboardInterrupt'a çevir — `finally` çalışsın.
+
+    🔴 ÖLÇÜLDÜ (11.08.2026): Python'un SIGTERM varsayılanı süreci ANINDA öldürür,
+    `finally` bloğu ÇALIŞMAZ. rclpy de SIGTERM'e dokunmuyor (yalnız SIGINT'e).
+    systemd `stop`/`reboot`/güç kesme SIGTERM gönderir ⇒ `kayit_kapat()` hiç
+    çağrılmaz ⇒ mp4'ün **moov atomu yazılmaz** ⇒ dosya OYNATILAMAZ.
+    Sonuç: md 4.2 Dosya-1 geçersiz = **5 CEZA PUANI** (md 5.5.4.3.5).
+    Ayrıca `dogrudan_surus` modunda motorlar sıfırlanmadan kalır.
+    """
+    import signal
+
+    def _kapat(signum, frame):          # noqa: ANN001
+        raise KeyboardInterrupt         # main'deki except/finally zincirine düşer
+
+    try:
+        signal.signal(signal.SIGTERM, _kapat)
+    except Exception:
+        pass                            # ana iş parçacığı değilse sessiz geç
+
+
 def main():
+    _sigterm_kur()
     rclpy.init()
     node = DubaNavigator()
     try:
