@@ -398,7 +398,29 @@ def hud_yaz(frame, satirlar, org=(10, 26)):
 
 
 # ------------------------------------------------------------------------- main
+def _sigterm_kur():
+    """SIGTERM'i KeyboardInterrupt'a çevir — `finally` çalışsın.
+
+    🔴 ÖLÇÜLDÜ (11.08.2026): Python'un SIGTERM varsayılanı süreci ANINDA öldürür,
+    `finally` bloğu ÇALIŞMAZ. systemd `stop`/`reboot` SIGTERM gönderir ⇒
+    `dev.close()` hiç çağrılmaz ⇒ OAK **kirli kapanır**. Bu, USB'nin bir sonraki
+    açılışta takılmasının tam zemini ([[usb3-tegra-xusb-lpm-arizasi]]) ve sahada
+    fiziksel erişim YOK. Manifest zaten kare başına flush'landığı için veri
+    kaybı en fazla 1 kare, asıl risk cihazın kendisi.
+    """
+    import signal
+
+    def _kapat(signum, frame):          # noqa: ANN001
+        raise KeyboardInterrupt
+
+    try:
+        signal.signal(signal.SIGTERM, _kapat)
+    except Exception:
+        pass
+
+
 def main():
+    _sigterm_kur()
     ap = argparse.ArgumentParser(
         description="OAK-D Lite (DepthAI v2) ile YOLO veri seti (kare) toplayıcı.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,

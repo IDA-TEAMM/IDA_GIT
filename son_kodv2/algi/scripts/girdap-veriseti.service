@@ -103,13 +103,39 @@ Environment=HOME=/home/__USER__
 #     veri setine YANSIMIYOR — sadece USB yükü ve ısı azalıyor.
 #     Toplayıcı USB hızını + VPU sıcaklığını açılışta journal'a yazar.
 # --min-bos-gb 10: disk dolmadan TEMİZ dur (exit 0 → systemd yeniden başlatmaz).
+# 🔴 --res 1352x1014 (11.08'de 1440x1080'den AÇIKÇA yazıldı): toplayıcı zaten
+#     1440x1080'i sessizce buna düşürüyordu (THE_1440X1080 sensör modu bu
+#     cihazda HİÇ kare üretmiyor), yani davranış değişmedi — niyet görünür oldu.
+#     512x512 TOPLAMA REDDEDİLDİ (Eyüp sordu, ölçüldü): kamera aynı anda iki
+#     çıkış veriyor — `isp` 1352x1014 (arşiv) ve `preview` 512x512 (NN). 512
+#     her zaman 1352'den türetilir, TERSİ ASLA. Ölçüm: 20+ m'deki duba 1352'de
+#     14,8 px / 240 piksel, 512'de 5,6 px / 48 piksel. Renk kaybolmuyor (ton
+#     kayması medyan 0,3°, sınır 21° uzakta) ama ELLE ETİKETLEMEDE 1 px'lik el
+#     hatası 512'de kutunun %18'i (1352'de %6,8) ve menzil yedeği bbox
+#     genişliğinden hesapladığı için bu doğrudan %18 mesafe hatası = 20 m'de
+#     3,6 m. Yer kazancı sıfıra yakın: 4.000 kare ~0,92 GB, diskte 418 GB.
 ExecStart=/bin/bash -lc 'exec python3 __WS__/src/girdap-ida-algi/scripts/oak_veriseti_topla.py \
     --no-preview --auto-start --out ~/girdap_veriseti \
-    --res 1440x1080 --fps 10 --interval 2.0 --min-fark 0.5 --zorunlu-aralik 10 \
+    --res 1352x1014 --fps 10 --interval 2.0 --min-fark 0.5 --zorunlu-aralik 10 \
     --min-bos-gb 10 --cihaz-bekle 3600'
 # on-failure: kamera kopması/çökme → yeniden dene (indeks kaldığı yerden devam
 # eder, manifest EKLEMELİ yazılır). Sınıra/diske takılıp temiz çıkarsa (exit 0)
 # yeniden başlatmaz — sonsuz döngü olmasın.
+# 🔴🔴 KAPANIŞ SÖZLEŞMESİ — 2026-08-11'de ÖLÇÜLDÜ, kod düzeltildi
+# Python'un SIGTERM varsayılanı süreci ANINDA öldürür, `finally` bloğu ÇALIŞMAZ
+# (gerçek süreçle doğrulandı; SIGINT'te çalışıyor, SIGTERM'de çalışmıyordu).
+# rclpy de yalnız SIGINT'e işleyici kuruyor, SIGTERM'e DOKUNMUYOR.
+# systemd `stop` / `reboot` / güç düğmesi **SIGTERM** gönderir.
+# Kodda artık SIGTERM→KeyboardInterrupt çevrimi VAR; buradaki iki satır ONUN
+# YEDEĞİ ve ayrıca kapanışa ZAMAN tanır — işleyici olsa bile systemd varsayılanı
+# 90 sn'dir ama biz açıkça yazıyoruz ki dosya tek başına okunduğunda görünsün.
+# KillSignal=SIGINT: iki yoldan da (işleyici + sinyal) temiz kapanış.
+# SendSIGKILL=yes: temiz kapanış tıkanırsa süreç yine de ölsün, boot asılmasın.
+KillSignal=SIGINT
+TimeoutStopSec=20
+SendSIGKILL=yes
+# Kapanmazsa: `dev.close()` calismaz, OAK KIRLI kapanir -> sonraki acilista
+# USB takilma riski, sahada fiziksel erisim YOK.
 Restart=on-failure
 RestartSec=10
 # Ekransız çalışıyor → tek görünürlük journal. `journalctl -fu girdap-veriseti`
