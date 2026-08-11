@@ -309,3 +309,40 @@ def test_fix_geri_gelince_olcum_yeniden_kabul_edilir(ros_context) -> None:
         assert node._n_gps_rejected == 2 and node._n_gps == 1
     finally:
         node.destroy_node()
+
+
+# ------------------------------------------ KAR-05: girdi yokken YAYIN YOK
+
+
+def test_KAR05_girdi_HIC_gelmeden_odom_YAYINLANMAZ(ros_context) -> None:  # noqa: ANN001
+    """🔴 KAR-05 nöbetçisi — projenin en tehlikeli "sahte yeşil"i.
+
+    Kaptanın bag analizi: `session_20260811_171943`'te `/girdap/fusion/odom`
+    **16.974 mesajın %100'ü (0,0,0)**, kusursuz 10,001 Hz, NaN yok, kovaryans
+    işaretlenmemiş, stamp geçerli. Aşağı akıştaki hiçbir düğüm bunun geçersiz
+    olduğunu anlayamıyordu; operatör `ros2 topic hz` ile "sağlıklı" görüyordu.
+
+    Kök neden: F8.2 bayatlık bekçisi `_last_input_t is not None` şartına bağlı
+    olduğu için, girdi **hiç gelmediyse** bekçi hiç çalışmıyordu.
+
+    Ayrıca bu, KAR-11'in besleyicisi: bozuk poz → dünya konumları oynar →
+    kenar hafızası mükerrer kayıtla patlar → kontrol döngüsü 10→2,5 Hz.
+    """
+    node = girdap.FusionNode(
+        parameter_overrides=[Parameter("use_isam2", Parameter.Type.BOOL, False)]
+    )
+    try:
+        yayinlanan = []
+        class _Spy:
+            def publish(self, msg):                      # noqa: ANN001, ANN202
+                yayinlanan.append(msg)
+        node._pub_odom = _Spy()
+        assert node._last_input_t is None, "test kurulumu: girdi olmamali"
+        for _ in range(20):
+            node._on_publish_timer()
+        assert yayinlanan == [], (
+            f"girdi HIC gelmeden {len(yayinlanan)} odom yayinlandi — "
+            f"asagi akisa 'orijindeyim' diye yalan soyleniyor (KAR-05)"
+        )
+    finally:
+        node.destroy_node()

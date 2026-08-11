@@ -178,6 +178,7 @@ class FusionNode(Node):
         # --- Periyodik yayım ---
         rate = float(self.get_parameter("publish_rate_hz").value)
         self._timer = self.create_timer(1.0 / rate, self._on_publish_timer)
+        self._hic_girdi_uyarildi = False   # KAR-05
         self._diag_timer = self.create_timer(5.0, self._log_diag)
 
         mode = "iSAM2" if self._use_isam2 else "MAVROS EKF geçişi (video)"
@@ -346,6 +347,33 @@ class FusionNode(Node):
             x, y, psi = self._source.current_pose()
         except RuntimeError:
             return
+
+        # 🔴 KAR-05 (12.08): "HİÇ GİRDİ GELMEDİ" durumu. Aşağıdaki F8.2 bekçisi
+        # `_last_input_t is not None` şartına bağlı olduğu için, girdi HİÇ
+        # gelmediyse (MAVROS bağlanmadı) bekçi HİÇ ÇALIŞMIYOR ve düğüm kusursuz
+        # düzenlilikte SIFIR poz yayınlamaya devam ediyordu.
+        # Kaptanın bag analizi: `session_20260811_171943`'te 16.974 mesajın
+        # %100'ü (0,0,0); NaN yok, kovaryans işaretlenmemiş, stamp geçerli →
+        # aşağı akıştaki hiçbir düğüm geçersiz olduğunu anlayamıyordu. Operatör
+        # `ros2 topic hz` ile "10 Hz, sağlıklı" görüyordu (sahte yeşil).
+        # Gerçek donanımda anlamı: araç "orijindeyim ve duruyorum" diye ısrar
+        # ediyor; kontrol katmanı buna göre komut üretiyor.
+        # Ayrıca bu, kenar hafızası patlamasının (KAR-11) da besleyicisi:
+        # bozuk/sıçrayan poz → dünya konumları oynar → mükerrer kayıt.
+        # ⇒ Girdi gelmeden YAYIN YOK. Tüketiciler zaten timeout ile doğru
+        #   davranışı seçiyor (planning_node/telemetry_node bekçileri var).
+        if self._last_input_t is None:
+            if not self._hic_girdi_uyarildi:
+                self._hic_girdi_uyarildi = True
+                self.get_logger().warn(
+                    "poz kaynagindan HIC girdi gelmedi — odom yayinlanmiyor. "
+                    "MAVROS bagli mi? (KAR-05: sifir poz yayinlamak, asagi "
+                    "akisa 'orijindeyim' diye YALAN soylemekti)"
+                )
+            return
+        if self._hic_girdi_uyarildi:
+            self._hic_girdi_uyarildi = False
+            self.get_logger().info("poz kaynagi ilk girdiyi verdi — odom yayini basladi")
 
         # F8.2: girdi akışı kesildiyse DONMUŞ pozu yayınlamaya devam etme.
         if self._pose_timeout_s > 0.0 and self._last_input_t is not None:
