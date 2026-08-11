@@ -153,6 +153,17 @@ class FSMNode(Node):
         # yapılandırma yok. Sert ret, çelişkiyi çözmek yerine yarışma yolunu
         # tamamen kapatırdı — tekne hiç açılmazdı.
         self.declare_parameter("parkur_senkron_dogrula", True)
+        # 🔴 KAR-01: `/girdap/mission/state` üzerinde İKİ çelişkili durum akışı
+        # bulundu — 1.190 geçiş, %92,7'si 0,5 s'den kısa, `20 ms / 80 ms` SABİT
+        # faz farkıyla. Tek bir FSM'in salınımı bunu üretmez (simetrik olurdu);
+        # bu, iki bağımsız 10 Hz yayıncının imzasıdır. Üretim kodunda tek
+        # yayıncı var (bu düğüm), yani ya ikinci bir `fsm_node` örneği koştu ya
+        # da yayın dışarıdan (test sızıntısı, PAR-01) geldi.
+        #
+        # Bag'den SONRADAN çıkarılması haftalar aldı; ROS bunu doğrudan
+        # söyleyebiliyor. `count_publishers` keşif tamamlandıkça güncellenir,
+        # o yüzden açılışta bir kez değil PERİYODİK bakılıyor.
+        self.declare_parameter("cift_yayinci_denetim_s", 5.0)
 
         self._fsm = MissionFSM()
         self._fsm.P1_TO_P2_DIST = float(
@@ -161,6 +172,11 @@ class FSMNode(Node):
         self._obs = Observation()
 
         # --- Parkur geçiş katmanı (waypoint-index tabanlı, MissionFSM'den ayrı) ---
+        self._cift_denetim_s = float(
+            self.get_parameter("cift_yayinci_denetim_s").value
+        )
+        self._son_cift_denetim = 0.0
+        self._cift_yayinci_uyarildi = False
         self._senkron_dogrula = bool(
             self.get_parameter("parkur_senkron_dogrula").value
         )
@@ -720,12 +736,61 @@ class FSMNode(Node):
         parkur_msg.data = self._parkur.state.value
         self._pub_parkur.publish(parkur_msg)
 
+        self._cift_yayinci_denetle()
+
         # 🔴 KAR-03: BOOT kilitlenmesini TESPİT ET (statustext'ten ÖNCE, çünkü
         # teşhis metni operatöre BOOT satırıyla birlikte gidiyor).
         self._kilit_denetle(new_state)
 
         # YKİ ekranı (şartname md 4.2)
         self._publish_statustext(new_state)
+
+    def _cift_yayinci_denetle(self) -> None:
+        """KAR-01: `/girdap/mission/state`'e bizden BAŞKA yayıncı var mı?
+
+        Kaptanın bag'inde `ARM ↔ PARKUR2` salınımı `20 ms / 80 ms` sabit faz
+        farkıyla tekrarlıyordu — toplam periyot tam 100 ms = 10 Hz. Tek bir
+        FSM'in salınımı simetrik olurdu; bu desen **iki bağımsız 10 Hz
+        yayıncının** imzasıdır. FSM'i dinleyen her düğüm (mission_manager,
+        planning_node, mavros_bridge, telemetry) saniyede 10 kez birbiriyle
+        çelişen durum gördü; görev-aktif geçidi sürekli açılıp kapandı.
+
+        Sebep iki ihtimalden biri: ikinci bir `fsm_node` örneği, ya da testlerin
+        canlı domaine sızması (PAR-01 — `conftest.py` izolasyonuyla kapatıldı).
+        İkisini de bu kontrol yakalar, çünkü ikisi de fazladan bir yayıncıdır.
+
+        ⚠ Periyodik, çünkü DDS keşfi anlık değil: açılışta tek bakış, sonradan
+        beliren bir ikinci örneği kaçırırdı. Uyarı bir kez basılır (durum
+        düzelirse tekrar armlanır) — 10 Hz'te ERROR selini önlemek için.
+        """
+        if self._cift_denetim_s <= 0.0:
+            return
+        simdi = self.get_clock().now().nanoseconds * 1e-9
+        if simdi - self._son_cift_denetim < self._cift_denetim_s:
+            return
+        self._son_cift_denetim = simdi
+
+        try:
+            n = self.count_publishers("/girdap/mission/state")
+        except Exception:                       # rclpy sürüm farkı — sessiz geç
+            return
+
+        if n > 1:
+            if not self._cift_yayinci_uyarildi:
+                self._cift_yayinci_uyarildi = True
+                self.get_logger().error(
+                    f"🔴 /girdap/mission/state uzerinde {n} YAYINCI var "
+                    "(bizim disimizda en az bir tane daha) — FSM durumu "
+                    "CELISKILI akiyor. Ikinci bir fsm_node ornegi mi kosuyor "
+                    "(`ros2 node list`), yoksa testler canli domaine mi "
+                    "siziyor (ROS_DOMAIN_ID)? KAR-01: bu, gorev-aktif "
+                    "gecidini saniyede 10 kez acip kapatir."
+                )
+        elif self._cift_yayinci_uyarildi:
+            self._cift_yayinci_uyarildi = False
+            self.get_logger().info(
+                "/girdap/mission/state tek yayinciya dondu — celiski bitti."
+            )
 
     def _kilit_denetle(self, state: MissionState) -> None:
         """Görev İLERLEMİYORSA sebebini AYIRT ET ve operatöre yüksek sesle söyle.

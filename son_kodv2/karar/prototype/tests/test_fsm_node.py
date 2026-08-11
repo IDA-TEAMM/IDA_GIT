@@ -1000,3 +1000,64 @@ def test_PAR09_TUTARLI_yapilandirma_engellenmez(ros_context, tmp_path) -> None: 
         assert node._parkur.state.value == "PARKUR_1"
     finally:
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# KAR-01 (2026-08-12) — /girdap/mission/state üzerinde ikinci yayıncı.
+# --------------------------------------------------------------------------- #
+
+
+def test_KAR01_ikinci_yayinci_tespit_ediliyor(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 Kaptanın bag'inde `20 ms / 80 ms` sabit faz farkı vardı — tek FSM'in
+    salınımı simetrik olurdu, bu iki bağımsız 10 Hz yayıncının imzasıydı.
+    Bag'den sonradan çıkarılması haftalar aldı; ROS bunu doğrudan söylüyor.
+    """
+    node = _make_node(
+        ros_context, tmp_path,
+        extra_params=[Parameter("cift_yayinci_denetim_s", value=0.0001)],
+    )
+    try:
+        hatalar = []
+        node.get_logger().error = lambda m, **kw: hatalar.append(m)  # type: ignore[method-assign]
+        node.count_publishers = lambda t: 2          # ikinci yayinci var
+        node._son_cift_denetim = 0.0
+        node._cift_yayinci_denetle()
+        assert hatalar and "YAYINCI" in hatalar[0], f"tespit edilmedi: {hatalar}"
+    finally:
+        node.destroy_node()
+
+
+def test_KAR01_tek_yayinciyken_sessiz(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Normal durumda (yalnız biz) uyarı basılmamalı — yanlış alarm, bekçinin
+    güvenilirliğini yok eder."""
+    node = _make_node(
+        ros_context, tmp_path,
+        extra_params=[Parameter("cift_yayinci_denetim_s", value=0.0001)],
+    )
+    try:
+        hatalar = []
+        node.get_logger().error = lambda m, **kw: hatalar.append(m)  # type: ignore[method-assign]
+        node.count_publishers = lambda t: 1
+        node._son_cift_denetim = 0.0
+        node._cift_yayinci_denetle()
+        assert not hatalar, f"yanlis alarm: {hatalar}"
+    finally:
+        node.destroy_node()
+
+
+def test_KAR01_uyari_bir_kez_basilir(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """10 Hz'te ERROR seli, asıl arızayı kendi gürültüsüne gömerdi."""
+    node = _make_node(
+        ros_context, tmp_path,
+        extra_params=[Parameter("cift_yayinci_denetim_s", value=0.0001)],
+    )
+    try:
+        hatalar = []
+        node.get_logger().error = lambda m, **kw: hatalar.append(m)  # type: ignore[method-assign]
+        node.count_publishers = lambda t: 3
+        for _ in range(5):
+            node._son_cift_denetim = 0.0
+            node._cift_yayinci_denetle()
+        assert len(hatalar) == 1, f"{len(hatalar)} kez basildi"
+    finally:
+        node.destroy_node()

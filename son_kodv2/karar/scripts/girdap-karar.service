@@ -48,6 +48,10 @@ Wants=girdap-algi.service
 [Service]
 Type=simple
 User=__USER__
+# KAR-09: karar yigini kayit/arka plan islerinden ONCE kosmali. RT politikasi
+# DEGIL bilincli bir tercih (bkz. girdap-rosbag.service'teki gerekce) —
+# negatif nice, oncelik verir ama aclik (starvation) uretmez.
+Nice=-5
 # F2.3: prototype/* importlari icin PYTHONPATH sart (systemd .bashrc okumaz).
 Environment=PYTHONPATH=__WS__/src/girdap-decision
 # Interaktif terminallerle ayni DDS domain'i (bashrc ROS_DOMAIN_ID=42) —

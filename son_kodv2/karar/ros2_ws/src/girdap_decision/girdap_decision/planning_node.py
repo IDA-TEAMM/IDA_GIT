@@ -73,6 +73,10 @@ from geometry_msgs.msg import Pose, PoseArray, PoseStamped, Twist
 from mavros_msgs.msg import State as MavState
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from std_msgs.msg import Float32MultiArray, Int32, String
+
+#: KAR-04: `PlanningPipeline._ACTIVE_STATES` ile AYNI olmak zorunda — sebep
+#: etiketi boru hattinin gercek kararini yansitmali, tahmin etmemeli.
+_AKTIF_DURUMLAR = ("PARKUR1", "PARKUR2", "PARKUR3")
 from vision_msgs.msg import Detection3DArray
 
 from girdap_decision.qos_profiles import sensor_data_qos
@@ -397,6 +401,28 @@ class PlanningNode(Node):
         self._pub_thrust = self.create_publisher(
             Float32MultiArray, "/girdap/control/thrust", 10
         )
+        # 🔴 KAR-04 (12.08): "komut SIFIR" ile "komut YOK" ayirt edilemiyordu.
+        # Kaptanin bag analizinde 30.874 thrust mesajinin TAMAMI [0,0] idi ve
+        # her oturumda BASKA bir kilit devredeydi (BOOT / KILL / BEKLEMEDE) —
+        # ama bag'e bakan kisi bunu ancak dort ayri topic'i capraz okuyarak
+        # cikarabildi. Sebep, komutun KENDI yaninda yayinlanmali.
+        self._pub_inhibit = self.create_publisher(
+            String, "/girdap/control/inhibit_reason", 10
+        )
+        self._son_inhibit = ""
+        # 🔴 KAR-10 (12.08): ArduPilot GUIDED modunda setpoint akisi KESILIRSE
+        # failsafe devreye girer. Kaptanin bag'inde bu topic 5 saatte 110
+        # mesaj ve EN BUYUK SESSIZLIK 30 DAKIKA — akis hic kurulmamis.
+        # Bu bekci, akisin kurulmus olmasi gereken anlarda (geçit açıkken)
+        # gercek YAYIN ARALIGINI olcer. Ayni zamanda KAR-09'un 8-12 s'lik
+        # donmalarini ICERIDEN gorur: bag'den sonradan cikarmak yerine olay
+        # aninda log'a dusuruyor.
+        self.declare_parameter("setpoint_bosluk_uyari_s", 0.5)
+        self._setpoint_bosluk_s = float(
+            self.get_parameter("setpoint_bosluk_uyari_s").value
+        )
+        self._son_setpoint_t: float | None = None
+        self._setpoint_bosluk_sayaci = 0
         # Dosya-3: yerel maliyet haritası (RViz + local_map_node PNG dumper).
         self._pub_map = self.create_publisher(
             OccupancyGrid, "/girdap/map/local", sensor_data_qos()
@@ -1174,21 +1200,54 @@ class PlanningNode(Node):
             gate = self._bridge.control_gate(self._now())
             self._log_backend()      # MPPI kurulur kurulmaz bir kez yazar
 
+            # KAR-04: sebepleri SIRAYLA topla — bir komutu birden fazla kilit
+            # sifirlayabilir ve hepsini bilmek gerekir. Yalniz ilkini yazmak,
+            # operator birini duzeltince "hala sifir" surprizi uretirdi.
+            sebepler: list[str] = []
+
             u = self._pipe.compute_control()
-            if u is None:                            # FSM parkur dışı → motor stop
+            if u is None:
                 u = np.zeros(2)
+                # `compute_control` iki AYRI sebeple None döner ve operatör
+                # icin bunlar hic benzemez: (a) FSM parkur disi — beklenen,
+                # gorev henuz baslamadi; (b) FSM aktif ama KONTROLCU KURULU
+                # DEGIL — referans/waypoint gelmemis, yani gorev basladi ama
+                # arac kipirdamiyor. Ikisine ayni etiketi yazmak, KAR-04'te
+                # bag'den cikarilmaya calisilan bilginin aynisini kaybederdi.
+                # SIRA `compute_control`'un kendi mantigini yansitir: orada
+                # once FSM durumu, sonra kontrolcu bakilir. Tersine cevirmek
+                # bootta "kontrolcu hazir degil" yazardi — dogru ama YANILTICI,
+                # cunku o asamada gorev zaten baslamamis.
+                if self._pipe.mission_state not in _AKTIF_DURUMLAR:
+                    sebepler.append(f"FSM-DISI({self._pipe.mission_state})")
+                else:
+                    sebepler.append("KONTROLCU-HAZIR-DEGIL")
             if gate.zero_thrust:                     # disarm / KILL → motor stop
                 u = np.zeros(2)
+                sebepler.append("DISARM-VEYA-KILL")
             if self._odom_stale():                   # F-P.1: poz bayat → kör sürme
                 u = np.zeros(2)
                 self._warn_stale_odom()
+                sebepler.append(
+                    "POZ-YOK" if self._last_odom_t is None else "POZ-BAYAT"
+                )
             if self._obstacles_stale():               # F-P.2: engel bayat → kör sürme
                 u = np.zeros(2)
                 self._warn_stale_obstacles()
+                sebepler.append(
+                    "ENGEL-YOK" if self._last_obstacle_t is None
+                    else "ENGEL-BAYAT"
+                )
 
+            self._publish_inhibit(sebepler, gate)
             self._publish_thrust(u)
             if gate.allow_cmd_vel:                   # yalnız GUIDED + armed
+                self._setpoint_akisini_denetle()
                 self._publish_cmd_vel(u)
+            else:
+                # Geçit kapandı → sayaç sıfırlanır, yoksa bir sonraki arm'da
+                # kasıtlı sessizlik "kesinti" diye raporlanır.
+                self._son_setpoint_t = None
         except Exception as exc:                     # kontrol adımı ASLA çökmemeli
             self.get_logger().error(
                 f"kontrol adımı hatası → motorlar DURDURULDU: {exc!r}",
@@ -1227,10 +1286,63 @@ class PlanningNode(Node):
         msg.pose.orientation.w = 1.0
         self._pub_gate.publish(msg)
 
+    def _publish_inhibit(self, sebepler: list[str], gate) -> None:  # noqa: ANN001
+        """KAR-04: thrust neden sıfır — komutun yanında, aynı anda.
+
+        Boş liste → "YOK" (hiçbir kilit yok, komut gerçek). Bu ayrım kritik:
+        `[0,0]` bir kilidin sonucu da olabilir, MPPI'nin gerçekten sıfır
+        istemesi de. Kaptanın 30.874 mesajlık analizinde bu ikisi ayırt
+        edilemediği için her oturumun sebebi ayrı ayrı, dört topic çapraz
+        okunarak çıkarılmak zorunda kalındı.
+
+        `allow_cmd_vel` de metne giriyor (KAR-10): thrust üretiliyor ama
+        FCU'ya setpoint gitmiyorsa — mod GUIDED değil ya da disarm — bu,
+        "araç neden kıpırdamıyor" sorusunun bambaşka bir cevabıdır ve
+        aynı satırda görünmeli.
+
+        Yalnız DEĞİŞİMDE yayınlanır: 20 Hz'te sabit metin basmak bag'i
+        şişirir ve asıl geçiş anını gürültüye gömer.
+        """
+        metin = ",".join(sebepler) if sebepler else "YOK"
+        if not gate.allow_cmd_vel:
+            metin += "|SETPOINT-KAPALI"
+        if metin == self._son_inhibit:
+            return
+        self._son_inhibit = metin
+        self._pub_inhibit.publish(String(data=metin))
+        self.get_logger().info(f"kontrol kilidi degisti: {metin}")
+
     def _publish_thrust(self, u: np.ndarray) -> None:
         msg = Float32MultiArray()
         msg.data = [float(u[0]), float(u[1])]
         self._pub_thrust.publish(msg)
+
+    def _setpoint_akisini_denetle(self) -> None:
+        """KAR-10: iki setpoint yayını arasındaki boşluğu ölç ve bağır.
+
+        ⚠ Bu bekçi yalnız geçit AÇIKKEN anlamlıdır — geçit kapalıyken
+        yayın yapmamak doğru davranıştır (disarm/GUIDED değil). Kapalıdan
+        açığa geçişte de ölçüm yapılmaz: aradaki "boşluk" gerçek bir kesinti
+        değil, kasıtlı sessizliktir. Bunu ayırmazsak her arm'da yanlış alarm
+        basar ve bekçi güvenilirliğini kaybeder.
+        """
+        simdi = self._now()
+        onceki = self._son_setpoint_t
+        self._son_setpoint_t = simdi
+        if onceki is None or self._setpoint_bosluk_s <= 0.0:
+            return
+        bosluk = simdi - onceki
+        if bosluk <= self._setpoint_bosluk_s:
+            return
+        self._setpoint_bosluk_sayaci += 1
+        self.get_logger().error(
+            f"🔴 SETPOINT AKISINDA {bosluk:.2f}s BOSLUK (esik "
+            f"{self._setpoint_bosluk_s:.2f}s, toplam "
+            f"{self._setpoint_bosluk_sayaci}) — ArduPilot GUIDED'da setpoint "
+            "kesilirse FAILSAFE'e duser. Kontrol dongusu butcesini asiyor "
+            "olabilir (KAR-11) ya da tum yigin donmus olabilir (KAR-09).",
+            throttle_duration_sec=2.0,
+        )
 
     def _publish_cmd_vel(self, u: np.ndarray) -> None:
         # Diferansiyel thruster → ileri sürat + yaw rate.

@@ -55,6 +55,17 @@ Type=simple
 User=__USER__
 WorkingDirectory=/home/__USER__
 Environment=ROS_DOMAIN_ID=42
+# 🔴 KAR-09 (12.08): tum hat 8-12 saniye donuyordu (MAVROS dahil); 2 m/s'de
+# 12 saniye = 24 metre KOR SEYIR. En guclu aday disk G/C doygunlugu —
+# ayni oturumda 14 GB'lik bir bag es zamanli yaziliyordu.
+#
+# Kaptanin onerisi #3 "kritik dugumleri gercek zamanli oncelige al" idi; bunu
+# BILEREK tersine cevirdim: MPPI adimi ~100 ms surer ve RT thread'de kosan
+# boyle bir dongu sistemin geri kalanini ac birakir — donmayi cozmek yerine
+# garanti ederdi. Bunun yerine SUCLUYU geri plana aliyoruz. Kayit gecikirse
+# yalnizca kayit gecikir; kontrol dongusu ve MAVLink heartbeat'i etkilenmez.
+Nice=10
+IOSchedulingClass=idle
 ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && exec bash __KARAR__/scripts/rosbag_kaydet.sh --tam'
 # rosbag_kaydet.sh'in kendi notu: "Ctrl+C ile durdur (metadata düzgün
 # yazılır)" — Ctrl+C = SIGINT. systemd varsayılanı SIGTERM'dir; SIGINT'e

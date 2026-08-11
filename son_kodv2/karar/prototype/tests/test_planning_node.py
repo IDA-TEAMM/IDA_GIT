@@ -14,6 +14,7 @@ rclpy gerektirir → .venv'de SKIP.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 rclpy = pytest.importorskip("rclpy", reason="rclpy yok (.venv) — ROS ortamında koş")
@@ -928,3 +929,135 @@ def test_KAR03_gorev_AKTIFken_poz_yoksa_thrust_SIFIR(ros_context) -> None:  # no
         )
     finally:
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# KAR-04 / KAR-10 (2026-08-12) — "komut sıfır" ≠ "komut yok".
+# --------------------------------------------------------------------------- #
+
+
+def test_KAR04_kilit_sebebi_yayinlaniyor(ros_context) -> None:  # noqa: ANN001
+    """🔴 Kaptanın 30.874 mesajlık analizinde her oturumda BAŞKA bir kilit
+    devredeydi (BOOT / KILL / BEKLEMEDE) ama bag'e bakan kişi bunu ancak dört
+    ayrı topic'i çapraz okuyarak çıkarabildi. Sebep komutun yanında olmalı.
+    """
+    node = pn.PlanningNode()
+    try:
+        sebep = []
+        node._pub_inhibit.publish = lambda m: sebep.append(m.data)
+        node._on_control_step()
+        assert sebep, "inhibit_reason hic yayinlanmadi"
+        # FSM parkur dışı + poz yok + engel yok → hepsi görünmeli
+        assert "FSM-DISI" in sebep[-1]
+        assert "POZ-YOK" in sebep[-1]
+    finally:
+        node.destroy_node()
+
+
+def test_KAR04_birden_fazla_kilit_HEPSI_yaziliyor(ros_context) -> None:  # noqa: ANN001
+    """Yalnız ilk sebebi yazmak, operatör birini düzeltince 'hâlâ sıfır'
+    sürprizi üretirdi — bir komutu birden fazla kilit sıfırlayabilir."""
+    node = pn.PlanningNode()
+    try:
+        sebep = []
+        node._pub_inhibit.publish = lambda m: sebep.append(m.data)
+        node._pipe.set_mission_state("PARKUR1")      # FSM kilidini KALDIR
+        node._on_control_step()
+        assert sebep
+        assert "FSM-DISI" not in sebep[-1]
+        # Kontrolcü henüz kurulu değil (referans yok) — bu AYRI bir sebep:
+        # "görev başladı ama araç kıpırdamıyor" hâli, "görev başlamadı"dan
+        # tamamen farklı bir teşhis.
+        assert "KONTROLCU-HAZIR-DEGIL" in sebep[-1]
+        assert "POZ-YOK" in sebep[-1] and "ENGEL-YOK" in sebep[-1], (
+            f"kalan kilitler eksik: {sebep[-1]!r}"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_KAR04_kilit_YOKKEN_acikca_YOK_yaziliyor(ros_context) -> None:  # noqa: ANN001
+    """🔑 Asıl ayrım: `[0,0]` bir kilidin sonucu da olabilir, MPPI'nin
+    gerçekten sıfır istemesi de. "YOK" bu ikincisini adlandırır."""
+    node = pn.PlanningNode()
+    try:
+        sebep = []
+        node._pub_inhibit.publish = lambda m: sebep.append(m.data)
+        node._pipe.set_mission_state("PARKUR1")
+        node._last_odom_t = node._now()              # poz taze
+        node._last_obstacle_t = node._now()          # engel taze
+        node._bridge.update_state(node._now(), True, True, True, "GUIDED")
+        node._pipe.compute_control = lambda: np.zeros(2)
+        node._on_control_step()
+        assert sebep and sebep[-1].startswith("YOK"), (
+            f"kilit yokken sebep {sebep[-1]!r}"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_KAR04_sebep_DEGISMEDIKCE_tekrar_yayinlanmaz(ros_context) -> None:  # noqa: ANN001
+    """20 Hz'te sabit metin basmak bag'i şişirir ve asıl geçiş anını
+    gürültüye gömer — tam da teşhisi zorlaştıran şey."""
+    node = pn.PlanningNode()
+    try:
+        sebep = []
+        node._pub_inhibit.publish = lambda m: sebep.append(m.data)
+        for _ in range(5):
+            node._on_control_step()
+        assert len(sebep) == 1, f"{len(sebep)} kez yayinlandi (degisim yok)"
+    finally:
+        node.destroy_node()
+
+
+def test_KAR10_setpoint_boslugu_yakalaniyor(ros_context) -> None:  # noqa: ANN001
+    """🔴 ArduPilot GUIDED'da setpoint kesilirse FAILSAFE. Kaptanın bag'inde
+    en büyük sessizlik 30 DAKİKAYDI ve bunu ancak sonradan bag analizinde
+    gördük — bekçi olayı ANINDA log'a düşürüyor."""
+    node = pn.PlanningNode()
+    try:
+        hatalar = []
+        node.get_logger().error = lambda m, **kw: hatalar.append(m)  # type: ignore[method-assign]
+        node._setpoint_bosluk_s = 0.05
+        node._setpoint_akisini_denetle()             # ilk yayin — olcum yok
+        assert not hatalar
+        import time
+        time.sleep(0.1)
+        node._setpoint_akisini_denetle()
+        assert hatalar and "BOSLUK" in hatalar[-1], f"bosluk yakalanmadi: {hatalar}"
+    finally:
+        node.destroy_node()
+
+
+def test_KAR10_gecit_KAPALIYKEN_yanlis_alarm_yok(ros_context) -> None:  # noqa: ANN001
+    """🔑 Geçit kapalıyken yayın yapmamak DOĞRU davranıştır (disarm / GUIDED
+    değil). Kapalıdan açığa geçişteki "boşluk" gerçek kesinti değil, kasıtlı
+    sessizliktir. Ayırmazsak her arm'da yanlış alarm basar ve bekçi
+    güvenilirliğini kaybeder — operatör kısa sürede onu yok saymayı öğrenir.
+    """
+    node = pn.PlanningNode()
+    try:
+        hatalar = []
+        node.get_logger().error = lambda m, **kw: hatalar.append(m)  # type: ignore[method-assign]
+        node._setpoint_bosluk_s = 0.05
+        node._setpoint_akisini_denetle()
+        import time
+        time.sleep(0.1)
+        node._son_setpoint_t = None                  # geçit kapandı (kontrol adımı)
+        node._setpoint_akisini_denetle()             # yeniden açıldı
+        assert not hatalar, f"kasitli sessizlik kesinti sayildi: {hatalar}"
+    finally:
+        node.destroy_node()
+
+
+def test_KAR04_sebep_etiketleri_boru_hattiyla_AYNI_kumede(ros_context) -> None:  # noqa: ANN001
+    """Drift kapısı: `_AKTIF_DURUMLAR` boru hattının kendi kümesiyle aynı olmalı.
+
+    Ayrışırsa sebep etiketi sessizce YALAN söyler — örneğin boru hattı
+    PARKUR4 diye bir durumu aktif sayarsa, node hâlâ "FSM-DISI" yazar ve
+    operatörü olmayan bir arızaya yönlendirir.
+    """
+    from prototype.planning.pipeline import _ACTIVE_STATES
+    assert pn._AKTIF_DURUMLAR == _ACTIVE_STATES, (
+        f"sebep etiketi kumesi ayristi: {pn._AKTIF_DURUMLAR} != {_ACTIVE_STATES}"
+    )
