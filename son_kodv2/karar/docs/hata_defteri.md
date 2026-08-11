@@ -794,3 +794,60 @@ PAR-01 (test izolasyonu yok)
           └─→ KAR-11 (dünya konumları oynar → kenar hafızası şişer → 10→2,5 Hz)
 KAR-05 (nöbetçi kör noktası) — AYRI arıza, aynı oturumda kapandı
 ```
+
+---
+
+## 2026-08-12 — KAR-03 KAPANDI: "sahte yeşil" — 25 dakika BOOT, herkes mutlu
+
+**Kaptanın bulgusu:** `session_20260811_171943`, 25 dakika:
+`mission/state` 16.967 mesajın **tamamı BOOT**, `control/thrust` 16.952 mesaj
+@9,999 Hz **tamamı [0,0]**, `fusion/odom` 16.974 mesaj @10,001 Hz **tamamı
+(0,0,0)**, `mavros/state` **tek** mesaj (connected=false).
+
+BOOT'ta kalmak MAVROS bağlı değilken **doğru** davranıştır. Arıza, sistemin
+geri kalanının bunu **umursamadan tam hızda çalışmaya devam etmesiydi**:
+operatör `ros2 topic hz` ile her şeyi sağlıklı gördü. Bu, boşa giden 25
+dakikadan daha kötü bir şey üretti — **yanlış güven**.
+
+### Üç ayrı kök neden çıktı, üçü de aynı sınıftan
+
+Hepsi *"veri hiç gelmedi"* halinin *"sorun yok"* diye kodlanmasıydı:
+
+| yer | eski kod | sonucu |
+|---|---|---|
+| `fusion_node` F8.2 | `if self._last_input_t is not None and ...` | 10 Hz sahte (0,0,0) poz (KAR-05) |
+| `planning_node` F-P.1 | `if ... or self._last_odom_t is None: return False` | uydurma orijinden sürme riski |
+| `planning_node` F-P.2 | `if ... or self._last_obstacle_t is None: return False` | boş engel torbası = "önüm açık" |
+
+Üçü de aynı gerekçeyle yazılmıştı: *"boot'ta yanlış alarm basmanın anlamı yok."*
+Endişe **haklıydı**, çözümü yanlıştı — bekçiyi kapatmak yerine **uyarıyı
+ayırmak** gerekiyordu ("hiç gelmedi" ≠ "eskidi"; farklı metin, farklı cadans).
+
+🔑 **Kural:** *bir bekçi yazarken "hiç olmadı" halini "eskidi"den AYRI ele al.
+Sessiz arızaların çoğu birincisidir ve bekçi tam orada susar.*
+
+### `np.zeros(6)` tuzağı
+
+F-P.1'in eski gerekçesi *"durum yok → MPPI zaten kontrol üretmez"* idi.
+`PlanningPipeline.__init__` durumu `np.zeros(6)` ile kurar — **"durum yok" diye
+bir hal yoktur**, poz hiç gelmemişken bile tam geçerli görünen bir (0,0,0)
+pozu vardır. Varsayılan başlangıç değeri, "veri yok" sinyalini yutuyor.
+KAR-01'de `ARM ↔ PARKUR2` salınımı odometri (0,0,0) iken yaşandı, yani bu yol
+kuramsal değil.
+
+### Operatöre söylemek — asıl düzeltme
+
+`fsm_node` BOOT'ta 60 s'den uzun kalırsa **Mission Planner ekranına** basıyor
+(ROS log'una değil — operatör sahada oraya bakıyor):
+`GIRDAP BOOT TAKILDI MAVROS-YOK` / `... FCU-KOPUK`, **ERROR** seviyesinde.
+
+İki ayrı arıza, çünkü **çözümleri farklı**: birincisinde launch/servis/domain'e
+bakılır, ikincisinde kablo/port/baud/Pixhawk gücüne. Kaptanın bag'indeki
+gerçek arıza ikincisiydi.
+
+### Kaptanın 2. önerisi (başlatma betiği MAVROS'u doğrulasın) — GEREKSİZ SAYILDI
+
+Aynı bilgiyi aynı kişiye 60 s içinde ve **sebebiyle birlikte** veren bir yol
+zaten kuruldu. Başlatmayı durduran ikinci bir mekanizma, yarışma günü
+MAVROS bir-iki saniye geç bağlandığında sistemi hiç açmama riski getirirdi.
+Yarışma koşusunda "geç açıl" > "hiç açılma".
