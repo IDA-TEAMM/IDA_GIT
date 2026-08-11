@@ -46,6 +46,7 @@ from vision_msgs.msg import (
 )
 
 from girdap_decision.image_codec import imgmsg_to_bgr
+from girdap_decision.kamikaze_param import KamikazeHedefKapisi
 from girdap_decision.qos_profiles import sensor_data_qos
 from prototype.perception.camera_buoys import (
     BuoyLocalizer,
@@ -149,6 +150,13 @@ class PerceptionCameraNode(Node):
         self._log_period_s = float(p("log_period_s").value)
         self._last_log_t: Optional[float] = None
 
+        # --- Parkur-3 hedef rengi (madde #4, md 5.5.3.1) ---
+        # ⚠ ASIL yer perception_fusion_node — bu node yalnız
+        # use_onboard_camera:=true iken koşuyor (varsayılan false). Burada da
+        # olması HSV yedek yolunun kendi başına doğru olmasını sağlıyor;
+        # yeniden etiketleme idempotent olduğu için ikisi birlikte güvenli.
+        self._hedef = KamikazeHedefKapisi(self)
+
         # --- I/O ---
         self._pub = self.create_publisher(
             Detection2DArray, "/perception/buoys", 10
@@ -189,6 +197,9 @@ class PerceptionCameraNode(Node):
                 throttle_duration_sec=5.0,
             )
             return
+        # madde #4: seçilen renk → class_id=2 (hedef). Hedef atanmamışsa
+        # (varsayılan) bu çağrı hiçbir şey yapmaz.
+        self._hedef.uygula(detections)
         self._pub.publish(self._to_msg(detections, msg))
 
         self.get_logger().debug(f"{len(detections)} duba tespiti")

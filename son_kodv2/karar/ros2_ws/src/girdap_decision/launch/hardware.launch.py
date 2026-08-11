@@ -277,6 +277,8 @@ def _load_hardware_config() -> dict:
     cfg["mission_file"] = _MISSION_DEFAULT
     cfg["mission_source"] = _MISSION_SOURCE_DEFAULT
     cfg["skip_home_seq0"] = _SKIP_HOME_DEFAULT
+    # madde #4: Parkur-3 hedef rengi — varsayilan BOS = hedef atanmamis.
+    cfg["kamikaze_target_color"] = ""
     cfg["mission_timing"] = {
         k: v for k, (v, _) in _MISSION_TIMING_DEFAULTS.items()
     }
@@ -357,6 +359,9 @@ def _load_hardware_config() -> dict:
         )
         cfg["skip_home_seq0"] = bool(
             mission_block.get("skip_home_seq0", _SKIP_HOME_DEFAULT)
+        )
+        cfg["kamikaze_target_color"] = str(
+            mission_block.get("kamikaze_target_color", "")
         )
         for key, (_, cast) in _MISSION_TIMING_DEFAULTS.items():
             if key in mission_block:
@@ -977,14 +982,24 @@ def generate_launch_description() -> LaunchDescription:
         # açılamaz. Açmak için: use_onboard_camera:=true.
         Node(package=_PKG, executable="perception_camera_node",
              name="perception_camera_node",
-             parameters=_perception_params("camera", _CAMERA_DEFAULTS),
+             # madde #4: hedef rengi `mission:` bloğunda yaşıyor (kamera TUNING
+             # ayarı değil, hakemin verdiği GÖREV bilgisi) → perception.camera.*
+             # zincirine değil, buraya ayrı ekleniyor.
+             parameters=_perception_params("camera", _CAMERA_DEFAULTS) + [
+                 {"kamikaze_target_color": str(hw["kamikaze_target_color"])},
+             ],
              condition=IfCondition(LaunchConfiguration("use_onboard_camera")),
              output="screen"),
         # Sprint 3: obstacle_map + buoys (sync) → /perception/classified_obstacles.
         # LiDAR+kamera node'larından SONRA gelmeli (mesajları tüketiyor).
         Node(package=_PKG, executable="perception_fusion_node",
              name="perception_fusion_node",
-             parameters=_perception_params("fusion", _FUSION_DEFAULTS),
+             # madde #4: hedef rengi burada da lazim — ASIL yer bu node, cunku
+             # /perception/buoys'u algi ekibinin paketi uretse bile fuzyon
+             # onun altinda kosuyor (use_onboard_camera varsayilani false).
+             parameters=_perception_params("fusion", _FUSION_DEFAULTS) + [
+                 {"kamikaze_target_color": str(hw["kamikaze_target_color"])},
+             ],
              output="screen"),
         Node(package=_PKG, executable="fusion_node",
              name="fusion_node", parameters=fusion_params, output="screen"),

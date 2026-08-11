@@ -83,6 +83,7 @@ from vision_msgs.msg import (
     ObjectHypothesisWithPose,
 )
 
+from girdap_decision.kamikaze_param import KamikazeHedefKapisi
 from prototype.perception.fusion import (
     CameraDetection,
     FusionConfig,
@@ -128,6 +129,14 @@ class PerceptionFusionNode(Node):
         self._last_log_t: Optional[float] = None
 
         # --- I/O ---
+        # --- Parkur-3 hedef rengi (madde #4, md 5.5.3.1) — ASIL YER ---
+        # /perception/buoys'u kim uretirse uretsin (bizim HSV yedegi ya da
+        # algi ekibinin girdap-ida-algi paketi) fuzyon onun ALTINDA ve HER
+        # ZAMAN kosuyor. Asagi akista hedefe bakan her sey (planning_node,
+        # MPPI w_kamikaze) classified_obstacles'i okudugu icin yeniden
+        # etiketlemenin dogru yeri burasi.
+        self._hedef = KamikazeHedefKapisi(self)
+
         self._pub = self.create_publisher(
             Detection3DArray, "/perception/classified_obstacles", 10
         )
@@ -259,6 +268,12 @@ class PerceptionFusionNode(Node):
                 throttle_duration_sec=5.0,
             )
             return
+
+        # madde #4: secilen renk -> class_id=2 (hedef). Hedef atanmamissa
+        # (varsayilan) hicbir sey yapmaz. `associate` sinif-agnostik oldugu
+        # icin once/sonra yapmak fark etmez; burada yapiliyor ki yalniz-kamera
+        # tespitleri de kapsansin.
+        self._hedef.uygula(fused)
 
         out = Detection3DArray()
         out.header.stamp = poses.header.stamp     # LiDAR referans stamp'i

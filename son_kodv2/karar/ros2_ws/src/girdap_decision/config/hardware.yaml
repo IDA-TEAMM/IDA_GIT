@@ -152,6 +152,25 @@ mission:
   # Offline/geliştirme için: mission_source:=file ver.
   mission_source: "fc"
   skip_home_seq0: true    # fc: ArduPilot görev index 0 = home konumu, atla
+  # --- Parkur-3 hedef rengi (12'lik madde #4, şartname md 5.5.3.1) ---
+  # Hakem hedef duba rengini koşudan ÖNCE söyler. Bu renge ait tespitler
+  # `class_id=2` (hedef) olarak yeniden etiketlenir; aşağı akıştaki hiçbir şey
+  # değişmez (MPPI `w_kamikaze` çekicisi ve FSM Parkur-3 mantığı hep 2'ye bakar).
+  #
+  # BOŞ BIRAK — varsayılan hâl hareketsizdir, hakem konuşmadan hiçbir şey
+  # yeniden etiketlenmez. Değeri config'e YAZMA; koşu sabahı canlı ver:
+  #     ros2 param set /perception_camera_node kamikaze_target_color kirmizi
+  #
+  # Kabul edilenler: kirmizi/kırmızı/red · yesil/yeşil/green ·
+  #                  kahverengi/kahve/brown
+  # 🔴 turuncu ve sarı REDDEDİLİR (kod düzeyinde): turuncu = parkur KENAR
+  #    dubası — `gate_follower` kapıları tam o sınıftan buluyor, hedefe
+  #    taşınırsa kapılar görünmez olur VE tekne kapı dubalarına sürer;
+  #    sarı = ENGEL, engele nişan almak istemiyoruz.
+  # 🔴 md 5.5.3.1: HAREKET BAŞLADIKTAN SONRA DEĞİŞTİRİLEMEZ. Kod bunu
+  #    zorluyor — FSM `PARKUR1/2/3` durumundayken `ros2 param set` reddedilir.
+  #    Yeniden vermek gerekirse önce `/girdap/mission/reset` (madde #11).
+  kamikaze_target_color: ""
   # F-V.7 (AUTO video): FC waypoint'te DURMAZ — bizim dwell'imiz yalnız kendi
   # hedef index'imizi geciktirir → yon_setpoint 2 sn boyunca ARKADA kalan
   # waypoint'i gösterir (Ekran-2b yalan söyler). AUTO'da dwell = 0.
