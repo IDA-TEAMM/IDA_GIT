@@ -474,3 +474,64 @@ failsafe olur. `3` daha az riskli.
    yük altında** `AMP_PERVLT` kalibrasyonu (`gerçek_A / okunan_A × mevcut
    değer`). Tek noktaya uydurma DEĞİL, en az iki yükte doğrulanmalı.
 3. Ancak o zaman `BATT_LOW_MAH`/`BATT_CRT_MAH` açılabilir.
+
+---
+
+## 🔴 2026-08-12 — FC 07.08 TEMELİNE GERİ DÖNMÜŞ, geri yazıldı
+
+**Belirti:** telemetri hiç bağlanmıyordu (MP zaman aşımı). Hat canlıydı, veri
+akıyordu, ama hiçbir baud'da geçerli MAVLink çerçevesi yoktu.
+
+**Kök neden:** `SERIAL1_BAUD` 57 → **19**. Ama tek başına değildi — döküm
+karşılaştırması 12 parametrenin **tam olarak 07.08 temelimizdeki değerlere**
+döndüğünü gösterdi. Yani biri eski bir `.param` dosyasını **toptan yüklemiş**.
+
+| parametre | 07.08 | 10.08 (bizim) | 12.08 bulunan |
+|---|---|---|---|
+| `SERIAL1_BAUD` | 19 | 57 | **19** ← telemetri koptu |
+| `BATT_VOLT_MULT` | 18.18 | 5.091626 | **18.18** ← batarya 57,7 V okuyor |
+| `BATT_FS_LOW/CRT_ACT` | 2 / 3 | 2 / 3 | **0 / 0** ← failsafe KAPALI |
+| `FS_ACTION` | 0 | 2 | **0** |
+| `INS_POS1_X/Y/Z` | 0 | ölçülen | **0** ← A-3'ün FC ayağı silindi |
+| `GPS1_POS_X/Y/Z` | 0 | ölçülen | **0** |
+| `BATT_CAPACITY` | 3300 | 35000 | **3300** |
+| `ARMING_CHECK` | 0 | 1 | **0** |
+| `GPS1_TYPE` / `RATE_MS` | 1 / 200 | 2 / 100 | **1 / 200** |
+| `LOG_DISARMED` | 0 | 1 | **0** |
+
+**NEDEN yapıldığı anlaşıldı** — kaptanın kendi arıza kataloğu
+(`hatalar/parametre.md` PAR-03) cevabı veriyor: **araç 14 oturumun hiçbirinde
+ARM edilememiş** (41.524 `/mavros/state` mesajının tamamında `armed=false`).
+Katalog kök nedeni de işaret ediyor: *"repo geçmişinde `769f3c0` 'Kotu AHRS =
+kalibrasyonlar GECERSIZ (arm reddediliyor)' commit'i tam bu sorunu gösteriyor."*
+
+Yani parametreler keyfi değiştirilmedi; **arm ettirme çabasının izleri**:
+`ARMING_CHECK 1→0` (reddi zorla aşmak), eski dosyayı yüklemek ("eskiden
+çalışıyordu"), pusulayı yeniden kalibre etmek. Ama kök neden bunların hiçbiri
+değildi: `PreArm: Compass not calibrated` — ve **kapalı alanda** yapılan
+kalibrasyon bozuk ofsetler yazınca `Kotu AHRS` geri geldi, arm yine reddedildi.
+Kısır döngü.
+
+### Yapılan (12.08 01:14)
+
+`docs/fc_parametreler_2026-08-12_SON_HAL.param` yüklendi: 10.08 tabanı +
+**taze kalibrasyon değerleri korunarak** (`INS_GYR*`, `COMPASS_*`, `STAT_*`,
+`BARO1_GND_PRESS` — 24 alan). **18 parametre** geri yazıldı, doğrulandı: 18/18.
+Telemetri **düzeldi** (`SERIAL1_BAUD=57`) — teşhis böylece kanıtlandı.
+
+Ayrıca `BATT_MONITOR` **4 → 3** (yalnız gerilim): akım kanalı ölü olduğu
+ölçüldü (bkz. bu dosyanın 11.08 bölümü) ve `MONITOR=4` kalan yüzdeyi o ölü
+kanaldan hesaplıyordu → 20 dk koşuda ekran **%85'te kalırdı**. Donanım ekibi
+sebebi doğruladı: kartta **PM06** var ve yalnız regülatörden dönen akımı
+okuyabiliyor. Çözüm yolda: **DALY 4-8S BMS → UART → TELEM3 (`SERIAL5`)**,
+takıldığında `BATT_MONITOR` seri BMS tipine alınacak (4'e DEĞİL — o analog).
+⚠️ BMS etiketi deşarj **60 A** diyor, kontaktörümüz **50 A** — B-4'ün
+"50 A yetiyor mu" sorusunun sayısal karşılığı.
+
+### Ders
+
+Bu karışıklık, aynı içeriğin farklı adlarla birden çok yerde durmasından
+büyüdü. Bundan sonra: Masaüstünde **tek** `canli_<tarih>_son_hal.param`
+(FC'nin doğrulanmış hâli), geçmiş `~/Masaüstü/params/` altında, "yüklenecek"
+dosyalar **ayrı adla** (`YUKLENEN_*_hedef.param`) arşivde. Aynı dosyanın hem
+"istediğimiz" hem "olan" olması yasak.
