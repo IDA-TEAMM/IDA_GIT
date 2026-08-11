@@ -190,3 +190,72 @@ def test_scene_fusion_matched_end_to_end(
     assert sum(f.matched for f in fused) == 2
     assert sum(f.class_id == CLASS_UNKNOWN for f in fused) == 1
     assert all(isinstance(f, FusedObstacle) for f in fused)
+
+
+# ------------------------------------------- kamera yaw ofseti (2026-08-11)
+
+
+def test_kamera_yaw_varsayilan_SIFIR_eski_davranis(cfg: FusionConfig) -> None:
+    """Ofset eklenmesi mevcut davranışı DEĞİŞTİRMEMELİ (varsayılan 0.0)."""
+    assert cfg.camera_yaw_rad == 0.0
+    det = CameraDetection(bbox_cx=0.5, bbox_cy=0.5, class_id=0, score=0.9)
+    assert bearing_from_camera(det, cfg.camera_hfov_rad) == pytest.approx(0.0)
+
+
+def test_kamera_yaw_bearingi_KAYDIRIYOR(cfg: FusionConfig) -> None:
+    """Yaw, kamera eksenindeki açıyı GÖVDE eksenine çevirir → sabit ofset."""
+    det = CameraDetection(bbox_cx=0.5, bbox_cy=0.5, class_id=0, score=0.9)
+    yaw = 0.0415
+    assert bearing_from_camera(det, cfg.camera_hfov_rad, yaw) == pytest.approx(yaw)
+
+
+def test_SAHA_OLCUMU_dondurulmus_2026_08_11(cfg: FusionConfig) -> None:
+    """🔴 İŞARET NÖBETÇİSİ — gerçek saha ölçümüyle doğrulanmış senaryo.
+
+    2026-08-11, kapalı alan: duba 5,20 m ileride, merkez hattının **15 cm
+    SOLUNDA** (yani gerçek yön +1,65°). Kamera bbox'ı 653,5/1280 veriyordu →
+    ham bearing −0,73°. Ölçülen kamera yaw'ı +2,38° (+0,0415 rad).
+
+    Düzeltilmiş bearing GERÇEK yönü vermeli: −0,73 + 2,38 = +1,65°.
+
+    Bu test işaretin ters çevrilmesini yakalar: yaw ÇIKARILIRSA sonuç −3,11°
+    olur, yani hata iki katına çıkar ve YANLIŞ TARAFA gider.
+    """
+    import math
+
+    hfov = math.radians(69.0)
+    det = CameraDetection(bbox_cx=653.5 / 1280.0, bbox_cy=0.5,
+                          class_id=0, score=0.9)
+    ham = bearing_from_camera(det, hfov)
+    assert math.degrees(ham) == pytest.approx(-0.73, abs=0.02), "ham bearing"
+
+    duzeltilmis = bearing_from_camera(det, hfov, 0.0415)
+    gercek = math.atan2(0.15, 5.20)                    # +1.65°
+    assert math.degrees(gercek) == pytest.approx(1.65, abs=0.02)
+    assert duzeltilmis == pytest.approx(gercek, abs=math.radians(0.05)), (
+        "duzeltilmis bearing gercek yonu vermiyor — isaret ters olabilir"
+    )
+
+
+def test_yaw_eslesmeyi_KURTARIYOR(cfg: FusionConfig) -> None:
+    """Yaw düzeltmesi olmadan uzak kapıda yanlış eşleşme riski.
+
+    15 m'de kapı dubalarının açısal ayrımı ~5,2°; 2,38°'lik sistematik kayma
+    bunun %46'sı. Burada dar toleransla o farkın eşleşmeyi çevirdiği gösteriliyor.
+    """
+    import math
+
+    hfov = math.radians(69.0)
+    yaw = 0.0415
+    dar = FusionConfig(bearing_tolerance_rad=math.radians(1.5),
+                       camera_hfov_rad=hfov, camera_yaw_rad=yaw)
+    # Gercekte +1.65°'de duran duba
+    det = CameraDetection(bbox_cx=653.5 / 1280.0, bbox_cy=0.5,
+                          class_id=0, score=0.9)
+    lidar_bearing = math.atan2(0.15, 5.20)
+    hatali = abs(bearing_from_camera(det, hfov) - lidar_bearing)
+    duzeltilmis = abs(
+        bearing_from_camera(det, hfov, dar.camera_yaw_rad) - lidar_bearing
+    )
+    assert hatali > dar.bearing_tolerance_rad, "duzeltmesiz zaten esilesiyor"
+    assert duzeltilmis < dar.bearing_tolerance_rad, "duzeltme esilesmeyi kurtarmadi"

@@ -102,6 +102,9 @@ class PerceptionFusionNode(Node):
 
         # --- Parametreler (config/hardware.yaml perception.fusion bloğu) ---
         self.declare_parameter("bearing_tolerance_rad", 0.15)
+        # Kamera yaw'i (rad). hardware.yaml tf.oak_frame.yaw'dan launch besler.
+        # 0.0 = eski davranis. Olculdu 2026-08-11: +0.0415 (docs/olcum_formu §3b).
+        self.declare_parameter("camera_yaw_rad", 0.0)
         self.declare_parameter("camera_hfov_rad", 1.2)
         # 2026-07-17: oakd_driver_node 1280x720'e çıkarıldı (config-drift
         # riski — bu node'un kod varsayılanı params.yaml/hardware.yaml'daki
@@ -121,6 +124,7 @@ class PerceptionFusionNode(Node):
         self._sync_queue_size = int(p("sync_queue_size").value)
         self._cfg = FusionConfig(
             bearing_tolerance_rad=float(p("bearing_tolerance_rad").value),
+            camera_yaw_rad=float(p("camera_yaw_rad").value),
             camera_hfov_rad=float(p("camera_hfov_rad").value),
         )
         self._image_w = int(p("camera_image_width_px").value)

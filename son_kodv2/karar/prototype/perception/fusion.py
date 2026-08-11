@@ -91,6 +91,12 @@ class FusionConfig:
 
     bearing_tolerance_rad: float = 0.15   # ~8.6° — eşleşme kabul eşiği
     camera_hfov_rad: float = 1.2          # OAK-D Lite yatay FOV yaklaşık değeri
+    #: Kameranın gövdeye göre YAW'ı (rad, sol pozitif). Optik eksen pruva
+    #: hattıyla çakışmıyorsa TÜM kamera bearing'leri sabit miktarda kayar.
+    #: ÖLÇÜLDÜ 2026-08-11: +0.0415 rad (+2.38°, iskeleye dönük) —
+    #: `docs/olcum_formu.md §3b`. Varsayılan 0.0 = eski davranış birebir.
+    #: Değer `hardware.yaml tf.oak_frame.yaw`'dan launch ile beslenir.
+    camera_yaw_rad: float = 0.0
 
 
 def bearing_from_lidar(det: LidarDetection) -> float:
@@ -98,7 +104,9 @@ def bearing_from_lidar(det: LidarDetection) -> float:
     return math.atan2(det.y, det.x)
 
 
-def bearing_from_camera(det: CameraDetection, hfov: float) -> float:
+def bearing_from_camera(
+    det: CameraDetection, hfov: float, yaw_rad: float = 0.0
+) -> float:
     """Bbox yatay merkezinden kaba bearing yaklaşımı (rad).
 
     İşaret kuralı = `bearing_from_lidar` (atan2) ile AYNI: **sol pozitif.**
@@ -107,8 +115,14 @@ def bearing_from_camera(det: CameraDetection, hfov: float) -> float:
     (F6.1 düzeltmesi: eski `(cx−0.5)·hfov` LiDAR'a göre TERSTİ; sentetik
     üretecin ters fonksiyonu hatayı maskeliyordu.) ⚠ Kamera ters/aynalı
     monte edilirse sahada yine burası tek değişim noktasıdır.
+
+    `yaw_rad`: kameranın gövdeye göre dönüklüğü (sol pozitif). Bbox'tan gelen
+    açı KAMERANIN kendi eksenine göredir; gövde eksenine çevirmek için yaw
+    EKLENİR. Doğrulama (2026-08-11 saha ölçümü): duba gerçekte +1.65°'de,
+    bbox −0.73° veriyordu, ölçülen yaw +2.38° → −0.73 + 2.38 = +1.65 ✓.
+    Varsayılan 0.0 → eski davranış birebir korunur.
     """
-    return (0.5 - det.bbox_cx) * hfov
+    return (0.5 - det.bbox_cx) * hfov + yaw_rad
 
 
 def _circular_diff(a: float, b: float) -> float:
@@ -171,7 +185,9 @@ def associate(
     for i, lidar_det in enumerate(lidar_list):
         lidar_bearing = bearing_from_lidar(lidar_det)
         for j, camera_det in enumerate(camera_list):
-            camera_bearing = bearing_from_camera(camera_det, cfg.camera_hfov_rad)
+            camera_bearing = bearing_from_camera(
+                camera_det, cfg.camera_hfov_rad, cfg.camera_yaw_rad
+            )
             diff = abs(_circular_diff(lidar_bearing, camera_bearing))
             if diff > cfg.bearing_tolerance_rad:
                 continue

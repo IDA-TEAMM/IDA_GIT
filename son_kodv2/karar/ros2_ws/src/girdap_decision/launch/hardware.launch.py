@@ -1004,6 +1004,12 @@ def generate_launch_description() -> LaunchDescription:
              # onun altinda kosuyor (use_onboard_camera varsayilani false).
              parameters=_perception_params("fusion", _FUSION_DEFAULTS) + [
                  {"kamikaze_target_color": str(hw["kamikaze_target_color"])},
+                 # Kamera yaw'i TEK KAYNAKTAN: tf.oak_frame.yaw. Ayri bir
+                 # perception.fusion.camera_yaw_rad ANAHTARI ACILMADI ki iki
+                 # yerde iki farkli deger tutup suruklenmesin.
+                 {"camera_yaw_rad": float(
+                     (hw["tf"].get("oak_frame") or {}).get("yaw", 0.0)
+                 )},
              ],
              output="screen"),
         Node(package=_PKG, executable="fusion_node",
