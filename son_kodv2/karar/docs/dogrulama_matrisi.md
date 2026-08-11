@@ -23,6 +23,9 @@
 | `run_ekran2.py` (video montaj aracı) | **canlı** | BUGÜNÜN gerçek CSV'sinden 3 panel PNG üretti; NaN'da sahte sıfır yok |
 | Heartbeat-kaybı KILL bekçisi | **canlı (kısmi)** | FCU'suz boot'ta KILL bastı — tetik çalışıyor; FCU'lu tam zincir M6'da |
 | Ortak yük (LiDAR+kamera birlikte) | **canlı** | kamera FPS düşmedi; CPU ~%30, 53 °C, 7.4 W |
+| **F-A.4 — görev durumu YKİ ekranında (md 4.2)** | **canlı (2026-08-11)** | Mission Planner → Mesajlar: `11.08.2026 06:03:30 : 191 : GIRDAP ARM` ve 10 s aralıkla kesintisiz seri. `191` = MAV_COMP_ID_ONBOARD_COMPUTER → mesaj gerçekten **araçtan** YKİ'ye gitti (FC compid 1, yönlendirme çalıştı). ⚠️ Kod 06.08'de yazılmıştı ama **hiç görünmüyordu**; iki sebep 11.08'de canlı ölçümle bulundu → `statustext_periyot_s` + abonesiz-yayın koruması (`416013d`) |
+| Batarya izleme (`BATT_VOLT_MULT`) | **canlı (2026-08-11)** | MP HUD: `Bat1 16,18v 1,4A 85%` → 4S'te 4,045 V/hücre, tutarlı. Düzeltme öncesi 57,7 V okuyordu (her zaman 13,2 V eşiğinin üstünde) → **batarya failsafe'i ilk kez fiilen çalışıyor** |
+| `Kotu AHRS` / `FAILSAFE` temizliği | **canlı (2026-08-11)** | İvmeölçer + seviye kalibrasyonu ve **reboot sonrası** MP HUD'da ikisi de YOK. Kalan tek pre-arm reddi `PreArm: Compass not calibrated` (FC'nin kendi ağzından, `/mavros/statustext/recv`'de de görüldü) |
 
 ## 🟡 Suite/bench'te yeşil, CANLI DOĞRULAMASI BEKLEYEN
 
