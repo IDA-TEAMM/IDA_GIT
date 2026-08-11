@@ -1061,3 +1061,26 @@ def test_KAR01_uyari_bir_kez_basilir(ros_context, tmp_path) -> None:  # noqa: AN
         assert len(hatalar) == 1, f"{len(hatalar)} kez basildi"
     finally:
         node.destroy_node()
+
+
+def test_KAR08_ARM_durumunda_da_teshis_basilir(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 12.08 CANLI BULGU — bekçimdeki boşluk.
+
+    Sistem yeniden başlatıldığında FSM `ARM`'da takılı kaldı (MAVROS bağlı →
+    BOOT'tan çıktı, ama araç arm edilemediği için BEKLEMEDE'ye geçemedi) ve
+    hiçbir teşhis basılmadı. Kaptanın verisi bunu zaten söylüyordu:
+    `session_20260811_143741`'de `ARM` 14.644 örnek. İlk yazımda gözden
+    kaçırdım; kapattığım sessizlik bir durum ötede duruyormuş.
+    """
+    node = _boot_node(ros_context, tmp_path)
+    try:
+        st = MavState()
+        st.connected = True
+        st.armed = False
+        node._on_mav_state(st)
+        _kilitte_bekle(node, MissionState.ARM)
+        assert node._kilit_teshis == "ARM-YOK", (
+            f"ARM'da takilma teshis edilmedi: {node._kilit_teshis!r}"
+        )
+    finally:
+        node.destroy_node()

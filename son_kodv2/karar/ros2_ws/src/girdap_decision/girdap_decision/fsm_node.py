@@ -824,7 +824,16 @@ class FSMNode(Node):
         """
         simdi = self.get_clock().now().nanoseconds * 1e-9
 
-        if state not in (MissionState.BOOT, MissionState.BEKLEMEDE):
+        # 🔴 12.08 CANLI BULGU: ARM da bir BEKLEME durumu ve bekçi onu
+        # kapsamıyordu. Sistem yeniden başlatıldığında FSM ARM'da takılı kaldı
+        # (MAVROS bağlı → BOOT'tan çıktı, ama araç arm edilemediği için
+        # BEKLEMEDE'ye geçemedi) ve hiçbir teşhis basılmadı — kapattığım
+        # sessizliğin aynısı bir durum ötede duruyormuş.
+        # Kaptanın verisi de bunu söylüyordu: `session_20260811_143741`'de
+        # `ARM` **14.644** örnek. Gözden kaçırmışım.
+        if state not in (
+            MissionState.BOOT, MissionState.ARM, MissionState.BEKLEMEDE
+        ):
             self._kilit_durum = None
             self._kilit_baslangic = simdi
             self._kilit_uyarildi = False
@@ -874,12 +883,22 @@ class FSMNode(Node):
                 "FCU hatti olu: kablo / fcu_url portu / baud / Pixhawk gucu"
             )
 
-        # BEKLEMEDE
+        # ARM ve BEKLEMEDE — ikisinde de ilk şart arm'dır.
         if not self._mav_armed:
             return "ARM-YOK", (
                 "arac ARM edilmemis — gorev ARM olmadan baslamaz. Mission "
                 "Planner'da pre-arm uyarilarina bak (PAR-03: 14 oturumun "
-                "hicbirinde armed=true olmadi, sorun burada dugumleniyor)"
+                "hicbirinde armed=true olmadi, sorun burada dugumleniyor). "
+                "🔑 Pre-arm ret sebebi /mavros/statustext/recv'de gorunur — "
+                "12.08'de canli olarak 'PreArm: Logging failed' bulundu "
+                "(FC SD kartina yazamiyor)."
+            )
+        if state is MissionState.ARM:
+            # Arm var ama ARM'dan cikilamiyor: kill_switch_off = _mav_armed
+            # oldugu icin bu normalde imkansiz. Gorulurse gozlem akisi bozuk.
+            return "GECIS-YOK", (
+                "arac ARMED ama FSM ARM'dan BEKLEMEDE'ye gecmedi — beklenmedik "
+                "durum, /mavros/state akisi kesikli olabilir"
             )
         if self._start_mode and self._last_mode != self._start_mode:
             return "MOD-YOK", (

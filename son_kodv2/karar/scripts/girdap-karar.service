@@ -86,7 +86,21 @@ WorkingDirectory=/home/__USER__
 # Çalışma zamanı ikinci katmanı: fsm_node `count_publishers` ile
 # /girdap/mission/state üzerinde birden fazla yayıncı görürse bağırır
 # (KAR-01) — servis kaçırırsa orada yakalanır.
-ExecStartPre=-/usr/bin/pkill -9 -f "hardware\.launch\.py"
+# 🔴 DESEN BAŞA SABİTLENMİŞ OLMALI — 12.08'de CANLI olarak öğrenildi.
+# İlk yazımım `-f "hardware\.launch\.py"` idi. `-f` TÜM KOMUT SATIRINDA
+# arattığı için o metni içeren HER SÜREÇ eşleşiyordu: operatörün kabuğu,
+# `grep`, editör — ve testi yapan ssh oturumumun kendisi. Denerken kendi
+# bağlantımı SIGKILL ile düşürdü. Bir "temizlik" komutunun masum süreçleri
+# öldürmesi, temizlediği arızadan daha kötüdür.
+# `^/usr/bin/python3 …` sabitlemesi yalnız GERÇEK launch sürecini yakalar;
+# kabukların komut satırı "bash -c …" ile başladığı için kapsam dışında kalır.
+#
+# ⚠ SINIR: ExecStartPre `User=` ile koşar, yani BAŞKA bir kullanıcının
+# (ör. sudo ile elle başlatılmış) yığınını öldüremez. Gerçek olayda iki
+# yığın da aynı kullanıcıdaydı; kural bu senaryoyu kapsıyor. Root olarak
+# elle launch eden biri hâlâ ikinci yığın yaratabilir — orada ikinci
+# katman devreye girer (fsm_node'un çift yayıncı denetimi, KAR-01).
+ExecStartPre=-/usr/bin/pkill -9 -f "^/usr/bin/python3 [^ ]*/ros2 launch girdap_decision"
 ExecStartPre=/bin/sleep 2
 ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source __WS__/install/setup.bash && exec ros2 launch girdap_decision hardware.launch.py mission_source:=fc'
 KillMode=control-group

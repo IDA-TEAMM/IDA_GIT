@@ -39,7 +39,32 @@ HUD'da heading gerçek yönle ±5° içinde. Değerleri bana söyle, param dök�
 işlerim. Ayrıca **eski ofsetlerle karşılaştıracağız** — fark büyükse kapalı
 alan kalibrasyonunun gerçekten bozuk olduğu kanıtlanmış olur.
 
-### A2 · ARM denemesi — `force` KULLANMADAN  🔴 PAR-03
+### A2 · 🔴 SD KART / LOGLAMA — arm denemesinden ÖNCE
+
+**12.08 gecesi CANLI ölçüldü, PAR-03'ün somut cevabı:** Pixhawk bağlıyken
+MAVROS log'unda 5 saniyede bir şu satır düşüyor:
+
+```
+FCU: PreArm: Logging failed
+```
+
+ArduPilot SD karta yazamıyor → pre-arm reddi. **Pusula ne kadar iyi kalibre
+edilirse edilsin araç ARM OLMAZ.** Bu yüzden bu madde A1'in de önüne geçti.
+
+Yan bulgu: bu mesajın çıkması `ARMING_CHECK`'in artık **0 olmadığının kanıtı**
+— 0 olsaydı pre-arm hiç koşmaz, mesaj da çıkmazdı. Yani bizim param yazımımız
+tuttu, kaptanın §0.41③ endişesi kapandı.
+
+**Yapılacak:** SD kartı çıkar → kart var mı, doluysa temizle, bozuksa FAT32
+formatla ya da yenisiyle değiştir → FC'yi yeniden başlat.
+
+**Kapatma ölçütü:** `PreArm: Logging failed` mesajı KESİLDİ (MAVROS log'unda
+ya da Mission Planner Messages'ta bir daha görünmüyor).
+
+⚠ `ARMING_CHECK`'ten loglama bitini düşürerek susturma — o, arızayı çözmez
+gizler ve şartname çıktısı olan uçuş log'unu da kaybederiz.
+
+### A3 · ARM denemesi — `force` KULLANMADAN  🔴 PAR-03
 
 Bu, listenin **en kritik maddesi**. 14 oturumda 41.524 `/mavros/state` mesajının
 hiçbirinde `armed=true` yok; 11.08'de force ile arm edildiğinde `Kotu AHRS`
@@ -58,7 +83,7 @@ hiçbirinde `armed=true` yok; 11.08'de force ile arm edildiğinde `Kotu AHRS`
 **Kapatma ölçütü:** ya arm başarılı, ya da ret sebebi metni elimizde.
 "Olmadı" tek başına kapatmaz.
 
-### A3 · LiDAR yaw kalibrasyonu
+### A4 · LiDAR yaw kalibrasyonu
 
 Önce **mekanik**: LiDAR kapağa değil, kapaktan bağımsız RİJİT bir yatağa
 oturmalı. 11.08'de kapak yamuk takıldığı için 34°'lik sahte bir eğiklik ölçtük;
