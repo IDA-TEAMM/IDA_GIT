@@ -444,13 +444,18 @@ Madde #4/#11 işi bitince Jetson'da **tam takım** koşturuldu (hedef platform;
 laptopta node testleri hiç koşamıyor — `rclpy`/`mavros_msgs` yok, container
 45 saattir `Exited (255)`). Sonuç: **788 passed, 8 failed**.
 
-**Bunlardan biri benimdi ve düzeltildi**, kalan 5'i öncedendi. Geçerli
-öncesi/sonrası karşılaştırma:
+**Bunlardan biri benimdi ve düzeltildi**, kalanı öncedendi. Geçerli
+öncesi/sonrası karşılaştırma (aynı 4 dosya, izole):
 
 | | başarısız |
 |---|---|
 | öncesi (`416013d`) | 6 |
 | sonrası (madde #4 + #11 + düzeltme) | **5** |
+
+Tam takımda tablo: **788 passed / 7 adlandırılmış hata** (+1 kararsız).
+`test_fp26_bozuk_callback_node_oldurmez` düzeltmeden sonra **tek başına
+geçiyor** — dekoratör `@_guard` yine `_on_odom`'da (kurulu modülde satır 496
+ile doğrulandı).
 
 ⚠️ **Ölçüm yöntemi tuzağı:** ilk karşılaştırmam GEÇERSİZDİ. `/tmp/oncesi`
 worktree'sinden koşarken `prototype.*` worktree'den geliyor ama
@@ -475,7 +480,7 @@ dekoratör olup olmadığına bak.
 
 | Test | Ne diyor | Değerlendirme |
 |---|---|---|
-| `test_fusion_node::test_bypass_stale_pose_stops_publishing` | *"bayat pozla odom yayını sürüyor (F8.2)"*, `21 == 10` | 🔴 **Gerçek davranış endişesi.** Bayat poz nöbetçisi yayını kesmiyor → aşağı akış (MPPI/planning) eski poza göre karar verir, bu SESSİZ olur. `fusion_node` = Yahya'nın 11.08 gecesi değiştirdiği alan ve `use_isam2` artık yarışma config'inde **AÇIK** → su testinden önce bakılmalı |
+| `test_fusion_node` — 3 test: `test_bypass_stale_pose_stops_publishing` · `test_bypass_odom_carries_pose_and_twist` · `test_fp7_bayat_velocity_body_twist_sifirlanir` | *"bayat pozla odom yayını sürüyor (F8.2)"*, `21 == 10`. ⚠️ **KARARSIZ (flaky):** izole koşuda 1'i, tam takımda 3'ü kırmızı → zamanlama/DDS'e duyarlı | 🔴 **Gerçek davranış endişesi.** Bayat poz nöbetçisi yayını kesmiyor → aşağı akış (MPPI/planning) eski poza göre karar verir, bu SESSİZ olur. `fusion_node` = Yahya'nın 11.08 gecesi değiştirdiği alan ve `use_isam2` artık yarışma config'inde **AÇIK** → su testinden önce bakılmalı |
 | `test_hardware_launch_config::test_isam2_launch_argumanlari_fusion_nodea_gecer` | `keyframe_rate_hz` bulunamıyor; parametre anahtarları `TextSubstitution` **tuple**'ı | 🟡 Test bayat görünüyor: launch artık substitution-anahtarlı parametre üretiyor (launch-arg override için), test düz string bekliyor. Canlı sistemde parametreler **çözülüyor** (bu gece `kamikaze_target_color` ve `statustext_periyot_s` ile doğrulandı) → davranış sağlam, **ölçüt** bozuk |
 | `test_hardware_launch_config::test_B0_montaj_parametreleri_lidar_nodeun_EN_SONUNDA` | `'mount_z' in {(TextSubstitution,): 0.015, …}` | 🟡 Aynı kök neden (substitution anahtarı ↔ string beklentisi) |
 | `test_mission_manager_node::test_fm1_null_island_fix_yoksayilir_gorev_baslamaz` | — | ⏳ İncelenmedi |
