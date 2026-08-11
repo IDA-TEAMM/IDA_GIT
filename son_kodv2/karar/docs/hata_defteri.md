@@ -490,3 +490,78 @@ dekoratör olup olmadığına bak.
 = Yahya/iSAM2, turuncu halka = kapı mantığı) ve biri gerçek bir emniyet
 sorusu (`margin=1.4`) — sahipleriyle konuşulmadan değiştirilmemeli. Ama
 **5'i de su testine girmeden önce ele alınmalı**, özellikle ilki.
+
+---
+
+## 2026-08-11 — 🔴 LiDAR HİÇ ÇALIŞMIYORMUŞ: iki ayrı arıza bulundu ve düzeltildi
+
+A-3'ün son maddesi (LiDAR yaw) için ölçüme geçilince `/perception/obstacle_map`
+**tamamen boş** çıktı. Sebep tek değil, **iki** ayrı arızaydı; ikisi de LiDAR'ı
+tümüyle kör bırakıyordu ve **hiçbir hata mesajı üretmiyordu**.
+
+**Yarışma etkisi:** bu hâlde suya girilseydi **Parkur-2 engel kaçınması hiç
+çalışmayacaktı** ve sebebi sahada anlaşılmazdı — `perception_lidar_node`
+sorunsuz görünüyor, sadece hiç engel yayınlamıyordu.
+
+### Arıza 1 — Livox config FABRİKA IP'lerinde kalmış
+
+`~/livox_ws/install/livox_ros_driver2/share/livox_ros_driver2/config/MID360_config.json`
+
+| alan | bulunan | olması gereken |
+|---|---|---|
+| `cmd_data_ip` / `push_msg_ip` / `point_data_ip` / `imu_data_ip` | `192.168.1.5` | **`192.168.117.60`** (Jetson) |
+| `ip` (LiDAR) | `192.168.1.12` | **`192.168.117.100`** |
+
+Yani sürücü LiDAR'a *"veriyi 192.168.1.5'e gönder"* diyordu — ağda öyle bir
+adres yok. **Teşhis ipucu:** `ping 192.168.117.100` ÇALIŞIYORDU. Ping'i biz
+doğru adrese attık; sürücü hiç oraya konuşmadı. "Ping geçiyor ama veri yok"
+tablosu doğrudan bunu gösterir.
+Düzeltme öncesi log: `Init lds lidar fail!` / `Failed to init livox lidar sdk`.
+Sonrası: `successfully set lidar attitude, ip: 192.168.117.100`.
+
+### Arıza 2 — Sürücü yanlış mesaj formatında yayınlıyordu
+
+`launch_ROS2/msg_MID360_launch.py` satır 8: **`xfer_format = 1`** (Livox
+CustomMsg). Bizim `perception_lidar_node` **`sensor_msgs/PointCloud2`**
+dinliyor. Belirti: `ros2 topic hz /livox/lidar` →
+*"contains more than one type: [livox_ros_driver2/msg/CustomMsg,
+sensor_msgs/msg/PointCloud2]"*.
+Düzeltme: `xfer_format = 0`.
+⚠ `rviz_MID360_launch.py` zaten 0 kullanıyor ama o RViz'i de açıyor —
+ekransız teknede kullanılmaz, bu yüzden `msg_*` dosyası düzeltildi.
+
+**Sonuç:** `/perception/obstacle_map` → **~5,5 Hz akıyor** (öncesi: sıfır).
+
+### 🔴 BU DÜZELTMELER KALICI DEĞİL — repo dışında
+
+İkisi de `~/livox_ws/install/...` altında, **bizim repomuzda değil**. Üstelik
+`src/` kopyaları düzeltilemedi (dosya yolu farklı çıktı, `sed` bulamadı).
+**Biri `livox_ws`'te `colcon build` yaparsa iki arıza da geri gelir** ve LiDAR
+yine sessizce susar. Yedekler `.bak` uzantısıyla yanlarında duruyor.
+👉 Yapılacak: `src/` kopyalarının gerçek yolunu bul, aynı düzeltmeleri oraya da
+uygula; sonra bu iki dosyayı `girdap-ida` deposunda versiyonla.
+
+### Yan bulgular (aynı oturum)
+
+- ✅ **A-3'ün garantisi doğrulandı:** `ros2 param get /perception_lidar_node
+  mount_z` → **`0.41`**. Ölçtüğümüz montaj değeri gerçekten node'a ulaşıyor.
+  (`test_B0_montaj_parametreleri...` kırmızı olduğu için bunu test
+  doğrulayamıyordu; elle kanıtlandı.)
+- 🔴 **Kapak LiDAR'ın açısını değiştiriyor.** Kullanıcı: *"kapak biraz yamuk
+  takılmış, LiDAR o yüzden eğik duruyordu"*. Su terazisiyle bakıldığında sapma
+  küçük ama **sıfır değil**. Bu, yaw/pitch kalibrasyonunu **tekrarlanamaz**
+  kılar: kapak her söküp takıldığında değer kayar. Mekanik tarafta LiDAR'ın
+  kapaktan bağımsız, rijit bir kaideye oturması gerekir — yoksa ölçülen yaw
+  ertesi gün geçersizdir.
+- 🟡 **Gövde kendini görüyor:** tüm okumalarda ~**0,6 m**'de sabit bir küme var
+  (`x≈0.59, y≈−0.20`). Büyük ihtimalle teknenin kendi direği/gövdesi. Bu,
+  su testi ekindeki ③ maddesinin cevabı — boyut filtresi (`5 ≤ n ≤ 500`) onu
+  elemiyor. Yakın engel olarak MPPI'ye girip girmediği kontrol edilmeli.
+
+### ⏳ LiDAR yaw HÂLÂ ÖLÇÜLMEDİ — A-3 açık
+
+Ortam kalabalık (14 küme) ve duba gürültüden ayırt edilemedi. 10 m'de bulunan
+kümenin yarıçapı 0,87 m çıktı (duba ~0,15–0,25 olmalı) → o duba değildi.
+**Sonraki oturumda:** teknenin burnunu en boş yöne çevir, dubayı 10 m'ye koy,
+`orientation.z` (= yarıçap) ile dubayı ayıkla. Ölçüt: `position.y ≈ 0`;
+değilse `yaw = -atan2(y, x)` → `hardware.yaml tf.livox_frame.yaw` (RADYAN).
