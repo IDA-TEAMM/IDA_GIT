@@ -435,3 +435,53 @@
 | F-S.1 | girdap_decision'da RC donanım kill-switch (companion computer'dan bağımsız) hiç yoktu | `MavrosBridge.is_rc_kill_active()` + `mavros_bridge_node._on_rc_in()` (`/mavros/rc/in`, ida_topics ile aynı kanal/eşik), Sude/Claude 2026-07-14 |
 
 Tam liste ve kanıtlar: `docs/kod_denetimi.md`.
+
+---
+
+## 2026-08-11 — Jetson'da 5 ÖNCEDEN VAR OLAN test hatası (tespit, düzeltme DEĞİL)
+
+Madde #4/#11 işi bitince Jetson'da **tam takım** koşturuldu (hedef platform;
+laptopta node testleri hiç koşamıyor — `rclpy`/`mavros_msgs` yok, container
+45 saattir `Exited (255)`). Sonuç: **788 passed, 8 failed**.
+
+**Bunlardan biri benimdi ve düzeltildi**, kalan 5'i öncedendi. Geçerli
+öncesi/sonrası karşılaştırma:
+
+| | başarısız |
+|---|---|
+| öncesi (`416013d`) | 6 |
+| sonrası (madde #4 + #11 + düzeltme) | **5** |
+
+⚠️ **Ölçüm yöntemi tuzağı:** ilk karşılaştırmam GEÇERSİZDİ. `/tmp/oncesi`
+worktree'sinden koşarken `prototype.*` worktree'den geliyor ama
+`girdap_decision.*` kurulu paket üzerinden **canlı repoya** çözülüyor
+(`build/girdap_decision/girdap_decision` bir symlink). Yani iki koşumda da
+AYNI node kodu çalıştı. Doğrusu: `PYTHONPATH="$W:$W/ros2_ws/src/girdap_decision"`
+ile paketi de worktree'ye zorlamak.
+
+### 🔴 Benim ürettiğim hata (düzeltildi)
+
+`planning_node.py`'ye `_yeniden_basla` metodunu `\n    def _on_` desenine göre
+eklerken metot **`@_guard` dekoratörü ile `def _on_odom` ARASINA** girdi →
+dekoratör benim metodu süsledi, `_on_odom` **çıplak kaldı**. Sonuç:
+`test_fp26_bozuk_callback_node_oldurmez` kırmızı; gerçek etkisi ise
+callback'te sızan bir istisnanın **spin'i öldürmesi** olurdu (F-P.26'nın tam
+korumaya çalıştığı şey). Metot `# ----- subscriber callback'leri -----`
+başlığının ÖNÜNE taşındı, `@_guard` yine `_on_odom`'da.
+**Ders:** koda desen eşleşmesiyle metot eklerken, eşleşen satırın ÜSTÜNDE
+dekoratör olup olmadığına bak.
+
+### ⏳ Önceden var olan 5 hata — sahipleri ilgilenmeli
+
+| Test | Ne diyor | Değerlendirme |
+|---|---|---|
+| `test_fusion_node::test_bypass_stale_pose_stops_publishing` | *"bayat pozla odom yayını sürüyor (F8.2)"*, `21 == 10` | 🔴 **Gerçek davranış endişesi.** Bayat poz nöbetçisi yayını kesmiyor → aşağı akış (MPPI/planning) eski poza göre karar verir, bu SESSİZ olur. `fusion_node` = Yahya'nın 11.08 gecesi değiştirdiği alan ve `use_isam2` artık yarışma config'inde **AÇIK** → su testinden önce bakılmalı |
+| `test_hardware_launch_config::test_isam2_launch_argumanlari_fusion_nodea_gecer` | `keyframe_rate_hz` bulunamıyor; parametre anahtarları `TextSubstitution` **tuple**'ı | 🟡 Test bayat görünüyor: launch artık substitution-anahtarlı parametre üretiyor (launch-arg override için), test düz string bekliyor. Canlı sistemde parametreler **çözülüyor** (bu gece `kamikaze_target_color` ve `statustext_periyot_s` ile doğrulandı) → davranış sağlam, **ölçüt** bozuk |
+| `test_hardware_launch_config::test_B0_montaj_parametreleri_lidar_nodeun_EN_SONUNDA` | `'mount_z' in {(TextSubstitution,): 0.015, …}` | 🟡 Aynı kök neden (substitution anahtarı ↔ string beklentisi) |
+| `test_mission_manager_node::test_fm1_null_island_fix_yoksayilir_gorev_baslamaz` | — | ⏳ İncelenmedi |
+| `test_planning_node::test_turuncu_kenar_dubasi_engel_torbasindan_cikarilir` | `4 == 2`; turuncu dubalar torbada, `margin=1.4` ile | 🟡 Muhtemelen **kasıtlı davranış değişimi**, test bayat: 12'liğin #6 çözümü *"turuncu dubalara dar bir güvenlik yarıçapı uygula — tam `obstacle_margin` değil"* diyor, yani artık çıkarılmıyor, **halkayla** tutuluyor. ⚠️ **AMA `margin=1.4` doğrulanmalı:** #6 metni ~0,4 m diyor; ölçülmüş kural `obstacle_margin=1.5` Parkur-2 geçidini **tamamen kapatıyor** (araç geçitten hiç geçmiyor). 1,4 m aynı bölgeye çok yakın |
+
+**Bu kalemler bilerek DÜZELTİLMEDİ:** ikisi başkalarının alanı (`fusion_node`
+= Yahya/iSAM2, turuncu halka = kapı mantığı) ve biri gerçek bir emniyet
+sorusu (`margin=1.4`) — sahipleriyle konuşulmadan değiştirilmemeli. Ama
+**5'i de su testine girmeden önce ele alınmalı**, özellikle ilki.

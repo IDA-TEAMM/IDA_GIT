@@ -469,9 +469,6 @@ class PlanningNode(Node):
                 "noktasına gidilir; md 5.5.2.2 puanı kapıdan geçmekten gelir"
             )
 
-    # ----- subscriber callback'leri -----
-
-    @_guard
     def _yeniden_basla(self) -> None:
         """md 5.5.3.1 yeniden baslama — planlama tarafinin sifirlanmasi.
 
@@ -495,6 +492,9 @@ class PlanningNode(Node):
         self._pipe.yeniden_basla()
         self._edge_buoys = []
 
+    # ----- subscriber callback'leri -----
+
+    @_guard
     def _on_odom(self, msg: Odometry) -> None:
         """ENU pose + velocity → durum vektörü [x, y, ψ, u, v, r]."""
         self._last_odom_t = self._now()          # F-P.1: bayatlık saati
