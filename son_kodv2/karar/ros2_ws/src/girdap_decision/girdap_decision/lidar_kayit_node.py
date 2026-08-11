@@ -49,6 +49,7 @@ from sensor_msgs.msg import PointCloud2
 from vision_msgs.msg import Detection3DArray
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mapping.bev_renderer import (
     BevConfig, BevRenderer, Kume, Mp4Yazici, PngSerisiYazici,
 )
@@ -94,9 +95,8 @@ class LidarKayitNode(Node):
             Path(out).expanduser() if out
             else Path.home() / "girdap_logs" / "lidar"
         )
-        oturum = datetime.now().strftime("oturum_%Y%m%d_%H%M%S")
-        self._session_dir = base / oturum
-        self._session_dir.mkdir(parents=True, exist_ok=True)
+        self._base = base            # madde #11: yeniden baslamada yeni oturum
+        self._session_dir = self._yeni_oturum_dizini()
 
         self._rend = BevRenderer(BevConfig())
         self._arac: Tuple[float, float] = (0.0, 0.0)
@@ -126,6 +126,9 @@ class LidarKayitNode(Node):
         # (zaman damgası zaten KAREYE yakılı) yedek yol teslimi KURTARIR.
         # `PngSerisiYazici` ile `Mp4Yazici` aynı arayüzü sunar; aşağıdaki
         # kayıt döngüsü hangisini tuttuğunu bilmek zorunda değildir.
+        # madde #11: yeniden baslamada ayni yazicilar yeni dizine kurulacak.
+        self._mp4_rate = rate
+        self._mp4_boyut = (cfg.genislik_px, cfg.yukseklik_px)
         self._yedege_dusuldu = False
         try:
             self._mp4 = Mp4Yazici(
@@ -143,6 +146,8 @@ class LidarKayitNode(Node):
                 "NASIL_MP4_YAPILIR.txt tek satırlık ffmpeg komutunu veriyor. "
                 "md 4.2 mp4 istiyor; çevrilmezse 5 ceza (md 5.5.4.3.5)."
             )
+
+        self._reset = ResetAbonesi(self, self._yeniden_basla)
 
         # --- Subscribers ---
         self._sub_cls = self.create_subscription(
@@ -165,6 +170,48 @@ class LidarKayitNode(Node):
             f"lidar_kayit_node aktif → {self._session_dir} "
             f"({rate} Hz, ham bulut seyreltme 1/{self._seyrelt}) "
             "— Şartname 4.2 'Diğer Otonomi Sensörleri' teslimi"
+        )
+
+    def _yeni_oturum_dizini(self):                     # noqa: ANN202
+        """Zaman damgali yeni oturum dizini olustur ve dondur."""
+        d = self._base / datetime.now().strftime("oturum_%Y%m%d_%H%M%S")
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _yeniden_basla(self) -> None:
+        """md 5.5.3.1 yeniden baslama — LiDAR teslimini YENI oturuma al.
+
+        🔴 Neden yeni dizin: yeniden baslama hakki kullanilinca ilk turun
+        puanlari sifirlanir, yani PUANLANAN kosu IKINCISI. Iki turun karelerini
+        ayni mp4'te birlestirmek hakeme gecersiz turu de vermek olur.
+
+        mp4 ONCE kapatilir: kapatilmadan birakilan dosya cogu codec'te
+        oynatilamaz kalir (moov atomu yazilmaz) -> ilk turun kaydi da gider.
+        md 5.5.4.3.5: eksik/gecersiz dosya = 5 ceza.
+
+        ⚠ Yazici tipi (mp4 / PNG yedegi) ilk kurulumdaki secime SADIK kalir:
+        acilista mp4 acilamadiysa codec yok demektir, ikinci turda da acilmaz.
+        Bosuna denemek yerine dogrudan ayni yola devam ediliyor.
+        """
+        try:
+            self._mp4.kapat()
+        except Exception as exc:                       # noqa: BLE001
+            self.get_logger().error(
+                f"ilk tur LiDAR kaydi kapatilamadi: {exc!r} — dosya bozuk olabilir"
+            )
+        self._kare = 0
+        self._session_dir = self._yeni_oturum_dizini()
+        if self._yedege_dusuldu:
+            self._mp4 = PngSerisiYazici(
+                self._session_dir / "lidar_kumeleme_png", fps=self._mp4_rate
+            )
+        else:
+            self._mp4 = Mp4Yazici(
+                self._session_dir / "lidar_kumeleme.mp4",
+                fps=self._mp4_rate, boyut=self._mp4_boyut,
+            )
+        self.get_logger().warn(
+            f"LiDAR teslimi YENI OTURUM (md 5.5.3.1): {self._session_dir}"
         )
 
     # ----- callback'ler -----

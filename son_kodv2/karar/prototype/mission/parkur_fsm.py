@@ -127,6 +127,19 @@ class ParkurTransitionLogic:
         self._impact_confirmed = False
         self._history: List[Tuple[ParkurState, ParkurState, str]] = []
 
+    def reset(self) -> None:
+        """Parkur katmanını PARKUR_1'e al — md 5.5.3.1 yeniden başlama.
+
+        `_impact_confirmed` de temizlenir: temizlenmezse ikinci turda araç
+        Parkur-3'e girdiği anda "çarpma zaten oldu" sayılıp görev anında
+        TAMAMLANDI'ya düşerdi.
+
+        ⚠ `_history` KORUNUR — geçiş geçmişi kanıt/teşhis kaydıdır, silinmez
+        (ilk turun nereye kadar gittiği yeniden başlama sonrası da lazım).
+        """
+        self._state = ParkurState.PARKUR_1
+        self._impact_confirmed = False
+
     # ----- sorgu -----
 
     @property

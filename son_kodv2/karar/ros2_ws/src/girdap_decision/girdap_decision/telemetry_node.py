@@ -58,6 +58,7 @@ from girdap_decision.qos_profiles import sensor_data_qos
 # donuk setpoint çizgisi md 3.3.1.1 senkron grafiklerini yanıltır; boş hücre
 # ekran2'de NaN boşluğu olur (sahte çizgi yok).
 _SETPOINT_ACTIVE_STATES = ("PARKUR1", "PARKUR2", "PARKUR3")
+from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.telemetry.csv_logger import (
     GRAPH_CSV_HEADER,
     GraphSample,
@@ -156,6 +157,11 @@ class TelemetryNode(Node):
             filename=f"grafik_{utc_timestamp()}.csv",
             header=GRAPH_CSV_HEADER,
         )
+
+        # madde #11 (md 5.5.3.1): yeniden baslama -> YENI dosyalar.
+        # Yollari sakliyoruz cunku yeni oturumda ayni dizine yazilacak.
+        self._csv_dir, self._graph_dir = out_dir, graph_dir
+        self._reset = ResetAbonesi(self, self._yeniden_basla)
 
         # --- Cache (en son alınan değer her tick'te yazılır) ---
         self._lat: Optional[float] = None
@@ -283,6 +289,33 @@ class TelemetryNode(Node):
         )
 
     # ----- subscriber callback'leri -----
+
+    def _yeniden_basla(self) -> None:
+        """md 5.5.3.1 yeniden baslama — Dosya-2'yi YENI dosyaya al.
+
+        🔴 Neden yeni dosya, neden ayni dosyaya devam DEGIL: yeniden baslama
+        hakki kullanilinca ilk turun puanlari sifirlaniyor, yani PUANLANAN kosu
+        ikincisi. Iki turu ayni CSV'de birlestirmek hakeme gecersiz turun
+        satirlarini da vermek olur; ustelik arac basa dondugu icin lat/lon
+        serisi geriye sicrar ve grafikler okunamaz hale gelir.
+
+        Dosya adi ayni zaman damgasi sozlesmesini korur (`utc_timestamp()`),
+        yalniz `_tur2` eki alir -> toplayici (prototype/teslim/toplayici.py)
+        ikisini de gorur, hakem hangisinin gecerli oldugunu addan anlar.
+        """
+        etiket = f"{utc_timestamp()}_tur2"
+        _ad = f"telemetri_{etiket}.csv" if self._saat_guvenilir else (
+            f"telemetri_{etiket}_SAAT-GUVENILMEZ.csv"
+        )
+        self._csv = TelemetryCsvLogger(self._csv_dir, filename=_ad)
+        self._graph_csv = TelemetryCsvLogger(
+            self._graph_dir,
+            filename=f"grafik_{etiket}.csv",
+            header=GRAPH_CSV_HEADER,
+        )
+        self.get_logger().warn(
+            f"Dosya-2 YENI OTURUM (md 5.5.3.1): {self._csv.path}"
+        )
 
     def _on_gps(self, msg: NavSatFix) -> None:
         if msg.status.status >= 0:               # fix yoksa (-1) yazma

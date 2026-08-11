@@ -170,6 +170,27 @@ class MissionFSM:
         """Acil durdurma — bir sonraki tick'te KILL'e geçilir."""
         self._kill_reason = reason
 
+    def yeniden_basla(self, reason: str = "soft-restart") -> None:
+        """Görevi BEKLEMEDE'ye al — şartname md 5.5.3.1 yeniden başlama hakkı.
+
+        *"Yeniden başlama hakkı 1 kez kullanılabilir, toplanan puanlar
+        sıfırlanır, SÜRE DURMAZ."* Süre durmadığı için elle node yeniden
+        başlatmak (ROS keşfi + MAVROS yeniden bağlanma + GPS/EKF oturması)
+        lüks; bu yüzden yığın ayakta kalırken durum sıfırlanıyor.
+
+        KILL'den de çıkar — asıl kullanım bu: acil durdurma sonrası ikinci tur.
+        ⚠ Fiziksel kill switch hâlâ basılıysa bir sonraki `tick()` gözlemi
+        yine KILL'e götürür; bu DOĞRU (donanım her zaman kazanır), yazılım
+        onu ezmeye çalışmaz.
+
+        `BOOT` durumuna DÖNÜLMEZ: BOOT→ARM geçişi MAVROS bağlantısı/arm
+        gözlemine bakar, o koşullar hâlâ sağlanıyor. Doğru hedef, "başlat
+        komutu bekleniyor" anlamına gelen BEKLEMEDE.
+        """
+        self._start_requested = False       # yeni başlat komutu beklenir
+        self._kill_reason = None            # yoksa tick anında KILL'e döner
+        self._transition(MissionState.BEKLEMEDE, reason)
+
     # ----- ana döngü -----
 
     def tick(self, obs: Observation) -> MissionState:

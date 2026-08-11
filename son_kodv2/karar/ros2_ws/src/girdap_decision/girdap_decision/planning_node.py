@@ -77,6 +77,7 @@ from vision_msgs.msg import Detection3DArray
 
 from girdap_decision.qos_profiles import sensor_data_qos
 from prototype.control.mavros_bridge import MavrosBridge, MavrosBridgeConfig
+from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mission.edge_memory import EdgeBuoyMemory
 from prototype.mission.gate_follower import (
     BUOY_RADIUS_M,
@@ -278,6 +279,9 @@ class PlanningNode(Node):
         # kadrajdan çıksa da kenar kalır (§0.17e; edge_memory.py docstring'i).
         # 12 m'lik gerçek kapıda P1'in ÇALIŞMA ŞARTI: hafızasız 1/4 nokta.
         self._edge_memory = EdgeBuoyMemory()
+        # madde #11 (md 5.5.3.1): yeniden baslama hakki. PUAN sifirlamasi
+        # BURADA yapiliyor cunku gecis sayaci GateFollower'in icinde yasiyor.
+        self._reset = ResetAbonesi(self, self._yeniden_basla)
         self._edge_mem_log_t = 0.0
         self._gate_post_margin = float(
             self.get_parameter("gate_post_margin_m").value
@@ -468,6 +472,29 @@ class PlanningNode(Node):
     # ----- subscriber callback'leri -----
 
     @_guard
+    def _yeniden_basla(self) -> None:
+        """md 5.5.3.1 yeniden baslama — planlama tarafinin sifirlanmasi.
+
+        Dort sey birden:
+          1. `reset()`              — kilitli kapi + yarim kalmis aday temiz
+          2. `reset_passed_gates()` — 🔴 PUAN SIFIRLAMASI. Sartname: "yeniden
+             baslama hakkini kullanan takimin topladigi puanlar SIFIRLANACAKTIR."
+             Temizlenmezse ikinci turda ayni gecitler "zaten gecildi" sayilir ve
+             HICBIRI puan getirmez. K1 listesi de burada temizleniyor: arac
+             fiilen basa dondugu icin o kapilar artik ARKADA degil ONDE.
+          3. `EdgeBuoyMemory.temizle()` — eski hatirlanan kenarlar artik
+             yanlis yerde; tasinirsa hayalet kapi uretir. (Mevcut API
+             kullaniliyor; ayni isi yapan ikinci bir metot EKLENMEDI.)
+          4. `PlanningPipeline.yeniden_basla()` — MPPI warm-start + kayan
+             pencere capasi + PID integratoru. Capa temizlenmezse arac basa
+             dondugunde her adim kenar-fallback'e duser (58 -> 791 ms).
+        """
+        self._gate.reset()
+        self._gate.reset_passed_gates()
+        self._edge_memory.temizle()
+        self._pipe.yeniden_basla()
+        self._edge_buoys = []
+
     def _on_odom(self, msg: Odometry) -> None:
         """ENU pose + velocity → durum vektörü [x, y, ψ, u, v, r]."""
         self._last_odom_t = self._now()          # F-P.1: bayatlık saati

@@ -70,6 +70,7 @@ from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Bool, Int32, String
 
 from girdap_decision.qos_profiles import latched_qos, sensor_data_qos
+from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mission.mission_manager import (
     FcMissionItem,
     MissionManager,
@@ -245,6 +246,14 @@ class MissionManagerNode(Node):
             "(/mavros/mission/reached, F-V.8)"
         )
 
+    def _yeniden_basla(self) -> None:
+        """md 5.5.3.1 yeniden baslama — gorevi ilk waypoint'e al.
+
+        IDLE + index 0. `start()` yalniz IDLE'da etkili oldugu icin IDLE'a
+        donmek ikinci turun baslatilabilmesi demek. COMPLETE'ten de cikar.
+        """
+        self._mgr.reset()
+
     def _on_fc_waypoints(self, msg) -> None:                      # noqa: ANN001
         """FC görev listesi geldi → görevi (yeniden) kur. Yalnız başlamadan.
 
@@ -273,6 +282,8 @@ class MissionManagerNode(Node):
             )
             return
         self._mgr = MissionManager(wps, self._cfg)
+        # madde #11 (md 5.5.3.1): yeniden baslama — gorev index'i 0'a.
+        self._reset = ResetAbonesi(self, self._yeniden_basla)
         self._prev_phase = self._mgr.phase
         self._fc_seqs = seqs                     # F-V.8: wp_seq → index eşlemesi
         self.get_logger().info(

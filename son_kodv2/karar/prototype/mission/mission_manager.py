@@ -183,6 +183,17 @@ class MissionManager:
             self._idx = 0
             self._dwell_start = None
 
+    def reset(self) -> None:
+        """Görevi başa al — md 5.5.3.1 yeniden başlama hakkı.
+
+        IDLE + index 0 + dwell temiz. `start()` yeniden çağrılabilir hâle
+        gelir (o metot yalnız IDLE'da etkili). COMPLETE'ten de çıkar: ikinci
+        tur ilk waypoint'ten başlar.
+        """
+        self._phase = MissionPhase.IDLE
+        self._idx = 0
+        self._dwell_start = None
+
     def update(
         self, lat: float, lon: float, now: float
     ) -> Optional[Tuple[float, float]]:

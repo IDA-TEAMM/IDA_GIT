@@ -168,7 +168,17 @@ class EdgeBuoyMemory:
         return [(k.x, k.y, k.r) for k in self._kayitlar]
 
     def temizle(self) -> None:
-        """Parkur geçişinde/yeniden başlamada hafızayı sıfırla."""
+        """Parkur geçişinde/yeniden başlamada hafızayı sıfırla.
+
+        md 5.5.3.1 yeniden başlamada ZORUNLU: araç fiilen başa döndüğü için
+        eski kayıtlar artık aracın önünde değil arkasında/yanlış yerde;
+        taşınırsa ikinci turda hayalet kenar dubaları kapı üretir.
+
+        ⚠ Teşhis sayaçları (`hatirlanarak_kurtarilan`, `celiskiyle_silinen`)
+        bilerek KORUNUR: koşum boyu kümülatif ölçüm, sıfırlanırsa hafızanın
+        toplam katkısı kayıt dışı kalır. `_edge_id` de korunur — o yalnız bir
+        önbellek, her `siniflandir()` çağrısında yeniden yazılıyor.
+        """
         self._kayitlar.clear()
 
     # ------------------------------------------------------------- çekirdek

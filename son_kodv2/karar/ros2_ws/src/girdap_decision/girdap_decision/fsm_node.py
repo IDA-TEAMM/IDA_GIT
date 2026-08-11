@@ -75,6 +75,10 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.yeniden_baslama import (
+    RESET_SERVICE,
+    ResetYayinci,
+)
 from prototype.fsm.mission_fsm import MissionFSM, MissionState, Observation
 from prototype.mission.parkur_fsm import (
     ParkurState,
@@ -243,6 +247,12 @@ class FSMNode(Node):
         # --- Services ---
         self._srv_start = self.create_service(
             Trigger, "/girdap/mission/start", self._on_start_srv
+        )
+        # madde #11 (md 5.5.3.1): yeniden baslama hakki. Servisi YALNIZ bu node
+        # sunar; digerleri fan-out topic'inden haber alir (yeniden_baslama.py).
+        self._reset_pub = ResetYayinci(self)
+        self._srv_reset = self.create_service(
+            Trigger, RESET_SERVICE, self._on_reset_srv
         )
         self._srv_kill = self.create_service(
             Trigger, "/girdap/mission/kill", self._on_kill_srv
@@ -519,6 +529,37 @@ class FSMNode(Node):
         self._fsm.kill("YKİ kill servisi")
         res.success = True
         res.message = "kill alındı"
+        return res
+
+    def _on_reset_srv(
+        self, req: Trigger.Request, res: Trigger.Response
+    ) -> Trigger.Response:
+        """Yumusak yeniden baslatma — md 5.5.3.1 yeniden baslama hakki.
+
+        FSM'i BEKLEMEDE'ye, parkur katmanini PARKUR_1'e alir, sonra fan-out
+        yayinini yapar ki diger node'lar (kapi hafizasi + MPPI sicak durumu,
+        gorev index'i, CSV/PNG oturumlari) kendilerini toplasin.
+
+        ⚠ SIRA: once KENDI durumumuzu sifirla, SONRA yayinla. Tersi olursa
+        diger node'lar sifirlanip bir sonraki tick'te bizim ESKI durumumuzu
+        (or. PARKUR2) yeniden yayinlamamizi gorur.
+
+        Puan sifirlanmasi (md 5.5.3.1) `GateFollower.reset_passed_gates()` ile
+        planning_node tarafinda yapiliyor — gecis sayaci orada yasiyor.
+        """
+        onceki = self._fsm.state.value
+        self._fsm.yeniden_basla("YKI yeniden baslama servisi (md 5.5.3.1)")
+        self._parkur.reset()
+        n = self._reset_pub.yayinla()
+        self.get_logger().warn(
+            f"YENIDEN BASLAMA #{n} (md 5.5.3.1): {onceki} -> "
+            f"{self._fsm.state.value}, parkur -> {self._parkur.state.value}. "
+            f"Puanlar sifirlaniyor; baslatmak icin /girdap/mission/start"
+        )
+        res.success = True
+        res.message = (
+            f"yeniden baslama #{n}: {onceki} -> {self._fsm.state.value}"
+        )
         return res
 
     # ----- tick döngüsü -----

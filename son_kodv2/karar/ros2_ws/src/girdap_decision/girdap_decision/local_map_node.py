@@ -51,6 +51,7 @@ from geometry_msgs.msg import PoseArray
 from nav_msgs.msg import OccupancyGrid, Odometry
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mapping.bev_renderer import BevConfig, BevRenderer, Mp4Yazici
 from prototype.mapping.local_map import LocalMapDumper
 
@@ -89,9 +90,8 @@ class LocalMapNode(Node):
             Path(out).expanduser() if out
             else Path.home() / "girdap_logs" / "local_map"
         )
-        oturum = datetime.now().strftime("oturum_%Y%m%d_%H%M%S")
-        self._session_dir = base / oturum
-        self._session_dir.mkdir(parents=True, exist_ok=True)
+        self._base = base            # madde #11: yeniden baslamada yeni oturum
+        self._session_dir = self._yeni_oturum_dizini()
 
         self._rend = BevRenderer(BevConfig())
         self._last: Optional[OccupancyGrid] = None
@@ -118,28 +118,14 @@ class LocalMapNode(Node):
                 "'En Az 1 Hz' ihlali; teslim geçersiz olur."
             )
 
+        # madde #11: yazici kurulumu metoda alindi — yeniden baslamada
+        # AYNI kod yeni oturum dizinine tekrar kosuyor (kopyalanmadi).
+        self._mp4_rate = rate
         self._mp4: Optional[Mp4Yazici] = None
-        if bool(self.get_parameter("mp4_enabled").value):
-            cfg = self._rend.cfg
-            try:
-                self._mp4 = Mp4Yazici(
-                    self._session_dir / "Dosya3_lokal_harita.mp4",
-                    fps=rate, boyut=(cfg.genislik_px, cfg.yukseklik_px),
-                )
-            except Exception as exc:                 # cv2 yok / codec yok
-                # PNG yedeği devam etsin — teslim tamamen kaybolmasın.
-                self.get_logger().error(
-                    f"Dosya-3 mp4 açılamadı ({exc!r}) → yalnız PNG serisi "
-                    "yazılacak. md 5.5.4.3.5: eksik dosya = 5 ceza."
-                )
-
         self._png: Optional[LocalMapDumper] = None
-        if bool(self.get_parameter("png_yedek").value):
-            self._png = LocalMapDumper(
-                base_dir=self._session_dir, session="png_yedek"
-            )
-
         self._kare = 0
+        self._yazicilari_kur()
+        self._reset = ResetAbonesi(self, self._yeniden_basla)
 
         # --- Subscribers ---
         self._sub = self.create_subscription(
@@ -162,6 +148,62 @@ class LocalMapNode(Node):
         )
 
     # ----- callback'ler -----
+
+    def _yeni_oturum_dizini(self):                     # noqa: ANN202
+        """Zaman damgali yeni oturum dizini olustur ve dondur."""
+        d = self._base / datetime.now().strftime("oturum_%Y%m%d_%H%M%S")
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _yazicilari_kur(self) -> None:
+        """mp4 + PNG yedegini `self._session_dir` icin ac."""
+        if bool(self.get_parameter("mp4_enabled").value):
+            cfg = self._rend.cfg
+            try:
+                self._mp4 = Mp4Yazici(
+                    self._session_dir / "Dosya3_lokal_harita.mp4",
+                    fps=self._mp4_rate,
+                    boyut=(cfg.genislik_px, cfg.yukseklik_px),
+                )
+            except Exception as exc:                 # cv2 yok / codec yok
+                # PNG yedeği devam etsin — teslim tamamen kaybolmasın.
+                self._mp4 = None
+                self.get_logger().error(
+                    f"Dosya-3 mp4 açılamadı ({exc!r}) → yalnız PNG serisi "
+                    "yazılacak. md 5.5.4.3.5: eksik dosya = 5 ceza."
+                )
+        if bool(self.get_parameter("png_yedek").value):
+            self._png = LocalMapDumper(
+                base_dir=self._session_dir, session="png_yedek"
+            )
+
+    def _yeniden_basla(self) -> None:
+        """md 5.5.3.1 yeniden baslama — Dosya-3'u YENI oturum dizinine al.
+
+        🔴 Neden yeni dizin: yeniden baslama hakki kullanilinca ilk turun
+        puanlari sifirlanir, yani PUANLANAN kosu ikincisi. Iki turun karelerini
+        ayni mp4/PNG serisinde birlestirmek hakeme gecersiz turu de vermek olur;
+        ustelik arac basa dondugu icin harita geriye sicrar.
+
+        mp4 ONCE kapatilir: kapatilmadan birakilan dosya cogu codec'te
+        bozuk/oynatilamaz kalir (moov atomu yazilmaz) -> ilk turun kaydi da
+        gider. md 5.5.4.3.5: eksik/gecersiz dosya = 5 ceza.
+        """
+        if self._mp4 is not None:
+            try:
+                self._mp4.kapat()
+            except Exception as exc:                 # noqa: BLE001
+                self.get_logger().error(
+                    f"ilk tur mp4 kapatilamadi: {exc!r} — dosya bozuk olabilir"
+                )
+            self._mp4 = None
+        self._png = None
+        self._kare = 0
+        self._session_dir = self._yeni_oturum_dizini()
+        self._yazicilari_kur()
+        self.get_logger().warn(
+            f"Dosya-3 YENI OTURUM (md 5.5.3.1): {self._session_dir}"
+        )
 
     def _on_map(self, msg: OccupancyGrid) -> None:
         self._last = msg

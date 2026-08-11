@@ -509,6 +509,26 @@ class PlanningPipeline:
         if onceki is not None:
             self._mppi.carry_state_from(onceki)      # sıralama: referanstan SONRA
 
+    def yeniden_basla(self) -> None:
+        """Kontrolcü sıcak durumunu sıfırla — md 5.5.3.1 yeniden başlama.
+
+        Yeniden başlamada araç fiilen başa döner; ilk turdan kalan sıcak durum
+        artık YANLIŞ bir tahmin:
+          - **MPPI `U_nominal`** (warm-start): ilk turun son manevrasını
+            (ör. son kapıda tam dönüş) ikinci turun ilk adımına dayatır.
+          - **Kayan pencere çapası** (F-M.2): referans üzerinde ilerideki bir
+            noktayı gösterir; araç başa döndüğü için çapa geride kalır ve her
+            adım kenar-fallback'e düşer (ölçülen bedel: adım 58 → 791 ms).
+          - **PID integratörü**: ilk turun birikmiş hatası ikinci turda
+            başlangıç vuruşu (windup) olarak boşalır.
+
+        Warm-start'ı sıfırlamak F11.1'in TERSİ değil: F11.1 ardışık adımlar
+        arası sürekliliği korumakla ilgili; burada süreklilik zaten koptu.
+        """
+        if self._mppi is not None:
+            self._mppi.reset_warm_start()
+        self._pid.reset()          # F-S.10 yedek kontrolcü (control_mode="pid")
+
     # ----- kontrol -----
 
     def compute_control(self) -> Optional[np.ndarray]:
