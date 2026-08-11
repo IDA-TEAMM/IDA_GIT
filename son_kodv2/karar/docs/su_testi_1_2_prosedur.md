@@ -125,3 +125,103 @@ ile koş — USB debug bağlantısını mod değişiminde KULLANMA.**
 (4 nokta AUTO görevi + manuel dönüş + kill switch gösterimi). Test 1+2 GEÇERSE
 video günü senaryosunun donanım/FC ayağı da fiilen provalanmış olur — ayrı
 bir "video provası" gerekmez, kayıt (Ekran 1/2/3) eklenmesi yeter.
+
+---
+
+## EK — A-3 sensör geometrisi: suda ölçülecek 5 kalem (Sude, 11.08)
+
+> **Neden bu dosyaya ekleniyor:** yukarıdaki iki test sensör geometrisine hiç
+> değinmiyor, ama **A-3'ün kapanmasını bekleyen son madde suda ölçülür**
+> (LiDAR yaw). Tekne zaten suda olacağı için beşi de **ekstra koşu
+> gerektirmiyor** — biri atlanırsa A-3 bir sonraki su seansına kalır.
+>
+> Masada ölçülen ofsetler FC'ye 10.08'de **yazıldı ve doğrulandı**
+> (`INS_POS1_*`, `GPS1_POS_*`; bkz. `fc_param_uzlasma_2026-08-10.md`).
+> Burada ölçülen şey ArduPilot ofsetleri **değil**, ROS tarafındaki
+> `hardware.yaml tf:` bloğu + suyun getirdiği düzeltmeler.
+
+### ① LiDAR yaw — A-3'Ü KAPATAN MADDE (Test 1'den ÖNCE, tekne bağlıyken)
+
+**Sorun:** LiDAR'ın gövdeye göre dönmesi (yaw) hiç ölçülmedi, `hardware.yaml`
+`tf:` bloğunda **0** duruyor. Yanlışsa her duba yanlış bearing'le girer →
+kapı orta noktası yana kayar (`gate_follower` yanlış hedef verir).
+
+1. Tekne suda ama **ipiyle sabit**, burnu bilinen bir yöne baksın.
+2. Pruva hattı üzerine, burundan **~10 m** ileriye tek bir nesne koy
+   (duba en iyisi — LiDAR'ın gördüğü şeyle aynı cins).
+3. Jetson'da o nesnenin cluster'ını oku:
+   ```
+   ros2 topic echo /perception/obstacle_map --once
+   ```
+4. **Ölçüt:** `position.y ≈ 0` olmalı (nesne pruva hattında).
+   Değilse `yaw = -atan2(y, x)` radyan — bu değeri `hardware.yaml`
+   `tf: livox: yaw:` alanına yaz (⚠️ **publisher RADYAN okur**, ölçüm formu
+   DERECE tutuyor — karıştırma).
+
+| ölçüm | değer |
+|---|---|
+| nesnenin gerçek ileri mesafesi (şeritle) | ______ m |
+| `position.x` (LiDAR) | ______ m |
+| `position.y` (LiDAR) | ______ m |
+| hesaplanan `yaw = -atan2(y,x)` | ______ rad ( ______ °) |
+
+### ② LiDAR'ın SU ÇİZGİSİNDEN yüksekliği (masadaki 0.410 m DEĞİL)
+
+Masada zeminden ölçüldü; suda anlamlı olan **su çizgisinden** yükseklik
+(su hattı ile teknenin oturduğu derinlik kadar farklı).
+
+🔴 **Neden kritik:** `perception.lidar.z_min = 0.1` / `z_max = 3.0`
+süzgeci **ham LiDAR çerçevesinde** koşuyor. Duba yüksekliği 50 cm; LiDAR
+su çizgisinden ~0,40 m yukarıdaysa dubanın tepesi LiDAR çerçevesinde
+z ≈ +0,10 m, tabanı z ≈ −0,40 m'de kalır → **z_min=0.1 dubaların
+neredeyse tamamını eler.** Bu ölçüm o eşiğin doğru işaretle ayarlanması
+için gerekli (asıl düzeltme algı ekibinde, ama sayı burada üretilir).
+
+- su çizgisinden LiDAR merkezine dikey mesafe: ______ m
+- teknenin su çekimi (draft, zeminden su çizgisine): ______ m
+
+### ③ Gövde LiDAR FOV'unda görünüyor mu
+
+Tekne durgun ve etrafı boşken `/perception/obstacle_map`'i izle. **Sıfır
+engel** görmelisi. Sabit bir cluster çıkıyorsa o **kendi gövdesi/direği** —
+`cluster` boyut filtresi (`5 ≤ n ≤ 500`) onu elemiyor demektir.
+
+- durgun suda görülen engel sayısı: ______ (beklenen: 0)
+- varsa merkezi (x, y): ______ , ______  → gövdenin o yönündeki parçası
+
+### ④ Teknenin suda GERÇEK pitch trim'i
+
+Seviye kalibrasyonu masada, tekne **1,0°** takozlanarak yapıldı
+(`Trim OK: pitch=-2.50`). Kullanıcının notu: *"suda gemi burnu hafifçe
+yukarı bakıyor"* — yani suda AHRS ufku masadakinden farklı.
+
+Tekne suda **durgun ve dengede** iken Mission Planner → Flight Data'da oku:
+
+- `pitch`: ______ °   · `roll`: ______ °
+- **Ölçüt:** |pitch| ve |roll| < 2°. Aşarsa `AHRS_TRIM_Y`/`AHRS_TRIM_X`'i
+  **suda** ölçülen değerle düzelt (masadaki değil — su gerçek çalışma
+  duruşu). ⚠️ Kalibrasyonu suda tekrarlama, yalnız TRIM'i düzelt.
+
+### ⑤ Kamera yaw teyidi
+
+`oak_frame` masada `yaw: 0.0` girildi (pitch ampirik olarak ~0 çıktı, göl
+fotoğraflarından ufuk ölçülerek). Suda tek kontrol: pruva hattındaki ①'deki
+nesne **görüntünün yatay ortasında** mı.
+
+- nesnenin bbox merkezi (normalize, 0-1): ______ (beklenen ≈ 0,50)
+- sapma varsa: `yaw ≈ (bbox_cx − 0.5) × HFOV` → `tf: oak: yaw:`
+
+⚠️ Bu aynı zamanda `fusion.py`'deki `bearing_from_camera` **işaret kuralının**
+ilk gerçek testidir (modül docstring'i "sahada doğrulanmalı" diyor): nesneyi
+pruvadan **sağa** kaydır, bbox merkezi de sağa gitmeli. Ters giderse
+düzeltme o fonksiyondaki tek işarettir.
+
+### Bu ekin kapattığı maddeler
+
+| kalem | kapatınca |
+|---|---|
+| ① | **A-3 KAPANIR** (son açık maddesiydi) |
+| ② | `z_min/z_max` süzgeci için gerçek sayı — algı ekibine verilir |
+| ③ | gövdenin sahte engel üretip üretmediği |
+| ④ | `AHRS_TRIM` suda doğrulanır |
+| ⑤ | `oak_frame yaw` + `bearing_from_camera` işaret kuralı |
