@@ -71,25 +71,25 @@ def _kareleri_topla(sayi: int, zaman_asimi: float):
     """
     import time
 
-    import depthai as dai
-
     from girdap_ida_algi import duba_gecis_navigator as dgn
-    from girdap_ida_algi import oak_baglanti as ob
 
     if not dgn.KAYIT_AKTIF:
         # passthrough çıkışı yalnız KAYIT_AKTIF iken bağlanıyor; NN giriş
         # karesini oradan alıyoruz.
         dgn.KAYIT_AKTIF = True
 
-    pipeline = dgn.pipeline_kur()
+    # 🔴 `pipeline_kur()` boru hattını KURAR **ve cihazı AÇAR** — dönüşü
+    # `(dev, det_q, rgb_q, siniflar)`, `dai.Pipeline` DEĞİL (bkz.
+    # duba_gecis_navigator:551-555; USB2 zorlaması + `dayanikli_ac` orada).
+    # 🪤 12.08: burada dönüş bir pipeline sanılıp `dai.Device(...)` ile İKİNCİ
+    # kez açılmaya çalışılıyordu ⇒ betik `TypeError` ile daha ilk adımda
+    # düşüyordu, yani KONTROL 3 cihazda HİÇ koşmamıştı. Karar mantığının
+    # testleri yeşildi (saf fonksiyon), donanım yolunu tutan yoktu —
+    # `test_kontrol3_kareleri_topla.py` bu sözleşmeyi artık kilitliyor.
+    dev, q_det, q_rgb, _siniflar = dgn.pipeline_kur()
     kareler, cihaz_tespit = [], []
 
-    # 🔴 USB2'ye ZORLAMA + dayanıklı açış — deploy ile AYNI (duba_gecis_navigator:551).
-    # SuperSpeed bu Jetson'da `tegra-xusb` U1/U2 pazarlığında çöküyor
-    # (X_LINK_DEVICE_NOT_FOUND); HIGH'a zorlanınca 5/5 açılış.
-    with ob.dayanikli_ac(lambda: dai.Device(pipeline, dai.UsbSpeed.HIGH)) as dev:
-        q_rgb = dev.getOutputQueue("rgb", maxSize=4, blocking=False)
-        q_det = dev.getOutputQueue("tespit", maxSize=4, blocking=False)
+    with dev:
         # 🪤 `q.get()` bloke eder: kamera hiç kare vermezse betik SONSUZA KADAR
         # asılırdı ve sahada "çalışıyor mu, dondu mu" ayırt edilemezdi.
         bitis = time.monotonic() + zaman_asimi
