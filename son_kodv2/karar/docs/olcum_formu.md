@@ -292,10 +292,30 @@ ayarı değil, fizik). Kaynağı belirsiz olan eski değerler `hull_width_m=0.78
 > (0.10 → 26 cm · 0.15 → 21 cm · 0.20 → 16 cm) ve `min_cluster_size=5`
 > uzak mesafede tutmayabilir. İki yönlü bir ödünleşme, kör ayarlanamaz.
 >
-> **Karar ilk su testine bırakıldı** (`su_testi_1_2_prosedur.md`): sakin suda
-> `z_min=0.1` ile hayalet engel sayısı, sonra dalgalı/dalgacıklı suda aynı
-> ölçüm. Sayı ölçülmeden değiştirilmeyecek — bugüne kadar bu projede kör
-> ayarlanan her eşik geri alındı.
+> ✅ **KARAR (12.08): `z_min` 0.10'DA KALIYOR.** İlk yazımda "kararı su
+> testine bırakalım" demiştim; yarışma **gölde** olduğu hatırlatılınca karar
+> verilebilir hale geldi:
+>
+> - **Göl çırpıntısı 2-5 cm**, yani 4 cm'lik pay pratikte yeterli. Deniz
+>   Durumu-2'yi (10-50 cm) ölçüt almak yanlıştı — o şartnamenin genel
+>   dayanıklılık ifadesi, yarışma alanının gerçeği değil.
+> - **Yükseltmenin bedeli yanlış tarafa düşüyor:** hayalet engel riskini
+>   azaltmak için GERÇEK DUBAYI kaçırma riskini artırırdık. Duba bandı 26 →
+>   16 cm'e inerdi ve `min_cluster_size=5` uzakta tutmayabilir.
+> - **Su yüzeyi zaten zayıf hedef:** sıyırma açısında ışın çoğunlukla aynasal
+>   yansır; dönen noktalar seyrek ve dağınık olduğu için 5 noktalık küme
+>   eşiğini geçmekte zorlanır.
+>
+> 🔑 **Yunuslama düzeltmesi:** ilk analizde "tekne yunuslarsa uzaktaki su
+> yüzeyi `base_link`'te yükselir, eşiği aşar" diye endişelendim. Eksik olan
+> şu: yunuslama **aynı mesafedeki** su yüzeyini de dubayı da AYNI miktarda
+> kaydırır — aradaki 30 cm'lik ayrım korunur. Bozulan tek şey mutlak eşiğin
+> doğruluğu, o da ~1 m/s'de giden bir göl teknesinde küçük.
+>
+> ⏳ **İzlenecek belirti (değiştirme ölçütü):** ilk su testinde
+> `/perception/obstacle_map`'te su üstünde, tekneyle birlikte hareket eden,
+> tutarsız görünüp kaybolan kümeler. Görülürse `z_min` 0.12-0.15'e çekilir —
+> tek satırlık yaml değişikliği, yeniden derleme gerektirmez.
 
 > 🔴 **ÇERÇEVE DÜZELTMESİ (2026-08-06):** yukarıdaki satırlar 05.08'e kadar
 > **eski `base_link`'e (= Pixhawk)** göre yazılıydı (x +0.07 · y −0.1375 ·
