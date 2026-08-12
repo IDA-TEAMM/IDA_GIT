@@ -1,0 +1,40 @@
+# GİRDAP İDA — MCAP yazıcı ayarı: PIXHAWK KAYIT DOSYASI GİBİ DOĞRUDAN YAZIM.
+#
+# 12.08.2026 (§0.53). Kaptan: "bu rosbag'i aniden Jetson kapansa bile
+# çalışacak şekilde ayarla" → "hayır direkt kaydetsin, Pixhawk'taki log gibi
+# düşün."
+#
+# HEDEF DAVRANIŞ: ArduPilot'un dataflash kaydı (.bin) gibi — mesaj geldiği
+# anda dosyanın sonuna eklenir. Fiş çekilirse dosyanın yalnız SONU kesilir,
+# o ana kadarki her şey diskte ve okunabilir kalır. Kurtarma, tamir, açma
+# adımı yok; dosya zaten dosyadır.
+#
+# ESKİ KURULUM NEDEN BUNU YAPMIYORDU:
+#   `--compression-mode file` sıkıştırmayı dosya KAPANIRKEN yapıyordu ve
+#   bölme ayarlı olmadığı için oturumda tek dosya vardı → dosya hiç kapanmaz
+#   → `.zstd` hiç üretilmez, geriye footer/index'siz ham `.mcap` kalır ve
+#   resmî araçlar açmayı reddeder. Yani ani kesinti = oturumun TAMAMI.
+
+# 🔑 PARÇALAMA KAPALI — İŞİN ÖZÜ BU.
+# Parçalama açıkken MCAP mesajları bellekte bir parça dolana kadar biriktirip
+# topluca yazar; kesinti o parçayı götürür. Kapalıyken her mesaj kendi kaydı
+# olarak doğrudan dosyaya eklenir — Pixhawk'ın dataflash davranışı.
+noChunking: true
+
+# Sıkıştırma YOK. MCAP'te sıkıştırma yalnız parça düzeyinde yapılabilir;
+# parçalama kapalıyken zaten uygulanamaz. Bilinçli bedel: dosyalar büyür.
+# Disk 401 GB boş (§0.51z/2) — kayıt kaybetmek diskten pahalıdır.
+# ⚠ Geçerli değerler: "None" | "Zstd". Boş dizge ("") kabul EDİLMİYOR —
+# eklenti `yaml-cpp: bad conversion` ile açılmayı reddeder (12.08'de ölçüldü).
+compression: "None"
+
+# İndeks ve tekrarlı şema/kanal kayıtları AÇIK (false = kapatma).
+# 🔑 Kesintide kritik: şema/kanal tanımları dosya boyunca tekrarlandığı için
+# sonu kesilmiş bir dosyadan da mesaj tipleri çözülebilir.
+noMessageIndex: false
+noRepeatedSchemas: false
+noRepeatedChannels: false
+
+# CRC'ler açık — okuyucu kesilmiş kuyruğu sağlam gövdeden ayırt edebilsin.
+noAttachmentCRC: false
+noSummaryCRC: false

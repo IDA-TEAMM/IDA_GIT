@@ -74,7 +74,7 @@ User=root
 # puan yok. 45 s, sicak GPS fix'i (FC genelde Jetson'dan once ayaga kalkar)
 # icin yeterli, soguk fix'te ise bilerek VAZGECIYORUZ.
 # Toplam en kotu hal: port bekleme (<=15 s, zaman_asimi/3) + 45 s.
-ExecStart=/usr/local/bin/girdap_saat_kur.py --port /dev/pixhawk --baud 57600 --zaman-asimi 45
+ExecStart=/usr/local/bin/girdap_saat_kur.py --port /dev/pixhawk --baud 921600 --zaman-asimi 45
 # Kurulamazsa (GPS fix yok) yigin YINE baslamali -> basarisizlik yutulur.
 SuccessExitStatus=0 1 2 3 4
 TimeoutStartSec=75

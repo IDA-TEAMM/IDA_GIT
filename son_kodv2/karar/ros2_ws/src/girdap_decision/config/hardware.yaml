@@ -15,10 +15,29 @@
 # aralıklı kopuyor (tamir tutmadı; TRB-mid-transfer kanıtı) → hat artık
 # TELEM2 üzerinden FTDI seri (ttyUSB0, 57600, MAVLink2, IMU ~8.1 Hz stabil).
 # ⚠ ttyUSB0 adı kırılgan (Jetson'da 2 FTDI var, reboot'ta takas olabilir) —
-#   Jetson'da udev symlink kur: FT231X seri no DU0EFEA7 → /dev/pixhawk_telem2
-#   ve fcu_url'i symlink'e çevir. Masa/geliştirmede USB-C takılıysa eski değer:
-#   "serial:///dev/ttyACM0:57600".
-fcu_url: "serial:///dev/ttyUSB0:57600"
+#   Jetson'da udev symlink KURULU (99-girdap-fc.rules: FT231X seri no
+#   DU0EFEA7 → /dev/pixhawk). fcu_url artık o symlink'i kullanır.
+#   Masa/geliştirmede USB-C takılıysa eski değer: "serial:///dev/ttyACM0:57600".
+#
+# 🔴🔴 2026-08-12 (§0.52) — BAUD 57600 → 921600 DÜZELTİLDİ. ÖLÇÜMLE.
+# Belirti: mavros_router `Remotes count` 17-38 (sağlıklı 1-3), gerçek
+# otopilot adresi 1.1 HİÇ görünmüyor, `connected=false` (§0.48a/§0.50).
+# Ölçüm (ham bayt, MAVLink çerçeve zincirleme testi, 6 sn/hız):
+#     baud     bayt  sihirli  zincirli   oran   kaynak
+#    57600     2134        1         0    %0    —
+#   115200     4558       46         0    %0    —
+#   921600    41895     1270      1269  %99,9   1.1 (otopilot) ×1269
+#   500000    22906      155         0    %0    —
+# 921600'de MAVLink2 çerçeveleri kırılmadan zincirleniyor ve TEK kaynak
+# var: 1.1. Mesaj dökümü sağlıklı otopilot yayını (ATTITUDE, GPS_RAW_INT,
+# SYS_STATUS, VFR_HUD, RC_CHANNELS… her biri 60 adet/6 sn = 10 Hz).
+# RADIO_STATUS (109) YOK → hattın ucunda telemetri radyosu değil,
+# TELEM2 FTDI kablosu var; "RF paraziti" hipotezi (F-P.24) DÜŞTÜ.
+# 👉 §0.50c'nin "baud şüphesi düştü" hükmü YANLIŞTI: 57600 sabah çalıştıysa
+# Pixhawk'ın SERIAL2_BAUD'u o gün 921'e değişmiş demektir (parametre
+# yüklemesi/reset). Yanlış baud'da rastgele baytlar arada bir geçerli
+# MAVLink başlığına benziyor → sahte "remote" adresleri = o çöp sayaç.
+fcu_url: "serial:///dev/pixhawk:921600"
 gcs_url: ""                       # YKİ köprüsü yok (Şartname 4.1: tek yönlü)
 
 # --- mavros_bridge_node güvenlik/mod ayarları ---

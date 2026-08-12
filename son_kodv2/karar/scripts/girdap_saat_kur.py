@@ -284,11 +284,17 @@ def system_time_ayikla(tampon: bytearray):
         del tampon[:1]
 
 
-def gps_saati_al_bagimsiz(port: str, zaman_asimi: float, log):
-    """pymavlink OLMADAN: portu oku, SYSTEM_TIME ayıkla. (t, kod) döner."""
+def gps_saati_al_bagimsiz(port: str, zaman_asimi: float, log, baud: int = 921600):
+    """pymavlink OLMADAN: portu oku, SYSTEM_TIME ayıkla. (t, kod) döner.
+
+    ⚠ 12.08.2026 (§0.52): baud ARTIK PARAMETRE. Eskiden burada 57600 iki yere
+    sabit yazılıydı ve `--baud` argümanı bu yola HİÇ ulaşmıyordu — üretimde
+    koşan yol tam da bu olduğu için saat kurulumu yanlış hızda dinliyor,
+    45 sn zaman aşımına düşüp "GPS fix yok?" diyordu. Gerçek sebep baud'du.
+    """
     try:
         import serial  # pyserial — Jetson'da kurulu (3.5, 09.08 teyidi)
-        sp = serial.Serial(port, 57600, timeout=1.0)
+        sp = serial.Serial(port, baud, timeout=1.0)
         kapat = sp.close
         oku = lambda: sp.read(4096) or b""     # noqa: E731
     except ImportError:
@@ -296,7 +302,8 @@ def gps_saati_al_bagimsiz(port: str, zaman_asimi: float, log):
         import termios
         fd = os.open(port, os.O_RDONLY | os.O_NOCTTY)
         a = termios.tcgetattr(fd)
-        a[4] = a[5] = termios.B57600                     # ispeed / ospeed
+        hiz_sabiti = getattr(termios, f"B{baud}", termios.B57600)
+        a[4] = a[5] = hiz_sabiti                         # ispeed / ospeed
         a[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
         a[0] = a[1] = a[3] = 0                           # iflag/oflag/lflag ham
         a[6][termios.VMIN], a[6][termios.VTIME] = 0, 10  # 1 s zaman aşımı
@@ -361,7 +368,7 @@ def gps_saati_al(port: str, baud: int, zaman_asimi: float, log):
     except ImportError:
         log("pymavlink yok → bagimsiz ayristirici kullaniliyor (SR2_EXTRA3=10, "
             "SYSTEM_TIME kendiliginden akiyor; istek gerekmez)")
-        return gps_saati_al_bagimsiz(port, zaman_asimi, log)
+        return gps_saati_al_bagimsiz(port, zaman_asimi, log, baud)
 
     log(f"FC'ye baglaniliyor (pymavlink): {port} @ {baud}")
     try:
@@ -426,7 +433,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--port", default="/dev/pixhawk",
                     help="FC seri portu (hardware.yaml fcu_url ile AYNI olmali)")
-    ap.add_argument("--baud", type=int, default=57600)
+    ap.add_argument("--baud", type=int, default=921600)
     ap.add_argument("--zaman-asimi", type=float, default=90.0,
                     help="gecerli SYSTEM_TIME icin beklenecek azami sure (s)")
     ap.add_argument("--kuru", action="store_true",

@@ -15,9 +15,70 @@
 set -euo pipefail
 
 CIKTI_KOK="$HOME/girdap_logs/rosbag"
-DAMGA="$(date +%Y%m%d_%H%M%S)"
-CIKTI="$CIKTI_KOK/session_${DAMGA}"
 mkdir -p "$CIKTI_KOK"
+
+# --- Saat güvenilir mi? (§0.53) ------------------------------------------
+# 🔴 12.08.2026: Jetson'un gerçek zaman saati (RTC) tutmuyor. Açılışta sistem
+# 1970-01-01'den başlıyor; saat ancak Pixhawk GPS'i (girdap-saat) ya da NTP
+# devreye girince düzeliyor — ölçülen gecikme o açılışta **16 dakika**.
+# Sonuç: `session_19700101_020151` adlı bir kayıt oluşuyor ve mesaj damgaları
+# kayıt ORTASINDA 56 yıl sıçrıyor. §0.51b'nin "bantlar üst üste biniyor /
+# saat geri yükleniyor" bulgusunun kök nedeni budur.
+#
+# Kayıt saatin düzelmesini BEKLEMEZ — veri kaybetmek saatsiz kalmaktan kötü.
+# Bunun yerine: adı işaretle ve sıçramayı ölçülebilir kıl (aşağıdaki nöbetçi).
+YIL="$(date +%Y)"
+BOOT_SN="$(cut -d. -f1 /proc/uptime)"
+if [ "$YIL" -lt 2020 ]; then
+    SAAT_GUVENILIR=0
+    DAMGA="SAATSIZ_boot$(printf '%06d' "$BOOT_SN")"
+    echo "⚠️  SAAT GÜVENİLİR DEĞİL (yıl=$YIL) — kayıt adı 'SAATSIZ' ile"
+    echo "   işaretlendi. Saat düzelince eşleme _saat.txt'ye yazılacak."
+else
+    SAAT_GUVENILIR=1
+    DAMGA="$(date +%Y%m%d_%H%M%S)"
+fi
+CIKTI="$CIKTI_KOK/session_${DAMGA}"
+SAAT_LOG="$CIKTI_KOK/session_${DAMGA}_saat.txt"
+
+# Kayıt damgalarını sonradan gerçek saate çevirebilmek için gereken her şey.
+{
+    echo "# GIRDAP bant saat kaydi — damgalari gercek saate cevirmek icin"
+    echo "kayit_adi=session_${DAMGA}"
+    echo "baslangic_saat_guvenilir=${SAAT_GUVENILIR}"
+    echo "baslangic_duvar_saati_unix=$(date +%s)"
+    echo "baslangic_duvar_saati_iso=$(date -Is)"
+    echo "baslangic_boot_sn=${BOOT_SN}"
+} > "$SAAT_LOG"
+
+# Nöbetçi: saat sıçrarsa ofseti yakala. Bir kez yazar, sonra çıkar.
+# Sıçrama = duvar saatindeki artışın, tekdüze (monotonic) uptime artışından
+# belirgin şekilde büyük olması. Böylece 1970'te başlayan bir kaydın
+# damgaları geriye dönük gerçek saate çevrilebilir.
+(
+    onceki_duvar=$(date +%s); onceki_boot=$(cut -d. -f1 /proc/uptime)
+    while :; do
+        sleep 5
+        simdi_duvar=$(date +%s); simdi_boot=$(cut -d. -f1 /proc/uptime)
+        d_duvar=$((simdi_duvar - onceki_duvar))
+        d_boot=$((simdi_boot - onceki_boot))
+        if [ "$((d_duvar - d_boot))" -gt 10 ] || [ "$((d_boot - d_duvar))" -gt 10 ]; then
+            {
+                echo "saat_sicramasi_tespit_edildi=1"
+                echo "sicrama_oncesi_unix=${onceki_duvar}"
+                echo "sicrama_sonrasi_unix=${simdi_duvar}"
+                echo "sicrama_miktari_sn=$((d_duvar - d_boot))"
+                echo "sicrama_anindaki_boot_sn=${simdi_boot}"
+                echo "sicrama_sonrasi_iso=$(date -Is)"
+                echo "# Bu kaydin sicramadan ONCEKI damgalarina"
+                echo "# 'sicrama_miktari_sn' eklenerek gercek saat bulunur."
+            } >> "$SAAT_LOG"
+            break
+        fi
+        onceki_duvar=$simdi_duvar; onceki_boot=$simdi_boot
+    done
+) &
+SAAT_NOBETCI_PID=$!
 
 # §0.25d "Kaydedilecek doğru liste" — karar yığınının çekirdek çıktıları.
 # 11.08.2026 (§0.33): setpoint_velocity + rc/in + state + diagnostics
@@ -119,9 +180,35 @@ if [ "$LIDAR_ISTENDI" = "1" ]; then
     echo "  ayni oturumda gorundu (KAR-09). Uzun kosuda kullanma."
 fi
 
+# --- Dayanıklılık ayarları (§0.53) ---------------------------------------
+# MCAP yazıcı ayarı betiğin yanında durur (kurulumda kopyalanır).
+MCAP_AYAR="${GIRDAP_MCAP_AYAR:-$(dirname "$(readlink -f "$0")")/rosbag_mcap_dayanikli.yaml}"
+if [ ! -f "$MCAP_AYAR" ]; then
+    echo "🔴 MCAP ayar dosyası YOK: $MCAP_AYAR" >&2
+    echo "   Dayanıklı kayıt bu dosyaya bağlı — kayıt BAŞLATILMIYOR." >&2
+    exit 1
+fi
+
+# Bant her BOLME_SN saniyede bir kapatılıp yenisi açılır. Kapanan dosya tam
+# footer + index ile mühürlenir; ani kesinti yalnız açık olan dosyayı riske
+# atar. 60 sn = en kötü hâlde 1 dakikalık dilim şüpheli, öncesi kesin sağlam.
+BOLME_SN="${GIRDAP_BANT_BOLME_SN:-60}"
+
+# `write()` verinin diske indiği anlamına gelmez, yalnız çekirdeğin sayfa
+# önbelleğine girdiği anlamına gelir; fişi çeken kesinti onu da götürür.
+# `99-girdap-bant-dayaniklilik.conf` bu pencereyi 30 sn'den 3 sn'ye indiriyor;
+# buradaki düzenli `sync` ise kalan payı da kapatır (uçuş kontrolcüsünün
+# SD karta doğrudan yazmasının karşılığı).
+SYNC_SN="${GIRDAP_BANT_SYNC_SN:-5}"
+
 echo "== GİRDAP rosbag kaydı =="
 echo "çıktı   : $CIKTI"
-echo "format  : mcap + zstd (dosya düzeyinde sıkıştırma)"
+echo "format  : mcap, SIKIŞTIRMASIZ + parçalama KAPALI (doğrudan yazım)"
+echo "davranış: Pixhawk dataflash kaydı gibi — mesaj geldiği anda dosyaya"
+echo "          eklenir; fiş çekilirse yalnız dosyanın SONU kesilir."
+echo "bölme   : her $BOLME_SN sn (kapanan dosya mühürlenir)"
+echo "disk    : her $SYNC_SN sn 'sync' (sayfa önbelleği diske indirilir)"
+echo "mcap    : $MCAP_AYAR"
 echo "topic'ler:"
 printf '  %s\n' "${TOPICLER[@]}"
 echo
@@ -140,17 +227,39 @@ TEGRA_LOG="$CIKTI_KOK/session_${DAMGA}_tegrastats.txt"
 if command -v tegrastats >/dev/null 2>&1; then
     tegrastats --interval 1000 --logfile "$TEGRA_LOG" &
     TEGRA_PID=$!
-    # Ctrl+C rosbag'e gider; tegrastats'ı biz toplamalıyız.
-    trap 'kill "$TEGRA_PID" 2>/dev/null || true' EXIT INT TERM
     echo "tegrastats: $TEGRA_LOG (1 s aralik, KAR-09 korelasyonu)"
 else
+    TEGRA_PID=""
     echo "⚠ tegrastats yok — donma sebebi (termal mi G/C mi) ayirt edilemez"
 fi
+
+# 🔴 §0.45c DÜZELTİLDİ: eskiden burada `exec ros2 bag record …` vardı.
+# `exec` kabuğu rosbag süreciyle DEĞİŞTİRDİĞİ için yukarıdaki `trap` yok
+# oluyordu → tegrastats (ve şimdi saat nöbetçisi) öksüz kalıyor, bant servisi
+# her durdurmada 5 dakika asılıp `failed` bitiyordu; reboot da 5 dakika
+# uzuyordu. Artık `exec` YOK: rosbag arka planda başlatılıp beklenir, sinyal
+# geldiğinde ÜÇ çocuk da düzgün toplanır.
+# Düzenli disk indirme — kayıt sürerken veriyi sayfa önbelleğinde bırakmaz.
+( while :; do sleep "$SYNC_SN"; sync; done ) &
+SYNC_PID=$!
+
+temizle() {
+    [ -n "${ROSBAG_PID:-}" ] && kill -INT "$ROSBAG_PID" 2>/dev/null || true
+    [ -n "${ROSBAG_PID:-}" ] && wait "$ROSBAG_PID" 2>/dev/null || true
+    [ -n "${TEGRA_PID:-}" ] && kill "$TEGRA_PID" 2>/dev/null || true
+    [ -n "${SAAT_NOBETCI_PID:-}" ] && kill "$SAAT_NOBETCI_PID" 2>/dev/null || true
+    [ -n "${SYNC_PID:-}" ] && kill "$SYNC_PID" 2>/dev/null || true
+    sync            # son kalanları da indir
+}
+trap temizle EXIT INT TERM
 echo
 
-exec ros2 bag record \
+ros2 bag record \
     -o "$CIKTI" \
     -s mcap \
-    --compression-mode file \
-    --compression-format zstd \
-    "${TOPICLER[@]}"
+    --storage-config-file "$MCAP_AYAR" \
+    --compression-mode none \
+    --max-bag-duration "$BOLME_SN" \
+    "${TOPICLER[@]}" &
+ROSBAG_PID=$!
+wait "$ROSBAG_PID"

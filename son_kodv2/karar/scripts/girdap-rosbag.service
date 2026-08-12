@@ -79,7 +79,15 @@ KillSignal=SIGINT
 #
 # Bedeli olculdu: indeks olmadan her okuma TAM DOSYA TARAMASI gerektiriyor —
 # kaptanin analizinde tek bir 13,6 GB'lik oturum ~20 dakika surdu.
-TimeoutStopSec=300
+#
+# ✅ 12.08.2026 (§0.53) — PAR-10'UN KÖK NEDENİ ORTADAN KALKTI. Sıkıştırma
+# artık kapanışta değil, PARÇA (chunk) düzeyinde kayıt sırasında yapılıyor
+# (`rosbag_mcap_dayanikli.yaml`) ve bant 60 saniyede bir bölünüyor. Yani
+# kapanışta yapılacak ağır iş kalmadı; 13,6 GB'lik oturumu 90 saniyeye
+# sığdırma sorunu diye bir şey yok. 300 s → 60 s indirildi: artık uzun süre
+# beklemenin faydası yok, zararı var (§0.45c'de ölçülen 5 dakikalık reboot
+# gecikmesi). Bir şey asılırsa systemd 60 saniyede toplasın.
+TimeoutStopSec=60
 Restart=on-failure
 RestartSec=10
 # StartLimit BİLEREK YOK (girdap-algi.service ile aynı gerekçe): geçici bir
