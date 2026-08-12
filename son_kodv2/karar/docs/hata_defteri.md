@@ -1112,3 +1112,49 @@ EKF failsafe eylemi **kapalı** — kestirim bozulduğunda araç hiçbir şey
 yapmıyor, motorlar komut almaya devam ediyor. Bugün görülen salınım
 (`EKF variance` ↔ `EKF failsafe cleared`, 4 kez) suda yaşansaydı tekne bozuk
 kestirimle sürmeye devam ederdi. Yarışma öncesi `1` (Hold) değerlendirilmeli.
+
+---
+
+## 2026-08-12 — SD kart / loglama: GEÇİCİ çözüm (parametre) + kalıcı çözüm (kart sipariş edildi)
+
+### Durum
+
+`PreArm: Logging failed` silme + güç döngüsüyle geçti ama **kök neden
+çözülmedi**: kart 10,2 MB/s (Class 10 tabanı) ve yük aynı. Suda uzun koşuda
+geri gelmesi beklenir.
+
+**Kalıcı çözüm:** U3/A1 işaretli microSD **sipariş edildi** (12.08). Geldiğinde
+takılacak ve aşağıdaki geçici kısıtlar gevşetilebilir.
+
+### Geçici çözüm — yükü kıs, veriyi kaybetme
+
+| Parametre | Eski | Yeni | Ne yapar |
+|---|---|---|---|
+| `LOG_DARM_RATEMAX` | 0 (sınırsız) | **5** | Arm DEĞİLKEN log hızı 5 Hz |
+| `LOG_FILE_RATEMAX` | 0 (sınırsız) | **25** | Arm İKEN her mesaj tipi 25 Hz |
+| `LOG_FILE_BUFSIZE` | 200 | **400** | Tampon 400 KB — kartın takıldığı anı yutar |
+
+### 🔴 `LOG_DISARMED = 0` ÖNERİM GERİ ÇEKİLDİ
+
+İlk teşhiste *"yarışma öncesi `LOG_DISARMED` 0'a dönsün"* yazmıştım. **Yanlıştı
+ve gerekçeyi kullanıcı verdi:** o dönemde araç ARM OLMUYORDU, dolayısıyla
+tezgâh logu elimizdeki TEK veri kaynağıydı. Onu kapatmak, teşhis için tek
+görüşü kapatmak olurdu — üstelik tam da 14 oturumun neden başarısız olduğunu
+aradığımız sırada.
+
+`LOG_DISARMED` **1 kalıyor**; hacim sorunu `LOG_DARM_RATEMAX` ile çözülüyor.
+Kural: *bir kaynağı tamamen kapatmak yerine hızını kıs — görüş korunur,
+maliyet düşer.*
+
+### `LOG_BITMASK`'e bilinçli olarak DOKUNULMADI
+
+Hacmi düşürmenin bir yolu da bitmask'ten mesaj tipi kapatmaktı. Yapılmadı:
+bit anlamları ArduPilot sürümleri arasında değişiyor ve yanlış bir bit
+kapatmak, ihtiyaç duyduğumuz veriyi **sessizce** kaybettirir. Hız sınırı aynı
+kazancı bu riski almadan veriyor.
+
+### Doğrulama ölçütü (yazıldıktan sonra)
+
+1. `PreArm: Logging failed` geri gelmiyor.
+2. Yeni oturumun `.BIN` dosyası **553 MB'a kıyasla belirgin küçük** — teşhisin
+   sayısal kanıtı bu olacak.
