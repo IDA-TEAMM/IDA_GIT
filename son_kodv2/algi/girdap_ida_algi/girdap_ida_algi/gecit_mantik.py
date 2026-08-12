@@ -364,3 +364,98 @@ def buyuk_cisim_mi(z_stereo, w_norm, f_px_norm, cap_m: float = DUBA_CAP_M,
         return False
     return (d_pin / z_stereo) < esik
 
+
+
+# ─────────────────────── PARKUR-3 HEDEF RENGİ (FAZ 2) ─────────────────────
+#: Hedef dubası renkleri — şartname s.18: RAL 3026 (floresan kırmızı) ·
+#: RAL 6037 (saf yeşil) · RAL 9005 (siyah). OpenCV HSV (h 0-179 = derece/2).
+#:
+#: 🔑 **Renk ADAY üretir, BOYUT karar verir.** Bu eşikler tek başına hedef
+#: seçmez: buraya yalnız `buyuk_cisim_mi` süzgecinden geçmiş, yani boyutu
+#: 0,30 m'lik dubadan belirgin büyük çıkmış tespitler gelir. Sıralama böyle
+#: olduğu için eşikler **gevşek** tutulabiliyor — sıkı eşik gerçek hedefi
+#: kaçırırdı (11.08 ölçümü: S>190'da gerçek hedef %41'e düşüyor).
+#:
+#: ⚠️ Aynı tablo `girdap-ida-p3/p3_hedef/hedef_mantik.py`'de de var (o repo
+#: FAZ 2'den önce yazıldı). ÜRETİMDE KULLANILAN BURASIDIR — orası artık
+#: referans. Birini değiştiren ötekini de değiştirmeli.
+HEDEF_RENK_ESIK = {
+    "kirmizi": dict(h=((0, 7), (174, 179)), s=130, v=90),   # RAL 3026 ≈ 3,2°
+    "yesil":   dict(h=((62, 85),),          s=80,  v=50),   # RAL 6037 ≈ 143,9°
+    "siyah":   dict(h=None,                 s=70,  v=-60),  # RAL 9005, akromatik
+}
+#: Kutu pikselinin bu oranı rengi tutmalı. %25: hedefin bir kısmı gölgede/
+#: parlamada olsa da geçer, ama bbox'ın çoğu su olan bir tespit geçmez.
+HEDEF_RENK_ORANI = 0.25
+
+#: Renk → sayısal kod. **Karar tarafıyla AYNI sözleşme**
+#: (`prototype/mission/renk_kodu.py KOD_RENK`): 0 = renk çözülemedi.
+#: 🔴 Üç repoda yaşıyor (algı · karar · İHA) — biri değişirse hepsi değişmeli;
+#: ayrışırsa yanlış hedefe angajman olur ve **hiç belirti vermez** (TS3).
+HEDEF_RENK_KODU = {None: 0, "kirmizi": 1, "yesil": 2, "siyah": 3}
+
+
+def _renk_kapsama(h, s, v, esik) -> float:
+    """Piksellerin `esik`e uyan oranı. h/s/v numpy dizisi."""
+    import numpy as np
+    h = np.asarray(h); s = np.asarray(s); v = np.asarray(v)
+    if h.size == 0:
+        return 0.0
+    if esik["h"] is None:
+        # Siyah: ton anlamsız (akromatik) ⇒ parlaklık TAVANI + doygunluk
+        # TAVANI. Doygunluk şart: gölgeli SU/zemin de karanlıktır ama rengini
+        # KORUR (13.08 İHA ölçümü: gölgeli çimen S=121 ↔ RAL 9005 S=23-32).
+        m = (v < -int(esik["v"])) & (s < int(esik["s"]))
+        return float(m.mean())
+    m = np.zeros(h.shape, bool)
+    for lo, hi in esik["h"]:
+        m |= (h >= lo) & (h <= hi)
+    return float((m & (s > esik["s"]) & (v > esik["v"])).mean())
+
+
+def hedef_rengi_bgr(roi_bgr, oran: float = HEDEF_RENK_ORANI):
+    """Hedef bbox'ının BGR kırpımından renk çöz — **üretimde çağrılan budur**.
+
+    🔴 **Gürültü bastırma ZORUNLU (13.08 ölçümü).** Doygunluk S=(max−min)/max
+    olduğu için **düşük parlaklıkta kararsızdır**: RAL 9005 (gerçek S≈20) σ=8
+    gürültüde **S≈89** okunuyor ⇒ doygunluk tavanı siyahı **eliyordu**
+    (kapsama %23, eşik %25 — sınırın hemen altında, yani sessiz ve rastgele).
+    3×3 Gauss sonrası: siyah kapsama **%71-82**, gölgeli su **%3-6**, gölgeli
+    çim **%1-2** ⇒ temiz ayrım. (Aynı olgu İHA plaka tarafında da bulundu.)
+
+    ⚠️ **Bilinen sınır:** siyah, herhangi bir KOYU AKROMATİK yüzeyden ayırt
+    edilemez (ölçüldü: koyu asfalt %92 geçiyor) — fizik böyle. Bizi koruyan
+    şey üstteki **boyut kapısı**: buraya yalnız suda yüzen, 0,50-0,91 m çapında
+    bir cisim gelir. Renk tek başına asla hedef seçmez.
+    """
+    import cv2
+    import numpy as np
+    roi = np.asarray(roi_bgr)
+    if roi.size == 0 or roi.ndim != 3:
+        return None, 0.0
+    if min(roi.shape[:2]) >= 3:
+        roi = cv2.GaussianBlur(roi, (3, 3), 0)
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    return hedef_rengi(hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2], oran)
+
+
+def hedef_rengi(h, s, v, oran: float = HEDEF_RENK_ORANI):
+    """Hedef dubasının rengi: ("kirmizi"|"yesil"|"siyah"|None, kapsama).
+
+    `None` = **renk çözülemedi**; hata değildir (gölge, parlama, kırpık bbox).
+    Çağıran yine de yayınlar — konum bilgisi tek başına değerlidir; rengi
+    bilinmeyen hedef `HEDEF_RENK_KODU[None] = 0` ile gider.
+
+    Birden fazla renk eşiği tutarsa **en yüksek kapsama** kazanır; siyah en
+    son bakılır çünkü gölgeli kırmızı/yeşil de karanlıktır — renkli bir
+    eşleşme varsa o önceliklidir (yanlış hedefe angajman TS3'ü artırır:
+    şartname s.25, 1 yanlış temas 100→50, 2 yanlış 100→**5**).
+    """
+    skor = {ad: _renk_kapsama(h, s, v, e) for ad, e in HEDEF_RENK_ESIK.items()}
+    renkli = {a: k for a, k in skor.items() if a != "siyah" and k > oran}
+    if renkli:
+        en = max(renkli, key=renkli.get)
+        return en, renkli[en]
+    if skor["siyah"] > oran:
+        return "siyah", skor["siyah"]
+    return None, 0.0

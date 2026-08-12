@@ -111,7 +111,9 @@ elif MOD == "algi_yayin":
     from geometry_msgs.msg import Pose, PoseArray
     from nav_msgs.msg import Odometry
     from std_msgs.msg import Bool, Int32, String
-    from vision_msgs.msg import (            # sudo apt install ros-humble-vision-msgs
+    from vision_msgs.msg import (
+        Detection3D,
+        Detection3DArray,            # sudo apt install ros-humble-vision-msgs
         Detection2D, Detection2DArray, ObjectHypothesisWithPose)
 
 # ================== AYARLAR ==================
@@ -346,6 +348,16 @@ GOREVDE_DUR = False    # True: şart sağlanınca yeni hedef/hız üretme
 KAYIT_AKTIF = True
 KAYIT_HZ = 2.0            # şart ≥1 Hz; 2 Hz pay bırakır (VPU'ya ek yük yok,
                           # passthrough zaten üretilen kare — sadece USB kopyası)
+# ── PARKUR-3 hedef yayını (FAZ 2, 2026-08-13) ────────────────────────────
+#: `/perception/targets` yayın hızı. Kare zaten Dosya-1 için 2 Hz'te
+#: çekiliyor; hedef adımı ondan hızlı koşamaz, ek kare ÇEKMİYORUZ.
+HEDEF_HZ = 2.0
+TARGETS_TOPIC = "/perception/targets"
+#: 🔴 Bu topic P1/P2'nin kullandığı `/perception/buoys`'tan **AYRI**. Hedef
+#: tespitleri oraya ASLA karışmaz: karışırsa füzyon `EdgeBuoyMemory`'ye kalıcı
+#: kenar kaydı açar → iki hedef arasında hayalet kapı → P2 rotası bozulur
+#: (11.08 gerekçesi, `buyuk_cisim_mi` docstring'i).
+
 KAYIT_SEGMENT_SN = 120.0  # çökme dayanımı: 2 dk'lık mp4 segmentleri (yarıda
                           # kesilirse en fazla son segment zarar görür)
 KAYIT_DIZIN = os.path.expanduser("~/girdap_logs/kamera")
@@ -587,6 +599,9 @@ class DubaNavigator(Node):
             self.buoys_pub = self.create_publisher(Detection2DArray, BUOYS_TOPIC, 10)
             self.gate_pub = self.create_publisher(Bool, GATE_TOPIC, 10)
             self.buoys3d_pub = self.create_publisher(PoseArray, BUOYS3D_TOPIC, 10)
+            # FAZ 2 — Parkur-3 hedefleri. /perception/buoys'tan AYRI topic.
+            self.targets_pub = self.create_publisher(
+                Detection3DArray, TARGETS_TOPIC, 10)
             # Dürüst sinyal: geçilen FARKLI geçit sayısı (parkur bitişi İDDİA ETMEZ)
             self.gate_count_pub = self.create_publisher(Int32, GATE_COUNT_TOPIC, 10)
             # M2: geçide yönlendirecek hedef — karar tarafı waypoint'ler arasında
@@ -659,6 +674,18 @@ class DubaNavigator(Node):
                 "SIRA TERSSE TURUNCU/SARI YER DEĞİŞİR — sahaya çıkmadan doğrula!")
 
         self.dubalar = []
+        # FAZ 2 — P3 hedef adayları: `tespit_yayinla` içinde büyük cisim
+        # süzgecine takılan tespitler. Her karede sıfırlanır (bayat hedef
+        # yayınlamamak için).
+        self._hedef_adaylari = []
+        # Kare TEK YERDEN tazelenir (`_kare_tazele`); kayıt ve hedef adımı
+        # ikisi de bunu okur. Numarayla takip: aynı kare iki kez işlenmesin,
+        # ve biri diğerinin karesini "tüketmiş" olmasın.
+        self._son_kare = None
+        self._kare_no = 0
+        self._kayit_kare_no = -1
+        self._hedef_kare_no = -1
+        self._son_hedef_t = 0.0
         self.son_tespit_t = -math.inf
         self.durum = "ARAMA"
         self.arama_baslangic = time.monotonic()
@@ -777,14 +804,16 @@ class DubaNavigator(Node):
             self.tespit_yayinla()   # taze NN karesi → sözleşme topic'leri
 
     # ---------- Dosya-1: işlenmiş kamera kaydı (şartname 4.2, s.14) ----------
-    def kayit_adimi(self):
-        """bbox+sınıf overlay'li, zaman etiketli mp4 karesi yaz (~KAYIT_HZ).
+    def _kare_tazele(self):
+        """RGB kuyruğunu **TEK YERDEN** boşalt, en taze kareyi sakla.
 
-        Şartname: ≥1 Hz, her frame zaman etiketli, tespit çerçeveleri + sınıf
-        görünür. Kayıt hatası görevi ASLA durdurmaz — devre dışı kalır, loglanır.
+        🔴 Neden tek yer: `tryGet()` kareyi kuyruktan ALIR. İki ayrı boşaltıcı
+        olsaydı hangisi önce koşarsa kareyi o kapardı, diğeri `None` görürdü —
+        Dosya-1'de boşluk (md 4.2, ≥1 Hz) ya da hedefin hiç görülmemesi.
+        Saklanan kare **ÇİZİLMEMİŞ** ham karedir; kayıt kendi kopyasına çizer.
         """
         frame = None
-        while True:                      # kuyruğu boşalt, en taze kareyi al
+        while True:                      # kuyruğu boşalt, en tazesini al
             f = self.rgb_q.tryGet()
             if f is None:
                 break
@@ -792,7 +821,96 @@ class DubaNavigator(Node):
         if frame is None:
             return
         try:
-            img = frame.getCvFrame()
+            self._son_kare = frame.getCvFrame()
+            self._kare_no += 1
+        except Exception as e:           # noqa: BLE001
+            self.get_logger().warn(f"kare alınamadı: {e}",
+                                   throttle_duration_sec=5.0)
+
+    def hedef_adimi(self, simdi):
+        """Parkur-3 hedef adaylarını renklendirip `/perception/targets`'a yayınla.
+
+        🔴 **Dosya-1'den TAMAMEN BAĞIMSIZ.** İki yönlü:
+          · Buradaki bir hata kaydı **etkilemez** (kendi try'ı var; kaydın
+            `except`'i `_kayit_bozuk=True` yapıp Dosya-1'i KALICI kapatıyor —
+            md 4.2, eksik dosya **5 ceza puanı**).
+          · Kayıt bozulsa da (`_kayit_bozuk`) hedef yayını **sürer**; aksi
+            hâlde Parkur-3 Dosya-1'le birlikte sessizce ölürdü.
+
+        Boş liste de yayınlanır: tüketici *"hedef yok"* ile *"node ölmüş"*ü
+        ayırt edebilsin.
+        """
+        if simdi - self._son_hedef_t < 1.0 / HEDEF_HZ:
+            return
+        self._son_hedef_t = simdi
+        try:
+            arr = Detection3DArray()
+            arr.header.stamp = self.get_clock().now().to_msg()
+            arr.header.frame_id = BASE_FRAME       # perception = GÖVDE çerçevesi
+            kare = self._son_kare
+            kare_taze = kare is not None and self._kare_no != self._hedef_kare_no
+            if kare_taze:
+                self._hedef_kare_no = self._kare_no
+            for d in self._hedef_adaylari:
+                renk = None
+                if kare is not None:
+                    renk = self._hedef_rengi_coz(kare, d)
+                det = Detection3D()
+                det.header = arr.header
+                # base_link: x=ileri, y=sol (buoys_3d ile AYNI dönüşüm)
+                det.bbox.center.position.x = d.z + KAMERA_OFSET_ILERI
+                det.bbox.center.position.y = -d.x
+                # ÖLÇÜLEN çap (varsayım değil): pinhole tersinden
+                # D = w_norm · z / f_norm. Tüketici "bu gerçekten 0,64 m mi"
+                # diye kendi kapısını kurabilsin diye yayınlanıyor.
+                cap = float(d.w * d.z / self._f_norm) if self._f_norm else 0.0
+                det.bbox.size.x = cap
+                det.bbox.size.y = cap
+                hyp = ObjectHypothesisWithPose()
+                # Sözleşme: 0=renk çözülemedi · 1=kırmızı · 2=yeşil · 3=siyah
+                hyp.hypothesis.class_id = str(gm.HEDEF_RENK_KODU[renk])
+                hyp.hypothesis.score = d.conf
+                det.results.append(hyp)
+                arr.detections.append(det)
+            self.targets_pub.publish(arr)
+            if arr.detections:
+                self._tani["hedef_yayin"] += len(arr.detections)
+        except Exception as e:           # noqa: BLE001
+            # ⚠️ Dosya-1'in aksine BURADA kalıcı devre dışı bırakma YOK:
+            # P3 geçici bir hatadan sonra kendini toparlayabilmeli.
+            self.get_logger().warn(f"hedef yayını atlandı: {e}",
+                                   throttle_duration_sec=5.0)
+
+    def _hedef_rengi_coz(self, kare, d):
+        """Tespitin bbox'ını karede kırp, rengini çöz. Çözülemezse None."""
+        h, w = kare.shape[:2]
+        x1 = max(0, int((d.cx - d.w / 2.0) * w))
+        y1 = max(0, int((d.cy - d.h / 2.0) * h))
+        x2 = min(w, int((d.cx + d.w / 2.0) * w))
+        y2 = min(h, int((d.cy + d.h / 2.0) * h))
+        if x2 <= x1 or y2 <= y1:         # kırpık/taşkın bbox
+            return None
+        return gm.hedef_rengi_bgr(kare[y1:y2, x1:x2])[0]
+
+    def kayit_adimi(self):
+        """bbox+sınıf overlay'li, zaman etiketli mp4 karesi yaz (~KAYIT_HZ).
+
+        Şartname: ≥1 Hz, her frame zaman etiketli, tespit çerçeveleri + sınıf
+        görünür. Kayıt hatası görevi ASLA durdurmaz — devre dışı kalır, loglanır.
+        """
+        # Kareyi artık `_kare_tazele` sağlıyor (tek boşaltıcı). Aynı kareyi
+        # iki kez yazmayız — eskiden "kuyruk boşsa atla" davranışı vardı,
+        # kare numarası onu birebir koruyor.
+        if self._son_kare is None or self._kare_no == self._kayit_kare_no:
+            return
+        self._kayit_kare_no = self._kare_no
+        try:
+            # 🔴 KOPYA ŞART: aşağıda görüntünün ÜSTÜNE çiziliyor (bbox
+            # dikdörtgenleri + yeşil zaman etiketi). numpy dizisi referanstır;
+            # kopyalamazsak `_son_kare` de boyanır ve Parkur-3 renk analizi
+            # kendi çizdiğimiz turuncu/sarı çerçeveyi okur. Ölçüldü (13.08):
+            # kopya 0,05 ms (Jetson ~0,25 ms) = 500 ms bütçenin %0,05'i.
+            img = self._son_kare.copy()
             h, w = img.shape[:2]
             for d in self.dubalar:
                 # bbox NN çerçevesinde normalize; passthrough karesi de NN
@@ -912,6 +1030,9 @@ class DubaNavigator(Node):
         arr3d = PoseArray()
         arr3d.header.stamp = stamp
         arr3d.header.frame_id = BASE_FRAME
+        # 🔴 Her karede sıfırlanır: temizlenmezse eski hedefler birikir ve
+        # tekne çoktan geçmiş bir hedefe nişan almaya devam eder.
+        self._hedef_adaylari = []
 
         for d in self.dubalar:
             # 🔴 BÜYÜK CİSİM SÜZGECİ (2026-08-11) — P3 hedef dubası bizim
@@ -924,6 +1045,10 @@ class DubaNavigator(Node):
             if getattr(d, "kaynak", "stereo") != "mono" and gm.buyuk_cisim_mi(
                     d.z, d.w, self._f_norm):
                 self._tani["buyuk_cisim"] += 1
+                # FAZ 2: ATMIYORUZ ARTIK — Parkur-3 hedef adayı olarak
+                # ayrı tutuluyor. `/perception/buoys` sözleşmesi DEĞİŞMEDİ:
+                # aşağıdaki `continue` aynen duruyor, oraya hâlâ girmiyor.
+                self._hedef_adaylari.append(d)
                 self.get_logger().warn(
                     f"Tespit SÜZÜLDÜ — stereo {d.z:.1f} m ile bbox genişliği "
                     f"uyuşmuyor: cisim Ø0,30 m'den büyük (P3 hedef dubası?). "
@@ -1073,11 +1198,18 @@ class DubaNavigator(Node):
         self.tespitleri_oku()
         simdi = time.monotonic()
 
+        # Kare TEK YERDEN tazelenir; kayıt ve Parkur-3 ikisi de bunu okur.
+        self._kare_tazele()
+
         # Dosya-1: görev durumundan BAĞIMSIZ kayıt (şartname ≥1 Hz; görev
         # tamamlansa da karaya alınana dek kayıt sürer)
         if not self._kayit_bozuk and simdi - self._son_kayit_t >= 1.0 / KAYIT_HZ:
             self._son_kayit_t = simdi
             self.kayit_adimi()
+
+        # Parkur-3 hedef yayını — KAYITTAN BAĞIMSIZ (`_kayit_bozuk` olsa da
+        # sürer; buradaki hata da kaydı etkilemez).
+        self.hedef_adimi(simdi)
 
         if self.gorev_tamam and GOREVDE_DUR:
             if MOD == "dogrudan_surus":
