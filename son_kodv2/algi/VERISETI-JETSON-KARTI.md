@@ -75,7 +75,7 @@ Elle komut çalıştıramayacağımıza göre toplayıcı **açılışta kendi b
 | Disk 10 GB'a iner | Temiz durur (`exit 0`) — systemd yeniden **başlatmaz**, sonsuz döngü olmaz |
 | **Güç kes / kapat / reboot** | systemd SIGTERM → kod bunu `KeyboardInterrupt`'a çevirir → `finally` çalışır → **`dev.close()`** ile OAK temiz kapanır |
 
-### 🔴 "Otomatik geçer mi" — HAYIR, ÖLÇÜLDÜ
+### 🔴→✅ "Otomatik geçer mi" — 11.08'de HAYIR'dı, **12.08'de EVET** (ikisi de ölçüldü)
 
 Eyüp'ün sorusu: *"kapatma kodu yazılınca otomatik bizim diğer kodlar kamerayı
 kullanacak mı?"* Gerçek systemd unit'leriyle ölçüldü:
@@ -83,13 +83,16 @@ kullanacak mı?"* Gerçek systemd unit'leriyle ölçüldü:
 | soru | ölçüm | sonuç |
 |---|---|---|
 | Bir kez `enable` → her boot'ta başlar mı | `default.target.wants/` bağlantısı kuruldu | ✅ EVET |
-| Toplayıcıyı durdurunca **algı kendi başlar mı** | `algi: inactive` | 🔴 **HAYIR** |
+| Toplayıcıyı durdurunca **algı kendi başlar mı** | 11.08: `algi: inactive` → **12.08: `OnSuccess=` eklendi**, `stop`'tan ~15 sn sonra algı `active`, OAK açıldı, NN 11,0 FPS | ✅ **ARTIK EVET** — bkz. **§8** |
 | Algıyı başlatınca toplayıcı çekilir mi | `veriseti: TEMIZ BIRAKTI → algi: ACTI` | ✅ EVET (`Conflicts=`) |
-| İkisi de `enable` kalırsa boot'ta ne olur | **3/3 denemede ALGI kazandı, toplayıcı HİÇ çalışmadı** | 🔴 sessiz felaket |
+| İkisi de `enable` kalırsa boot'ta ne olur | **3/3 denemede ALGI kazandı, toplayıcı HİÇ çalışmadı** | 🔴 sessiz felaket — **DEĞİŞMEDİ** |
 
-🔑 **Kamerayı bırakma otomatik; kamerayı kim alacağı DEĞİL.** `--veriseti-servis`
-algıyı `disable` ettiği için toplayıcı durunca kamera boşta kalır, kimse almaz.
-Geçiş **komutla**: `jetson_kur.sh --servis`.
+🔑 **Artık hem bırakma hem alma otomatik** — ama yalnızca *çalışırken* yapılan
+geçişte. `Conflicts=` "başlarken karşıdakini durdur" der, `OnSuccess=` "temiz
+durunca karşıdakini başlat" der; ikisi birlikte kapalı bir devir zinciri kurar.
+🔴 **Boot yarışı bunun DIŞINDA:** açılışta ikisi de `enabled` ise hangisinin
+kazandığı hâlâ belirsiz, orada karar veren tek şey `enable`/`disable`
+(`jetson_kur.sh --veriseti-servis` ↔ `--servis`).
 
 ### 🔴 Kapanış neden ayrı bir iş — 11.08'de ÖLÇÜLDÜ
 
@@ -219,6 +222,9 @@ doğrudan `1352x1014` yazılı.
 lsusb | grep 03e7                                    # 03e7:2485 = bootloader, BOŞTA
 ps aux | grep -iE "oakd|perception_camera|depthai" | grep -v grep    # BOŞ olmalı
 systemctl is-enabled girdap-algi 2>/dev/null         # "disabled" ya da hata
+# 🔴 12.08: "disabled" tek başına koruma DEĞİL — `enable` yalnız boot'u ilgilendirir,
+#   `OnSuccess=` disabled algıyı da başlatır (ölçüldü). Toplayıcı temiz durursa algı
+#   kamerayı devralır; toplamaya devam için `start girdap-veriseti` (§8).
 
 # (b) 🔴 SAAT — bayat saat kareleri düne yazar, zaman-bloğu bölmesi bozulur
 date                                                  # GÖZLE DOĞRULA, tarih+saat doğru mu
@@ -307,3 +313,33 @@ Kareleri PC'ye aktar → etiketle → `arac/veri_512_uret.py` ile 512'ye türet 
 ```bash
 bash scripts/jetson_kur.sh --servis     # veriseti'ni disable eder, algıyı enable eder
 ```
+
+---
+
+## 8. AÇMA / KAPAMA KODU (tek OAK — hangisi açıksa öteki kapalı)
+
+```bash
+# VERİ TOPLAMAYA geç  (kamera → toplayıcı; algı Conflicts= ile kendi durur)
+sudo systemctl start girdap-veriseti
+
+# ALGIYA geç  (kamera → algı; OnSuccess= ile ~15 sn içinde KENDİ başlar)
+sudo systemctl stop girdap-veriseti
+sudo systemctl start girdap-algi         # acelen varsa: beklemeden elle başlat
+
+# KİM KAMERADA — durum
+systemctl is-active girdap-veriseti girdap-algi
+ps aux | grep -iE "oak_veriseti|duba_gecis" | grep -v grep
+
+# CANLI LOG
+journalctl -fu girdap-veriseti           # "[+] N kare"
+journalctl -fu girdap-algi               # "[algi_yayin|ARAMA] ... NN x FPS"
+
+# BOOT'ta hangisi açılsın (kalıcı seçim — yukarıdakiler yalnız o anı değiştirir)
+bash scripts/jetson_kur.sh --veriseti-servis   # boot → toplayıcı
+bash scripts/jetson_kur.sh --servis            # boot → algı (yarışma günü)
+```
+
+📌 `stop girdap-veriseti` → algı kendi kalkar (12.08'de eklenen `OnSuccess=`,
+canlı ölçüldü). Tersi de doğru: `start girdap-veriseti` algıyı durdurur
+(`Conflicts=`). 🔴 Toplayıcı **hata**yla ölürse (kamera hiç yok) algı
+devralmaz — bilerek: sebep USB'deyse algı da açamaz, journal'de `failed` kalır.

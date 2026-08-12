@@ -70,6 +70,29 @@ After=network.target
 #   yalnız SERVİS olarak açılan süreçleri bilir; elle `ros2 run` ile açılmış
 #   bir kamera düğümünü görmez.
 Conflicts=girdap-algi.service
+# 🔴 12.08.2026 — KAMERA DEVRI (kaptan istedi: "veri toplayici kapaninca algi
+#   kamerayi kendiliginden acsin").
+#   `Conflicts=` TEK YONLU BIR ISE YARAR: veriseti BASLARKEN algiyi durdurur.
+#   Ama veriseti DURUNCA algiyi geri BASLATMAZ — durdurmak "baslatma sebebi"
+#   degildir. 12.08 oncesi durum tam buydu: toplayici kapatiliyor, OAK bosta
+#   kaliyor, algi ise `enabled` oldugu halde OLU bekliyordu; kamerayi geri
+#   almanin tek yolu elle `systemctl start girdap-algi` idi. Sahada SSH yok.
+#   OnSuccess= bosluğu kapatir: bu unit TEMIZ (basarili) sekilde `inactive`
+#   olur olmaz systemd girdap-algi icin bir start job'i kuyruklar.
+#   Tetiklenen haller: elle `systemctl stop`, ve toplayicinin kendi temiz
+#   cikislari (`--min-bos-gb` disk siniri → exit 0).
+#   Tetiklenmeyen hal: FAILED durum (kamera hic yok → exit 1 → 5 deneme →
+#   StartLimitBurst). Bu BILEREK boyle: toplayici kamerayi hic acamadiysa
+#   sebep muhtemelen USB/cihaz tarafindadir, algi da acamayacaktir; oraya
+#   dusmek yerine journal'de gorunur bir `failed` birakmak dogru.
+#   ⚠ Reboot/kapanista tetiklenmez: girdap-algi'de systemd'nin ORTUK
+#   `Conflicts=shutdown.target` + `Before=shutdown.target` bagimliligi var
+#   (DefaultDependencies=yes, olculdu) → kapanis sirasindaki start job'i
+#   discard edilir. Yani "reboot ederken algi ayaga kalkar mi" endisesi YOK.
+#   DOGRULAMA (dosya degil, ETKIN deger + CANLI davranis kanittir):
+#     systemctl show girdap-veriseti -p OnSuccess   # girdap-algi.service
+#     sudo systemctl stop girdap-veriseti; sleep 15; systemctl is-active girdap-algi
+OnSuccess=girdap-algi.service
 # Kamera hiç takılı değilse script exit(1) verir; sonsuz döngü yerine 300 sn
 # penceresinde 5 denemeden sonra pes et (journal şişmesin).
 StartLimitIntervalSec=300
