@@ -43,3 +43,131 @@
 /**/setpoint_velocity:
   ros__parameters:
     mav_frame: BODY_NED
+
+# ---------------------------------------------------------------------------
+# 🔴 EKLENTİ BEYAZ LİSTESİ (§0.54, 13.08.2026) — İŞLEMCİ YÜKÜNÜ DÜŞÜRMEK İÇİN
+# ---------------------------------------------------------------------------
+# ÖLÇÜM (değişiklikten önce): mavros_node **%53,6 CPU**, **178 MB**, **61 düğüm**.
+# Orin Nano'da 6 çekirdek var ve sistem yükü 8,5-10 ölçüldü; MAVROS tek başına
+# yarım çekirdek yiyordu. `apm_pluginlists.yaml` yalnız 13 eklenti yasaklıyor,
+# geri kalan ~50'si yükleniyordu.
+#
+# Bu bilinen bir MAVROS sorunu (mavlink/mavros#1185: APM'de 8 çekirdekte ~%100;
+# #2046: örnek başına %250). Önerilen çözüm eklenti listesini kısmak.
+#
+# 🔑 BEYAZ LİSTE MANTIĞI: liste BOŞSA hepsi yüklenir (kara liste hariç); DOLUYSA
+# yalnız buradakiler yüklenir. Bu dosya `apm_pluginlists.yaml`'dan SONRA
+# yüklendiği için burası kazanır.
+#
+# ⚠️ AŞAĞIDAKİ 10 EKLENTİ TAHMİNLE SEÇİLMEDİ. Yöntem: `son_kodv2` içindeki tüm
+# `/mavros/...` kullanımları çıkarıldı (kod + bant kayıt listesi), sonra her
+# arayüzün HANGİ düğüm tarafından sağlandığı ÇALIŞAN sisteme `ros2 node info`
+# ile soruldu. Eşleme aşağıda; kaldırılanların gerekçesi §0.54'te.
+/**:
+  ros__parameters:
+    plugin_allowlist:
+      # /mavros/state · /mavros/statustext/recv · /mavros/statustext/send
+      # · /mavros/set_mode · /mavros/set_stream_rate  (hepsi /mavros/sys'te)
+      # → FSM'in tüm durum girdisi + PreArm ret sebepleri (PAR-03) buradan.
+      - sys_status
+      # TIMESYNC / /mavros/time_reference. Kod kullanmıyor ama damga
+      # tutarlılığı için bırakıldı — §0.51b'de saat karışıklığı pahalıya
+      # patladı, 1 eklentilik maliyeti göze almak ucuz sigorta.
+      - sys_time
+      # /mavros/cmd/arming → mavros_bridge arm/disarm (F-M.3 kill köprüsü).
+      - command
+      # /mavros/param/pull + /get → testler/fc_teshis.sh'in dayandığı yol;
+      # SERIAL2_BAUD teyidi de bununla yapıldı (§0.52b). Teşhis can simidi.
+      - param
+      # /mavros/global_position/global → NavSatFix, füzyon + telemetri Dosya-2.
+      - global_position
+      # /mavros/imu/data → füzyon (iSAM2) + FSM şok algılama (PARKUR3 bitişi).
+      - imu
+      # /mavros/local_position/{pose,velocity_body,odom} → füzyon, telemetri.
+      - local_position
+      # /mavros/rc/in + /rc/out → RC kill/override güvenlik yolu, banda kaydediliyor.
+      - rc_io
+      # /mavros/setpoint_velocity/cmd_vel_unstamped → MPPI'nin TEK çıkış yolu.
+      - setpoint_velocity
+      # /mavros/mission/waypoints + /reached → mission_source=fc'nin görev
+      # kaynağı; bu olmadan waypoint hiç gelmez.
+      - waypoint
+
+    # 🔴🔴 ÖLÇÜLDÜ: BEYAZ LİSTE BU MAVROS SÜRÜMÜNDE UYGULANMIYOR.
+    # Yukarıdaki liste düğüme DOĞRU ulaşıyor (`ros2 param get /mavros/mavros
+    # plugin_allowlist` onu aynen döndürüyor) ama yükleme yine de sürüyor:
+    # günlükte `Plugin setpoint_trajectory initialized`, `Plugin sim_state
+    # initialized`, `Plugin tdr_radio initialized`. Ölçüm: düğüm 61 → 61,
+    # CPU %53,6 → %53,9 (yani DEĞİŞMEDİ). Bilinen sorun: mavlink/mavros#1917.
+    #
+    # ✅ KARA LİSTE İSE ÇALIŞIYOR — kanıt: apm_pluginlists.yaml'ın yasakladığı
+    # `altitude`, `vibration`, `px4flow`, `debug_value`, `wheel_odometry`
+    # düğüm listesinde YOK. (Aynı dosyadaki `vision_speed_estimate` ise
+    # YANLIŞ AD — gerçek eklenti adı `vision_speed`, o yüzden o yüklenmeye
+    # devam ediyordu.)
+    #
+    # 👉 Bu yüzden beyaz liste BELGE olarak duruyor (ileride düzelirse çalışır),
+    # asıl işi aşağıdaki AÇIK kara liste yapıyor: kayıtlı 65 eklentiden
+    # yukarıdaki 10'u DIŞINDA kalan 55'i tek tek yasaklanmıştır.
+    # Adlar `mavros_plugins.xml` kayıtlarından birebir alındı (yazım hatası =
+    # sessizce yüklenmeye devam eder, yukarıdaki `vision_speed` tuzağı).
+    plugin_denylist:
+      # --- mavros çekirdek: bizde karşılığı olmayan komut/telemetri yolları ---
+      - actuator_control      # doğrudan aktüatör komutu — biz hız setpoint'i kullanıyoruz
+      - altitude              # irtifa telemetrisi — yüzey aracı
+      - dummy                 # test eklentisi
+      - ftp                   # FC dosya sistemi — kullanılmıyor
+      - geofence              # coğrafi çit — kullanılmıyor
+      - home_position         # home'u FC kendi set ediyor, biz okumuyoruz
+      - manual_control        # elle kumanda köprüsü — kullanılmıyor
+      - nav_controller_output # FC'nin kendi navigasyon çıktısı — biz planlıyoruz
+      - rallypoint            # toplanma noktası — kullanılmıyor
+      - setpoint_accel        # ivme setpoint'i — MPPI hız üretiyor
+      - setpoint_attitude     # yönelim setpoint'i — kullanılmıyor
+      - setpoint_position     # konum setpoint'i — kullanılmıyor
+      - setpoint_raw          # ham setpoint — kullanılmıyor
+      - setpoint_trajectory   # yörünge setpoint'i — kullanılmıyor
+      - wind_estimation       # rüzgâr kestirimi — kullanılmıyor
+      # --- mavros_extras: bizde OLMAYAN donanım / geçersiz senaryo ---
+      - adsb                  # uçak transponderi
+      - camera                # MAVLink kamera protokolü — OAK-D ROS tarafında
+      - cam_imu_sync
+      - cellular_status       # hücresel yasak (şartname md 4.1)
+      - companion_process_status
+      - debug_value
+      - distance_sensor       # mesafe sensörü yok
+      - esc_status            # ESC telemetrisi yok
+      - esc_telemetry
+      - fake_gps              # gerçek GPS var
+      - gimbal_control        # gimbal yok
+      - gps_input
+      - gps_rtk               # RTK düzeltmesi FC üzerinden, MAVROS'tan değil
+      - gps_status
+      - guided_target         # PX4'e özgü hedef çıktısı
+      - hil                   # donanım-döngüde simülasyon
+      - landing_target        # iniş hedefi — deniz aracı
+      - log_transfer          # FC log indirme (§0.50'de cevapsız kalmıştı)
+      - mag_calibration_status
+      - mocap_pose_estimate   # hareket yakalama yok
+      - mount_control
+      - obstacle_distance     # engel bilgisi FC'ye gönderilmiyor
+      - obstacle_distance_3d
+      - odometry              # görsel odometri girişi — biz local_position kullanıyoruz
+      - onboard_computer_status
+      - open_drone_id
+      - optical_flow          # optik akış sensörü yok
+      - play_tune
+      - px4flow
+      - rangefinder           # telemetre yok
+      - sim_state             # simülasyon
+      - tdr_radio
+      - terrain               # arazi verisi — yüzey aracı
+      - trajectory
+      - tunnel
+      - vfr_hud               # ⚠ eski ida_topics/telemetri_node kullanıyordu ama
+                              #   O PAKET KURULU DEĞİL; koşan telemetry_node
+                              #   girdap_decision'dan ve velocity_body kullanıyor
+      - vibration
+      - vision_pose           # görsel poz girişi — iSAM2 kendi füzyonunu yapıyor
+      - vision_speed
+      - wheel_odometry        # tekerlek yok
