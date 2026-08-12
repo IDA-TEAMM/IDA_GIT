@@ -12,10 +12,11 @@ Neden bu dosya var (2026-08-12, §0.52 + §0.56):
     drift.py`) ama **bağlantı ayarlarının hiç nöbetçisi yoktu**; yanlış baud
     tam bu boşlukta yaşadı. Bu dosya o boşluğu kapatır.
 
-Bağlanan üç kopya:
+Bağlanan dört kopya:
     config/hardware.yaml          fcu_url                (TEK GERÇEK KAYNAK)
     launch/hardware.launch.py     _HW_DEFAULTS["fcu_url"] (yaml okunamazsa)
     scripts/girdap-saat.service   --port / --baud         (ayrı süreç, aynı hat)
+    testler/fc_teshis.sh          kullanım satırı + parametre okuma yolu
 
 `hardware.yaml` okunamadığında launch kendi varsayılanına düşer; ikisi
 ayrışırsa `ros2 launch` sessizce BAŞKA bir hatta bağlanır. Saat servisi ise
@@ -41,6 +42,13 @@ _HARDWARE_YAML = _PKG_DIR / "config" / "hardware.yaml"
 _LAUNCH_PY = _PKG_DIR / "launch" / "hardware.launch.py"
 _SAAT_SERVICE = _KARAR_DIR / "scripts" / "girdap-saat.service"
 _UDEV_RULES = _KARAR_DIR / "scripts" / "99-girdap-fc.rules"
+_TESHIS_BETIGI = _KARAR_DIR.parent / "testler" / "fc_teshis.sh"
+
+# ROS 1 API'si. MAVROS 2 (Humble) bu servisi HİÇ açmaz — 13.08.2026'da canlı
+# ölçüldü: `param` eklentisi yüklüyken de yalnız `param/pull` + `param/set` var.
+_OLMAYAN_PARAM_SERVISI = "/mavros/param/get"
+# MAVROS 2'de parametre okumanın çalışan tek yolu (ölçüldü: "Integer value is: 921").
+_CALISAN_PARAM_YOLU = "ros2 param get /mavros/param"
 
 # Kalıcı aygıt adı: udev kuralının ürettiği symlink. Ham `ttyUSB*`/`ttyACM*`
 # adları takılma sırasına göre yer değiştirir (Jetson'da iki FTDI var).
@@ -170,4 +178,69 @@ def test_fcu_url_hizi_ucus_kontrolcusunun_serial2_baudu_ile_ayni() -> None:
     assert baud == 921600, (
         f"fcu_url hızı {baud} — ölçülen SERIAL2_BAUD 921600. Uçuş "
         "kontrolcüsünde de değiştiyse bu testi ölçümle birlikte güncelle."
+    )
+
+
+# ------------------------------------------------- teşhis betiği nöbetçileri
+
+
+def _teshis_betigi_calisan_satirlari() -> str:
+    """`fc_teshis.sh`'ın YORUM OLMAYAN satırları.
+
+    Yorumlar ayıklanır çünkü betiğin açıklama bloğu, artık kullanılmayan
+    servisin adını bilerek anıyor (neden bırakıldığını anlatmak için) —
+    düz metin araması o açıklamayı gerçek bir çağrı sanardı.
+    """
+    satirlar = _TESHIS_BETIGI.read_text(encoding="utf-8").splitlines()
+    return "\n".join(s for s in satirlar if not s.lstrip().startswith("#"))
+
+
+def test_teshis_betigi_olmayan_mavros_servisini_cagirmaz() -> None:
+    """Teşhis betiği MAVROS 2'de var olmayan servisi çağırmamalı.
+
+    13.08.2026'da ölçüldü: betik 45 parametrenin tamamı için
+    `ros2 service call /mavros/param/get` çağırıyordu; o servis MAVROS 2'de
+    yok, çağrı zaman aşımına uğrayıp BOŞ dönüyordu ve betik `SERIAL2_BAUD : `
+    diye basıp geçiyordu. Yani teşhis aracının kendisi sahte-yeşildi: parametre
+    okunamadığı hâlde okunmuş gibi rapor ediliyordu. §0.41'in "kalibrasyon
+    geçersiz" teşhisi tam bu betiğe dayanıyordu.
+    """
+    calisan = _teshis_betigi_calisan_satirlari()
+
+    assert _OLMAYAN_PARAM_SERVISI not in calisan, (
+        f"fc_teshis.sh {_OLMAYAN_PARAM_SERVISI} çağırıyor — MAVROS 2'de bu "
+        "servis YOK, çağrı sessizce boş döner. Doğru yol: "
+        f"{_CALISAN_PARAM_YOLU} <PARAM>"
+    )
+    assert _CALISAN_PARAM_YOLU in calisan, (
+        f"fc_teshis.sh parametreleri {_CALISAN_PARAM_YOLU} ile okumuyor — "
+        "parametre dökümü bölümü kaybolmuş olabilir"
+    )
+
+
+def test_teshis_betigi_bos_okumayi_deger_gibi_basmaz() -> None:
+    """Okunamayan parametre, değeri boş olan parametreden AYIRT EDİLMELİ.
+
+    Sahte-yeşilin asıl mekanizması buydu: boş çıktı doğrudan loglanınca
+    "SERIAL2_BAUD : " satırı, "parametre 0/tanımsız" diye okunuyordu.
+    """
+    calisan = _teshis_betigi_calisan_satirlari()
+    assert "OKUNAMADI" in calisan, (
+        "fc_teshis.sh boş parametre okumasını ayırt etmiyor — boş çıktı "
+        "değer gibi basılırsa teşhis yanlış yönlendirir"
+    )
+
+
+def test_teshis_betigi_guncel_hat_adresini_yazar() -> None:
+    """Betiğin kullanım satırı `hardware.yaml` ile AYNI hattı göstermeli.
+
+    Kullanım satırı 12.08'e kadar `serial:///dev/ttyUSB0:57600` diyordu:
+    hem ham aygıt adı (açılışa göre kayar) hem de §0.52'de çürütülen hız.
+    Betiği o satıra bakarak elle koşan biri yanlış hatta bağlanır.
+    """
+    metin = _TESHIS_BETIGI.read_text(encoding="utf-8")
+    url = _yaml_fcu_url()
+    assert url in metin, (
+        f"fc_teshis.sh kullanım satırı {url} yazmıyor — hardware.yaml ile "
+        "ayrışmış, betiği elle koşan yanlış hatta bağlanır"
     )

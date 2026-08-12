@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # FC TEŞHİS BETİĞİ — Oturum 1, adım 1.3+1.4 (SALT OKUMA, hiçbir şey değiştirmez)
 # Kullanım: mavros çalışırken (örn. ros2 launch mavros apm.launch
-#   fcu_url:=serial:///dev/ttyUSB0:57600)  →  bash testler/fc_teshis.sh
+#   fcu_url:=serial:///dev/pixhawk:921600)  →  bash testler/fc_teshis.sh
+#   ⚠ Hat hızı 12.08'de 57600'den 921600'e düzeltildi (§0.52), aygıt adı da
+#   kalıcı udev symlink'i; ham `ttyUSB0` adı açılışa göre kayıyor (§0.56m).
 # Çıktı: ~/girdap_logs/fc_teshis/teshis_<zaman>.txt  (ekrana da basar)
 # Amaç: 12.07 FC-OLAY kök neden ayrımı (a: mod kanalı dinlenmede AUTO /
 #   c: boot parametreleri / d: gaz kanalı dinlenmede yüksek).
@@ -46,9 +48,23 @@ PARAMS=(MODE_CH MODE1 MODE2 MODE3 MODE4 MODE5 MODE6 INITIAL_MODE \
   RC3_MIN RC3_TRIM RC3_MAX RC5_MIN RC5_TRIM RC5_MAX \
   RC8_MIN RC8_TRIM RC8_MAX)
 
+# ⚠ `/mavros/param/get` (mavros_msgs/srv/ParamGet) ROS 1 API'sidir — MAVROS 2
+# (Humble) o servisi HİÇ açmaz; 13.08.2026'da canlı ölçüldü: `param` eklentisi
+# yüklüyken bile yalnız `/mavros/param/pull` ve `/mavros/param/set` var.
+# Eski çağrı bu yüzden 45 parametrenin 45'inde de BOŞ dönüyordu ve betik
+# "SERIAL2_BAUD : " diye basıp geçiyordu — okuyan "parametre boş/sıfır" sanar.
+# Doğru yol, MAVROS 2'nin parametreleri düğüm parametresi olarak sunması:
+#   ros2 param get /mavros/param SERIAL2_BAUD  →  "Integer value is: 921"
 for p in "${PARAMS[@]}"; do
-  RES=$(timeout 10 ros2 service call /mavros/param/get mavros_msgs/srv/ParamGet "{param_id: '$p'}" 2>/dev/null \
-        | grep -oE 'success=\w+|integer=-?[0-9]+|real=-?[0-9.]+' | tr '\n' ' ')
+  RES=$(timeout 10 ros2 param get /mavros/param "$p" 2>/dev/null | tail -1)
+  case "$RES" in
+    "Integer value is: "*) RES="${RES#Integer value is: }" ;;
+    "Double value is: "*)  RES="${RES#Double value is: }" ;;
+    "String value is: "*)  RES="${RES#String value is: }" ;;
+    "Parameter not set."*) RES="YOK (uçuş kontrolcüsünde tanımsız)" ;;
+    # 🔑 Boş çıktıyı ASLA değer gibi basma — sessiz sahte-yeşilin kaynağı buydu.
+    "")                    RES="OKUNAMADI (mavros yanıt vermedi — bağlantı var mı?)" ;;
+  esac
   log "$p : $RES"
 done
 
