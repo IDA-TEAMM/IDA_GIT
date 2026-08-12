@@ -86,6 +86,21 @@ class FusionNode(Node):
         # KESİLİR (bayat pozla 50 Hz yayın, downstream'i donmuş pozla plan
         # yapmaya iter). 0 → devre dışı.
         self.declare_parameter("pose_timeout_s", 1.0)
+        # 🔴 ENU orijini kalıcılığı — kaptanın F-M.12 `respawn=True`
+        # değişikliğiyle etkileşim. Ayrıntılı gerekçe `_orijini_geri_yukle`
+        # docstring'inde; kısaca: respawn olan düğüm orijini ilk fix'ten
+        # yeniden alırsa dünya çerçevesi kayar ve planning'in birikimleri
+        # (kenar hafızası, kapı sayacı, warm-start) sessizce geçersizleşir.
+        # Tazelik penceresi bir yarışma koşusunu kapsar; 0 → kalıcılık kapalı
+        # (eski davranış, A/B için).
+        self.declare_parameter("enu_orijin_dosyasi", "~/girdap_logs/enu_orijin.json")
+        self.declare_parameter("enu_orijin_tazelik_s", 3600.0)
+        # ⚠ KOŞULSUZ kurulmalı: `use_isam2=false` kolunda kaynak
+        # `PosePassthrough` ve orijin diye bir şey yok, ama `_on_gps` her iki
+        # kolda da `_orijini_kaydet` çağırıyor. Bayrağı yalnız iSAM2 kolunda
+        # kurmak, video modunda AttributeError ile düğümü öldürürdü —
+        # testler bunu yakaladı.
+        self._orijin_kaydedildi = False
         # F-P.7 (robustness taraması, 2026-07-15): pose_timeout_s YALNIZ
         # poz kaynağını (IMU/EKF) kapsar — velocity_body AYRI bir topic,
         # kendi kaynağı tek başına donarsa (IMU/GPS akışı sürerken) bu
@@ -235,6 +250,7 @@ class FusionNode(Node):
             f"(σ={cfg.heading_sigma_psi} rad)"
         )
         self._source = FusionPipeline(cfg)
+        self._orijini_geri_yukle()
         self._sub_imu = self.create_subscription(
             Imu, "/mavros/imu/data", self._on_imu, sensor_qos
         )
@@ -401,6 +417,7 @@ class FusionNode(Node):
             self._son_gps = (msg.latitude, msg.longitude, simdi)
 
         self._source.on_gps(msg.latitude, msg.longitude, sigma_xy=sigma_xy)
+        self._orijini_kaydet()
         self._n_gps += 1
 
     # ----- bypass callback'i -----
@@ -415,6 +432,96 @@ class FusionNode(Node):
         self._mark_input()                       # bypass pozunu EKF sürer
 
     # ----- yayım -----
+
+    # ----- ENU orijini kalıcılığı (respawn dayanıklılığı) -----
+
+    def _orijin_dosyasi(self) -> "Path":
+        from pathlib import Path
+        return Path(str(self.get_parameter("enu_orijin_dosyasi").value)).expanduser()
+
+    def _orijini_geri_yukle(self) -> None:
+        """🔴 Respawn'dan sonra ENU çerçevesini KORU (12.08).
+
+        Kaptan F-M.12 ile `fusion_node`'u `respawn=True` yaptı — sessiz ölümü
+        kapatan doğru bir karar. Ama orijin ilk GPS fix'inden alındığı için
+        yeniden doğan süreç çerçeveyi aracın YENİ konumuna çakardı ve
+        `planning_node`'un dünya-çerçeveli birikimleri (kenar hafızası,
+        geçilmiş kapılar, RRT* referansı, MPPI warm-start) sessizce
+        geçersizleşirdi. Bu, "sessiz ölüm"ü "sessiz çerçeve kayması" ile
+        değiştirmek olurdu.
+
+        Tazelik penceresi ZORUNLU: günler önceki bir orijin geri yüklenirse
+        equirectangular yaklaşımı bozulur ve koordinatlar anlamsız büyür.
+        Pencere, bir yarışma koşusunu rahat kapsayacak şekilde seçildi.
+
+        Orijinin geri yüklenmesi aynı zamanda **respawn'ın kanıtıdır** — o
+        yüzden sessizce değil GÜRÜLTÜLÜ loglanıyor. Respawn kendi başına bir
+        "sahte yeşil" üretebilir: düğüm ayakta görünür, arıza görünmez.
+        """
+        if not hasattr(self._source, "set_origin"):
+            return              # PosePassthrough (video modu) — orijin yok
+        yol = self._orijin_dosyasi()
+        pencere = float(self.get_parameter("enu_orijin_tazelik_s").value)
+        if pencere <= 0.0:
+            return
+        try:
+            import json, time
+            veri = json.loads(yol.read_text(encoding="utf-8"))
+            yas = time.time() - float(veri["t"])
+            if yas > pencere:
+                self.get_logger().info(
+                    f"kayitli ENU orijini {yas / 60.0:.0f} dk once yazilmis "
+                    f"(pencere {pencere / 60.0:.0f} dk) — YOK SAYILDI, ilk "
+                    "fix yeni orijin olacak"
+                )
+                return
+            self._source.set_origin(float(veri["lat"]), float(veri["lon"]))
+        except FileNotFoundError:
+            return                              # ilk acilis — normal
+        except Exception as exc:                # noqa: BLE001
+            self.get_logger().warn(
+                f"ENU orijini geri yuklenemedi ({exc!r}) — ilk fix orijin olur"
+            )
+            return
+        self._orijin_kaydedildi = True
+        self.get_logger().error(
+            f"🔁 ENU orijini KAYITTAN geri yuklendi ({veri['lat']:.7f}, "
+            f"{veri['lon']:.7f}, {yas:.0f}s once) — bu, bu dugumun YENIDEN "
+            "DOGDUGU (respawn) anlamina gelir. Cerceve korundu: planning "
+            "tarafindaki kenar hafizasi/kapi sayaci gecersizlesmedi. "
+            "Dugumun neden oldugu ARASTIRILMALI (F-M.12 respawn'i olumu "
+            "gizler)."
+        )
+
+    def _orijini_kaydet(self) -> None:
+        """İlk fix orijini çaktığında diske yaz (bir kez)."""
+        if self._orijin_kaydedildi:
+            return
+        if not hasattr(self._source, "origin_latlon"):
+            return              # PosePassthrough (video modu) — orijin yok
+        merkez = self._source.origin_latlon()
+        if merkez is None:
+            return
+        try:
+            import json, time
+            yol = self._orijin_dosyasi()
+            yol.parent.mkdir(parents=True, exist_ok=True)
+            yol.write_text(
+                json.dumps({"lat": merkez[0], "lon": merkez[1], "t": time.time()}),
+                encoding="utf-8",
+            )
+        except Exception as exc:                # noqa: BLE001
+            self.get_logger().warn(
+                f"ENU orijini kaydedilemedi ({exc!r}) — respawn olursa "
+                "cerceve kayar (KAR-11 ailesi)"
+            )
+            self._orijin_kaydedildi = True      # her fix'te tekrar denemesin
+            return
+        self._orijin_kaydedildi = True
+        self.get_logger().info(
+            f"ENU orijini cakildi ve kaydedildi: ({merkez[0]:.7f}, "
+            f"{merkez[1]:.7f}) — respawn'da bu deger geri yuklenecek"
+        )
 
     def _on_publish_timer(self) -> None:
         try:

@@ -233,6 +233,44 @@ class FusionPipeline:
         self._t_since_flush = 0.0
         return True
 
+    def set_origin(self, lat: float, lon: float) -> None:
+        """ENU orijinini AÇIKÇA çak — süreç yeniden doğduğunda çerçeve kaymasın.
+
+        🔴 12.08 (kaptanın F-M.12 respawn değişikliğiyle etkileşim): orijin
+        normalde İLK GPS FIX'inden alınıyor. `fusion_node` artık `respawn=True`
+        ile açıldığı için, düğüm ölüp yeniden doğduğunda `_lat0` `None`'a döner
+        ve **bir sonraki fix yeni orijin olur** → dünya çerçevesi aracın o anki
+        konumuna yeniden çakılır.
+
+        Görev hedefleri bundan etkilenmez (mission topic'leri ENU-hizalı
+        ÖTELEME taşır, odom xy ile birlikte kayar) ama `planning_node`'da
+        DÜNYA çerçevesinde biriken her şey bozulur: `EdgeBuoyMemory`, geçilmiş
+        kapı kayıtları (md 5.5.3.1 puan sayacı), RRT* referansı, MPPI
+        warm-start. O düğüm eşzamanlı yeniden başlamaz. KAR-11'de tam bu tür
+        bir kayma kenar hafızasını şişirmişti.
+
+        ⇒ Düğüm katmanı orijini kalıcılaştırıp respawn'dan sonra buradan geri
+        yükler; böylece "sessiz ölüm" kapatılırken yerine "sessiz çerçeve
+        kayması" konmaz.
+
+        Yalnız orijin HENÜZ ÇAKILMAMIŞSA çağrılabilir: koşu ortasında orijin
+        değiştirmek, tam da engellemeye çalıştığımız sıçramayı üretir.
+        """
+        if self._lat0 is not None:
+            raise RuntimeError(
+                "ENU orijini zaten cakili — kosu ortasinda degistirmek "
+                "cerceve sicramasi uretir"
+            )
+        self._lat0 = lat
+        self._lon0 = lon
+        self._cos_lat0 = math.cos(math.radians(lat))
+
+    def origin_latlon(self) -> Optional[Tuple[float, float]]:
+        """Çakılı ENU orijini (lat, lon) — çakılmadıysa None."""
+        if self._lat0 is None or self._lon0 is None:
+            return None
+        return (self._lat0, self._lon0)
+
     def _latlon_to_enu(self, lat: float, lon: float) -> Tuple[float, float]:
         """Eşit-dikdörtgensel projeksiyon. Yarışma alanı <1 km için yeterli."""
         assert self._lat0 is not None and self._lon0 is not None

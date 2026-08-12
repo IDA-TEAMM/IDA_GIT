@@ -1008,16 +1008,44 @@ birlikte kayar, göreli geometri korunur.
 koyabilir. Ölçülmedi — kaptanın değişikliği bizden sonra geldi ve suda hiç
 koşulmadı.
 
-**Çözüm adayları (karar verilmedi):**
-1. Orijini respawn'a dayanıklı yap — ilk fix yerine sabit bir referans
-   (home position) ya da diske/parametreye yazılan bir orijin.
-2. `fusion_node` respawn'ında `planning_node`'un dünya-çerçeveli birikimlerini
-   temizlet. ⚠ Mevcut `/girdap/mission/reset` servisi bunun için YANLIŞ araç:
-   md 5.5.3.1 yeniden başlama hakkını harcar ve puanı sıfırlar. Daha dar bir
-   sinyal gerekir (`EdgeBuoyMemory.temizle()` + warm-start sıfırlama).
-3. Respawn sayacını yayınla — kaç kez respawn olduğu görünmezse bu kayma
-   sahada fark edilmez (respawn'ın kendisi de bir "sahte yeşil" üretebilir:
-   düğüm ayakta görünür, ama çerçeve değişmiştir).
+### ✅ KAPATILDI (12.08, aynı gece) — orijin kalıcılaştırıldı
+
+**Seçilen çözüm: 1. aday.** Orijin ilk fix'te diske yazılıyor
+(`~/girdap_logs/enu_orijin.json`), düğüm açılışında **tazelik penceresi
+içindeyse** geri yükleniyor. Böylece respawn olan süreç aynı çerçevede devam
+ediyor; `planning_node`'un birikimleri geçersizleşmiyor.
+
+2. aday (planning'in birikimlerini temizletmek) **elenmedi ama gerekmedi** —
+üstelik mevcut `/girdap/mission/reset` servisi onun için yanlış araç olurdu:
+md 5.5.3.1 yeniden başlama hakkını harcar ve puanı sıfırlar.
+
+3. aday (respawn görünürlüğü) **bedavaya geldi**: orijinin kayıttan geri
+yüklenmesi zaten "bu düğüm yeniden doğdu" demektir, o yüzden `ERROR`
+seviyesinde loglanıyor. Respawn kendi başına bir "sahte yeşil" üretebilir —
+düğüm ayakta görünür, ölmüş olduğu görünmez.
+
+**Tazelik penceresi (varsayılan 1 saat) ZORUNLU:** günler önceki bir orijin
+geri yüklenirse equirectangular yaklaşımı bozulur ve koordinatlar anlamsız
+büyür. `0` → kalıcılık kapalı (eski davranış, A/B için).
+
+**Ölçülen kanıt (test):** orijin korunmazsa aynı fiziksel nokta iki farklı ENU
+koordinatına düşüyor; fark = başlangıçtan respawn anına kadar kat edilen
+mesafe. `planning_node` bu iki çerçeveyi ayırt edemez.
+
+**Canlı doğrulandı:** Jetson'da `systemctl restart` sonrası log'da
+`🔁 ENU orijini KAYITTAN geri yuklendi … YENIDEN DOGDUGU (respawn) anlamina
+gelir` satırı göründü.
+
+⚠️ **Doğrulama sırasında öğrenilen:** test için elle yazılan orijin dosyası
+SİLİNMEDEN bırakılırsa, sonraki gerçek koşuda o sahte orijin geri yüklenir ve
+çerçeve gerçek konumdan kilometrelerce şaşar. Silindi ve temiz açılış
+doğrulandı. Sahada bu dosya elle oluşturulmamalı.
+
+⚠️ **`use_isam2=false` (video) kolunda kaynak `PosePassthrough`'dur ve orijin
+diye bir şey yoktur.** İlk yazımda bayrağı yalnız iSAM2 kolunda kurmuştum;
+`_on_gps` her iki kolda da çağırdığı için video modunda `AttributeError` ile
+düğümü öldürüyordu. Testler yakaladı. İki metot da artık kaynağın yeteneğine
+göre kapılı.
 
 ### Yol boyunca kapatılan gerçek boşluk
 
