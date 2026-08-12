@@ -73,3 +73,67 @@ def test_TURUNCU_ve_SARI_koda_cevrilemez() -> None:
     for yasak in ("turuncu", "sari", "sarı", "orange", "yellow"):
         with pytest.raises(HedefRengiHatasi):
             renk_to_kod(yasak)
+
+
+# ───────── 13.08 kusur avı: geçici hata sonrası YENİDEN DENEME ─────────
+from prototype.mission.renk_kodu import RenkUygulamaDurumu    # noqa: E402
+
+
+def test_GECICI_HATA_sonrasi_YENIDEN_DENENIR() -> None:
+    """🔴🔴 BULUNAN KUSURUN BEKÇİSİ.
+
+    Köprünün ilk hâli okunan kodu UYGULAMADAN ÖNCE önbelleğe yazıyordu. Hedef
+    node'un parametre servisi o anda hazır değilse (açılışta çok muhtemel),
+    uygulama atlanıyor ve bir sonraki yoklamada kod "değişmedi" görünüp erken
+    dönülüyordu ⇒ **renk bir daha HİÇ uygulanmıyordu** — belirtisiz, logsuz,
+    Parkur-3 sessizce sıfır.
+    """
+    d = RenkUygulamaDurumu()
+
+    renk, yeni = d.kod_geldi(3.0)
+    assert (renk, yeni) == ("siyah", True)
+    # ... uygulama BAŞARISIZ oldu (servis hazır değil) → uygulandi() ÇAĞRILMADI
+    assert d.bekleyen == "siyah"
+
+    # aynı kod tekrar okundu: log için "yeni değil" ama HÂLÂ uygulanmalı
+    renk2, yeni2 = d.kod_geldi(3.0)
+    assert renk2 == "siyah", "geçici hatadan sonra yeniden denenmiyor!"
+    assert yeni2 is False, "aynı kod tekrar tekrar loglanmamalı"
+    assert d.bekleyen == "siyah"
+
+
+def test_uygulandiktan_SONRA_tekrar_denenmez() -> None:
+    d = RenkUygulamaDurumu()
+    d.kod_geldi(2.0)
+    d.uygulandi("yesil")
+    assert d.bekleyen is None
+    assert d.kod_geldi(2.0) == (None, False)      # iş yok
+    assert d.uygulanan == "yesil"
+
+
+def test_kod_DEGISIRSE_yeni_renk_uygulanir() -> None:
+    """Operatör yanlış yazıp düzeltirse yeni değer geçmeli."""
+    d = RenkUygulamaDurumu()
+    d.kod_geldi(1.0)
+    d.uygulandi("kirmizi")
+    renk, yeni = d.kod_geldi(3.0)
+    assert (renk, yeni) == ("siyah", True)
+    assert d.bekleyen == "siyah"
+
+
+def test_kod_0_beklemeyi_TEMIZLER() -> None:
+    """Operatör değeri sıfırlarsa bekleyen uygulama düşer (hedef atanmamış)."""
+    d = RenkUygulamaDurumu()
+    d.kod_geldi(3.0)
+    assert d.bekleyen == "siyah"
+    renk, _ = d.kod_geldi(0.0)
+    assert renk is None and d.bekleyen is None
+
+
+def test_gecersiz_kod_beklemeyi_BOZMAZ() -> None:
+    """Geçersiz kod hata fırlatır; önceden bekleyen renk kaybolmamalı."""
+    d = RenkUygulamaDurumu()
+    d.kod_geldi(3.0)
+    with pytest.raises(HedefRengiHatasi):
+        d.kod_geldi(7.0)
+    assert d.bekleyen == "siyah", "geçersiz kod bekleyen rengi düşürdü"

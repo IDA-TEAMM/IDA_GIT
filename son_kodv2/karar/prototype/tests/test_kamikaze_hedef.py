@@ -252,3 +252,16 @@ def test_BUYUK_HARF_turkce_I_kabul_edilir() -> None:
     assert renk_to_class("YEŞİL") == CLASS_YESIL
     assert renk_to_class("KIRMIZI") == CLASS_KIRMIZI
     assert renk_to_class("  SİYAH  ") == CLASS_SIYAH
+
+
+def test_SIYAHIN_DEDEKTORU_YOK_acikca_beyan_edilmis() -> None:
+    """🔴 13.08 kusur avı: siyah seçiliyken "karede hiç görülmedi" uyarısı
+    *"HSV eşiği / ışık / renk adı kontrol edilmeli"* diyordu — YANILTICI.
+    Gerçek sebep eşik değil, `camera_buoys`'ta **siyah dedektörünün hiç
+    olmaması**. Operatör olmayan bir sorunu kovalardı.
+    """
+    from prototype.mission.kamikaze_hedef import DEDEKTORU_OLAN_SINIFLAR
+    assert CLASS_SIYAH not in DEDEKTORU_OLAN_SINIFLAR
+    assert {CLASS_KIRMIZI, CLASS_YESIL} <= DEDEKTORU_OLAN_SINIFLAR
+    # seçilebilir ama dedektörsüz olabilir — ikisi FARKLI kümeler
+    assert CLASS_SIYAH in SECILEBILIR_SINIFLAR

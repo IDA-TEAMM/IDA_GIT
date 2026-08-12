@@ -45,7 +45,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 from prototype.mission.kamikaze_hedef import HedefRengiHatasi, degistirilebilir_mi
-from prototype.mission.renk_kodu import kod_to_renk
+from prototype.mission.renk_kodu import RenkUygulamaDurumu
 
 #: Hedef node — hedef rengini ASIL tüketen yer (`use_onboard_camera` varsayılan
 #: false olduğu için `perception_camera_node` genelde koşmuyor).
@@ -80,9 +80,13 @@ class RenkKoduKoprusu(Node):
                                              "/mavros/param/get")
         self._set_cli = self.create_client(SetParameters,
                                            f"/{hedef}/set_parameters")
-        self._son_uygulanan: str | None = None
-        self._son_kod: float | None = None
+        # 🔴 Kod ancak BAŞARIYLA UYGULANDIKTAN sonra işlenmiş sayılır —
+        # geçici hata (servis hazır değil / çağrı düştü) yeniden denenir.
+        # İlk sürüm okunanı uygulamadan önce önbelleğe yazıyordu ⇒ açılışta
+        # hedef node hazır değilse renk BİR DAHA HİÇ uygulanmıyordu (sessiz).
+        self._durum = RenkUygulamaDurumu()
         self._uyarildi = False
+        self._servis_uyarildi = False
         self._gorev_durumu: str | None = None
         self._durdu = False
         # md 5.5.3.1 — hareket BAŞLADIKTAN SONRA hedef bilgisi aktarılamaz.
@@ -124,6 +128,12 @@ class RenkKoduKoprusu(Node):
                 )
             return
         self._durdu = False
+
+        # Bekleyen bir uygulama varsa YOKLAMAYI BEKLEMEDEN yeniden dene.
+        bekleyen = self._durum.bekleyen
+        if bekleyen is not None:
+            self._uygula(bekleyen)
+
         if not self._param_get.service_is_ready():
             if not self._uyarildi:
                 self.get_logger().warn(
@@ -151,32 +161,41 @@ class RenkKoduKoprusu(Node):
             )
             return
 
+        # ParamValue: FLOAT parametre `real`de, INT parametre `integer`da gelir;
+        # ikisinden dolu olanı alınır (ikisi de 0 ise kod zaten 0 = karar yok).
         ham = float(getattr(cevap.value, "real", 0.0)) or float(
             getattr(cevap.value, "integer", 0)
         )
-        if self._son_kod is not None and abs(ham - self._son_kod) < 1e-6:
-            return                                       # değişmedi, sessiz kal
-        self._son_kod = ham
-
         try:
-            renk = kod_to_renk(ham)
+            renk, yeni = self._durum.kod_geldi(ham)
         except HedefRengiHatasi as exc:
             # Sessizce "hedef yok"a düşmek operatörün hatasını GİZLERDİ.
             self.get_logger().error(f"FC'den GEÇERSİZ renk kodu: {exc}")
             return
 
         if renk is None:
-            self.get_logger().info("FC renk kodu 0 — hedef atanmamış (bekleniyor)")
+            if yeni and self._durum.uygulanan is None:
+                self.get_logger().info(
+                    "FC renk kodu 0 — hedef atanmamış (bekleniyor)")
             return
         self._uygula(renk)
 
     def _uygula(self, renk: str) -> None:
-        """Hedef node'un parametresini set et — md 5.5.3.1 kapısı ORADA."""
-        if renk == self._son_uygulanan:
+        """Hedef node'un parametresini set et — md 5.5.3.1 kapısı ORADA.
+
+        Başarısızlık durumunda `_durum.bekleyen` dolu kalır ⇒ bir sonraki
+        turda yeniden denenir (sessiz kayıp yok).
+        """
+        if renk == self._durum.uygulanan:
             return
         if not self._set_cli.service_is_ready():
-            self.get_logger().warn("hedef node'un parametre servisi hazır değil")
+            if not self._servis_uyarildi:
+                self._servis_uyarildi = True
+                self.get_logger().warn(
+                    "hedef node'un parametre servisi hazır değil — "
+                    "renk BEKLETİLİYOR, denemeye devam ediliyor")
             return
+        self._servis_uyarildi = False
         p = ParameterMsg()
         p.name = _HEDEF_PARAM
         p.value = ParameterValue(type=ParameterType.PARAMETER_STRING,
@@ -192,11 +211,10 @@ class RenkKoduKoprusu(Node):
                 return
             ok = bool(sonuclar) and sonuclar[0].successful
             if ok:
-                self._son_uygulanan = renk
+                self._durum.uygulandi(renk)
                 # WARN bilinçli: operatör koşu öncesi bunu GÖRMELİ.
                 self.get_logger().warn(
-                    f"PARKUR-3 HEDEF RENGI FC'den alindi: {renk.upper()} "
-                    f"(kod {self._son_kod:.0f})"
+                    f"PARKUR-3 HEDEF RENGI FC'den alindi: {renk.upper()}"
                 )
             else:
                 neden = sonuclar[0].reason if sonuclar else "?"

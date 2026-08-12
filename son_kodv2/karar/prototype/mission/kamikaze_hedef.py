@@ -86,6 +86,15 @@ SECILEBILIR_SINIFLAR: frozenset[int] = frozenset(
     {CLASS_KIRMIZI, CLASS_YESIL, CLASS_KAHVERENGI, CLASS_SIYAH}
 )
 
+#: Bu sınıfları `camera_buoys` GERÇEKTEN tespit eder (HSV eşiği vardır).
+#: 🔴 `CLASS_SIYAH` bilerek YOK: siyahın dedektörü hiçbir yerde yok, kimlik
+#: yalnız parametrenin kabul edilmesi için var. Bu küme olmadan operatöre
+#: *"HSV eşiği/ışık/renk adı kontrol et"* denir ve **olmayan bir sorun**
+#: kovalanır — tanı kodu da koddur, yanlış teşhis zararlıdır.
+DEDEKTORU_OLAN_SINIFLAR: frozenset[int] = frozenset(
+    {CLASS_KIRMIZI, CLASS_YESIL, CLASS_KAHVERENGI}
+)
+
 _YASAK_GEREKCE: dict[int, str] = {
     CLASS_PARKUR_KENARI: (
         "turuncu = parkur KENAR dubasi (sinif 0); gate_follower kapilari tam "

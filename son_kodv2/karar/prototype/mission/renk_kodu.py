@@ -97,3 +97,60 @@ def renk_to_kod(ad: Optional[str]) -> int:
             + ", ".join(sorted(RENK_KOD))
         )
     return RENK_KOD[anahtar]
+
+
+class RenkUygulamaDurumu:
+    """*"Hangi rengi hâlâ uygulamamız gerekiyor?"* — ROS'suz durum makinesi.
+
+    🔴 **Neden var (13.08 kusur avında bulundu):** köprünün ilk hâli okunan
+    kodu **uygulamadan ÖNCE** önbelleğe yazıyordu. Hedef node'un parametre
+    servisi o anda hazır değilse (açılışta ÇOK muhtemel — füzyon node'u henüz
+    ayağa kalkıyor olabilir) uygulama sessizce atlanıyor, bir sonraki yoklamada
+    kod *"değişmedi"* görünüp erken dönülüyordu ⇒ **renk bir daha HİÇ
+    uygulanmıyordu**. Belirti yok, log yok, Parkur-3 sessizce sıfır.
+
+    Kural: bir kod ancak **başarıyla uygulandıktan sonra** işlenmiş sayılır.
+    Geçici hatalar (servis hazır değil, çağrı düştü, ret) yeniden denenir.
+    """
+
+    def __init__(self) -> None:
+        self._son_kod: Optional[float] = None
+        self._uygulanan: Optional[str] = None
+        self._bekleyen: Optional[str] = None
+
+    def kod_geldi(self, kod) -> tuple[Optional[str], bool]:
+        """FC'den kod okundu. Döner: (uygulanacak_renk, ilk_kez_görüldü_mü).
+
+        `uygulanacak_renk is None` → yapılacak bir şey yok (kod 0 ya da zaten
+        uygulanmış). İkinci değer yalnız **loglama** içindir: aynı kod her
+        yoklamada tekrar tekrar loglanmasın, ama **denenmeye devam etsin**.
+
+        Raises:
+            HedefRengiHatasi: kod tanınmıyorsa (çağıran loglar).
+        """
+        yeni = self._son_kod is None or abs(float(kod) - self._son_kod) > 1e-6
+        self._son_kod = float(kod)
+        renk = kod_to_renk(kod)            # geçersizse yukarı fırlar
+        if renk is None:
+            self._bekleyen = None
+            return None, yeni
+        if renk == self._uygulanan:
+            self._bekleyen = None
+            return None, yeni
+        self._bekleyen = renk              # 🔑 uygulanana kadar bekler
+        return renk, yeni
+
+    def uygulandi(self, renk: str) -> None:
+        """Hedef node değeri KABUL etti — artık işlenmiş sayılır."""
+        self._uygulanan = renk
+        if self._bekleyen == renk:
+            self._bekleyen = None
+
+    @property
+    def bekleyen(self) -> Optional[str]:
+        """Okundu ama HENÜZ uygulanamadı — her turda yeniden denenmeli."""
+        return self._bekleyen
+
+    @property
+    def uygulanan(self) -> Optional[str]:
+        return self._uygulanan

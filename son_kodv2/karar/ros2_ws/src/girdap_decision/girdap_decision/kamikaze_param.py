@@ -30,6 +30,7 @@ from std_msgs.msg import String
 
 from prototype.mission.kamikaze_hedef import (
     CLASS_HEDEF,
+    DEDEKTORU_OLAN_SINIFLAR,
     HedefRengiHatasi,
     degistirilebilir_mi,
     hedef_isaretle,
@@ -148,10 +149,19 @@ class KamikazeHedefKapisi:
         if zaten == 0:
             if not self._gorulmedi_uyarildi:
                 self._gorulmedi_uyarildi = True
-                self._log.warn(
-                    f"hedef rengi {self._renk_adi!r} atandi ama karede HIC "
-                    f"gorulmedi — HSV esigi / isik / renk adi kontrol edilmeli"
-                )
+                if self._sinif not in DEDEKTORU_OLAN_SINIFLAR:
+                    # Ör. SİYAH: bu node'da dedektörü YOK. "HSV esigini
+                    # kontrol et" demek operatoru olmayan bir soruna surer.
+                    self._log.warn(
+                        f"hedef rengi {self._renk_adi!r} atandi — bu node o "
+                        f"rengi TESPIT ETMIYOR (dedektoru yok). Hedefi algi "
+                        f"ekibinin P3 node'u gorecek; burada uyari normaldir."
+                    )
+                else:
+                    self._log.warn(
+                        f"hedef rengi {self._renk_adi!r} atandi ama karede HIC "
+                        f"gorulmedi — HSV esigi / isik / renk adi kontrol edilmeli"
+                    )
         else:
             self._gorulmedi_uyarildi = False
         return n
