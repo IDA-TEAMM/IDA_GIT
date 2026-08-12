@@ -264,8 +264,38 @@ ayarı değil, fizik). Kaynağı belirsiz olan eski değerler `hull_width_m=0.78
 | **`z` — `base_link`'ten yukarı (h)** | **+0.41 m** ✅ | 🔴 B0'ı çözen sayı — gövde TABANINDAN, aşağıdaki hesap |
 | `yaw` — pruvaya göre dönüklük | `____` ° ⏳ | **Ampirik ölç** (§0.5) — iletkiyle uğraşma |
 | `pitch` / `roll` — eğik monte edildi mi? | 0 / 0 | Düz monte |
-| **Su hattından yükseklik** (yüklü tekne, sakin su) | `____` m ⏳ | İlk suya inişte; `z_min`'in doğru değerini bu belirler |
+| **Su hattından yükseklik** (yüklü tekne, sakin su) | **+0.35 m** 🟡 | 12.08 kaba ölçüm: su çekimi 6 cm → 0.41 − 0.06. Sakin suda teyit edilecek |
+| **Su çekimi** — yan gövdeler (kollar) | **6 cm** 🟡 | 12.08, gözle. `base_link` z=0 yan gövde tabanı (masaya oturan yer) |
+| **Su çekimi** — orta gövde | **1-2 cm** 🟡 | 12.08, gözle |
 | Gövdenin LiDAR görüş alanına giren kısmı var mı? | ☐ var ☐ yok | Varsa `min_range` filtresi gerekir (F5.1 ile birlikte) |
+
+> 🟡 **12.08.2026 — SU ÇEKİMİ ÖLÇÜLDÜ, `z_min` PAYI İNCE ÇIKTI.**
+> Kaba ölçüm (gözle, sakin su): yan gövdeler **6 cm**, orta gövde **1-2 cm**
+> batıyor. `base_link` z=0 tekne masadayken masaya oturan yer, yani **yan
+> gövde tabanı** (daha derine inen o) ⇒ **su hattı `base_link`'te z = +0.06 m**.
+>
+> | | base_link'te z |
+> |---|---|
+> | gövde tabanı (z=0) | 0.00 m |
+> | **su hattı** | **+0.06 m** |
+> | `perception.lidar.z_min` (mevcut) | +0.10 m → su hattının **4 cm** üstü |
+> | duba tepesi (su üstü ~30 cm) | +0.36 m |
+> | LiDAR | +0.41 m |
+>
+> ⇒ `z_min = 0.1` su hattını **kesiyor** (sakin suda hayalet engel yok) ama
+> pay yalnız **4 cm**. Şartname Deniz Durumu-2 diyor = 10-50 cm dalga; teknenin
+> kendi su hattına göre 4 cm'i aşan her dalga tepesi filtreden geçer ve
+> **engel sanılır** — üstelik hiçbir hata mesajı üretmeden.
+>
+> ⚠ Kör büyütme de çözüm değil: duba bandı su hattından +30 cm'de bitiyor.
+> `z_min` yükseldikçe kümelemeye kalan duba bandı incelir
+> (0.10 → 26 cm · 0.15 → 21 cm · 0.20 → 16 cm) ve `min_cluster_size=5`
+> uzak mesafede tutmayabilir. İki yönlü bir ödünleşme, kör ayarlanamaz.
+>
+> **Karar ilk su testine bırakıldı** (`su_testi_1_2_prosedur.md`): sakin suda
+> `z_min=0.1` ile hayalet engel sayısı, sonra dalgalı/dalgacıklı suda aynı
+> ölçüm. Sayı ölçülmeden değiştirilmeyecek — bugüne kadar bu projede kör
+> ayarlanan her eşik geri alındı.
 
 > 🔴 **ÇERÇEVE DÜZELTMESİ (2026-08-06):** yukarıdaki satırlar 05.08'e kadar
 > **eski `base_link`'e (= Pixhawk)** göre yazılıydı (x +0.07 · y −0.1375 ·
