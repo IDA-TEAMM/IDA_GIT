@@ -71,7 +71,13 @@ def _default_localizer_model() -> str:
 
 # hardware.yaml okunamazsa kullanılacak güvenli varsayılanlar (yarışma modu).
 _HW_DEFAULTS = {
-    "fcu_url": "serial:///dev/ttyACM0:57600",
+    # 🔴 2026-08-12: burası `serial:///dev/ttyACM0:57600` idi ve İKİ YÖNDEN
+    # yanlıştı — Pixhawk'ın kendi USB-C soketi arızalı (F-M.9), yani
+    # `/dev/ttyACM0` bu teknede HİÇ oluşmuyor; hat hızı da 57600 değil
+    # 921600 (uçuş kontrolcüsünün `SERIAL2_BAUD`=921 değeri okundu). Yani
+    # "güvenli varsayılan" sessizce ÖLÜ bir bağlantı üretiyordu. Bağlı
+    # ayarları `test_baglanti_config_drift.py` bağlar.
+    "fcu_url": "serial:///dev/pixhawk:921600",
     "gcs_url": "",
     "mode_name": "GUIDED",
     "heartbeat_timeout_s": 5.0,
