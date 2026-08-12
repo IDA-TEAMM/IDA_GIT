@@ -26,6 +26,7 @@ from __future__ import annotations
 from typing import Iterable, Optional, Protocol
 
 from rcl_interfaces.msg import SetParametersResult
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import String
 
 from prototype.mission.kamikaze_hedef import (
@@ -76,8 +77,14 @@ class KamikazeHedefKapisi:
         # Rengin SAHİBİ burasıdır ⇒ ilanı da buradan yapılır. `fsm_node`
         # Parkur-3 kapısını (`p3_bekleniyor`) bu topic'ten öğrenir; parametreyi
         # ikinci bir node'dan okumak iki kaynak = sessiz sürüklenme demekti.
+        # 🔴 13.08 av turu: varsayılan QoS **VOLATILE**. İlan `__init__`'te bir
+        # kez yapılıyor; `fsm_node` o an henüz abone değilse (node başlatma
+        # sırası garanti DEĞİL) mesaj KAYBOLUR ⇒ `p3_bekleniyor` sonsuza kadar
+        # False ⇒ **Parkur-3 hiç açılmaz**, hiçbir belirti vermeden.
+        # TRANSIENT_LOCAL = geç gelen abone SON değeri alır (latch).
         self._pub_renk = node.create_publisher(
-            String, "/girdap/mission/hedef_rengi", 10
+            String, "/girdap/mission/hedef_rengi",
+            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
         self._renk_ilan_et()
 

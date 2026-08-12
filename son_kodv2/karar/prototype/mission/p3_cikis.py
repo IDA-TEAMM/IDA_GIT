@@ -65,10 +65,20 @@ class P3CikisIzleyici:
         self._giris_t = None
         self._durgun_baslangic = None
 
-    def guncelle(self, t: float, hiz_mps: float) -> tuple[bool, bool]:
-        """Döner: (ilerleme_yok, sure_doldu). P3'e girilmediyse ikisi de False."""
+    def guncelle(self, t: float, hiz_mps: float,
+                 hiz_gecerli: bool = True) -> tuple[bool, bool]:
+        """Döner: (ilerleme_yok, sure_doldu). P3'e girilmediyse ikisi de False.
+
+        `hiz_gecerli=False` (odom bayat/ölü) → **"durdu" sonucu çıkarılamaz**:
+        sayaç sıfırlanır, temas iddia edilmez. Ölçemediğimiz şeyde çelişki
+        iddia etmiyoruz. Süre aşımı ise saatten geldiği için etkilenmez.
+        """
         if self._giris_t is None:
             return False, False
+
+        if not hiz_gecerli:
+            self._durgun_baslangic = None
+            return False, (t - self._giris_t) >= self._azami_sure
 
         if abs(float(hiz_mps)) < self._durma_hizi:
             if self._durgun_baslangic is None:

@@ -63,3 +63,31 @@ def test_negatif_hiz_de_hareket_sayilir() -> None:
     iz.p3ye_girildi(0.0)
     for t in range(1, 10):
         assert iz.guncelle(float(t), -0.5)[0] is False
+
+
+def test_BAYAT_ODOM_sahte_temas_uretmez() -> None:
+    """🔴 13.08 av turu: odom susarsa hız son değerinde DONAR. Tekne o sırada
+    duruyorsa "ilerleme yok" sahte tetiklenir ve görev, temas olmadığı hâlde
+    TAMAMLANDI'ya düşer. Ölçemediğimiz şeyde çelişki iddia etmiyoruz.
+    """
+    iz = P3CikisIzleyici(durma_suresi_s=2.0)
+    iz.p3ye_girildi(0.0)
+    for t in range(1, 30):
+        ilerleme_yok, _ = iz.guncelle(float(t), 0.0, hiz_gecerli=False)
+        assert ilerleme_yok is False, "bayat odomla temas iddia edildi"
+
+
+def test_bayat_odom_SURE_ASIMINI_engellemez() -> None:
+    """Süre saatten gelir — odom ölse de tekne sonsuza kadar sürüklenmemeli."""
+    iz = P3CikisIzleyici(azami_sure_s=10.0)
+    iz.p3ye_girildi(0.0)
+    assert iz.guncelle(11.0, 0.0, hiz_gecerli=False)[1] is True
+
+
+def test_odom_tazelenince_sayac_BASTAN_baslar() -> None:
+    iz = P3CikisIzleyici(durma_suresi_s=2.0)
+    iz.p3ye_girildi(0.0)
+    iz.guncelle(1.0, 0.0, hiz_gecerli=True)          # durgunluk başladı
+    iz.guncelle(2.0, 0.0, hiz_gecerli=False)         # odom öldü → sıfırla
+    assert iz.guncelle(3.0, 0.0, hiz_gecerli=True)[0] is False   # yeniden say
+    assert iz.guncelle(5.0, 0.0, hiz_gecerli=True)[0] is True
