@@ -87,6 +87,12 @@ class RenkKoduKoprusu(Node):
         self._durum = RenkUygulamaDurumu()
         self._uyarildi = False
         self._servis_uyarildi = False
+        # 🔴 13.08 2. av turu: her turda koşulsuz `call_async` yapılıyordu.
+        # Servis VAR ama cevap vermiyorsa (FC susmuş, MAVLink linki koptu)
+        # istekler birikir — hem kaynak sızıntısı hem de sonradan hepsi birden
+        # dönüp aynı değeri defalarca uygulamaya kalkar. Uçuşta tanısı zor.
+        self._okuma_ucusta = False
+        self._yazma_ucusta = False
         self._gorev_durumu: str | None = None
         self._durdu = False
         # md 5.5.3.1 — hareket BAŞLADIKTAN SONRA hedef bilgisi aktarılamaz.
@@ -134,6 +140,8 @@ class RenkKoduKoprusu(Node):
         if bekleyen is not None:
             self._uygula(bekleyen)
 
+        if self._okuma_ucusta:
+            return                      # önceki istek hâlâ cevap bekliyor
         if not self._param_get.service_is_ready():
             if not self._uyarildi:
                 self.get_logger().warn(
@@ -145,10 +153,12 @@ class RenkKoduKoprusu(Node):
         self._uyarildi = False
         istek = self._param_get.srv_type.Request()
         istek.param_id = self._fc_param
+        self._okuma_ucusta = True
         gelecek = self._param_get.call_async(istek)
         gelecek.add_done_callback(self._cevap_geldi)
 
     def _cevap_geldi(self, gelecek) -> None:            # noqa: ANN001
+        self._okuma_ucusta = False
         try:
             cevap = gelecek.result()
         except Exception as exc:                        # noqa: BLE001
@@ -188,6 +198,8 @@ class RenkKoduKoprusu(Node):
         """
         if renk == self._durum.uygulanan:
             return
+        if self._yazma_ucusta:
+            return                      # aynı anda iki set çağrısı gönderme
         if not self._set_cli.service_is_ready():
             if not self._servis_uyarildi:
                 self._servis_uyarildi = True
@@ -201,9 +213,11 @@ class RenkKoduKoprusu(Node):
         p.value = ParameterValue(type=ParameterType.PARAMETER_STRING,
                                  string_value=renk)
         istek = SetParameters.Request(parameters=[p])
+        self._yazma_ucusta = True
         gelecek = self._set_cli.call_async(istek)
 
         def _sonuc(f) -> None:                           # noqa: ANN001
+            self._yazma_ucusta = False
             try:
                 sonuclar = f.result().results
             except Exception as exc:                     # noqa: BLE001
