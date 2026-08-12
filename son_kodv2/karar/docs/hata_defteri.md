@@ -1055,3 +1055,60 @@ yalnız şablondaydı → **tercih edilen kurulum yolu onu düşürüyordu.** Ü
 betiğe de eklendi.
 🔑 Ders: aynı birim iki yerde tanımlanıyorsa, birine yapılan güvenlik eklemesi
 diğerine geçmeden "kurulmuş" sayılmaz.
+
+---
+
+## 2026-08-12 (sabah) — PAR-03 KAPANDI: araç 14 oturumdan sonra ARM OLDU
+
+`PreArm: Logging failed` engeli kalktı ve **`Throttle armed`** geldi — `force`
+kullanılmadan. Kaptanın PAR-03'ü *"41.524 `/mavros/state` mesajının hiçbirinde
+`armed=true` yok"* diyordu; bu kapandı.
+
+### 🔴 Kart teşhisim YANLIŞTI — ölçüm çürüttü
+
+*"`LOG_DISARMED=1` + `LOG_BITMASK=65535` kartı doldurmuştur, `LOG_FILE_MB_FREE
+=500` eşiği aşılıyordur"* demiştim. Ölçüm:
+
+| | |
+|---|---|
+| Dosya sistemi | FAT32 ✓ |
+| Doluluk | **%11** — 7,0 GB **boş** |
+| `LOGS` içeriği | **2 dosya** (553 MB + 119 MB) |
+| **Yazma hızı** | **10,2 MB/s** — Class 10'un alt sınırı |
+
+Kart dolu değildi. Yani eşik teorisi yanlıştı. Loglar silinip güç döngüsü
+yapılınca sorun geçti — ama **iki şey aynı anda değişti** (silme + yeniden
+başlatma), o yüzden hangisinin çözdüğü KANITLANMADI. En olası açıklama
+`logging_failed` bayrağının kilitlenip yalnız yeniden başlatmada temizlenmesi.
+
+⚠ **Yazma hızı endişesi duruyor:** 10,2 MB/s, `LOG_BITMASK=65535` +
+`LOG_DISARMED=1` yüküne dar. Bir oturumda 553 MB yazılmış. Uzun koşuda geri
+gelirse çözüm: `LOG_DISARMED=0`, bitmask'i düşür, ve/veya U3/A1 kart.
+
+FC logları silinmeden `~/Masaüstü/fc_loglari_2026-08-12/` altına alındı.
+
+### 🔑 KURAL: kapalı alanda alınan EKF/pusula okumaları KANIT DEĞİLDİR
+
+Arm sonrası HUD `FAILSAFE` + `Kotu AHRS` gösterdi, log'da `EKF variance` ve
+**`MAG0 in-flight yaw alignment complete`** (EKF pusuladan gelen yönü yanlış
+bulup GPS rotasından yeniden hizalamış) vardı. Bunlardan "pusula bozuk"
+sonucunu çıkarmaya başlamıştım — **araç hâlâ ATÖLYE İÇİNDEYDİ.**
+
+Kapalı alanda GPS gökyüzü görmez ("3D Fix" yazsa bile çözüm zayıftır) ve
+çelik/beton demiri/elektrik pusulayı zaten bozar. Yani bu okumaların hepsi
+**beklenen davranıştır, arıza kanıtı değildir.**
+
+Aynı hatanın maliyeti zaten kayıtlı: kaptan pusulayı kapalı alanda kalibre
+etti (§0.41), ofsetler atölyenin manyetik alanını taşıdı ve bugünkü tablo
+oradan çıktı. ⇒ **EKF/pusula ile ilgili hiçbir teşhis ve hiçbir kalibrasyon
+kapalı alanda yapılmaz.** Ölçüm de kalibrasyon da açık gökyüzü ister.
+
+Kayıt için, yeniden kalibrasyon öncesi ofsetler: `COMPASS_OFS_X = -37.99903`,
+`COMPASS_OFS_Y = 36.8756`.
+
+### Yarışma için açık karar: `FS_EKF_ACTION = 0`
+
+EKF failsafe eylemi **kapalı** — kestirim bozulduğunda araç hiçbir şey
+yapmıyor, motorlar komut almaya devam ediyor. Bugün görülen salınım
+(`EKF variance` ↔ `EKF failsafe cleared`, 4 kez) suda yaşansaydı tekne bozuk
+kestirimle sürmeye devam ederdi. Yarışma öncesi `1` (Hold) değerlendirilmeli.
