@@ -7,6 +7,18 @@
 > Kaynak: 2026-08-11 PC oturumu — kapanış sözleşmesi ölçümü + arşiv çözünürlüğü
 > ölçümü. Her adımın yanında **neden** var.
 
+> 🔴🔴 **12.08.2026 — BÖLÜM 2 ve BÖLÜM 8'İN "AÇILIŞ SEÇİMİ" KISMI GEÇERSİZ.**
+> Jetson'da ölçüldü: `bash scripts/jetson_kur.sh --veriseti-servis` (ve
+> `--servis`) **çalışmıyor**, ayrıca `girdap-algi`'yi `disable` etmek onu
+> açılışta **engellemiyor** — `girdap-karar.service`'in `Wants=` çekmesi
+> `disable`'ı eziyor ve toplayıcının başlatma işi `Conflicts=` ile **sessizce**
+> düşüyor (journal'e tek satır yazılmadan). Kalıcı açılış seçimi artık
+> `girdap-karar.service`'teki tek satırla yapılır.
+> 👉 **Önce oku: [`VERISETI-ACILIS-MODU.md`](VERISETI-ACILIS-MODU.md).**
+> Bölüm 8'in *o anı* değiştiren komutları (`start`/`stop girdap-veriseti`,
+> `Conflicts=`/`OnSuccess=` devri) **geçerlidir**; geçersiz olan yalnızca
+> **kalıcı açılış seçimi**.
+
 ---
 
 ## 0. Önce bil: bu oturumda neyin yanlış gitmesi telafisiz
