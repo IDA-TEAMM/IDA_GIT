@@ -119,14 +119,12 @@ class MavrosBridgeNode(Node):
         # F-S.12: -1 (negatif) = manuel override KAPALI.
         self.declare_parameter("rc_manual_channel", 4)
         self.declare_parameter("rc_manual_threshold_pwm", 1700)
-        # F-P.24 (2026-07-17): 2026-07-16 gerçek donanım testinde TELEM2/FTDI
-        # hattı, teknedeki telemetri radyosunun RF paraziti/girişimi
-        # (muhtemelen radyo antenlerinin birbirine çok yakın olmasından)
-        # ArduPilot'un dahili yönlendiricisi üzerinden bu temiz kablolu porta
-        # da bulaşınca çöktü — mavros_router diagnostics'i "Remotes count"un
-        # 174'e, sonra 323'e çıktığını gösteriyordu (sağlıklı hatta 1-3
-        # olmalı), ama bunu ELLE `ros2 topic echo /diagnostics` ile bulmak
-        # 30+ dakika sürdü. Artık bu anormallik otomatik izlenir.
+        # F-P.24: "Remotes count" nöbetçisi. Sağlıklı hatta 1-3; yüzlere
+        # çıkması hattan MAVLink olarak çözülemeyen bayt geldiği anlamına
+        # gelir (2026-07-16: 174 → 323; 2026-08-12: 17-38).
+        # 🔑 Ölçülen kök neden HAT HIZI UYUŞMAZLIĞI'dır — ayrıntı ve teyit
+        # komutu `_on_diagnostics` docstring'inde. Elle `ros2 topic echo
+        # /diagnostics` ile aramak 30+ dakika sürüyordu, artık otomatik.
         self.declare_parameter("link_remotes_warn_threshold", 5)
 
         cfg = MavrosBridgeConfig(
@@ -227,7 +225,8 @@ class MavrosBridgeNode(Node):
             RCIn, "/mavros/rc/in", self._on_rc_in, sensor_data_qos()
         )
         # F-P.24: mavros_router'ın kendi /diagnostics'i — "Remotes count"
-        # anormalliğini (RF girişimi belirtisi) erken yakalar.
+        # anormalliğini (önce hat hızı uyuşmazlığı, sonra radyo
+        # girişimi belirtisi) erken yakalar.
         self._sub_diag = self.create_subscription(
             DiagnosticArray, "/diagnostics", self._on_diagnostics, 10
         )
@@ -388,13 +387,29 @@ class MavrosBridgeNode(Node):
     def _on_diagnostics(self, msg: DiagnosticArray) -> None:
         """F-P.24: mavros_router'ın "Remotes count" anormalliğini izle.
 
-        2026-07-16 gerçek donanım testinde teknedeki telemetri radyosunun RF
-        paraziti/girişimi (muhtemelen radyo antenlerinin birbirine çok yakın
-        olması), ArduPilot'un dahili MAVLink yönlendiricisi üzerinden temiz
-        TELEM2/FTDI hattına da bulaştı — sağlıklı bir hatta 1-3 olması
-        gereken "Remotes count" 174'e, sonra 323'e çıktı. Bu, `ros2 topic
-        echo /diagnostics` ile ELLE bulundu (30+ dakika debug). Artık her
-        `mavros_router: endpoint` diagnostic'inde otomatik kontrol edilir.
+        Sağlıklı bir hatta 1-3 olması gereken sayaç yüzlere çıkıyorsa hatta
+        MAVLink çerçevesi olarak çözülemeyen bayt akıyor demektir; her sahte
+        çerçeve yeni bir "uzak adres" gibi kaydedilir.
+
+        🔑 KÖK NEDEN SIRASI (2026-08-12'de ölçüldü, sıra önemli):
+
+        1. **Hat hızı uyuşmazlığı — ilk bakılacak yer.** `fcu_url`'deki hız
+           uçuş kontrolcüsünün `SERIAL2_BAUD`'undan farklıysa hattan rastgele
+           bayt gelir ve sayaç tırmanır. 12.08'de tam bu yaşandı: hat
+           57600'deydi, uçuş kontrolcüsü **921600** konuşuyordu; hız
+           düzeltilince sayaç 17-38'den 1-3'e indi ve bağlantı kuruldu.
+           Teyit: `ros2 param get /mavros/param SERIAL2_BAUD` (921 = 921600)
+           ile `fcu_url` aynı sayıyı göstermeli.
+        2. **Telemetri radyosunun radyo frekansı girişimi** — 2026-07-16
+           testindeki ilk açıklama (sayaç 174, sonra 323). Ölçümle
+           doğrulanmadı; 12.08'de yakalanan trafikte `RADIO_STATUS` mesajı
+           YOKTU ve hattın ucunda doğrudan TELEM2 kablosu olduğu udev
+           kuralıyla teyit edildi. Artık ikinci sıradaki aday.
+
+        ⚠️ Bu uyarı hattın **çöp akıtmasını** yakalar, **kopmasını** değil.
+        Aygıt evrensel seri veri yolundan tamamen düşerse (`ftdi_sio ...
+        now disconnected`) bu geri çağrı hiç tetiklenmez; orada `connected`
+        bayrağı ve çekirdek günlüğü bakılır (12.08'de beş kez oldu).
         """
         for status in msg.status:
             if "mavros_router: endpoint" not in status.name:
@@ -414,11 +429,14 @@ class MavrosBridgeNode(Node):
                     self._link_warn_active = True
                     self.get_logger().error(
                         f"LINK ANORMALLİĞİ: {status.name} 'Remotes count'="
-                        f"{remotes} (sağlıklı: 1-3) — muhtemelen telemetri "
-                        "radyosunun RF paraziti/girişimi bu porta da "
-                        "bulaşıyor (F-P.24). Radyo antenlerini birbirinden "
-                        "uzaklaştırmayı dene, ya da bu hattı bırakıp USB-C "
-                        "gibi ayrı bir bağlantıya geç"
+                        f"{remotes} (sağlıklı: 1-3) — hattan MAVLink olarak "
+                        "çözülemeyen bayt geliyor (F-P.24). ÖNCE HAT HIZINI "
+                        "KONTROL ET: yukarıdaki bağlantı adresindeki hız, "
+                        "uçuş kontrolcüsünün SERIAL2_BAUD değeriyle aynı mı? "
+                        "(ros2 param get /mavros/param SERIAL2_BAUD — 921 = "
+                        "921600). 12.08'de sebep buydu. Hızlar tutuyorsa "
+                        "ikinci aday telemetri radyosunun girişimi: "
+                        "antenleri birbirinden uzaklaştır"
                     )
             elif self._link_warn_active:
                 self._link_warn_active = False

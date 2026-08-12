@@ -456,15 +456,18 @@ def _diag(endpoint_name: str, remotes_count: int):  # noqa: ANN201
 
 
 def test_fp24_yuksek_remotes_count_uyari_basar(ros_context) -> None:  # noqa: ANN001
-    """F-P.24 (2026-07-17): 2026-07-16 gerçek donanım testinde "Remotes
-    count" 174'e/323'e çıktığı ELLE (/diagnostics manuel echo) bulundu —
-    artık otomatik izlenip GÜRÜLTÜLÜ uyarı basılmalı."""
+    """F-P.24: "Remotes count" anormalliği otomatik yakalanmalı.
+
+    2026-07-16'da 174'e/323'e çıktığı ELLE (/diagnostics manuel echo)
+    bulunmuştu. 2026-08-12'de kök neden ölçüldü: hat hızı uyuşmazlığı
+    (hat 57600, uçuş kontrolcüsü 921600) — uyarı metni artık ÖNCE hızı
+    kontrol ettiriyor."""
     n = girdap.MavrosBridgeNode()
     try:
         errors: list[str] = []
         n.get_logger().error = lambda msg, **kw: errors.append(msg)  # type: ignore[method-assign]
 
-        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/ttyUSB0:57600", 174))
+        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/pixhawk:921600", 174))
 
         assert len(errors) == 1
         assert "Remotes count" in errors[0] and "174" in errors[0]
@@ -479,7 +482,7 @@ def test_fp24_saglikli_remotes_count_uyari_basmaz(ros_context) -> None:  # noqa:
         errors: list[str] = []
         n.get_logger().error = lambda msg, **kw: errors.append(msg)  # type: ignore[method-assign]
 
-        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/ttyUSB0:57600", 3))
+        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/pixhawk:921600", 3))
 
         assert errors == []
     finally:
@@ -494,13 +497,13 @@ def test_fp24_normale_donunce_bir_kez_bilgi_loglar_tekrar_uyarmaz(ros_context) -
         errors: list[str] = []
         n.get_logger().error = lambda msg, **kw: errors.append(msg)  # type: ignore[method-assign]
 
-        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/ttyUSB0:57600", 174))
-        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/ttyUSB0:57600", 200))
-        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/ttyUSB0:57600", 174))
+        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/pixhawk:921600", 174))
+        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/pixhawk:921600", 200))
+        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/pixhawk:921600", 174))
         assert len(errors) == 1, "aynı anormallik tekrar tekrar loglanmamalı (spam)"
 
-        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/ttyUSB0:57600", 2))
-        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/ttyUSB0:57600", 174))
+        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/pixhawk:921600", 2))
+        n._on_diagnostics(_diag("endpoint 1000: serial:///dev/pixhawk:921600", 174))
         assert len(errors) == 2, "normale dönüp tekrar bozulunca yeniden uyarmalı"
     finally:
         n.destroy_node()
