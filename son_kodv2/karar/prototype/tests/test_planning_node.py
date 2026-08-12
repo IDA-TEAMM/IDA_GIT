@@ -1061,3 +1061,126 @@ def test_KAR04_sebep_etiketleri_boru_hattiyla_AYNI_kumede(ros_context) -> None: 
     assert pn._AKTIF_DURUMLAR == _ACTIVE_STATES, (
         f"sebep etiketi kumesi ayristi: {pn._AKTIF_DURUMLAR} != {_ACTIVE_STATES}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# ARIZA KODLARI → YER KONTROL İSTASYONU (kaptan isteği, 2026-08-13)
+#
+# Ölçülen boşluk: 13.08 02:09'da LiDAR ağı düşmüştü, planning_node saniyede
+# bir "engel haritası HİÇ gelmedi → MPPI DURDURULDU" basıyordu ama
+# `/mavros/statustext/send` hattında 12 saniyede TEK mesaj yoktu — kıyıdaki
+# operatör Mission Planner'da hiçbir şey göremiyordu.
+# --------------------------------------------------------------------------- #
+
+
+def _statustext_casusu():                               # noqa: ANN202
+    """`/mavros/statustext/send`'i dinleyen ayrı düğüm + gelen mesaj listesi."""
+    from mavros_msgs.msg import StatusText
+    gelenler = []
+    casus = rclpy.create_node("ariza_statustext_casusu")
+    casus.create_subscription(
+        StatusText, "/mavros/statustext/send", gelenler.append, 10
+    )
+    return casus, gelenler
+
+
+def _abone_bekle_ve_don(node, casus, tur: int = 200):    # noqa: ANN001, ANN202
+    """İki düğümü döndür; abonelik eşleşene kadar bekle (eşleşmezse False)."""
+    from rclpy.executors import SingleThreadedExecutor
+    yurutucu = SingleThreadedExecutor()
+    yurutucu.add_node(node)
+    yurutucu.add_node(casus)
+    for _ in range(tur):
+        yurutucu.spin_once(timeout_sec=0.01)
+        if node._pub_statustext.get_subscription_count() > 0:
+            return yurutucu
+    return None
+
+
+def test_ariza_kodu_yer_istasyonuna_GIDER(ros_context) -> None:  # noqa: ANN001
+    """Engel haritası hiç gelmemişken YKİ'ye `ENGEL-YOK` kodu düşmeli.
+
+    Bu testin yakaladığı gerçek arıza: kod ROS günlüğüne yazıyordu ama
+    telsize HİÇBİR ŞEY çıkmıyordu.
+    """
+    from mavros_msgs.msg import StatusText
+    node = pn.PlanningNode()
+    casus, gelenler = _statustext_casusu()
+    try:
+        yurutucu = _abone_bekle_ve_don(node, casus)
+        assert yurutucu is not None, "STATUSTEXT abonesi eşleşmedi (test altyapısı)"
+
+        node._on_odom(_odom())          # poz VAR → tek eksik engel haritası
+        node._on_control_step()         # sebep listesi burada üretilir
+        node._ariza_gonder()
+        for _ in range(50):
+            yurutucu.spin_once(timeout_sec=0.01)
+            if gelenler:
+                break
+
+        assert gelenler, (
+            "arıza sürerken yer kontrol istasyonuna HİÇ mesaj gitmedi — "
+            "operatör teknenin neden durduğunu göremez"
+        )
+        metin = gelenler[0].text
+        assert "ENGEL-YOK" in metin, f"beklenen kod yok: {metin!r}"
+        assert metin.startswith("GIRDAP "), f"önek yok: {metin!r}"
+        assert len(metin) <= 50, f"MAVLink sınırı aşıldı ({len(metin)}): {metin!r}"
+        assert gelenler[0].severity == StatusText.ERROR
+    finally:
+        casus.destroy_node()
+        node.destroy_node()
+
+
+def test_abone_yokken_gonderilmis_SAYILMAZ(ros_context) -> None:  # noqa: ANN001
+    """MAVROS henüz hazır değilken yollanan mesaj kaybolur → tekrar denenmeli.
+
+    `fsm_node`'un aynı dersi: abonesiz yayın sessizce çöpe gider. Arıza
+    "gönderildi" diye işaretlenirse operatör o kodu BİR DAHA hiç görmez.
+    """
+    node = pn.PlanningNode()
+    try:
+        assert node._pub_statustext.get_subscription_count() == 0
+        node._on_odom(_odom())
+        node._on_control_step()
+        node._ariza_gonder()                     # abone yok → sessiz dönmeli
+        # Bildirici hiç "gönderildi" işaretlememeli:
+        assert node._ariza._son_metin is None, (
+            "abone yokken gönderilmiş sayıldı — abone belirince arıza bir daha "
+            "hiç bildirilmez"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_ariza_gecince_TEMIZ_bildirilir(ros_context) -> None:  # noqa: ANN001
+    """Operatör arızanın düzeldiğini de görmeli (yoksa ekranda asılı kalır)."""
+    from geometry_msgs.msg import PoseArray
+    node = pn.PlanningNode()
+    casus, gelenler = _statustext_casusu()
+    try:
+        yurutucu = _abone_bekle_ve_don(node, casus)
+        assert yurutucu is not None
+
+        node._on_odom(_odom())
+        node._on_control_step()
+        node._ariza_gonder()                     # ENGEL-YOK gitti
+        for _ in range(50):
+            yurutucu.spin_once(timeout_sec=0.01)
+            if gelenler:
+                break
+        assert gelenler and "ENGEL-YOK" in gelenler[0].text
+        gelenler.clear()
+
+        node._on_obstacles(PoseArray())          # engel haritası akmaya başladı
+        node._on_control_step()
+        node._ariza_gonder()
+        for _ in range(50):
+            yurutucu.spin_once(timeout_sec=0.01)
+            if gelenler:
+                break
+        assert gelenler, "arıza düştü ama YKİ'ye haber verilmedi"
+        assert "ariza yok" in gelenler[0].text, f"beklenmedik metin: {gelenler[0].text!r}"
+    finally:
+        casus.destroy_node()
+        node.destroy_node()

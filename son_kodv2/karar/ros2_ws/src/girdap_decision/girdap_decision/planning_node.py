@@ -71,6 +71,7 @@ from rclpy.node import Node
 
 from geometry_msgs.msg import Pose, PoseArray, PoseStamped, Twist
 from mavros_msgs.msg import State as MavState
+from mavros_msgs.msg import StatusText
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from std_msgs.msg import Float32MultiArray, Int32, String
 
@@ -89,6 +90,19 @@ from prototype.mission.gate_follower import (
     GateFollowerConfig,
 )
 from prototype.planning.mppi import MPPIConfig
+from prototype.telemetry.ariza_bildirici import (
+    CMDVEL_KESIK,
+    ENGEL_BOS,
+    GPU_YOK,
+    KAPI_YOK,
+    KONTROL_HATA,
+    RRT_RED,
+    SEBEP_TUREVLI_ARIZALAR,
+    SETPOINT_BOSLUK,
+    SINIF_YOK,
+    ArizaBildirici,
+    sebepten_kodla,
+)
 from prototype.planning.pipeline import PlanningPipeline, PlanningPipelineConfig
 from prototype.planning.rrt_star import Bounds, CircleObstacle
 
@@ -464,6 +478,33 @@ class PlanningNode(Node):
             PoseArray, "/girdap/planning/edge_buoys", 10
         )
 
+        # 🔴 ARIZA KODLARI → YER KONTROL İSTASYONU (kaptan isteği, 13.08.2026).
+        #
+        # Ölçüldü (13.08 02:09, canlı yığın): LiDAR ağı düşmüştü, bu düğüm
+        # saniyede bir "engel haritası HİÇ gelmedi → MPPI DURDURULDU" basıyordu
+        # — ama YALNIZ ROS günlüğüne. `/mavros/statustext/send` hattında 12
+        # saniyede TEK mesaj yoktu. Kıyıdaki operatörün elinde yalnız Mission
+        # Planner var; teknenin niye durduğunu görmesinin hiçbir yolu yoktu.
+        #
+        # `fsm_node` görev durumunu zaten bu hattan bildiriyor; buraya yalnız
+        # ALT SİSTEM arızaları giriyor. Metinler 50 karakter ve tazeleme
+        # periyoduyla sınırlı — 868 MHz telsizin hava hızı ~2,1 KB/s (§10.1;
+        # 16.07'de hat dolunca uçuş kontrolcüsü komut kabul etmemişti).
+        self._pub_statustext = self.create_publisher(
+            StatusText, "/mavros/statustext/send", 10
+        )
+        self.declare_parameter("ariza_statustext_periyot_s", 20.0)
+        self._ariza = ArizaBildirici(
+            tazeleme_s=float(
+                self.get_parameter("ariza_statustext_periyot_s").value
+            )
+        )
+        # RRT* düz çizgiye düştüğünde sayaç artar; arızayı sayacın ARTIŞINDAN
+        # türetiyoruz (mutlak değerinden değil) — yoksa bir kez düşen plan
+        # görev boyunca "RRT reddetti" diye görünürdü.
+        self._son_duz_cizgi_sayaci = 0
+        self._ariza_timer = self.create_timer(1.0, self._ariza_gonder)
+
         # --- Kontrol döngüsü ---
         rate = float(self.get_parameter("control_rate_hz").value)
         self._timer = self.create_timer(1.0 / rate, self._on_control_step)
@@ -639,6 +680,7 @@ class PlanningNode(Node):
             "YOK (tüm dubalar engel; geçiş puanı düşer). Kamera/OAK/füzyon "
             "node'unu kontrol et."
         )
+        self._ariza.bildir(SINIF_YOK)
 
     def _on_classified(self, msg: Detection3DArray) -> None:
         """Sınıflı engeller → kapı dubaları AYRIŞTIRILIR, gerisi engel kalır.
@@ -909,6 +951,7 @@ class PlanningNode(Node):
             "mi (B0/F5.1, mount_z girili mi) · `ros2 topic echo "
             "/perception/obstacle_map --once` · kümeleme logunda nokta sayısı"
         )
+        self._ariza.bildir(ENGEL_BOS)
 
     def _refine_target(self, coarse: tuple[float, float]) -> tuple[float, float]:
         """Ham görev noktasını (GN) algılanan kapının NİŞAN NOKTASIYLA değiştir.
@@ -1054,6 +1097,7 @@ class PlanningNode(Node):
             "Kapı seçiminde ayarlanabilir eşik YOK → sorun algıda: dubanın "
             "biri görünmüyor ya da renk sınıfı kaçıyor olabilir."
         )
+        self._ariza.bildir(KAPI_YOK)
 
     @_guard
     def _on_waypoints(self, msg: Path) -> None:
@@ -1240,6 +1284,8 @@ class PlanningNode(Node):
                 )
 
             self._publish_inhibit(sebepler, gate)
+            self._ariza_kilitlerden_guncelle(sebepler)
+            self._ariza.temizle(KONTROL_HATA)     # bu tur çökmeden tamamlandı
             self._publish_thrust(u)
             if gate.allow_cmd_vel:                   # yalnız GUIDED + armed
                 self._setpoint_akisini_denetle()
@@ -1253,6 +1299,7 @@ class PlanningNode(Node):
                 f"kontrol adımı hatası → motorlar DURDURULDU: {exc!r}",
                 throttle_duration_sec=2.0,
             )
+            self._ariza.bildir(KONTROL_HATA)
             self._safe_stop()
 
     # ----- yayım yardımcıları -----
@@ -1312,6 +1359,46 @@ class PlanningNode(Node):
         self._pub_inhibit.publish(String(data=metin))
         self.get_logger().info(f"kontrol kilidi degisti: {metin}")
 
+    def _ariza_kilitlerden_guncelle(self, sebepler: list[str]) -> None:
+        """Kilit sebeplerini arıza koduna çevir (tespit MANTIĞI TEK YERDE).
+
+        `sebepler` KAR-04 için zaten her turda üretiliyor; telsize çıkan kod
+        da aynı listeden türetilir, böylece ikisi hiçbir zaman ayrışamaz.
+        Listede olmayan sebep-türevli arızalar bu turda DÜŞMÜŞ demektir —
+        temizlenir ki operatör düzelen şeyi de görsün.
+        """
+        aktif = {t.kod for t in sebepten_kodla(sebepler)}
+        for tanim in SEBEP_TUREVLI_ARIZALAR:
+            self._ariza.ayarla(tanim, aktif=tanim.kod in aktif)
+
+    def _ariza_rrt_denetle(self) -> None:
+        """RRT* bu saniyede düz çizgiye düştü mü (kaptanın 'RRT reddetti')."""
+        sayac = self._pipe.duz_cizgiye_dusuldu
+        self._ariza.ayarla(RRT_RED, aktif=sayac > self._son_duz_cizgi_sayaci)
+        self._son_duz_cizgi_sayaci = sayac
+
+    def _ariza_gonder(self) -> None:
+        """Sırası gelen arıza kodunu STATUSTEXT ile yer istasyonuna yolla.
+
+        🔴 ABONESİZ YAYIN SESSİZCE ÇÖPE GİDER — `fsm_node`'un aynı dersi:
+        MAVROS'un `sys_status` eklentisi bu topic'e abone olana kadar
+        yollanan her mesaj kaybolur. Abone yokken GÖNDERİLMİŞ SAYMIYORUZ:
+        bildiriciye hiç sorulmuyor, böylece abone belirince aynı arıza
+        bir sonraki turda yeniden denenir.
+        """
+        if self._pub_statustext.get_subscription_count() == 0:
+            return
+        self._ariza_rrt_denetle()
+        gonderim = self._ariza.gonderilecek(self._now())
+        if gonderim is None:
+            return
+        metin, seviye = gonderim
+        msg = StatusText()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.severity = seviye
+        msg.text = metin
+        self._pub_statustext.publish(msg)
+
     def _publish_thrust(self, u: np.ndarray) -> None:
         msg = Float32MultiArray()
         msg.data = [float(u[0]), float(u[1])]
@@ -1343,6 +1430,7 @@ class PlanningNode(Node):
             "olabilir (KAR-11) ya da tum yigin donmus olabilir (KAR-09).",
             throttle_duration_sec=2.0,
         )
+        self._ariza.bildir(SETPOINT_BOSLUK)
 
     def _publish_cmd_vel(self, u: np.ndarray) -> None:
         # Diferansiyel thruster → ileri sürat + yaw rate.
@@ -1413,6 +1501,7 @@ class PlanningNode(Node):
                 "10 Hz bütçesi 100 ms). Jetson'da bu beklenmiyor: cupy kurulumunu "
                 "kontrol et (cupy-cuda12x + numpy sürüm uyumu)."
             )
+            self._ariza.bildir(GPU_YOK)
         else:
             self.get_logger().info(f"MPPI hesap yolu: {ad}")
 
@@ -1451,6 +1540,7 @@ class PlanningNode(Node):
             "aralıkta tekne durmuş olabilir. Sebep neredeyse kesin olarak "
             "kontrol thread'inin bloklanmasıdır (RRT* replan, §18/P1)."
         )
+        self._ariza.bildir(CMDVEL_KESIK)
 
     def _safe_stop(self) -> None:
         """Fail-safe motor durdurma: kontrol adımı çökerse sıfır thrust + sıfır
