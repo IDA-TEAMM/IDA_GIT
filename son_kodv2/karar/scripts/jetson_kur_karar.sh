@@ -101,7 +101,24 @@ User=$KULLANICI
 Environment=PYTHONPATH=$PP
 Environment=ROS_DOMAIN_ID=42
 WorkingDirectory=$EV
+# CIFT YIGIN KORUMASI (§0.42 — 12.08'de canli dogrulandi).
+# 11.08 aksami girdap-karar altinda AYNI ANDA IKI TAM YIGIN kostu; eski yigin
+# olup canlaninca bes bekci ~1195 s bayatlik olctu -> heartbeat KILL -> kopru
+# FC'yi disarm etti. Kaptanin "GUIDED'a cektim hala KILL atti" dedigi olayin
+# sebebi buydu; KILL aslinda GUIDED'dan 3 dakika ONCE atmisti.
+#
+# ⚠ DESEN BASA SABIT: `-f` tum komut satirinda arar. Sabitlemeden yazilirsa
+# "hardware.launch.py" metnini iceren HER surec eslesir — operatorun kabugu,
+# grep, hatta kurulumu yapan ssh oturumu. 12.08'de tam bunu yasadim, kendi
+# baglantimi dusurdu.
+# ⚠ SINIR: ExecStartPre User= ile kosar, baska kullanicinin (sudo ile elle
+# baslatilmis) yigininı olduremez. Ikinci katman fsm_node'un cift yayinci
+# denetimidir (KAR-01).
+ExecStartPre=-/usr/bin/pkill -9 -f "^/usr/bin/python3 [^ ]*/ros2 launch girdap_decision"
+ExecStartPre=/bin/sleep 2
 ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source $WS/install/setup.bash && exec ros2 launch girdap_decision hardware.launch.py mission_source:=fc'
+KillMode=control-group
+TimeoutStopSec=30
 Restart=on-failure
 RestartSec=10
 

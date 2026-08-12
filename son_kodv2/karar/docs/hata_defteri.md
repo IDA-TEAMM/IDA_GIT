@@ -972,3 +972,58 @@ oluşturulurken bağlar**; ethernet LiDAR'a takılınca yeni süreçler keşif
 yapamıyor. `journalctl` çalışıyor çünkü DDS kullanmıyor.
 🔑 Kural: Jetson'da ethernet değiştikten sonra `ros2` CLI ile ölçüm yapma —
 çalışan servisin log'undan oku.
+
+---
+
+## 2026-08-12 (gece) — Kaptanın F-M.12 (respawn) değişikliğiyle ETKİLEŞİM: açık madde
+
+Kaptan `21621af` ile dört düğümü (`fusion_node`, `planning_node`,
+`mavros_bridge_node`, `fsm_node`) `respawn=True` yaptı. Gerekçesi sağlam:
+§0.42d'de `fusion_node` iSAM2 tekilleşmesiyle ölmüş ve launch onu bir daha
+başlatmamıştı. Commit gövdesinde bizim `ab21c2a` (süreç-içi tekilleşme
+kurtarması) commit'ine atıf yapıp *"çakışmaz, tamamlar"* diyor — doğru:
+kurtarma istisnayı süreç İÇİNDE yakalar (graf durumu korunur), respawn ise
+kurtarmanın yetmediği hâli toplar.
+
+### 🟠 Ama bir yan etki var: respawn ENU ORİJİNİNİ KAYDIRIYOR
+
+`FusionPipeline._lat0/_lon0` **ilk GPS fix'inden** alınıyor. Düğüm respawn
+olunca bu alanlar `None`'a döner ve **bir sonraki fix yeni orijin olur** —
+yani dünya çerçevesi, aracın o anki konumuna yeniden çakılır.
+
+**Kırılmayan taraf:** görev hedefleri. `latlon_to_enu` saf bir fonksiyon;
+`current_target` o anki GPS'e göre **ofset** olarak üretilip odom xy'ye
+ekleniyor (bkz. CLAUDE.md frame kuralı). Orijin kayarsa odom xy ve hedef
+birlikte kayar, göreli geometri korunur.
+
+**Kırılan taraf:** `planning_node`'da **dünya çerçevesinde biriken** her şey,
+çünkü o düğüm eşzamanlı yeniden başlamıyor:
+
+- `EdgeBuoyMemory` — kalıcı duba haritası (KAR-11'de tam bu tür bir kayma
+  hafızayı şişirmişti: aynı duba iki farklı dünya konumunda kaydediliyor)
+- `GateFollower` geçilmiş kapı kayıtları (md 5.5.3.1 puan sayacı)
+- RRT* referans yolu ve MPPI warm-start (`U_nominal`, kayan pencere çapası)
+
+**Yani:** respawn "sessiz ölüm"ü kapatıyor ama yerine "sessiz çerçeve kayması"
+koyabilir. Ölçülmedi — kaptanın değişikliği bizden sonra geldi ve suda hiç
+koşulmadı.
+
+**Çözüm adayları (karar verilmedi):**
+1. Orijini respawn'a dayanıklı yap — ilk fix yerine sabit bir referans
+   (home position) ya da diske/parametreye yazılan bir orijin.
+2. `fusion_node` respawn'ında `planning_node`'un dünya-çerçeveli birikimlerini
+   temizlet. ⚠ Mevcut `/girdap/mission/reset` servisi bunun için YANLIŞ araç:
+   md 5.5.3.1 yeniden başlama hakkını harcar ve puanı sıfırlar. Daha dar bir
+   sinyal gerekir (`EdgeBuoyMemory.temizle()` + warm-start sıfırlama).
+3. Respawn sayacını yayınla — kaç kez respawn olduğu görünmezse bu kayma
+   sahada fark edilmez (respawn'ın kendisi de bir "sahte yeşil" üretebilir:
+   düğüm ayakta görünür, ama çerçeve değişmiştir).
+
+### Yol boyunca kapatılan gerçek boşluk
+
+Kaptanın ikinci commit'i (`9542df1`) `jetson_kur_karar.sh`'nin birimi **kendi
+ürettiğini, şablonu okumadığını** ortaya çıkardı. Bizim çift yığın koruması
+yalnız şablondaydı → **tercih edilen kurulum yolu onu düşürüyordu.** Üretici
+betiğe de eklendi.
+🔑 Ders: aynı birim iki yerde tanımlanıyorsa, birine yapılan güvenlik eklemesi
+diğerine geçmeden "kurulmuş" sayılmaz.
