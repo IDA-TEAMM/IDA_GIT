@@ -14,7 +14,7 @@
    BİZ (girdap-ida-algi)                  ARKADAŞ (girdap-decision)
 ┌──────────────────────────┐         ┌─────────────────────────────────┐
 │ OAK-D Lite               │         │ perception_fusion_node          │
-│  VPU: YOLO11n 416x416    │ buoys   │  (kamera+LiDAR bearing füzyonu) │
+│  VPU: YOLO11n 512x512    │ buoys   │  (kamera+LiDAR bearing füzyonu) │
 │  + StereoDepth   11 FPS  │────────►│         │                       │
 │                          │         │         ▼                       │
 │ duba_gecis_navigator     │ gate_   │ planning_node (RRT* + MPPI)     │
@@ -53,7 +53,7 @@ Onun `perception_camera_node` şemasıyla birebir:
 - Boş dizi de yayınlanır (taze kare + tespit yok bilgisi, füzyon senkronu için)
 
 **Ön işleme notu (letterbox DEĞİL, SIKIŞTIRMA):** deploy `setPreviewKeepAspect
-Ratio(False)` ile 4:3 kareyi (1352×1014) 416×416'ya **eziyor** → üst/alt şerit
+Ratio(False)` ile 4:3 kareyi (1352×1014) 512×512'ye **eziyor** → üst/alt şerit
 oluşmuyor → çıkarılacak pay YOK, kodda `self._lb_pay = 0.0`. Normalize bbox
 her iki eksende doğrudan ölçekleniyor. ⚠️ Eğitim de **aynı** ön işlemeyle
 (stretch) yapılmalı — Ultralytics varsayılanı letterbox'tır.

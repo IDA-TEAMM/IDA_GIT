@@ -192,7 +192,7 @@ def test_timeout_sifir_beklemeden_doner():
 
 # --------------------------------------------------- oran (deploy geometrisi)
 def test_43_cozunurlukler_uyumlu():
-    """Deploy 4:3 çalışıyor (1352x1014 → 416x416 SIKIŞTIRMA, letterbox payı 0)."""
+    """Deploy 4:3 çalışıyor (1352x1014 → 512x512 SIKIŞTIRMA, letterbox payı 0)."""
     assert ov.oran_uyumlu(1440, 1080) is True
     assert ov.oran_uyumlu(640, 480) is True
     assert ov.oran_uyumlu(1920, 1440) is True

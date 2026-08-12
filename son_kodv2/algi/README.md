@@ -6,12 +6,12 @@ duba algılama ve geçit görev mantığı. YOLOv11n, OAK-D Lite kameranın
 sayar ve seçilen moda göre çıkış üretir.
 
 **Algı gerçekleri (saha ölçümü):**
-- Model: YOLO11n @ **416×416** — düz `.blob` + yanında `config.json`, RVC2,
+- Model: YOLO11n @ **512×512** — düz `.blob` + yanında `config.json`, RVC2,
   **4 shave** (deploy boru hattında NN'e ancak bu kadarı kalıyor; 6-shave blob
   cihazda yüklenmedi). Mimari 06.08.2026'da ölçülerek seçildi: v8n 21,6 /
   v11n 19,9 FPS (fark %8) → v11n'in +2,2 mAP'i tercih edildi
 - Tespit hızı: **deploy 11 FPS** — boru hattı tavanı **12,2 ÖLÇÜLDÜ** (05.08.2026;
-  YOLO 416×416 + stereo birlikte, VPU sınırı). 11 = tavanın %10 altı
+  YOLO 512×512 + stereo birlikte, VPU sınırı). 8 = tavanın %19 altı
 - API: **DepthAI v2 (2.30.0.0)** — 05.08.2026'da v3'ten taşındı, çünkü v3
   firmware'i bu cihazda mono/stereo'yu açamıyor (stereo %0; v2'de 29,7 FPS).
   ⚠️ v3'e dönmek hem algı node'unu hem veri seti toplayıcısını kırar
@@ -25,7 +25,7 @@ Karar/sürüş tarafı takım arkadaşının
 perception sözleşmesini besler.
 
 ```
-OAK-D Lite (VPU: YOLO11n 416x416 + StereoDepth, 11 FPS — tavan 12,2)
+OAK-D Lite (VPU: YOLO11n 512x512 + StereoDepth, 8 FPS — tavan 9,83)
         │  tespitler (sınıf + bbox + X/Y/Z)
         ▼
 duba_gecis_navigator ─► MOD="algi_yayin" (PLAN A, varsayılan):

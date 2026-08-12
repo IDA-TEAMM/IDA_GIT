@@ -22,7 +22,8 @@ import sys
 
 # docs/hubai_model_rehberi.md §0 — ölçülmüş/doğrulanmış kısıtlar. Ayar değil.
 BEKLENEN_SHAVE = 4          # deploy boru hattında NN'e kalan bütçe (05.08 ölçümü)
-BEKLENEN_GIRIS = 416        # duba_gecis_navigator.NN_GIRIS ile BİRLİKTE değişir
+BEKLENEN_GIRIS = 512        # duba_gecis_navigator.NN_GIRIS ile BİRLİKTE değişir
+                            # (2026-08-12: 416 → 512; menzil gerekçesi orada yazılı)
 BEKLENEN_SINIF_SAYISI = 2   # kenar_dubasi + engel_dubasi
 
 
@@ -157,7 +158,8 @@ def main() -> int:
         for h in hatalar:
             print(f"  · {h}")
         return 1
-    print("✅ TESLİME UYGUN — 4 shave · 416×416 · sınıflar isimden çözülüyor.")
+    print(f"✅ TESLİME UYGUN — {BEKLENEN_SHAVE} shave · "
+          f"{BEKLENEN_GIRIS}×{BEKLENEN_GIRIS} · sınıflar isimden çözülüyor.")
     print("   Sıra: blob + config.json → /home/girdap/models/ (USB ile), "
           "sonra scripts/duba_kamera_test.py ile masa teyidi.")
     return 0

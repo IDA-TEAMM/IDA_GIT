@@ -115,7 +115,7 @@ elif MOD == "algi_yayin":
         Detection2D, Detection2DArray, ObjectHypothesisWithPose)
 
 # ================== AYARLAR ==================
-# ---- Model: YOLOv11n @ 416x416 (depthai v2: .blob + yanında config.json) ----
+# ---- Model: YOLOv11n @ 512x512 (depthai v2: .blob + yanında config.json) ----
 # 🔴 v2'de NNArchive YOK (2.30.0.0'dan introspection ile doğrulandı) → model
 # .blob olarak verilir (HubAI/modelconverter çıktısı NNArchive tar.xz ise
 # içinden blob + config.json ÇIKARILIR — arşivde ikisi de var, tar -xf yeter).
@@ -130,7 +130,20 @@ elif MOD == "algi_yayin":
 # deploy) shave sayısından kritik: 16:9'a inmek dikey FOV'u kırpar, model
 # geçide 2 m kala alt bölgedeki dubayı kaybeder.
 MODEL_BLOB = "/home/girdap/models/yolo11n_duba_rvc2.blob"
-NN_GIRIS = 416          # NN giriş boyutu; blob bu boyutla derlenir, İKİSİ BİRLİKTE değişir
+NN_GIRIS = 512          # NN giriş boyutu; blob bu boyutla derlenir, İKİSİ BİRLİKTE değişir
+# 🔴 2026-08-12: 416 → 512. Gerekçe ÖLÇÜM, tercih değil — darboğazımız MENZİL:
+# recall dubanın piksel genişliğine çok duyarlı (3-4 px %30 · 4-5 px %80 ·
+# 5-6 px %90 · 8-11 px %99) ve 20 m'deki duba 416'da 4,5 px (=%80 bandı),
+# 512'de 5,6 px (=%90 bandı). Kabul testi (aynı valid, aynı video tezgâhı):
+# 20+ m recall %49,3 → %62,7 · genel recall %96,1 → %97,0 · kapı kurulabilen
+# kare %92,5 → %94,9 · yanlış kutu 56 → 47.
+# ⚠️ Sınıf hatası 3 → 7 (kabul kapısı ≤5'ti, GEÇMEDİ): 6'sı 416'nın hiç
+# göremediği 13-27 m dubalarında — yeni hata değil, hata yapma FIRSATI.
+# Yalnız 1'i gerçek gerileme (5,9 m). Bu yüzden 512 "denemek için" alındı;
+# yarışma kararı cihazda KONTROL 3 + sahadan sonra.
+# 🔴 608 ELENDİ: 4,63 FPS (sert duvar — ara katmanlar 4 shave'in yerel
+# belleğine sığmayıp dış belleğe taşıyor); 512→608 için 1 piksel başına
+# 5 FPS ödeniyor. Üç boyut da 4 shave'e SIĞIYOR (ölçüldü).
 
 # Sınıf indeksleri — YALNIZCA YEDEK. Gerçek indeksler çalışma anında NN
 # Archive'ın sınıf İSİMLERİNDEN çözülür (_sinif_indeksleri_coz).
@@ -141,16 +154,27 @@ NN_GIRIS = 416          # NN giriş boyutu; blob bu boyutla derlenir, İKİSİ B
 KENAR_CLASS = 0        # turuncu duba (RAL 2003) - parkur kenarı  [yedek]
 ENGEL_CLASS = 1        # sarı duba   (RAL 1026) - engel           [yedek]
 CONF_ESIK = 0.5
-FPS = 11               # sensorFps üst sınırı. ÖLÇÜLDÜ (2026-08-05, bu cihaz):
-                       # YOLO 416x416 + stereo birlikte boru hattı TAVANI = 12,2
-                       # FPS (akış eklemek etkilemiyor: yalnız tespit / +derinlik
-                       # / +RGB → üçü de 12,10). 11 = tavanın %10 altı, gerçek pay.
-                       # 12'ye çıkarmak tavana yapışmak demek: kuyrukta bayat kare
-                       # birikir, gecikme artar. 20 dk kesintisiz 11,00 FPS sapmasız,
-                       # VPU platosu 68-69 °C (tepe 69,3) — termal kısma yok.
-                       # ⚠️ Cihazda otomatik kısma YOK (çökme 125 °C); güneş altında
-                       # gölgelik FPS'ten ~10 kat etkili kaldıraç (11→10 sadece 1-2 °C).
-FPS_UYARI_ESIK = 8.0   # ölçülen NN FPS bunun altına düşerse logda uyar
+FPS = 8                # sensorFps üst sınırı. 🔴 2026-08-12: 11 → 8 (NN_GIRIS 512
+                       # ile BİRLİKTE). ÖLÇÜLDÜ (2026-08-11, dağıtımın birebir
+                       # aynı ayarıyla: 12MP + ispScale 1/3, stereo AÇIK, USB2):
+                       # boru hattı tavanı 416 → 12,00 · **512 → 9,83** · 608 → 4,63.
+                       # 🪤 Kayıtlardaki "20,6 FPS" YANLIŞTI (stereo kapalı ölçülmüş)
+                       # — 11 hedefi meğer 416 tavanının hemen altındaymış.
+                       # 8 seçildi (9 değil): 512@9'da güneş altı termal tahmini
+                       # ~90 °C, uyarı eşiğimiz 85 / kritik 95 ve cihazda OTOMATİK
+                       # KISMA YOK (çökme 125 °C). 8 = tavanın %19 altı.
+                       # ⚠️ Bu termal sayı TAHMİN — 512@8 platosu Jetson'da 15 dk
+                       # ölçülüp buraya yazılacak. Gölgelik yine de ŞART (FPS'ten
+                       # ~10 kat etkili kaldıraç).
+                       # 🔑 8 FPS YETERLİ: dümeni algı sürmüyor, MPPI 20 Hz koşuyor;
+                       # 1,5 m/s'te kare arası yol 18,8 cm ↔ duba çapı 30 cm.
+                       # Şartname md 4.2 Dosya-1 şartı ≥1 Hz.
+FPS_UYARI_ESIK = 6.5   # ölçülen NN FPS bunun altına düşerse logda uyar.
+                       # 🪤 HEDEF FPS'İN ALTINDA KALMALI. Eskiden 8.0 idi; FPS 11
+                       # iken doğruydu, ama FPS 8'e inince eşik hedefin ÜSTÜNE
+                       # çıkmış olurdu ⇒ alarm HER KARE yanardı. Bizde bunun dersi
+                       # yazılı: "her zaman yanan alarm alarm değildir" (09.08,
+                       # mono_menzil vakası). Eşik hedefin ~%80'i.
 
 # OAK-D Lite RGB'si iki varyant: AF (otofokus) | FF (sabit odak). AF varyantı
 # dalga/titreşimde odak avlar (Luxonis titreşimli araçta sabitlemeyi önerir).
@@ -224,7 +248,7 @@ SINIF_ESLEME = {KENAR_CLASS: "0", ENGEL_CLASS: "1"}
 
 # ---- GERÇEK kamera karesi ----
 # 🔴 SABİT YOK — bilerek. Deploy zinciri: 12MP → ispScale(1,3) = 1352×1014 (ISP)
-# → preview 416×416 (NN). Kayıt overlay'i kare boyutunu `frame.shape`'ten
+# → preview 512×512 (NN). Kayıt overlay'i kare boyutunu `frame.shape`'ten
 # OKUR (kayit_adimi), sabitten değil — eskiden burada duran `IMG_W/IMG_H =
 # 640, 480` çifti 05.08'deki 12MP taşımasından sonra GERÇEĞİ YANSITMIYORDU
 # ve yalnız ölü letterbox hesabını besliyordu (aşağıya bkz.).
@@ -245,7 +269,7 @@ BBOX_W, BBOX_H = 1280, 720
 
 # ---- LETTERBOX PAYI = 0 (sabit değil, ön işlemenin SONUCU) ----
 # 🔴 Deploy ön işlemesi SIKIŞTIRMA (stretch): setPreviewKeepAspectRatio(False)
-# 4:3 kareyi 416×416'ya EZER → üst/alt gri şerit OLUŞMAZ → çıkarılacak pay YOK.
+# 4:3 kareyi 512×512'ye EZER → üst/alt gri şerit OLUŞMAZ → çıkarılacak pay YOK.
 # Bu yüzden __init__'te `self._lb_pay = 0.0` sabitlenir (bkz. tespitleri_oku).
 # Eskiden burada `_LB_ICERIK/_LB_PAY = 0.125` hesabı vardı; ölüydü (hiçbir yerde
 # okunmuyordu) ama "deploy letterbox yapıyor" izlenimi veriyordu — SİLİNDİ.
@@ -278,8 +302,10 @@ K_KACIN = 0.6
 #    geometrik ayrım). Emniyet payı artık algı filtresi DEĞİL — dar ama gerçek
 #    bir kapıyı görünmez kılıp puan kaybettiriyordu; pay sürüş katmanının işi.
 # 🔴 MENZİL TAVANI (2026-08-04 araştırmasıyla 15.0 → 8.0 İNDİRİLDİ):
-#   (a) Piksel sınırı: HFOV 69°, NN 416 px → 30 cm duba 15 m'de ~6 px, 10 m'de
-#       ~9 px, 5 m'de ~18 px. 6 pikselli nesne YOLO için pratikte yok.
+#   (a) Piksel sınırı: HFOV 69°, NN 512 px → 30 cm duba 15 m'de ~7,4 px, 10 m'de
+#       ~11 px, 5 m'de ~22 px. (416'da sırasıyla 6 / 9 / 18 idi.) 🔴 DEĞER
+#       DEĞİŞMEDİ: 512'ye geçmek bu tavanı yükseltmiş OLABİLİR ama burada
+#       ölçüm yok — hesap değişti, ölçüm değişmedi. Suda ölçülene kadar 8,0.
 #   (b) Stereo sınırı: OAK-D Lite baseline 7,5 cm; 480P'de 3-5 px disparite
 #       6,6-11 m'ye denk → ~8 m ötesinde Z hatası METRELERCE (Luxonis doc).
 #   İki bağımsız sınır aynı yere çıkıyor: güvenilir geçit tespiti ~6-8 m.
@@ -328,7 +354,7 @@ if KAYIT_AKTIF:
     import cv2            # overlay çizimi + mp4 yazımı (yalnız kayıt aktifken)
 
 KONTROL_HZ = 15.0
-HEDEF_KAYIP_SN = 1.0   # s - tespit tazeliği; 11 FPS'te 11 kareye denk (tam sınırda
+HEDEF_KAYIP_SN = 1.0   # s - tespit tazeliği; 8 FPS'te 8 kareye denk (tam sınırda
                        # değil: 10 FPS'e düşerse 10 kare kalır, kare düşünce
                        # tazelik filtresi tetiklenebilir — 11 bu yüzden 10'a yeğlendi)
 ARAMA_TIMEOUT_SN = 25.0
@@ -381,7 +407,7 @@ def _blob_denetle(blob_yolu: str, siniflar, logger=None):
 
     🔴 NEDEN (2026-08-10 derin tarama): blob `/home/girdap/models/` altına
     ELLE kopyalanıyor (JETSON-KURULUM adım 2). Yanlış/eski blob konursa:
-      · giriş boyutu tutmazsa  -> preview 416 ↔ blob 640 => çöp tespit
+      · giriş boyutu tutmazsa  -> preview 512 ↔ blob 416 => çöp tespit
       · sınıf sayısı tutmazsa  -> decode kayar => turuncu↔sarı KARIŞIR => Ç2
     İkisi de **belirti vermeden** olur. Blob başlığı bu bilgiyi taşıyor
     (giriş dims + çıkış kanal sayısı = 5 + nc, yolov6r2 kafası) ⇒ bedava kontrol.
@@ -437,14 +463,14 @@ def pipeline_kur():
     # çerçeveyi görmeli, yoksa model sahada öğrendiğinden farklı FOV görür.
     # (THE_1440X1080 enum'da var ama bu cihazda SESSİZCE 0 kare üretiyor —
     # 05.08 mod taraması; 12MP+ispScale ölçüldü: RGB-only 18,6 FPS tavan.)
-    # ⚠️ FPS/termal referans ölçümleri 1080P ile alındı → 11 FPS bandı bu modla
+    # ⚠️ FPS/termal referans ölçümleri 1080P ile alındı → FPS bandı bu modla
     # masa testinde YENİDEN doğrulanmalı (duba_kamera_test.py).
     cam_rgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_12_MP)
     cam_rgb.setIspScale(1, 3)
     cam_rgb.setPreviewSize(NN_GIRIS, NN_GIRIS)
     cam_rgb.setInterleaved(False)
     cam_rgb.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
-    # False = tam kare 416×416'ya SIKIŞTIRILIR (letterbox şeridi YOK) —
+    # False = tam kare 512×512'ye SIKIŞTIRILIR (letterbox şeridi YOK) —
     # Luxonis'in resmî YOLO örnekleriyle ve bu cihazdaki ölçülü desenle aynı.
     # Sonuçları: (a) tam FOV korunur, (b) bbox normalize koordinatları kaynak
     # kareye DOĞRUDAN ölçeklenir → letterbox payı 0 (bkz. tespitleri_oku),
@@ -665,7 +691,7 @@ class DubaNavigator(Node):
         # Pinhole odak (normalize bbox için): D = f·W/w_norm
         self._f_norm = gm.odak_px(1.0)
         # Letterbox payı = 0: v2'de preview keepAspectRatio(False) tam kareyi
-        # 416×416'ya SIKIŞTIRIR — şerit yok, bbox normalize koordinatları kaynak
+        # 512×512'ye SIKIŞTIRIR — şerit yok, bbox normalize koordinatları kaynak
         # kareye her iki eksende DOĞRUDAN ölçeklenir. (gm.letterbox_payi saf
         # katmanı testli duruyor; letterbox'a dönülürse hazır — ama o gün
         # EĞİTİM ön işlemesi de birlikte değişmeli.)
@@ -689,7 +715,7 @@ class DubaNavigator(Node):
                 "5 ceza riski). Koşudan ÖNCE: tethering ile NTP senkronu, ya da "
                 "`sudo date -s '...'` → sonra bu node'u yeniden başlat.")
         self._son_log = -math.inf
-        self._fps_n = 0            # ölçülen NN FPS (beklenen: ~11, tavan 12,2)
+        self._fps_n = 0            # ölçülen NN FPS (beklenen: ~8, 512 tavanı 9,83)
         self._fps_t0 = time.monotonic()
         self.olculen_fps = 0.0
 
@@ -710,7 +736,7 @@ class DubaNavigator(Node):
             self._fps_n, self._fps_t0 = 0, t
             if self.olculen_fps < FPS_UYARI_ESIK:
                 self.get_logger().warn(
-                    f"NN FPS düşük: {self.olculen_fps:.1f} (beklenen ~11, tavan 12,2) — "
+                    f"NN FPS düşük: {self.olculen_fps:.1f} (beklenen ~8, tavan 9,8) — "
                     "USB bağlantısı / VPU ısınması / kablo kontrol")
         if msg is None:
             return
@@ -987,7 +1013,7 @@ class DubaNavigator(Node):
     def _menzil_saglikli(self, d):
         """Stereo Z ile bbox genişliğinden gelen pinhole menzil çelişiyor mu?
 
-        bbox normalize olduğu için ölçek 416/640'tan bağımsız: f_norm=odak_px(1.0).
+        bbox normalize olduğu için ölçek 512/640'tan bağımsız: f_norm=odak_px(1.0).
         Ölçümlerden biri yoksa çelişki iddia edilmez (True döner).
 
         🔴 2026-08-08: menzil zaten mono'dan geldiyse çapraz kontrol ANLAMSIZ —

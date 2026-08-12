@@ -12,20 +12,22 @@
 ## Bu blob nereden geldi (provenance)
 
 ```
-kaynak .pt : girdap_EGITIM_HATTI/runs/detect/girdap_ince3_1053/weights/last.pt
-             (best.pt DEGIL — olculdu: Ultralytics mAP'e bakiyor, bizim metrigimiz
-              sinif hatasi; son epoch'lar 52 -> 47 iyilestirdi)
-zincir     : ana egitim 208 ep (en iyi 158)  ->  dikissiz ton kopyalariyla
-             ince ayar 162 ep (en iyi 132)
-egitim     : YOLO11n · imgsz 416 · 300 ep tavan/patience · hsv_h 0.015 · hsv_s 0.35
+kaynak .pt : girdap_MODEL_512/girdap_512_ep87.pt
+             (= runs/detect/r512, 87. epoch'ta kesildi: mAP50-95 ep80'den sonra
+              durakladi, son 5 epoch +0,0001)
+zincir     : 512'de SIFIRDAN egitim — 416 modeli 512 girdiyle baslatilamaz
+egitim     : YOLO11n · imgsz 512 · 300 ep tavan/patience · hsv_h 0.015 · hsv_s 0.35
              scale 0.5 · perspective 0 · flipud 0 · degrees 0 · negatif kare %8
-veri       : 7.546 train (416x416 EZILMIS) + 2.087 valid · sizintisiz blok bolme
-export     : tools --imgsz 416 --use-rvc2  ->  ONNX
+veri       : 14.488 train (512x512 EZILMIS: 7.546 orijinal + 6.942 dikissiz ton
+             kopyasi) + 2.087 valid · sizintisiz blok bolme
+export     : tools --imgsz 512 --use-rvc2  ->  ONNX
              blobconverter FP16 · shaves=4 · OpenVINO 2022.1
              optimizer_params: --scale_values=[255,255,255] --mean_values=[0,0,0]
                                --reverse_input_channels        <-- 🔴 ZORUNLU
-sha256 blob  : 5726819a101eb4f62dd8ad65cdd302f980b349c0fa448190264d412031871b9c
-sha256 config: 79f6e174bc9f175a580b03068d74202d78a50c5276ac1bec017a3d5ae0660d0c
+sha256 blob  : 31fb03488907eae18f25e171ba13cf794cb60ea61579e4b2d2cd6a5f421857c7
+sha256 config: e16c31458dcf1874dac1ae45a40b2bf294c8a854e07b936fe83214b75d658927
+onceki (416) : 5726819a101eb4f62dd8ad65cdd302f980b349c0fa448190264d412031871b9c
+               (git gecmisinde duruyor — geri donus icin `git revert`)
 ```
 
 ### 🔴 `--reverse_input_channels` NEDEN ZORUNLU
@@ -79,8 +81,10 @@ tar -xJf yolo11n_duba_rvc2.tar.xz     # → *.blob + config.json + buildinfo.jso
 mv *.blob yolo11n_duba_rvc2.blob      # MODEL_BLOB adıyla eşleştir
 ```
 
-Saha benchmark'ı: deploy **11 FPS**, ölçülen tavan **12,2** (416×416 + stereo
-birlikte, VPU sınırı — 05.08.2026 ölçümü).
+Saha benchmark'ı: deploy **8 FPS**, ölçülen tavan **9,83** (512×512 + stereo
+birlikte, VPU sınırı — 11.08.2026, dağıtımın birebir aynı ayarıyla).
+🪤 Eski kayıttaki **20,6 FPS YANLIŞTI** (stereo kapalı ölçülmüş). Aynı tezgâhta
+416 → 12,00 · 512 → 9,83 · 608 → 4,63 (608 elendi: 1 piksel başına 5 FPS).
 
 ## 🔴 Export/eğitim kısıtları (ölçüldü, pazarlıksız)
 
@@ -97,9 +101,10 @@ birlikte, VPU sınırı — 05.08.2026 ölçümü).
    ℹ️ Ölçüm 06.08: 4→19,9 · 6→21,8 · **8→14,3 FPS** — çok shave yavaşlatıyor
    (Luxonis: optimal ≈ mevcudun yarısı). 4 ile 6 arası fark yalnız %9; 12MP
    tam-FOV tercihinin bedeli bu, takas lehimize.
-2. **Giriş 416×416** ve `NN_GIRIS` sabitiyle birlikte değişir.
+2. **Giriş 512×512** ve `NN_GIRIS` sabitiyle birlikte değişir (12.08: 416 → 512;
+   gerekçe menzil — 20 m'de duba 4,5 px → 5,6 px, recall %80 bandından %90 bandına).
 3. **Ön işleme = SIKIŞTIRMA (stretch), letterbox DEĞİL:** deploy'da preview
-   `keepAspectRatio(False)` ile tam kare 416×416'ya sıkıştırılıyor (Luxonis
+   `keepAspectRatio(False)` ile tam kare 512×512'ye sıkıştırılıyor (Luxonis
    resmî YOLO deseni; bu cihazda ölçülen desen de bu). Eğitimde de aynı ön
    işleme kullanılmalı — Ultralytics varsayılanı letterbox'tır, fark modelin
    sahada gördüğü geometriyi kaydırır. Eğitim günü karar: ya eğitimde stretch,
@@ -145,7 +150,7 @@ python3 scripts/model_dogrula.py /home/girdap/models/yolo11n_duba_rvc2.blob
 ⚠️ Betiğin ilk çalıştırması araç zincirini kurar (torch, ~1 GB, internet).
 Kurulum yeri `~/girdap_model_araclari` (`GIRDAP_ARACLAR` ile değiştirilebilir).
 **2026-08-08'de bu makinede kurulu ve stok `yolo11n.pt` ile uçtan uca
-koşturuldu** — üretilen blob `numShaves=4`, giriş `416×416×3`; doğrulama stok
+koşturuldu** — üretilen blob `numShaves=4`, giriş `512×512×3`; doğrulama stok
 COCO modelini (80 sınıf, isimlerde `kenar`/`engel` yok) beklendiği gibi
 REDDETTİ.
 

@@ -2,8 +2,8 @@
     "config_version": "1.0",
     "model": {
         "metadata": {
-            "name": "girdap_final",
-            "path": "girdap_final.onnx",
+            "name": "girdap_512",
+            "path": "girdap_512.onnx",
             "precision": "float32"
         },
         "inputs": [
@@ -14,8 +14,8 @@
                 "shape": [
                     1,
                     3,
-                    416,
-                    416
+                    512,
+                    512
                 ],
                 "layout": "NCHW",
                 "preprocessing": {
@@ -42,8 +42,8 @@
                 "shape": [
                     1,
                     7,
-                    52,
-                    52
+                    64,
+                    64
                 ],
                 "layout": "NCHW"
             },
@@ -53,8 +53,8 @@
                 "shape": [
                     1,
                     7,
-                    26,
-                    26
+                    32,
+                    32
                 ],
                 "layout": "NCHW"
             },
@@ -64,8 +64,8 @@
                 "shape": [
                     1,
                     7,
-                    13,
-                    13
+                    16,
+                    16
                 ],
                 "layout": "NCHW"
             }

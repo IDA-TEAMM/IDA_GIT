@@ -102,7 +102,8 @@ def test_log_fonksiyonu_cagrilir(monkeypatch):
 # ─────────────────────────────── sicaklik_durumu ──────────────────────────
 @pytest.mark.parametrize("c,beklenen", [
     (25.0, "normal"),
-    (68.9, "normal"),      # 11 FPS'te ölçülen iç mekân platosu
+    (68.9, "normal"),      # 416@11 FPS'te ölçülen iç mekân platosu (12.08'de
+                           # 512@8'e geçildi; yeni plato Jetson'da ölçülecek)
     (84.9, "normal"),
     (85.0, "uyari"),       # eşik DÂHİL
     (94.9, "uyari"),

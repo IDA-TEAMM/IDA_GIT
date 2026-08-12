@@ -14,8 +14,8 @@
 |---|---|---|
 | 1 | **shave = 4** | Deploy boru hattında (12MP RGB tam-FOV + stereo) NN'e yalnız **4 shave + 4 CMX** kalıyor. 6-shave blob cihazda *"compiled for 6 shaves, only 4 available"* ile **YÜKLENMEDİ** (05.08, kamerada). |
 | 2 | **superblob = KAPALI** (düz `.blob` üret) | Jetson'da **depthai 2.30.0.0** var; bu sürümde **SuperBlob API'si ve NNArchive YOK** (`depthai-core@v2.30.0` ve `depthai-python@v2.30.0.0` kaynağından doğrulandı). Superblob gelirse teknede açılmaz ve **sahada düzeltilemez**. |
-| 3 | **giriş 416×416** | Koddaki `NN_GIRIS` ile birlikte değişir. Bu boyutta ölçülen tavan 12,2 FPS, deploy 11. |
-| 4 | **ön işleme = SIKIŞTIRMA (stretch), letterbox DEĞİL** | Deploy `setPreviewKeepAspectRatio(False)` kullanıyor → 4:3 kare 416×416'ya eziliyor. **Eğitim de aynı ön işlemeyle yapılmalı**, yoksa model eğitimde yuvarlak / sahada ~1,33× dikey uzamış duba görür. (Ultralytics varsayılanı letterbox'tır — bilerek değiştirilmeli.) |
+| 3 | **giriş 512×512** | Koddaki `NN_GIRIS` ile birlikte değişir. 🔴 12.08.2026: 416 → **512** (gerekçe MENZİL: 20 m'de duba 4,5 px → 5,6 px = recall %80 bandından %90 bandına; 20+ m recall %49,3 → %62,7). Bu boyutta ölçülen tavan **9,83 FPS**, deploy **8**. |
+| 4 | **ön işleme = SIKIŞTIRMA (stretch), letterbox DEĞİL** | Deploy `setPreviewKeepAspectRatio(False)` kullanıyor → 4:3 kare 512×512'ye eziliyor. **Eğitim de aynı ön işlemeyle yapılmalı**, yoksa model eğitimde yuvarlak / sahada ~1,33× dikey uzamış duba görür. (Ultralytics varsayılanı letterbox'tır — bilerek değiştirilmeli.) |
 
 🔴 **HubAI'nin iki varsayılanı bizim için YANLIŞ:**
 `number_of_shaves` varsayılanı **8**, `superblob` varsayılanı **True**
@@ -24,6 +24,8 @@ model sahada hiç açılmaz. Bu rehberin en kritik satırı budur.
 
 ### Mimari: YOLO11n (2026-08-06'da ölçülerek seçildi)
 Aynı cihazda, 4 shave, 416×416, iki koşu: **v8n 21,6 FPS · v11n 19,9 FPS**
+(⚠️ bu kıyas 416'da ve stereo KAPALI alınmıştı — mimari kıyası için geçerli,
+mutlak FPS için değil; gerçek dağıtım tavanı 512'de **9,83**)
 (fark yalnız %8). v11n +2,2 mAP getiriyor (39,5 vs 37,3) ve bizim darboğazımız
 hız değil **menzil/küçük nesne** → **YOLO11n seçildi**.
 ⚠️ **YOLO26 KULLANILAMAZ:** cihazda çözümlemesi depthai **v3.6.0+** istiyor,
@@ -53,7 +55,7 @@ okumaz. **İsimleri olduğu gibi bırak.**
 ## 2. Eğitim
 
 ### 2a. 🔴 ROBOFLOW KULLANIYORSAK — iki ayar hayati
-**(1) Preprocessing → Resize → `Stretch to` 416×416.** `Fit within` DEĞİL.
+**(1) Preprocessing → Resize → `Stretch to` 512×512.** `Fit within` DEĞİL.
 Roboflow'un kendi tanımı: *"**Stretch to** stretches your images to a preferred
 pixel-by-pixel dimension with images being square and distorted, but no source
 image data is lost"* — deploy'daki `setPreviewKeepAspectRatio(False)` ile
@@ -72,17 +74,17 @@ elinde `best.pt` olur → §3'teki dönüşüme girer.
 
 ### 2b. Kendi eğitimimiz
 ```bash
-yolo detect train data=data.yaml model=yolo11n.pt imgsz=416 rect=False
+yolo detect train data=data.yaml model=yolo11n.pt imgsz=512 rect=False
 ```
 - `model=yolo11n.pt` — başlangıç ağırlığı (`~/Desktop/yolo11n.pt`).
 - 🔴 **Ön işleme deploy ile aynı olmalı (stretch).** Ultralytics varsayılanı
-  **letterbox**'tır. En temiz çözüm: **kareleri eğitimden önce 416×416'ya EZ**
+  **letterbox**'tır. En temiz çözüm: **kareleri eğitimden önce 512×512'ye EZ**
   (Roboflow'daki `Stretch to` ile aynı şey). Sebebi ölçüldü:
   ```
-  1352×1014 -> letterbox -> içerik 416×312 + üstte/altta 52 px gri şerit
-  416×416   -> letterbox -> dolgu YOK (r = 1.000)   ← kare girdide letterbox etkisiz
+  1352×1014 -> letterbox -> içerik 512×384 + üstte/altta 64 px gri şerit
+  512×512   -> letterbox -> dolgu YOK (r = 1.000)   ← kare girdide letterbox etkisiz
   ```
-  ⇒ Kareler zaten 416×416 ise Ultralytics'in letterbox'ı **hiçbir şey yapmaz** ve
+  ⇒ Kareler zaten 512×512 ise Ultralytics'in letterbox'ı **hiçbir şey yapmaz** ve
   eğitim geometrisi deploy ile birebir olur.
 - ✅ **Etiketler değişmez:** YOLO etiketleri normalize (0-1) olduğu için saf
   yeniden boyutlandırma değerleri etkilemez — `.txt` dosyaları aynen kopyalanır.
@@ -102,7 +104,7 @@ Aşağıdaki üç adımı sırayla yapar ve **§4 doğrulamasını zorunlu kıla
 `config.json`'ı blob'un yanına koymak — betikte sabittir. İlk çalıştırma
 araç zincirini `~/girdap_model_araclari` altına kurar (torch, ~1 GB).
 Bu makinede 08.08'de stok `yolo11n.pt` ile uçtan uca koşturuldu: blob
-`numShaves=4`, giriş `416×416×3`, doğrulama COCO'yu reddetti (beklenen).
+`numShaves=4`, giriş `512×512×3`, doğrulama COCO'yu reddetti (beklenen).
 
 ### Yol A (06.08'de UÇTAN UCA ÇALIŞTIRILDI, tercih edilen)
 Bu yol gerçekten koşuldu ve ürettiği blob **gerçek kamerada** ölçüldü.
@@ -114,7 +116,7 @@ git clone --recursive https://github.com/luxonis/tools.git && cd tools
 python3 -m venv venv
 venv/bin/pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 PIP_CONSTRAINT=constraints.txt PIP_BUILD_CONSTRAINT=constraints.txt venv/bin/pip install .
-venv/bin/tools /yol/best.pt --imgsz "416" --use-rvc2
+venv/bin/tools /yol/best.pt --imgsz "512" --use-rvc2
 #    -> shared_with_container/outputs/<ad>_<tarih>/{<ad>.onnx, <ad>.tar.xz}
 #       (.tar.xz içinde ONNX + config.json — VPU'da KOŞMAZ, adım 2 şart)
 ```
@@ -147,7 +149,7 @@ r = client.convert.RVC2(
     compress_to_fp16=True,
     number_of_shaves=4,             # 🔴 varsayılan 8 — MUTLAKA 4 yap
     superblob=False,                # 🔴 varsayılan True — MUTLAKA False (v2.30 okuyamaz)
-    yolo_input_shape=[416, 416],    # varsayılan [640,640]
+    yolo_input_shape=[512, 512],    # varsayılan [640,640]
     yolo_class_names=["kenar_dubasi", "engel_dubasi"],   # SIRA = data.yaml sırası
 )
 ```
@@ -165,7 +167,7 @@ seçme imkânı v2.30'da yok, yeniden dönüşüm internet ister).
 import depthai as dai
 b = dai.OpenVINO.Blob("yolo11n_duba_rvc2.blob")
 print(b.numShaves, b.numSlices)          # -> 4 4   (cihaz gerekmez)
-print({n: v.dims for n, v in b.networkInputs.items()})   # -> 416x416x3
+print({n: v.dims for n, v in b.networkInputs.items()})   # -> 512x512x3
 ```
 ```bash
 python3 -c "
@@ -177,7 +179,7 @@ Beklenen:
 - `numShaves == 4` — değilse **DUR**, adım 3'ü tekrarla
 - `classes == ['kenar_dubasi','engel_dubasi']`, `n_classes == 2`
   (80 görürsen stok COCO'yu çevirmişsin — yanlış dosya)
-- giriş 416×416
+- giriş 512×512
 
 ### 4b. Sınıf çökmesi testi (atlanmamalı)
 Luxonis'in bildirdiği gerçek vaka: YOLO11n + 416×416 + **iki benzer sınıf** →
@@ -233,7 +235,7 @@ küçük bir veri setiyle tüm adımlar denendi (model kalitesi amaç değildi):
 |---|---|
 | Sentetik veri (80 train / 20 val, `kenar_dubasi`+`engel_dubasi`) | ✅ |
 | `yolo detect train … model=yolo11n.pt imgsz=416` (8 epoch, CPU, ~47 sn) | ✅ mAP50 0,913 |
-| `tools best.pt --imgsz "416" --use-rvc2` | ✅ ONNX + config.json |
+| `tools best.pt --imgsz "416" --use-rvc2` (kuru prova, 06.08) | ✅ ONNX + config.json |
 | `blobconverter.from_onnx(..., shaves=4)` | ✅ blob 5,7 MB |
 | §4 doğrulama: `numShaves` | ✅ **4** |
 | §4 doğrulama: `classes` / `n_classes` | ✅ `['kenar_dubasi','engel_dubasi']` / **2** |
