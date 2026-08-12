@@ -1,0 +1,38 @@
+[Unit]
+# GİRDAP İDA — Jetson saat hızlarını azamiye kilitle (§0.55, 13.08.2026)
+#
+# SORUN (ölçüldü): güç kipi `MAXN_SUPER` olmasına rağmen **GPU 306 MHz**'de
+# duruyordu — azami 1020 MHz'in dörtte biri. Bellek yolu (EMC) da 2133 MHz
+# idi, azami 3199 MHz. `nvpmodel` yalnız TAVANI belirler; frekansı fiilen
+# yükseltmek için `jetson_clocks` gerekir ve o **açılışta uygulanmaz**.
+#
+# 🔑 MPPI bu araçta GPU'da koşuyor (günlük: "MPPI hesap yolu: cupy/float32"),
+# yani GPU'yu asgari frekansta bırakmak doğrudan kontrol döngüsünü yavaşlatır.
+#
+# ÖLÇÜM: GPU 306 → 1020 MHz (3,3×) · EMC 2133 → 3199 MHz (1,5×).
+# İşlemci çekirdekleri zaten 1728 MHz'de (azami) idi, orada kazanç yok.
+#
+# ⚠ BEDEL: güç tüketimi ve ısı artar. Uygulama anında ölçülen sıcaklıklar
+# CPU 50 °C / GPU 49 °C; Orin Nano ~95 °C'de kısıtlar, yani bol pay var
+# (28 000 tegrastats örneğinde görülen en yüksek jonksiyon 56,5 °C idi).
+# Tekne aküyle çalıştığı için görev süresi kısaysa bu takas doğru; uzun
+# beklemelerde `sudo systemctl stop girdap-saat-hizlari` ile geri alınabilir.
+#
+# ⚠ `jetson_clocks` kalıcı DEĞİLDİR — her açılışta yeniden uygulanmalı.
+# Bu birim tam da onun için var.
+Description=GIRDAP IDA — Jetson saat hizlarini azamiye kilitle (jetson_clocks)
+After=nvpmodel.service
+Wants=nvpmodel.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# nvpmodel'in güç kipini oturtması için kısa bekleme — aksi hâlde
+# jetson_clocks eski tavana göre kilitleyebilir.
+ExecStartPre=/bin/sleep 5
+ExecStart=/usr/bin/jetson_clocks
+# Durdurulunca varsayılan (dinamik) frekans yönetimine dön.
+ExecStop=/usr/bin/jetson_clocks --restore
+
+[Install]
+WantedBy=multi-user.target
