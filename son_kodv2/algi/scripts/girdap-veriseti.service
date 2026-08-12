@@ -12,11 +12,31 @@
 #       ~/oak_veriseti_topla.py'yi (git dışı, **manifest.csv'siz**) çağırıyor.
 #   ⇒ Bugün denize girilse tek kare toplanmazdı. Aşağıdaki kurulum ŞART.
 #
-# Kurulum (kurulu ESKİ kopyanın ÜZERİNE yazar):
+# 🔴 12.08.2026 — YOL DÜZELTİLDİ. ExecStart şunu arıyordu:
+#     __WS__/src/girdap-ida-algi/scripts/oak_veriseti_topla.py
+#   ve İKİ KEZ yanlıştı:
+#     (1) `girdap-ida-algi` TİRELİ — gerçek sembolik bağ `girdap_ida_algi`
+#         (alt çizgili). Kaptanın 12.08'de `girdap-karar.service`'te
+#         düzelttiği tuzağın (`girdap-decision` ↔ `girdap_decision`) birebir
+#         aynısı; aynı hata iki serviste birden duruyormuş.
+#     (2) Betik ROS PAKETİNİN İÇİNDE DEĞİL: paket `algi/girdap_ida_algi/`,
+#         betikler ise bir üst dizinde `algi/scripts/`. `~/ros2_ws/src/
+#         girdap_ida_algi/scripts/` diye bir yol HİÇ var olmadı.
+#   ⇒ Servis kurulsaydı `python3: can't open file` ile ölür, `Restart=
+#     on-failure` 5 kez dener, `StartLimitBurst` dolar ve sessizce pes ederdi.
+#     Yani bu dosyanın kendi uyarısı gerçekleşirdi: "tekne suya girer, kimse
+#     fark etmeden tek kare toplanmadan geri döner."
+#   Artık `__ALGI__` yer tutucusu kullanılıyor (kaptanın `__KARAR__` deseni).
+#
+# Kurulum (kurulu ESKİ kopyanın ÜZERİNE yazar) — ÜÇ ikame ŞART:
 #   sudo cp scripts/girdap-veriseti.service /etc/systemd/system/
-#   sudo sed -i "s|__USER__|$USER|g; s|__WS__|$HOME/ros2_ws|g" \
+#   sudo sed -i "s|__USER__|$USER|g; s|__WS__|$HOME/ros2_ws|g; \
+#                s|__ALGI__|$HOME/IDA_GIT/son_kodv2/algi|g" \
 #        /etc/systemd/system/girdap-veriseti.service
 #   sudo systemctl daemon-reload
+#   # DOĞRULA (dosya değil, ETKİN değer kanıttır — §0.43 kuralı):
+#   systemctl cat girdap-veriseti | grep ExecStart
+#   ls -l $(systemctl cat girdap-veriseti | grep -oE "/[^ ]*oak_veriseti_topla.py")
 #
 # 🔴 VERİ SETİ GÜNÜ (tek OAK var, iki süreç açamaz — kıyıda, denize girmeden):
 #   sudo systemctl enable --now girdap-veriseti
@@ -40,10 +60,15 @@ Description=GIRDAP IDA veri seti toplayici (OAK-D Lite, ekransiz)
 After=network.target
 # Emniyet kemeri: ikisi aynı anda AÇILAMAZ. Tek OAK'ı iki süreç açamaz;
 # çakışırsa kamera tamamen ölür ve sahada belirti vermez.
-# ⚠ 2026-08-05 ÖLÇÜMÜ: bu makinede `girdap-algi.service` diye bir unit YOK
-#   (yalnız girdap-karar.service var, enabled+active). Yani bu satır bugün
-#   hiçbir şeyi engellemiyor — gerçek koruma kıyı kontrol listesindeki
-#   "OAK'ı tutan süreç var mı" adımı (docs/veriseti_deniz_oturumu.md).
+# ⚠ 2026-08-05 ÖLÇÜMÜ: "bu makinede girdap-algi.service diye bir unit YOK,
+#   yani bu satır hiçbir şeyi engellemiyor" deniyordu.
+# ✅ 12.08.2026 GÜNCELLEME: `girdap-algi.service` ARTIK KURULU ve AKTİF
+#   (ölçüldü: systemctl list-unit-files → enabled, is-active → active).
+#   Yani `Conflicts=` satırı BUGÜN GERÇEKTEN ÇALIŞIYOR: `systemctl start
+#   girdap-veriseti` algı servisini kendiliğinden DURDURUR, tersi de geçerli.
+#   Kıyı kontrol listesindeki elle doğrulama yine de bırakıldı — `Conflicts=`
+#   yalnız SERVİS olarak açılan süreçleri bilir; elle `ros2 run` ile açılmış
+#   bir kamera düğümünü görmez.
 Conflicts=girdap-algi.service
 # Kamera hiç takılı değilse script exit(1) verir; sonsuz döngü yerine 300 sn
 # penceresinde 5 denemeden sonra pes et (journal şişmesin).
@@ -114,7 +139,7 @@ Environment=HOME=/home/__USER__
 #     hatası 512'de kutunun %18'i (1352'de %6,8) ve menzil yedeği bbox
 #     genişliğinden hesapladığı için bu doğrudan %18 mesafe hatası = 20 m'de
 #     3,6 m. Yer kazancı sıfıra yakın: 4.000 kare ~0,92 GB, diskte 418 GB.
-ExecStart=/bin/bash -lc 'exec python3 __WS__/src/girdap-ida-algi/scripts/oak_veriseti_topla.py \
+ExecStart=/bin/bash -lc 'exec python3 __ALGI__/scripts/oak_veriseti_topla.py \
     --no-preview --auto-start --out ~/girdap_veriseti \
     --res 1352x1014 --fps 10 --interval 2.0 --min-fark 0.5 --zorunlu-aralik 10 \
     --min-bos-gb 10 --cihaz-bekle 3600'
