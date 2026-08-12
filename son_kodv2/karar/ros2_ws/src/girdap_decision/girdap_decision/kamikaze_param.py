@@ -73,6 +73,14 @@ class KamikazeHedefKapisi:
             # sessiz kalmıyor: hedefsiz koşmak, YANLIŞ hedefe koşmaktan iyidir.
             self._log.error(f"{_PARAM} GECERSIZ, hedef ATANMADI: {exc}")
 
+        # Rengin SAHİBİ burasıdır ⇒ ilanı da buradan yapılır. `fsm_node`
+        # Parkur-3 kapısını (`p3_bekleniyor`) bu topic'ten öğrenir; parametreyi
+        # ikinci bir node'dan okumak iki kaynak = sessiz sürüklenme demekti.
+        self._pub_renk = node.create_publisher(
+            String, "/girdap/mission/hedef_rengi", 10
+        )
+        self._renk_ilan_et()
+
         node.add_on_set_parameters_callback(self._on_param_set)
         # md 5.5.3.1 kapısı görev durumunu gerektiriyor (fsm_node yayınlıyor).
         self._sub = node.create_subscription(
@@ -83,6 +91,12 @@ class KamikazeHedefKapisi:
                 f"PARKUR-3 hedef rengi (config): {self._renk_adi!r} → "
                 f"class_id={CLASS_HEDEF}"
             )
+
+    def _renk_ilan_et(self) -> None:
+        """Seçili rengi yayınla (boş dize = hedef atanmamış)."""
+        m = String()
+        m.data = self._renk_adi if self._sinif is not None else ""
+        self._pub_renk.publish(m)
 
     # ---------------------------------------------------------------- durum
 
@@ -122,6 +136,7 @@ class KamikazeHedefKapisi:
             self._sinif = yeni
             self._renk_adi = str(pr.value).strip()
             self._gorulmedi_uyarildi = False
+            self._renk_ilan_et()
             # WARN seviyesi bilinçli: operatör koşu öncesi bunu GÖRMELİ.
             self._log.warn(
                 "PARKUR-3 HEDEF RENGI = "
