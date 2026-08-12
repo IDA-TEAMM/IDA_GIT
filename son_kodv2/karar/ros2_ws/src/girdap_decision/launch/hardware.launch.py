@@ -1015,14 +1015,26 @@ def generate_launch_description() -> LaunchDescription:
                  )},
              ],
              output="screen"),
+        # F-M.12 (2026-08-11): görev zincirinin dört kalbi + füzyon RESPAWN'lı.
+        # Ölçülen olay (§0.42d): `fusion_node` iSAM2 tekilleşmesiyle (GTSAM
+        # `Indeterminant linear system`, x1569) exit 1 verip öldü ve launch onu
+        # BİR DAHA BAŞLATMADI. Poz/odom üreten düğüm odur; ölünce planlama poz
+        # alamaz, MPPI hiç koşmaz — üstelik `perception_fusion_node` (AYRI bir
+        # düğüm) ayakta kaldığı için `pgrep -f fusion_node` iki eşleşme verir ve
+        # "füzyon çalışıyor" sanılır. Sessiz ölüm, sahte yeşil.
+        # Yeniden başlatma tekilliği de çözer: iSAM2 grafiği sıfırdan kurulur.
         Node(package=_PKG, executable="fusion_node",
-             name="fusion_node", parameters=fusion_params, output="screen"),
+             name="fusion_node", parameters=fusion_params, output="screen",
+             respawn=True, respawn_delay=2.0),
         Node(package=_PKG, executable="planning_node",
-             name="planning_node", parameters=planning_params, output="screen"),
+             name="planning_node", parameters=planning_params, output="screen",
+             respawn=True, respawn_delay=2.0),
         Node(package=_PKG, executable="mavros_bridge_node",
-             name="mavros_bridge", parameters=bridge_params, output="screen"),
+             name="mavros_bridge", parameters=bridge_params, output="screen",
+             respawn=True, respawn_delay=2.0),
         Node(package=_PKG, executable="fsm_node",
-             name="fsm_node", parameters=fsm_params, output="screen"),
+             name="fsm_node", parameters=fsm_params, output="screen",
+             respawn=True, respawn_delay=2.0),
         Node(package=_PKG, executable="telemetry_node",
              name="telemetry_node", parameters=telemetry_params,
              output="screen"),
