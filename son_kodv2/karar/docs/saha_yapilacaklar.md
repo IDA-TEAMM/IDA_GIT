@@ -207,14 +207,28 @@ Donanımcılar TELEM3'e takacak = **`SERIAL5`**. TX/RX çapraz, GND ortak, VCC y
 **Kapatma ölçütü:** Mission Planner'da gerçek akım okunuyor; param dökümü
 güncellendi.
 
-### C3 · LiDAR düzeltmeleri REPOYA  🔴 ALG-05
+### ~~C3 · LiDAR düzeltmeleri REPOYA~~ ✅ **KAPANDI 12.08.2026** (`2c9084b`)
 
-`MID360_config.json` IP'leri ve `xfer_format=0` şu an yalnız
-`~/livox_ws/install/` altında yaşıyor — `src/` kopyaları düzeltilmedi.
-**Bir `colcon build` ikisini de geri alır ve LiDAR yine sessizce ölür.**
+~~`MID360_config.json` IP'leri ve `xfer_format=0` yalnız `install/` altında.~~
 
-**Kapatma ölçütü:** düzeltmeler `src/` altında, commit'li; temiz build'den sonra
-LiDAR veri veriyor.
+Durum ölçüldü; varsayımım kısmen yanlıştı ve iki katman birden kapatıldı:
+
+- `src/` tarafı 11.08'de **zaten düzeltilmişti** (kaptan §0.40 "livox src
+  mayını temizlendi") — ama o üçüncü parti depoda **COMMIT'SİZ** duruyordu.
+  Tek bir `git checkout .` ikisini birden silerdi. Jetson'da commit'lendi
+  (`a675ef4`), çalışma ağacı temiz.
+- Kalıcı kopya + geri yükleme/doğrulama yordamı repoya alındı:
+  `karar/deploy/livox/` (`MID360_config.json`, `msg_MID360_launch.py`,
+  `OKU.md`). Jetson yeniden kurulsa bilgi artık kaybolmaz.
+
+⚠ Doğrulama ölçütü bilinçli olarak "dosya doğru mu" değil **"topic akıyor
+mu"**: kaptan §0.40'ta sürücünün açılışta `bind failed` ile öldüğünü ama
+servisin yine `active` göründüğünü ve `NRestarts=0` kaldığını ölçtü.
+`systemctl is-active` **sağlık kanıtı değildir.**
+
+🔴 **Kalan (bizde değil):** LiDAR ağı `enP8p1s0` şu an **DOWN** (kaptan
+§0.43 — kablo/güç). Düzeltmeler doğru ama LiDAR fiziksel bağlanana kadar
+`topic hz` ile doğrulanamaz.
 
 ---
 
