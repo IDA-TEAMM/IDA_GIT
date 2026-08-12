@@ -78,6 +78,22 @@ class Observation:
         mission_complete      — görev yöneticisi TÜM waypoint'leri bitirdi
                                 (video senaryosu terminal koşulu; kamikaze
                                 çarpması olmadan da PARKUR*→TAMAMLANDI)
+
+    Parkur-3 (kamikaze) alanları — 2026-08-13, hepsi VARSAYILAN FALSE:
+        p3_bekleniyor         — hedef rengi YÜKLÜ (`kamikaze_target_color`
+                                dolu). 🔑 Bütün P3 davranışının KAPISI: false
+                                iken FSM bugünküyle **bit birebir aynı**
+                                çalışır. Renk gelmemişse/İHA başarısızsa
+                                kamikaze hiç açılmaz, tekne temiz durur.
+        p3_ilerleme_yok       — ileri komut var ama tekne İLERLEMİYOR (temas).
+                                🔴 Şok eşiği (3 g) BU İŞİ GÖREMEZ: ölçülen
+                                temas hızı 0,134-0,154 m/s ⇒ 0,03-0,14 g;
+                                IMU durağanken zaten 1,0 g okur ⇒ eşik ASLA
+                                aşılmaz (karar tarafının kendi notu,
+                                `pipeline.py:100-104`).
+        p3_sure_doldu         — P3'e girişten beri N sn geçti. Hedef hiç
+                                bulunamazsa tekne sonsuza kadar kamikaze
+                                çekicisiyle sürüklenmesin.
     """
 
     boot_ok: bool = False
@@ -88,6 +104,10 @@ class Observation:
     last_gate_passed_p2: bool = False
     shock_detected_p3: bool = False
     mission_complete: bool = False
+
+    p3_bekleniyor: bool = False
+    p3_ilerleme_yok: bool = False
+    p3_sure_doldu: bool = False
 
 
 @dataclass
@@ -242,11 +262,30 @@ class MissionFSM:
         # buraya varır ve araç temiz durur (TAMAMLANDI'da compute_control None →
         # sıfır thrust). Parkur geçiş kurallarından ÖNCE değerlendirilir ki
         # görev bitince spurious PARKUR2 geçişi kazanmasın.
-        if (
-            s in (MissionState.PARKUR1, MissionState.PARKUR2, MissionState.PARKUR3)
-            and obs.mission_complete
-        ):
-            return MissionState.TAMAMLANDI, "görev tamamlandı (tüm waypoint'ler)"
+        if obs.mission_complete:
+            # 🔑 PARKUR-3 KAPISI (2026-08-13) — yalnız hedef rengi YÜKLÜ ise.
+            # Şartname s.18/23: P3 = kamikaze angajman, 145 puan (toplamın
+            # %48'i). Tetik "son görev noktasına varmak"; bu, P1→P2 geçişiyle
+            # SİMETRİK (o da waypoint mesafesinden çalışıyor) ve Şekil 3'ün
+            # P3'e ayrı görev noktası verip vermemesinden ETKİLENMEZ.
+            # Renk boşsa aşağıdaki eski kural aynen işler ⇒ P1/P2 davranışı
+            # bit birebir korunur.
+            if obs.p3_bekleniyor and s in (MissionState.PARKUR1,
+                                           MissionState.PARKUR2):
+                return (
+                    MissionState.PARKUR3,
+                    "tüm waypoint'ler bitti + hedef rengi yüklü → kamikaze",
+                )
+            # 🔴 PARKUR3'teyken bu kural ATLANMALI: `mission_complete` LATCH'li
+            # (bir kez True olunca sıfırlanmaz). Atlanmazsa P3'e giren tekne
+            # bir SONRAKİ tick'te aynı kuralla TAMAMLANDI'ya düşer ⇒ kamikaze
+            # tek tick yaşar, hedefe hiç gidilmez. P3'ten çıkış aşağıda:
+            # şok VEYA ilerleme-yok VEYA süre doldu.
+            if not (obs.p3_bekleniyor and s is MissionState.PARKUR3):
+                if s in (MissionState.PARKUR1, MissionState.PARKUR2,
+                         MissionState.PARKUR3):
+                    return (MissionState.TAMAMLANDI,
+                            "görev tamamlandı (tüm waypoint'ler)")
         if (
             s is MissionState.PARKUR1
             and obs.dist_to_last_wp_p1 <= self.P1_TO_P2_DIST
@@ -258,8 +297,17 @@ class MissionFSM:
             )
         if s is MissionState.PARKUR2 and obs.last_gate_passed_p2:
             return MissionState.PARKUR3, "son duba ikilisi geçildi"
-        if s is MissionState.PARKUR3 and obs.shock_detected_p3:
-            return MissionState.TAMAMLANDI, "IMU şok algılandı"
+        if s is MissionState.PARKUR3:
+            # P3 ÇIKIŞI — üç bağımsız yol. Şok tek başına YETMEZ (bkz.
+            # Observation docstring'i: temas 0,03-0,14 g ↔ eşik 3,0 g).
+            if obs.shock_detected_p3:
+                return MissionState.TAMAMLANDI, "IMU şok algılandı"
+            if obs.p3_ilerleme_yok:
+                return (MissionState.TAMAMLANDI,
+                        "temas: ileri komut var, ilerleme yok")
+            if obs.p3_sure_doldu:
+                return (MissionState.TAMAMLANDI,
+                        "Parkur-3 süre aşımı — hedefe ulaşılamadı")
         return None
 
     def _transition(self, new: MissionState, reason: str) -> None:
