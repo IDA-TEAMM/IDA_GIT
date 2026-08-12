@@ -42,7 +42,9 @@ from rcl_interfaces.msg import ParameterType, ParameterValue
 from rcl_interfaces.srv import SetParameters
 from rclpy.node import Node
 
-from prototype.mission.kamikaze_hedef import HedefRengiHatasi
+from std_msgs.msg import String
+
+from prototype.mission.kamikaze_hedef import HedefRengiHatasi, degistirilebilir_mi
 from prototype.mission.renk_kodu import kod_to_renk
 
 #: Hedef node — hedef rengini ASIL tüketen yer (`use_onboard_camera` varsayılan
@@ -81,6 +83,15 @@ class RenkKoduKoprusu(Node):
         self._son_uygulanan: str | None = None
         self._son_kod: float | None = None
         self._uyarildi = False
+        self._gorev_durumu: str | None = None
+        self._durdu = False
+        # md 5.5.3.1 — hareket BAŞLADIKTAN SONRA hedef bilgisi aktarılamaz.
+        # Hedef node zaten reddediyor; burada AYRICA yoklamayı kesiyoruz ki
+        # sistem koşu ortasında gelen bir rengi almaya **kalkışmasın** bile.
+        # ("reddediliyor" savunması "hiç denemiyor"dan zayıftır; ayrıca
+        # journal'da koşu boyunca param okuma trafiği görünmesin.)
+        self.create_subscription(String, "/girdap/mission/state",
+                                 self._on_gorev_durumu, 10)
 
         self.create_timer(float(self.get_parameter("periyot_s").value),
                           self._tik)
@@ -97,7 +108,22 @@ class RenkKoduKoprusu(Node):
         from mavros_msgs.srv import ParamGet      # noqa: PLC0415
         return ParamGet
 
+    def _on_gorev_durumu(self, msg) -> None:            # noqa: ANN001
+        self._gorev_durumu = msg.data
+
     def _tik(self) -> None:
+        # md 5.5.3.1 kapısı — kuralın KAYNAĞI kamikaze_hedef'te, burada yalnız
+        # "şimdi okumaya gerek var mı" sorusu için kullanılıyor (kural kopyası
+        # DEĞİL; kopya sessizce ayrışırdı).
+        izin, neden = degistirilebilir_mi(self._gorev_durumu)
+        if not izin:
+            if not self._durdu:
+                self._durdu = True
+                self.get_logger().info(
+                    f"renk kodu yoklamasi DURDURULDU — {neden}"
+                )
+            return
+        self._durdu = False
         if not self._param_get.service_is_ready():
             if not self._uyarildi:
                 self.get_logger().warn(
