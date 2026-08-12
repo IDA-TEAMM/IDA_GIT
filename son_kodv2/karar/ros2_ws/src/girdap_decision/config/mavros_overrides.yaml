@@ -92,6 +92,15 @@
       # /mavros/mission/waypoints + /reached → mission_source=fc'nin görev
       # kaynağı; bu olmadan waypoint hiç gelmez.
       - waypoint
+      # 🔑 KODUMUZ KULLANMIYOR — MAVROS'un KENDİSİ kullanıyor (kaptan kararı).
+      # Denetimde bulundu: `global_position` eklentisi `/mavros/home_position/
+      # home` topic'ine ABONE. `home_position` yasaklanınca o abonelik yayıncısız
+      # kalıyor — yani eklentiler arası bir bağ kopuyor. Ölçümde bizim
+      # kullandığımız `/global` sağlıklı kalmıştı ve home'a bağımlı üç topic
+      # (`local`, `rel_alt`, `gp_lp_offset`) kodda SIFIR yerde kullanılıyor,
+      # yani zarar görünmüyordu. Yine de kopuk bağ bırakmamak için geri açıldı;
+      # maliyeti tek eklenti.
+      - home_position
 
     # 🔴🔴 ÖLÇÜLDÜ: BEYAZ LİSTE BU MAVROS SÜRÜMÜNDE UYGULANMIYOR.
     # Yukarıdaki liste düğüme DOĞRU ulaşıyor (`ros2 param get /mavros/mavros
@@ -118,7 +127,6 @@
       - dummy                 # test eklentisi
       - ftp                   # FC dosya sistemi — kullanılmıyor
       - geofence              # coğrafi çit — kullanılmıyor
-      - home_position         # home'u FC kendi set ediyor, biz okumuyoruz
       - manual_control        # elle kumanda köprüsü — kullanılmıyor
       - nav_controller_output # FC'nin kendi navigasyon çıktısı — biz planlıyoruz
       - rallypoint            # toplanma noktası — kullanılmıyor
