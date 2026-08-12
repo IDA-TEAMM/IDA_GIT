@@ -12,6 +12,9 @@ Sınıflar:
     3 = kirmizi       (kırmızı duba/işaret)
     4 = yesil         (yeşil duba/işaret)
     5 = kahverengi    (kahverengi duba/işaret — düşük-V turuncuya yakın)
+    6 = siyah         (RAL 9005 — Parkur-3 hedef dubası. 🔴 BU MODÜLDE
+                       DEDEKTÖRÜ YOKTUR: sözleşme kimliği olarak tanımlıdır,
+                       siyahı üreten taraf algı ekibinin P3 node'udur.)
 
 Tasarım: turuncu/sarı/kırmızı/yeşil/kahverengi için renk segmentasyonu
 yeterli (YOLO'ya gerek yok); YOLO yalnız hedef sınıfı için — ultralytics
@@ -43,6 +46,14 @@ CLASS_HEDEF = 2             # Parkur-3 hedef (YOLO)
 CLASS_KIRMIZI = 3           # kırmızı
 CLASS_YESIL = 4             # yeşil
 CLASS_KAHVERENGI = 5        # kahverengi
+#: RAL 9005 — şartname s.18'e göre Parkur-3'ün ÜÇÜNCÜ hedef rengi.
+#: 🔴 Bu modül siyahı TESPİT ETMEZ (HSV eşiği yok) — kimlik yalnız
+#: `/perception/buoys` sözleşmesini tam tutmak için var. Sınıf 3/4/5 sahada
+#: GÖRÜLEN renklerden türetilmişti (bkz. 2026-07-17 "yeni renk sınıfları"),
+#: siyah o gün parkurda yoktu; şartnamenin istediği üçlü ise
+#: kırmızı·yeşil·SİYAH. Bu kimlik olmadan hakem "siyah" dediğinde
+#: `kamikaze_target_color` parametresi HİÇ kabul edilmiyordu ⇒ Parkur-3 sıfır.
+CLASS_SIYAH = 6             # siyah (RAL 9005) — dedektörü BU MODÜLDE yok
 
 
 @dataclass
