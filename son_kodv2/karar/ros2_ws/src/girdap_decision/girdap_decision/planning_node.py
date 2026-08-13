@@ -471,6 +471,8 @@ class PlanningNode(Node):
         )
         self._son_setpoint_t: float | None = None
         self._setpoint_bosluk_sayaci = 0
+        self._isci_uyarildi = False
+        self._isci_zaman_asimi_son = 0
         # Dosya-3: yerel maliyet haritası (RViz + local_map_node PNG dumper).
         self._pub_map = self.create_publisher(
             OccupancyGrid, "/girdap/map/local", sensor_data_qos()
@@ -1357,6 +1359,7 @@ class PlanningNode(Node):
                     else "ENGEL-BAYAT"
                 )
 
+            self._plan_isci_sagligi_denetle()
             self._publish_inhibit(sebepler, gate)
             self._ariza_kilitlerden_guncelle(sebepler)
             self._ariza.temizle(KONTROL_HATA)     # bu tur çökmeden tamamlandı
@@ -1563,6 +1566,36 @@ class PlanningNode(Node):
         msg = Float32MultiArray()
         msg.data = [float(u[0]), float(u[1])]
         self._pub_thrust.publish(msg)
+
+    def _plan_isci_sagligi_denetle(self) -> None:
+        """F-P.10 asenkron planlayıcı çöktüyse ya da zaman aşıyorsa BAĞIR.
+
+        13.08 kod incelemesi bulgusu: işçi kurulamazsa boru hattı SESSİZCE
+        senkron kola dönüyordu — kontrol döngüsü yeniden 370 ms'ye kadar
+        bloklanır (KAR-11/KAR-09 belirtilerinin kaynağı) ve dışarıdan hiçbir
+        şey görünmezdi. Mekanizma doğruydu, görünürlük yoktu.
+        """
+        try:
+            s = self._pipe.plan_isci_saglik()
+        except Exception:                       # noqa: BLE001
+            return
+        if not s["acik"]:
+            return                              # asenkron kol kapalı — normal
+        if s["kullanilabilir"] is False and not self._isci_uyarildi:
+            self._isci_uyarildi = True
+            self.get_logger().error(
+                "🔴 ASENKRON PLANLAYICI DUSTU — boru hatti SENKRON kola dondu. "
+                "RRT* artik kontrol dongusunu blokluyor (olculen en kotu 370 ms; "
+                "asenkron kolda 1,1 ms). Gorev yurur ama kontrol dongusu "
+                "butcesini asar — KAR-11/KAR-09 belirtileri geri gelebilir."
+            )
+        if s["zaman_asimi"] > self._isci_zaman_asimi_son:
+            self._isci_zaman_asimi_son = s["zaman_asimi"]
+            self.get_logger().error(
+                f"plan iscisi ZAMAN ASIMI (toplam {s['zaman_asimi']}) — her biri "
+                "5 s bekleme + isci yeniden kurulumu demek; ust uste olursa "
+                "yeniden planlama fiilen durur."
+            )
 
     def _setpoint_akisini_denetle(self) -> None:
         """KAR-10: iki setpoint yayını arasındaki boşluğu ölç ve bağır.

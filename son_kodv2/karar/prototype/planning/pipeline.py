@@ -537,6 +537,31 @@ class PlanningPipeline:
         self._rebuild_mppi()
         return True
 
+    def plan_isci_saglik(self) -> dict:
+        """F-P.10 asenkron planlama sağlığı — dışarıdan okunabilir teşhis.
+
+        🔴 13.08 kod incelemesi bulgusu. Mekanizma doğruydu ama GÖRÜNÜR
+        değildi: işçi bir kez kurulamazsa `kullanilabilir` kalıcı olarak
+        False olur, o an tek bir `logger.warning` düşer ve sonrası sessizdir.
+        Boru hattı senkron kola döner — yani kontrol döngüsü yeniden 370 ms'ye
+        kadar bloklanır, ki KAR-11/KAR-09 belirtilerini üreten şey tam buydu.
+        Aynı şekilde `zaman_asimi` sayacı artıyordu ama kimse okumuyordu;
+        her zaman aşımı 5 saniye ve işçiyi öldürüp yeniden kuruyor.
+
+        Bu hafta üç ayrı yerde aynı desen çıktı: *arıza vardı, kod onu
+        biliyordu, ama kimseye söylemiyordu.* Sayaçları dışarı açmak
+        mekanizmayı değiştirmiyor, yalnız sessizliği kaldırıyor.
+        """
+        isci = self._isci
+        return {
+            "acik": bool(self.cfg.plan_isci_enabled),
+            "kullanilabilir": bool(isci.kullanilabilir) if isci else None,
+            "gonderilen": getattr(isci, "gonderilen", 0) if isci else 0,
+            "tamamlanan": getattr(isci, "tamamlanan", 0) if isci else 0,
+            "zaman_asimi": getattr(isci, "zaman_asimi", 0) if isci else 0,
+            "asenkron_plan": self._asenkron_plan,
+        }
+
     def _plan_iscisi(self) -> Optional["PlanIscisi"]:
         """F-P.10 işçisini (gerekiyorsa) kur; kapalıysa/kurulamıyorsa None.
 
