@@ -503,6 +503,19 @@ class PlanningNode(Node):
         # türetiyoruz (mutlak değerinden değil) — yoksa bir kez düşen plan
         # görev boyunca "RRT reddetti" diye görünürdü.
         self._son_duz_cizgi_sayaci = 0
+        # 🔴 OLAY TABANLI ARIZALARIN DÜŞME SÜRESİ (13.08.2026 düzeltmesi).
+        # `SETPOINT` ve `CMDVEL` bir DURUM değil, olmuş bitmiş bir OLAYDIR
+        # ("akışta 1,4 sn boşluk oldu"). Olayın kendisi hiçbir zaman
+        # "düzelmez", dolayısıyla durum yüklemi de yazılamaz: son olaydan bu
+        # kadar saniye sonra arıza düşer. Tazeleme periyoduyla aynı seçildi —
+        # böylece geçici bir olay ekranda en az bir kez görünür (değişim anında
+        # hemen gönderilir), sonra kendiliğinden temizlenir.
+        self.declare_parameter("ariza_olay_tutma_s", 20.0)
+        self._ariza_olay_tutma_s = float(
+            self.get_parameter("ariza_olay_tutma_s").value
+        )
+        self._son_setpoint_bosluk_t: Optional[float] = None
+        self._son_cmdvel_bosluk_t: Optional[float] = None
         self._ariza_timer = self.create_timer(1.0, self._ariza_gonder)
 
         # --- Kontrol döngüsü ---
@@ -680,7 +693,10 @@ class PlanningNode(Node):
             "YOK (tüm dubalar engel; geçiş puanı düşer). Kamera/OAK/füzyon "
             "node'unu kontrol et."
         )
-        self._ariza.bildir(SINIF_YOK)
+        # ⚠ Arıza kodu BURADAN basılmaz — bu dal mandallı (log seli olmasın
+        # diye bir kez çalışır). Telsize giden kod `_ariza_durumlardan_
+        # guncelle`'de her turda `_classified_taze()` yüklemiyle kurulur;
+        # akış dönünce kendiliğinden düşer.
 
     def _on_classified(self, msg: Detection3DArray) -> None:
         """Sınıflı engeller → kapı dubaları AYRIŞTIRILIR, gerisi engel kalır.
@@ -951,7 +967,8 @@ class PlanningNode(Node):
             "mi (B0/F5.1, mount_z girili mi) · `ros2 topic echo "
             "/perception/obstacle_map --once` · kümeleme logunda nokta sayısı"
         )
-        self._ariza.bildir(ENGEL_BOS)
+        # ⚠ Arıza kodu BURADAN basılmaz (yukarıdaki `SINIF-YOK` gerekçesi):
+        # bu dal mandallı, telsize giden kod durum yükleminden kurulur.
 
     def _refine_target(self, coarse: tuple[float, float]) -> tuple[float, float]:
         """Ham görev noktasını (GN) algılanan kapının NİŞAN NOKTASIYLA değiştir.
@@ -1097,7 +1114,10 @@ class PlanningNode(Node):
             "Kapı seçiminde ayarlanabilir eşik YOK → sorun algıda: dubanın "
             "biri görünmüyor ya da renk sınıfı kaçıyor olabilir."
         )
-        self._ariza.bildir(KAPI_YOK)
+        # ⚠ Arıza kodu BURADAN basılmaz — bu dal 5 saniyede bir kısılıyor,
+        # üstelik kapı KİLİTLENDİĞİNDE hiç çağrılmıyor. Telsize giden kod
+        # `_ariza_durumlardan_guncelle`'de "kapı kilitli değil + en az iki
+        # turuncu duba görünüyor" yüklemiyle kurulur; kapı kilitlenince düşer.
 
     @_guard
     def _on_waypoints(self, msg: Path) -> None:
@@ -1377,6 +1397,74 @@ class PlanningNode(Node):
         self._ariza.ayarla(RRT_RED, aktif=sayac > self._son_duz_cizgi_sayaci)
         self._son_duz_cizgi_sayaci = sayac
 
+    def _ariza_durumlardan_guncelle(self) -> None:
+        """Kilit listesi DIŞINDAKİ arızaları her turda DURUMDAN yeniden kur.
+
+        🔴 **13.08.2026 düzeltmesi — mandal kusuru.** İlk sürümde bu kodlar
+        yalnız `bildir()` ediliyordu ve hiçbir yerde `temizle()` edilmiyordu;
+        yani bir kez ateşleyen kod görev sonuna kadar aktif kalıyordu. Ölçülen
+        sonuç: `KAPI-YOK` parkurun OLAĞAN bir anıdır (iki turuncu duba görünüp
+        çift kurulamadığı her an basılır) ⇒ ilk kapı yaklaşmasında kesin
+        ateşliyor ⇒ o andan sonra **"ariza yok" bir daha hiç basılamıyor** ve
+        gerçek arıza (LiDAR vb.) düzeldiğinde ekran temiz görünmek yerine
+        dakikalar önce olmuş bir olaya düşüyordu. Operatör ekrandaki kodun
+        ŞİMDİ mi GEÇMİŞTE mi olduğunu ayırt edemezdi.
+
+        👉 Kural: **arıza kodu DURUMDUR, olay değil.** Her tur yeniden
+        hesaplanır; koşul geçerse kod kendiliğinden düşer. Kilit sebebi
+        türevlileri bunu zaten `_ariza_kilitlerden_guncelle`'de yapıyordu —
+        bu metot aynı disiplini kalan kodlara uygular.
+
+        ⚠ `GPU-YOK` BİLEREK dışarıda: MPPI hesap yolu açılışta bir kez seçilir,
+        tekne koşu ortasında GPU'ya kavuşmaz. Onun mandallı kalması DOĞRU;
+        `test_GPU_YOK_bilerek_mandalli_kalir` bu ayrımı donduruyor.
+        """
+        simdi = self._now()
+
+        # SINIF-YOK: sınıflı akış bir kez görüldü ama artık taze değil.
+        # `_sinifsiz_yola_dusuldu`'nun mandalı LOG seli içindir; arıza kodu
+        # tazelik yükleminden gelir, böylece akış dönünce kod da düşer
+        # (kurtarma dalı `_on_classified`'da zaten vardı, haber verilmiyordu).
+        self._ariza.ayarla(
+            SINIF_YOK,
+            aktif=self._classified_seen and not self._classified_taze(),
+        )
+
+        # ENGEL-BOS: algı akıyor ama uyarı süresidir tek cisim bile yok.
+        self._ariza.ayarla(
+            ENGEL_BOS,
+            aktif=(
+                self._son_dolu_akis_t is not None
+                and (simdi - self._son_dolu_akis_t) >= self._bos_akis_uyari_s
+            ),
+        )
+
+        # KAPI-YOK: en az iki turuncu duba GÖRÜNÜYOR ama kapı kilitlenemiyor.
+        # İki dubadan azken arıza değil (kapı beklemek zaten anlamsız) —
+        # `_warn_sessiz_ret`'in kullandığı ölçütün aynısı, ayrışamasınlar.
+        self._ariza.ayarla(
+            KAPI_YOK,
+            aktif=(
+                self._gate_enabled
+                and self._last_gate_used_fallback
+                and self._gate.last_diagnostics.n_edge_buoys >= 2
+            ),
+        )
+
+        # SETPOINT / CMDVEL: olay tabanlı — son olaydan `ariza_olay_tutma_s`
+        # sonra düşer (bir olay "düzelmez", bu yüzden durum yüklemi yazılamaz).
+        for tanim, olay_t in (
+            (SETPOINT_BOSLUK, self._son_setpoint_bosluk_t),
+            (CMDVEL_KESIK, self._son_cmdvel_bosluk_t),
+        ):
+            self._ariza.ayarla(
+                tanim,
+                aktif=(
+                    olay_t is not None
+                    and (simdi - olay_t) < self._ariza_olay_tutma_s
+                ),
+            )
+
     def _ariza_gonder(self) -> None:
         """Sırası gelen arıza kodunu STATUSTEXT ile yer istasyonuna yolla.
 
@@ -1385,10 +1473,17 @@ class PlanningNode(Node):
         yollanan her mesaj kaybolur. Abone yokken GÖNDERİLMİŞ SAYMIYORUZ:
         bildiriciye hiç sorulmuyor, böylece abone belirince aynı arıza
         bir sonraki turda yeniden denenir.
+
+        ⚠ **Durum güncellemesi abone kontrolünden ÖNCE yapılır.** Aksi hâlde
+        `_ariza_rrt_denetle`'nin sayaç tabanı abone yokken donar ve MAVROS
+        abone olduğu anda, dakikalar önce olmuş bir düşüş için sahte bir
+        `RRT-RED` çakardı — hem de tam operatörün ekranı açtığı saniyede.
+        Güncelleme ucuzdur (yüklem hesabı), gönderim pahalıdır (telsiz).
         """
+        self._ariza_rrt_denetle()
+        self._ariza_durumlardan_guncelle()
         if self._pub_statustext.get_subscription_count() == 0:
             return
-        self._ariza_rrt_denetle()
         gonderim = self._ariza.gonderilecek(self._now())
         if gonderim is None:
             return
@@ -1430,7 +1525,9 @@ class PlanningNode(Node):
             "olabilir (KAR-11) ya da tum yigin donmus olabilir (KAR-09).",
             throttle_duration_sec=2.0,
         )
-        self._ariza.bildir(SETPOINT_BOSLUK)
+        # Olay ZAMANI kaydedilir, arıza değil: `_ariza_durumlardan_guncelle`
+        # kodu `ariza_olay_tutma_s` boyunca aktif tutar, sonra düşürür.
+        self._son_setpoint_bosluk_t = simdi
 
     def _publish_cmd_vel(self, u: np.ndarray) -> None:
         # Diferansiyel thruster → ileri sürat + yaw rate.
@@ -1540,7 +1637,8 @@ class PlanningNode(Node):
             "aralıkta tekne durmuş olabilir. Sebep neredeyse kesin olarak "
             "kontrol thread'inin bloklanmasıdır (RRT* replan, §18/P1)."
         )
-        self._ariza.bildir(CMDVEL_KESIK)
+        # Olay ZAMANI kaydedilir (yukarıdaki `SETPOINT` gerekçesi).
+        self._son_cmdvel_bosluk_t = now
 
     def _safe_stop(self) -> None:
         """Fail-safe motor durdurma: kontrol adımı çökerse sıfır thrust + sıfır

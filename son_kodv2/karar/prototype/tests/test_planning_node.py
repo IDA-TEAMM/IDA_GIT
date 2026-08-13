@@ -1184,3 +1184,196 @@ def test_ariza_gecince_TEMIZ_bildirilir(ros_context) -> None:  # noqa: ANN001
     finally:
         casus.destroy_node()
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 ARIZA KODU MANDAL KUSURU (13.08.2026 düzeltmesi)
+#
+# İlk sürümde altı kod yalnız `bildir()` ediliyor, hiçbir yerde `temizle()`
+# edilmiyordu. `KAPI-YOK` parkurun OLAĞAN bir anıdır (iki turuncu duba görünüp
+# çift kurulamadığı her an) ⇒ ilk kapı yaklaşmasında kesin ateşliyor ⇒ o andan
+# sonra "ariza yok" bir daha HİÇ basılamıyor ve gerçek arıza düzeldiğinde ekran
+# temiz görünmek yerine dakikalar önce olmuş bir olaya düşüyordu.
+#
+# Kural: **arıza kodu DURUMDUR, olay değil.** Tek istisna `GPU-YOK`.
+# --------------------------------------------------------------------------- #
+
+
+def test_KAPI_YOK_kapi_kilitlenince_DUSER(ros_context) -> None:  # noqa: ANN001
+    """Mandal kusurunun ta kendisi: kapı kilitlenince kod düşmeli.
+
+    Bu test mandal geri gelirse KIRMIZI olur — düşmeyen `KAPI-YOK` görev
+    boyunca "ariza yok" satırını da öldürür.
+    """
+    from prototype.telemetry.ariza_bildirici import KAPI_YOK
+    node = pn.PlanningNode()
+    try:
+        # Kapı kilitli DEĞİL + iki turuncu duba görünüyor → arıza.
+        node._last_gate_used_fallback = True
+        node._gate.last_diagnostics.n_edge_buoys = 2
+        node._ariza_durumlardan_guncelle()
+        assert KAPI_YOK.kod in node._ariza.aktif_kodlar
+
+        # Kapı KİLİTLENDİ → arıza DÜŞMELİ.
+        node._last_gate_used_fallback = False
+        node._ariza_durumlardan_guncelle()
+        assert KAPI_YOK.kod not in node._ariza.aktif_kodlar, (
+            "kapı kilitlendiği hâlde KAPI-YOK aktif kaldı — mandal kusuru geri geldi"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_KAPI_YOK_tek_duba_varken_ARIZA_DEGIL(ros_context) -> None:  # noqa: ANN001
+    """İki dubadan azken kapı beklemek anlamsız — yanlış alarm basılmamalı."""
+    from prototype.telemetry.ariza_bildirici import KAPI_YOK
+    node = pn.PlanningNode()
+    try:
+        node._last_gate_used_fallback = True
+        node._gate.last_diagnostics.n_edge_buoys = 1
+        node._ariza_durumlardan_guncelle()
+        assert KAPI_YOK.kod not in node._ariza.aktif_kodlar
+    finally:
+        node.destroy_node()
+
+
+def test_SINIF_YOK_akis_donunce_DUSER(ros_context) -> None:  # noqa: ANN001
+    """Sınıflı algı geri gelince kod düşmeli (kurtarma dalı zaten vardı)."""
+    from prototype.telemetry.ariza_bildirici import SINIF_YOK
+    node = pn.PlanningNode()
+    try:
+        # Akış bir kez görüldü, sonra bayatladı.
+        node._classified_seen = True
+        node._last_classified_t = node._now() - (node._classified_timeout + 5.0)
+        node._ariza_durumlardan_guncelle()
+        assert SINIF_YOK.kod in node._ariza.aktif_kodlar
+
+        # Akış DÖNDÜ.
+        node._last_classified_t = node._now()
+        node._ariza_durumlardan_guncelle()
+        assert SINIF_YOK.kod not in node._ariza.aktif_kodlar, (
+            "sınıflı akış döndüğü hâlde SINIF-YOK aktif kaldı"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_ENGEL_BOS_dolu_kare_gelince_DUSER(ros_context) -> None:  # noqa: ANN001
+    """Algı yeniden cisim görmeye başlayınca kod düşmeli."""
+    from prototype.telemetry.ariza_bildirici import ENGEL_BOS
+    node = pn.PlanningNode()
+    try:
+        node._son_dolu_akis_t = node._now() - (node._bos_akis_uyari_s + 5.0)
+        node._ariza_durumlardan_guncelle()
+        assert ENGEL_BOS.kod in node._ariza.aktif_kodlar
+
+        node._son_dolu_akis_t = node._now()          # dolu kare geldi
+        node._ariza_durumlardan_guncelle()
+        assert ENGEL_BOS.kod not in node._ariza.aktif_kodlar, (
+            "algı yeniden cisim gördüğü hâlde ENGEL-BOS aktif kaldı"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_olay_arizalari_tutma_suresi_sonunda_DUSER(ros_context) -> None:  # noqa: ANN001
+    """`SETPOINT`/`CMDVEL` olaydır: tutma süresi dolunca kendiliğinden düşer.
+
+    Bir olay hiçbir zaman "düzelmez", bu yüzden durum yüklemi yazılamaz —
+    ama sonsuza kadar da asılı kalmamalı.
+    """
+    from prototype.telemetry.ariza_bildirici import CMDVEL_KESIK, SETPOINT_BOSLUK
+    node = pn.PlanningNode()
+    try:
+        simdi = node._now()
+        node._son_setpoint_bosluk_t = simdi
+        node._son_cmdvel_bosluk_t = simdi
+        node._ariza_durumlardan_guncelle()
+        assert SETPOINT_BOSLUK.kod in node._ariza.aktif_kodlar
+        assert CMDVEL_KESIK.kod in node._ariza.aktif_kodlar
+
+        # Tutma süresi geçmiş gibi davran (saati ileri almak yerine olayı geri al).
+        gecmis = simdi - (node._ariza_olay_tutma_s + 1.0)
+        node._son_setpoint_bosluk_t = gecmis
+        node._son_cmdvel_bosluk_t = gecmis
+        node._ariza_durumlardan_guncelle()
+        assert SETPOINT_BOSLUK.kod not in node._ariza.aktif_kodlar, (
+            "tutma süresi dolduğu hâlde SETPOINT aktif kaldı"
+        )
+        assert CMDVEL_KESIK.kod not in node._ariza.aktif_kodlar
+    finally:
+        node.destroy_node()
+
+
+def test_GPU_YOK_bilerek_mandalli_kalir(ros_context) -> None:  # noqa: ANN001
+    """`GPU-YOK` istisnadır: hesap yolu bir kez seçilir, koşu ortasında değişmez.
+
+    Bu testin işi mandalı KORUMAK — biri "tutarlılık olsun" diye onu da durum
+    yüklemine çevirirse burada durur.
+    """
+    from prototype.telemetry.ariza_bildirici import GPU_YOK
+    node = pn.PlanningNode()
+    try:
+        node._ariza.bildir(GPU_YOK)
+        for _ in range(5):
+            node._ariza_durumlardan_guncelle()
+        assert GPU_YOK.kod in node._ariza.aktif_kodlar, (
+            "GPU-YOK düşürüldü — tekne koşu ortasında GPU'ya kavuşmaz, "
+            "bu kodun mandallı kalması DOĞRU davranıştır"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_hicbir_ariza_SONSUZA_KADAR_asili_kalmaz(ros_context) -> None:  # noqa: ANN001
+    """🔑 YAPISAL NÖBETÇİ — mandal kusurunun SINIFINI kapatır.
+
+    Tek tek testler yeni bir kod eklendiğinde sessiz kalır. Bu test kaynağı
+    okuyup şunu dayatır: `_ariza.bildir(X)` ile basılan her kodun ya açık bir
+    `temizle(X)` karşılığı olmalı, ya da bilerek mandallı olduğu burada
+    yazılmalı. Yeni bir arıza kodu temizleme yolu olmadan eklenirse KIRMIZI.
+    """
+    import inspect
+    import re
+
+    # Bilerek mandallı kalanlar — her birinin gerekçesi koddaki yorumda.
+    MANDALLI_KALMASI_DOGRU = {
+        "GPU_YOK",        # hesap yolu açılışta bir kez seçilir (bkz. test yukarıda)
+    }
+
+    kaynak = inspect.getsource(pn)
+    basilan = set(re.findall(r"_ariza\.bildir\(\s*([A-Z_]+)\s*\)", kaynak))
+    temizlenen = set(re.findall(r"_ariza\.temizle\(\s*([A-Z_]+)\s*\)", kaynak))
+
+    asili = basilan - temizlenen - MANDALLI_KALMASI_DOGRU
+    assert not asili, (
+        f"şu arıza kodları basılıyor ama HİÇ temizlenmiyor: {sorted(asili)}. "
+        "Mandallı bir kod görev boyunca 'ariza yok' satırını da öldürür ve "
+        "operatör kodun ŞİMDİ mi GEÇMİŞTE mi olduğunu ayırt edemez. Kodu "
+        "`_ariza_durumlardan_guncelle`'de durum yüklemiyle kurun ya da "
+        "bilerek mandallıysa MANDALLI_KALMASI_DOGRU'ya gerekçesiyle ekleyin."
+    )
+
+
+def test_RRT_RED_abonesiz_donemde_BAYAT_alarm_uretmez(ros_context) -> None:  # noqa: ANN001
+    """Abone yokken sayaç tabanı donarsa, abone gelince sahte alarm çakar.
+
+    MAVROS abone olduğu an operatörün ekranı açılır; ilk gördüğü şey dakikalar
+    önce olmuş bir düşüş OLMAMALI.
+    """
+    from prototype.telemetry.ariza_bildirici import RRT_RED
+    node = pn.PlanningNode()
+    try:
+        # Abone YOK. Bu dönemde RRT birkaç kez düz çizgiye düştü.
+        # (`duz_cizgiye_dusuldu` salt-okunur property → arkasındaki alan.)
+        node._pipe._duz_cizgiye_dusuldu = 3
+        node._ariza_gonder()                 # abonesiz tur — taban güncellenmeli
+        assert node._son_duz_cizgi_sayaci == 3, (
+            "abonesiz turda RRT sayaç tabanı donmuş — abone gelince bayat "
+            "RRT-RED çakar"
+        )
+        # Abone belirdi, yeni düşüş YOK.
+        node._ariza_gonder()
+        assert RRT_RED.kod not in node._ariza.aktif_kodlar
+    finally:
+        node.destroy_node()
