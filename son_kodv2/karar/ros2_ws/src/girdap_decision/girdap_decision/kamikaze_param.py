@@ -26,12 +26,10 @@ from __future__ import annotations
 from typing import Iterable, Optional, Protocol
 
 from rcl_interfaces.msg import SetParametersResult
-from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import String
 
 from prototype.mission.kamikaze_hedef import (
     CLASS_HEDEF,
-    DEDEKTORU_OLAN_SINIFLAR,
     HedefRengiHatasi,
     degistirilebilir_mi,
     hedef_isaretle,
@@ -74,20 +72,6 @@ class KamikazeHedefKapisi:
             # sessiz kalmıyor: hedefsiz koşmak, YANLIŞ hedefe koşmaktan iyidir.
             self._log.error(f"{_PARAM} GECERSIZ, hedef ATANMADI: {exc}")
 
-        # Rengin SAHİBİ burasıdır ⇒ ilanı da buradan yapılır. `fsm_node`
-        # Parkur-3 kapısını (`p3_bekleniyor`) bu topic'ten öğrenir; parametreyi
-        # ikinci bir node'dan okumak iki kaynak = sessiz sürüklenme demekti.
-        # 🔴 13.08 av turu: varsayılan QoS **VOLATILE**. İlan `__init__`'te bir
-        # kez yapılıyor; `fsm_node` o an henüz abone değilse (node başlatma
-        # sırası garanti DEĞİL) mesaj KAYBOLUR ⇒ `p3_bekleniyor` sonsuza kadar
-        # False ⇒ **Parkur-3 hiç açılmaz**, hiçbir belirti vermeden.
-        # TRANSIENT_LOCAL = geç gelen abone SON değeri alır (latch).
-        self._pub_renk = node.create_publisher(
-            String, "/girdap/mission/hedef_rengi",
-            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
-        )
-        self._renk_ilan_et()
-
         node.add_on_set_parameters_callback(self._on_param_set)
         # md 5.5.3.1 kapısı görev durumunu gerektiriyor (fsm_node yayınlıyor).
         self._sub = node.create_subscription(
@@ -98,12 +82,6 @@ class KamikazeHedefKapisi:
                 f"PARKUR-3 hedef rengi (config): {self._renk_adi!r} → "
                 f"class_id={CLASS_HEDEF}"
             )
-
-    def _renk_ilan_et(self) -> None:
-        """Seçili rengi yayınla (boş dize = hedef atanmamış)."""
-        m = String()
-        m.data = self._renk_adi if self._sinif is not None else ""
-        self._pub_renk.publish(m)
 
     # ---------------------------------------------------------------- durum
 
@@ -143,7 +121,6 @@ class KamikazeHedefKapisi:
             self._sinif = yeni
             self._renk_adi = str(pr.value).strip()
             self._gorulmedi_uyarildi = False
-            self._renk_ilan_et()
             # WARN seviyesi bilinçli: operatör koşu öncesi bunu GÖRMELİ.
             self._log.warn(
                 "PARKUR-3 HEDEF RENGI = "
@@ -171,19 +148,10 @@ class KamikazeHedefKapisi:
         if zaten == 0:
             if not self._gorulmedi_uyarildi:
                 self._gorulmedi_uyarildi = True
-                if self._sinif not in DEDEKTORU_OLAN_SINIFLAR:
-                    # Ör. SİYAH: bu node'da dedektörü YOK. "HSV esigini
-                    # kontrol et" demek operatoru olmayan bir soruna surer.
-                    self._log.warn(
-                        f"hedef rengi {self._renk_adi!r} atandi — bu node o "
-                        f"rengi TESPIT ETMIYOR (dedektoru yok). Hedefi algi "
-                        f"ekibinin P3 node'u gorecek; burada uyari normaldir."
-                    )
-                else:
-                    self._log.warn(
-                        f"hedef rengi {self._renk_adi!r} atandi ama karede HIC "
-                        f"gorulmedi — HSV esigi / isik / renk adi kontrol edilmeli"
-                    )
+                self._log.warn(
+                    f"hedef rengi {self._renk_adi!r} atandi ama karede HIC "
+                    f"gorulmedi — HSV esigi / isik / renk adi kontrol edilmeli"
+                )
         else:
             self._gorulmedi_uyarildi = False
         return n

@@ -9,7 +9,7 @@ aktarım yasak.
 
 **Mekanizma:** kamera node'u zaten her rengi ayrı sınıfla yayınlıyor
 (`camera_buoys.py`: turuncu=0, sarı=1, hedef=2, kırmızı=3, yeşil=4,
-kahverengi=5, siyah=6 — **siyahın dedektörü yok**, bkz. CLASS_SIYAH). Hakem "kırmızı" derse yapılacak tek şey, kırmızı tespitlerini
+kahverengi=5). Hakem "kırmızı" derse yapılacak tek şey, kırmızı tespitlerini
 **`CLASS_HEDEF=2`** olarak yeniden etiketlemek — aşağı akıştaki hiçbir şey
 (MPPI `w_kamikaze` çekicisi, FSM Parkur-3 mantığı) değişmez, çünkü hepsi
 sınıf 2'ye bakıyor.
@@ -43,18 +43,6 @@ CLASS_HEDEF = 2
 CLASS_KIRMIZI = 3
 CLASS_YESIL = 4
 CLASS_KAHVERENGI = 5
-#: RAL 9005 — şartname s.18'in ÜÇÜNCÜ hedef rengi.
-#: 🔴 13.08.2026'da eklendi. Öncesinde bu sözlük kırmızı·yeşil·**kahverengi**
-#: kabul ediyordu; o üçlü şartnameden DEĞİL, 2026-07-16 saha testinde GÖRÜLEN
-#: renklerden geliyordu (`IDA_GIT@166352b`: *"parkurda bu renklerin de
-#: bulunduğu bulundu"*). Hedef renkleri ise s.18'e göre RAL 3026 (kırmızı) ·
-#: RAL 6037 (yeşil) · **RAL 9005 (siyah)**. Hakem "siyah" derse eski sözlükte
-#: `renk_to_class` HATA atıyor, `ros2 param set` REDDEDİLİYOR ve hedef
-#: atanmamış kalıyordu ⇒ **3 renkten 1'inde Parkur-3 tamamen sıfır**.
-#: ⚠️ `camera_buoys` siyahı TESPİT ETMEZ ⇒ `hedef_isaretle` siyahta hiçbir
-#: tespiti taşımaz (no-op). Siyah hedefi gören taraf algı ekibinin P3 node'u
-#: olacak; bu kimliğin buradaki işi parametrenin KABUL EDİLMESİ.
-CLASS_SIYAH = 6
 
 #: Hakemin söyleyebileceği renk adı → kamera sınıfı. Türkçe karakterli ve
 #: karaktersiz yazımlar, İngilizce karşılıkları da kabul edilir; operatör
@@ -69,9 +57,6 @@ RENK_SINIFLARI: dict[str, int] = {
     "kahverengi": CLASS_KAHVERENGI,
     "kahve": CLASS_KAHVERENGI,
     "brown": CLASS_KAHVERENGI,
-    "siyah": CLASS_SIYAH,
-    "siyahi": CLASS_SIYAH,
-    "black": CLASS_SIYAH,
     # Aşağıdakiler TANINIR ama REDDEDİLİR — bilinmeyen renk ile yasak renk
     # farklı hatalar, operatöre farklı şey söylenmeli.
     "turuncu": CLASS_PARKUR_KENARI,
@@ -83,15 +68,6 @@ RENK_SINIFLARI: dict[str, int] = {
 
 #: Hedef olarak seçilebilen sınıflar. Kasıtlı olarak 0 ve 1 YOK.
 SECILEBILIR_SINIFLAR: frozenset[int] = frozenset(
-    {CLASS_KIRMIZI, CLASS_YESIL, CLASS_KAHVERENGI, CLASS_SIYAH}
-)
-
-#: Bu sınıfları `camera_buoys` GERÇEKTEN tespit eder (HSV eşiği vardır).
-#: 🔴 `CLASS_SIYAH` bilerek YOK: siyahın dedektörü hiçbir yerde yok, kimlik
-#: yalnız parametrenin kabul edilmesi için var. Bu küme olmadan operatöre
-#: *"HSV eşiği/ışık/renk adı kontrol et"* denir ve **olmayan bir sorun**
-#: kovalanır — tanı kodu da koddur, yanlış teşhis zararlıdır.
-DEDEKTORU_OLAN_SINIFLAR: frozenset[int] = frozenset(
     {CLASS_KIRMIZI, CLASS_YESIL, CLASS_KAHVERENGI}
 )
 
@@ -118,24 +94,6 @@ class HedefRengiHatasi(ValueError):
     """Renk adı tanınmadı ya da hedef olarak seçilmesi yasak."""
 
 
-#: Türkçe **İ** tuzağı — 13.08.2026'da ölçümle bulundu.
-#: Python'un varsayılan (Türkçe olmayan) küçültmesi `İ` (U+0130) harfini
-#: `i` + **U+0307 birleşik nokta** yapar:
-#:      "SİYAH".lower() -> 'si̇yah'   ✗ sözlükte yok
-#:      "YEŞİL".lower() -> 'yeşi̇l'   ✗ sözlükte "yeşil" VAR ama eşleşmez
-#:      "KIRMIZI".lower() -> 'kirmizi' ✓ (İ içermiyor)
-#: ⇒ Operatör rengi BÜYÜK HARF yazarsa (Türkçe klavye, koşu sabahı, baskı
-#: altında) `ros2 param set` **reddediliyordu** — üstelik bu sözlüğün amacı
-#: tam tersi: *"operatör klavye ayarıyla uğraşmasın"*. Yalnız U+0307 atılıyor;
-#: ş/ç/ğ/ü/ö bozulmasın diye NFKD çözümlemesi BİLEREK yapılmıyor.
-_BIRLESIK_NOKTA = "\u0307"
-
-
-def _anahtarla(ad: str) -> str:
-    """Sözlük anahtarı: kırp + küçült + Türkçe İ'nin bıraktığı noktayı at."""
-    return ad.strip().lower().replace(_BIRLESIK_NOKTA, "")
-
-
 def renk_to_class(ad: Optional[str]) -> Optional[int]:
     """Hakemin söylediği renk adını kamera sınıfına çevir.
 
@@ -149,7 +107,7 @@ def renk_to_class(ad: Optional[str]) -> Optional[int]:
     """
     if ad is None:
         return None
-    anahtar = _anahtarla(ad)
+    anahtar = ad.strip().lower()
     if not anahtar:
         return None
     if anahtar not in RENK_SINIFLARI:

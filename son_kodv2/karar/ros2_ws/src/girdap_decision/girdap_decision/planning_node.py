@@ -68,7 +68,6 @@ from typing import Callable, Optional
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile
 
 from geometry_msgs.msg import Pose, PoseArray, PoseStamped, Twist
 from mavros_msgs.msg import State as MavState
@@ -91,7 +90,6 @@ from prototype.mission.gate_follower import (
     GateFollowerConfig,
 )
 from prototype.planning.mppi import MPPIConfig
-from prototype.mission.hedef_secim import Hedef, nisan_hedefi
 from prototype.telemetry.ariza_bildirici import (
     CMDVEL_KESIK,
     ENGEL_BOS,
@@ -315,11 +313,6 @@ class PlanningNode(Node):
         # Kenar dubaları DÜNYA ENU'da (classified_obstacles'tan her taramada
         # tazelenir). Boş liste = kapı görünmüyor → gate_follower ham GN'ye düşer.
         self._edge_buoys: list[tuple[float, float]] = []
-        # PARKUR-3: dünya çerçevesine çevrilmiş hedef adayları + istenen renk
-        self._hedefler: list = []
-        self._hedef_t: float = 0.0
-        self._istenen_renk: int = 0
-        self._hedef_kilit_bildirildi = False
         # Dairesel engeller DÜNYA ENU'da (x, y, r) — MPPI'ye giden torbanın
         # AYNISI, kopya değil aynı taramadan. Kapı NİŞANININ engellere göre
         # kayması için gerekli: kenar dubaları MPPI'de engel olmadığından
@@ -406,19 +399,6 @@ class PlanningNode(Node):
         )
         self._sub_wp = self.create_subscription(
             Path, "/girdap/mission/waypoints", self._on_waypoints, 10
-        )
-        # ── PARKUR-3 (FAZ 3, 2026-08-13) ────────────────────────────────
-        # Hedef adayları algı ekibinin AYRI topic'inden gelir; /perception/
-        # buoys'a hiç dokunulmaz ⇒ P1/P2 tanım gereği etkilenmez.
-        self.create_subscription(
-            Detection3DArray, "/perception/targets", self._on_targets, 10
-        )
-        # Hedef rengi: sahibi `KamikazeHedefKapisi` ilan eder (LATCH'li —
-        # geç abone son değeri alır; VOLATILE olsaydı node sırası yüzünden
-        # kaçırabilirdik, 13.08 av turu bulgusu).
-        self.create_subscription(
-            String, "/girdap/mission/hedef_rengi", self._on_hedef_rengi,
-            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
         # Video bypass (use_rrt=false): mission_manager'dan doğrudan hedef.
         self._sub_target = self.create_subscription(
@@ -1016,12 +996,6 @@ class PlanningNode(Node):
 
         `gate_following_enabled=false` → tamamen devre dışı, eski davranış.
         """
-        # ── PARKUR-3 NİŞANI (FAZ 3) — kapı mantığından ÖNCE ─────────────
-        # Kapı ve hedef aynı anda anlamlı değil: P3'te kapı yok, hedef var.
-        p3 = self._parkur3_nisani(coarse)
-        if p3 is not None:
-            return p3
-
         if not self._gate_enabled or self._last_xy is None:
             return coarse
         result = self._gate.update(
@@ -1050,45 +1024,6 @@ class PlanningNode(Node):
             self._warn_sessiz_ret()
         self._publish_gate_count()
         return result.target
-
-    def _parkur3_nisani(self, coarse):
-        """PARKUR-3'te görülen hedefe nişan al. Uygun değilse `None`.
-
-        `None` dönmek "hedef yok" demek DEĞİL, "**bu çağrıda P3 yolu devrede
-        değil**" demek — çağıran o zaman bugünkü davranışına (kapı takibi ya
-        da ham görev noktası) düşer. Dört kapı da geçilmeden nişan değişmez:
-
-        1. **PARKUR3'te miyiz** — P1/P2'de bu yol tanım gereği kapalı.
-        2. **Hedef rengi yüklü mü** — hakem rengi vermemişse hedefe kendi
-           kendimize karar vermeyiz (yanlış hedef TS3: 100→50→**5**).
-        3. **Tespit TAZE mi** — algı sussa (node öldü, kamera koptu) bayat
-           konuma nişan almak, olmayan bir şeye sürmektir.
-        4. **İstenen renkte, çapı makul, EN YAKIN aday var mı.**
-
-        ⚠️ Konum, tespitin geldiği andaki değil **şu anki** pozla dünyaya
-        çevrildi (`_on_targets`); 2 Hz'te 1,5 m/s'de ~0,75 m gecikme payı var.
-        Aynı yaklaşım engel yolunda da kullanılıyor — tutarlı, ama temas
-        anında bu payın ölçülmesi gerekiyor (**suda**).
-        """
-        secilen = nisan_hedefi(
-            self._mission_state, self._istenen_renk, self._hedefler,
-            self._last_xy, self._now() - self._hedef_t,
-        )
-        if secilen is None:
-            if self._hedef_kilit_bildirildi:
-                self._hedef_kilit_bildirildi = False
-                self.get_logger().warn(
-                    "PARKUR-3 hedefi KAYBOLDU → ham görev noktasına dönüldü"
-                )
-            return None
-        if not self._hedef_kilit_bildirildi:
-            self._hedef_kilit_bildirildi = True
-            self.get_logger().warn(
-                f"PARKUR-3 HEDEFİ KİLİTLENDİ: ({secilen.x:.1f}, {secilen.y:.1f}), "
-                f"renk kodu {secilen.renk_kodu}, ölçülen çap {secilen.cap_m:.2f} m "
-                "— MPPI referansı buraya kuruluyor"
-            )
-        return (secilen.x, secilen.y)
 
     def _publish_edge_buoys(self, edges: list[tuple[float, float]]) -> None:
         """Kenar dubalarını DÜNYA (odom) çerçevesinde yayınla — Dosya-3 katmanı.
@@ -1225,44 +1160,6 @@ class PlanningNode(Node):
         path = self._pipe.global_path
         if path is not None:
             self._publish_path(path)
-
-    @_guard
-    def _on_hedef_rengi(self, msg: String) -> None:
-        """Hedef rengi yüklendi/temizlendi (sahibi: `KamikazeHedefKapisi`).
-
-        Boş dize = hedef atanmamış ⇒ **tüm P3 nişanı kapalı** (P1/P2 aynen).
-        """
-        from prototype.mission.renk_kodu import RENK_KOD, _anahtarla
-        yeni = RENK_KOD.get(_anahtarla(msg.data), 0) if msg.data.strip() else 0
-        if yeni != self._istenen_renk:
-            self._istenen_renk = yeni
-            self.get_logger().warn(
-                f"PARKUR-3 hedef rengi = {msg.data.strip() or 'ATANMAMIS'} "
-                f"(kod {yeni})"
-            )
-
-    @_guard
-    def _on_targets(self, msg: Detection3DArray) -> None:
-        """`/perception/targets` → dünya çerçevesinde hedef adayları.
-
-        🔴 Çerçeve: algı topic'leri **GÖVDE (base_link)**, boru hattı **DÜNYA**
-        çalışır ⇒ `_body_to_world` ŞART (2026-08-03'te engel yolunda tam bu
-        dönüşüm eksikti ve engeller yanlış yere düşüyordu).
-        """
-        hedefler = []
-        for det in msg.detections:
-            if not det.results:
-                continue
-            try:
-                kod = int(det.results[0].hypothesis.class_id)
-            except (ValueError, TypeError):
-                continue                       # sayısal olmayan sınıf → atla
-            wx, wy = self._body_to_world(det.bbox.center.position.x,
-                                         det.bbox.center.position.y)
-            hedefler.append(Hedef(wx, wy, kod, float(det.bbox.size.x),
-                                  float(det.results[0].hypothesis.score)))
-        self._hedefler = hedefler
-        self._hedef_t = self._now()
 
     @_guard
     def _on_mission_state(self, msg: String) -> None:
