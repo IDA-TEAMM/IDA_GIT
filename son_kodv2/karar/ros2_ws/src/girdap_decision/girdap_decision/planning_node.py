@@ -91,7 +91,7 @@ from prototype.mission.gate_follower import (
     GateFollowerConfig,
 )
 from prototype.planning.mppi import MPPIConfig
-from prototype.mission.hedef_secim import Hedef, nisan_hedefi
+from prototype.mission.hedef_secim import Hedef, HedefKilidi, nisan_hedefi
 from prototype.telemetry.ariza_bildirici import (
     CMDVEL_KESIK,
     ENGEL_BOS,
@@ -320,6 +320,10 @@ class PlanningNode(Node):
         self._hedef_t: float = 0.0
         self._istenen_renk: int = 0
         self._hedef_kilit_bildirildi = False
+        # Hedefe kilitlen ve görüntü kesilse de nişanı koru. Ölçüldü (13.08):
+        # 0,3 m altında stereo ölüyor ⇒ son yarım metrede tespit KESİNLİKLE
+        # kesilir; kilitsiz nişan tam temas anında ham görev noktasına düşerdi.
+        self._hedef_kilidi = HedefKilidi()
         # Dairesel engeller DÜNYA ENU'da (x, y, r) — MPPI'ye giden torbanın
         # AYNISI, kopya değil aynı taramadan. Kapı NİŞANININ engellere göre
         # kayması için gerekli: kenar dubaları MPPI'de engel olmadığından
@@ -1070,10 +1074,15 @@ class PlanningNode(Node):
         Aynı yaklaşım engel yolunda da kullanılıyor — tutarlı, ama temas
         anında bu payın ölçülmesi gerekiyor (**suda**).
         """
-        secilen = nisan_hedefi(
+        taze = nisan_hedefi(
             self._mission_state, self._istenen_renk, self._hedefler,
             self._last_xy, self._now() - self._hedef_t,
         )
+        # PARKUR3 dışındaysak kilit BIRAKILIR (yeniden başlama / parkur geçişi).
+        if self._mission_state != "PARKUR3" or not self._istenen_renk:
+            self._hedef_kilidi.sifirla()
+            return None
+        secilen = self._hedef_kilidi.guncelle(taze)
         if secilen is None:
             if self._hedef_kilit_bildirildi:
                 self._hedef_kilit_bildirildi = False

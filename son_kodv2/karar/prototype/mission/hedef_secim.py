@@ -109,3 +109,88 @@ def nisan_hedefi(mission_state, istenen_renk_kodu, hedefler, arac_xy,
     if not hedefler or hedef_yasi_s > bayatlik_s:
         return None
     return hedef_sec(hedefler, istenen_renk_kodu, arac_xy)
+
+
+# ─────────────────────── HEDEF KİLİDİ (2026-08-13) ────────────────────────
+#: Kilitlemeden önce hedefin kaç ARDIŞIK karede görülmesi gerekir.
+#: Tek karelik yanlış tespite kilitlenmek, yanlış hedefe sürmek demektir
+#: (TS3: 100→50→**5**). 2 Hz'te 3 kare = 1,5 sn — angajman bütçesinde hiçbir şey.
+KILIT_ONAY_KARE = 3
+
+#: Kilitliyken gelen yeni tespit, kilitli konuma bu mesafeden yakınsa **aynı
+#: hedef** sayılır ve konum tazelenir. Uzaktaysa **yok sayılır** — hedefler
+#: yan yana duruyor (Şekil 3) ve saldırı ortasında hedef değiştirmek, iki
+#: hedefe birden temas riskidir.
+KILIT_TAZELEME_M = 3.0
+
+
+class HedefKilidi:
+    """Bir hedefe kilitlen ve **görüntü kesilse de** nişanı koru.
+
+    🔴 **NEDEN GEREKLİ.** Nişan yalnız taze tespitle sürülürse, hedef bir an
+    kaybolduğunda (dalga, serpinti, kadraj taşması) `nisan_hedefi` `None`
+    döner ve çağıran **ham görev noktasına** düşer — o da Parkur-2'nin son
+    noktası, yani **arkamız**. Sonuç: saldırı ortasında tekne hedeften döner.
+
+    🔑 Bu, karar tarafının kapı hafızasıyla (`edge_memory`) **aynı desen**:
+    *"kapıya yaklaşırken direkler kaçınılmaz olarak kadrajdan çıkar"* ⇒
+    hatırlamak tahmin değil, **fiziksel gerçeğin korunması**. Bizde daha da
+    güçlü: hedef **şamandıra, demirli** — yer değiştirmiyor. Kaybolan şey
+    cismin kendisi değil, o karede **görülebilirliği**.
+
+    ÖLÇÜLDÜ (13.08): hedef **0,7 m**'ye kadar kadrajda kalıyor, ama **0,3 m**
+    altında stereo ölüyor (`setDepthLowerThreshold(300)`) ⇒ son yarım metrede
+    tespit **kesinlikle** kesilir. Kilit olmadan tam temas anında nişan düşer.
+
+    ⚠️ Konum **dünya çerçevesinde** saklanır; odometri sürüklenmesi kadar
+    hata birikir. Yaklaşma kısa (10 m @1,5 m/s ≈ 7 sn) olduğu için ihmal
+    edilebilir, ama **suda doğrulanmalı**.
+    """
+
+    def __init__(self, onay_kare: int = KILIT_ONAY_KARE,
+                 tazeleme_m: float = KILIT_TAZELEME_M) -> None:
+        self._onay_kare = int(onay_kare)
+        self._tazeleme_m = float(tazeleme_m)
+        self._aday: Optional[Hedef] = None
+        self._sayac = 0
+        self._kilitli: Optional[Hedef] = None
+
+    def guncelle(self, secilen: Optional[Hedef]) -> Optional[Hedef]:
+        """Bu karenin seçimini ver, nişan alınacak hedefi al (`None` = yok).
+
+        · Kilitli DEĞİLKEN: aynı hedef `onay_kare` kez üst üste görülürse kilitlenir.
+        · Kilitliyken: yakındaki yeni tespit konumu **tazeler**; tespit yoksa
+          **kilitli konum korunur** (asıl amaç bu).
+        """
+        if self._kilitli is not None:
+            if secilen is not None and self._yakin(secilen, self._kilitli):
+                self._kilitli = secilen          # taze ölçümle konumu güncelle
+            return self._kilitli
+
+        if secilen is None:
+            self._aday, self._sayac = None, 0    # ardışıklık bozuldu
+            return None
+        if self._aday is not None and self._yakin(secilen, self._aday):
+            self._sayac += 1
+        else:
+            self._aday, self._sayac = secilen, 1
+        self._aday = secilen
+        if self._sayac >= self._onay_kare:
+            self._kilitli = secilen
+            return self._kilitli
+        return None                              # henüz onaylanmadı
+
+    def sifirla(self) -> None:
+        """Parkur-3'ten çıkıldı / yeniden başlama — kilit bırakılır."""
+        self._aday, self._sayac, self._kilitli = None, 0, None
+
+    def _yakin(self, a: Hedef, b: Hedef) -> bool:
+        return math.hypot(a.x - b.x, a.y - b.y) <= self._tazeleme_m
+
+    @property
+    def kilitli(self) -> Optional[Hedef]:
+        return self._kilitli
+
+    @property
+    def onay_sayaci(self) -> int:
+        return self._sayac
