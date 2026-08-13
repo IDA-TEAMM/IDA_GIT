@@ -33,8 +33,11 @@ catamaran:
   # 1.26 m/s yaptı; tanılama o çalışmadan 1.455 N/motor veriyor — spec'in
   # ~1/20'si. MPPI açısından doğru olan bu: "tam komutta tekne fiilen bunu
   # yapıyor". ⚠ AMA BU BİR DONANIM BULGUSUDUR, kabullenilmemeli — olası
-  # sebepler: 4 motorun yalnız 2'sinin sürülmesi (§7.2 açık sorusu) · ESC/
-  # batarya akım sınırı · pervane/yön hatası · CFD'nin fazla iyimser olması.
+  # sebepler: ESC/batarya akım sınırı · pervane/yön hatası · CFD'nin fazla
+  # iyimser olması. ⛔ "4 motorun yalnız 2'si sürülüyor" ŞIKKI ELENDİ: tekne
+  # 2 MOTORLU (yardımcı thruster'lar 19.07.2026'da ESC'leriyle söküldü,
+  # 04.08'de kalıcı olduğu teyit edildi, kaptan 13.08'de yeniden doğruladı) —
+  # §7.2'nin açık sorusu KAPANDI, düşük itki bir motor eksikliği DEĞİL.
   # Sabit-gaz step testinde ölçülüp buraya gerçek değer yazılacak.
   max_thrust: 1.455       # N - tek motor, log 58'den TANILANDI (CFD: 30.0)
   # CFD'nin RPM → Newton tablosu (SUDA DOĞRULANMADI, referans olarak duruyor):
