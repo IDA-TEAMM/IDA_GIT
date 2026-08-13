@@ -190,6 +190,43 @@ def test_timeout_sifir_beklemeden_doner():
                           log=lambda *a: None) is False
 
 
+def test_bekleme_mesaji_TAMPONU_BOSALTARAK_yazilir(monkeypatch):
+    """🔴 NÖBETÇİ (2026-08-13): varsayılan günlükçü `flush` ETMEZSE saha kör kalır.
+
+    Servis çıktısı journal'a BORU üzerinden gider → blok tamponlanır. Tek
+    satırlık bekleme mesajı flush edilmezse tampona takılır ve journal'a hiç
+    ulaşmaz; operatör `active (running)` görüp "topluyor" sanır, oysa toplayıcı
+    olmayan bir kamerayı `--cihaz-bekle` boyunca (sahada 3600 sn) bekler.
+    Ölçüldü: 13.08'de servis 5 dakika koştu, journal'da `Started`'dan başka
+    satır yoktu. Bu test `log` VARSAYILANINI sınar — bilerek `log=` VERİLMEZ.
+    """
+    class SahteStdout:
+        def __init__(self):
+            self.yazilan = []
+            self.flush_edildi = False
+            self.flushsuz_yazi_var = False
+
+        def write(self, s):
+            if s.strip():
+                self.yazilan.append(s)
+                self.flush_edildi = False
+            return len(s)
+
+        def flush(self):
+            self.flush_edildi = True
+
+    sahte = SahteStdout()
+    monkeypatch.setattr(sys, "stdout", sahte)
+
+    assert ov.cihaz_bekle(lambda: [], timeout_s=0.05, uyku_s=0.01) is False
+
+    assert sahte.yazilan, "bekleme mesajı hiç yazılmadı"
+    assert "OAK" in "".join(sahte.yazilan)
+    assert sahte.flush_edildi, (
+        "bekleme mesajı flush EDİLMEDİ — journal'a boru üzerinden giderken "
+        "tampona takılır, sahada görünmez (bkz. cihaz_bekle docstring'i)")
+
+
 # --------------------------------------------------- oran (deploy geometrisi)
 def test_43_cozunurlukler_uyumlu():
     """Deploy 4:3 çalışıyor (1352x1014 → 512x512 SIKIŞTIRMA, letterbox payı 0)."""
