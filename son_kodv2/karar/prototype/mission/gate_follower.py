@@ -177,6 +177,37 @@ class Gate:
         """Sürülecek nokta: nişan varsa o, yoksa geometrik orta."""
         return self.aim if self.aim is not None else self.midpoint
 
+    def gecis_hedefi(self, uzatma: float) -> Point:
+        """🔴 F-K.1 (13.08.2026) — SÜRÜLECEK NOKTA KAPININ ÖTESİNDEDİR.
+
+        Kapı bir VARIŞ NOKTASI DEĞİL, GEÇİLECEK BİR EŞİKTİR. Nişan kapı
+        düzleminin üstünde bırakılırsa MPPI referansı orada BİTER; araç
+        oraya varır, terminal maliyet sıfırlanır ve **tam kapı ortasında
+        durur**. Düzlem geçilmediği için kilit de çözülmez → görev bir daha
+        ilerlemez.
+
+        📏 Sanal gölde ölçüldü (13.08, kapalı döngü, gerçek düğümler):
+        tekne 25 m sürüp 1. kapıya vardı ve **(0.02, 24.95)'te kilitlendi** —
+        `current_target` (−0.02, 25.04)'te takılı kaldı, MPPI thrust
+        (−0.13, +0.05) N, yani fiilen sıfır. Görev yöneticisi bir sonraki
+        noktaya geçmiş olmasına rağmen araç durdu.
+
+        🔑 UZATMA MİKTARI UYDURULMADI: **gövde boyu** (`hull_length_m`,
+        ölçülmüş 1,04 m). Gerekçe yarışma tanımının kendisi: geçiş süresi
+        *pruva* dubaları geçince başlar, ***kıç* geçince biter** — yani
+        geçmiş sayılmak için TÜM tekne düzlemin ötesine çıkmalı. Nişanı
+        gövde boyu kadar öteye koymak bunu garanti eder ve yeni bir
+        ayarlanabilir eşik getirmez.
+
+        `normal` yoksa (eski kurs-ekseni kolu) uzatma yapılmaz — davranış
+        birebir eskisi gibi kalır.
+        """
+        if self.normal is None:
+            return self.drive_target
+        ax, ay = self.drive_target
+        nx, ny = self.normal
+        return (ax + nx * uzatma, ay + ny * uzatma)
+
     @property
     def aim_shift(self) -> float:
         """Nişanın geometrik ortadan kayma miktarı (m) — saha teşhisi."""
@@ -289,6 +320,15 @@ class GateResult:
     target: Point            # rafine hedef (kapı ortası) ya da fallback (ham GN)
     gate: Optional[Gate]     # seçilen kapı; fallback'te None
     used_fallback: bool      # True → kapı yok, ham GN'ye düşüldü
+    # 🔴 F-K.1: KONTROLE giden nokta. `target` kapının NİŞANIDIR (kimlik,
+    # teşhis, RViz); `surus_hedefi` onun gövde boyu kadar ÖTESİDİR — MPPI
+    # referansı buraya kurulur ki araç kapıda durmayıp GEÇSİN. Kapı yokken
+    # ikisi aynıdır (ham GN), yani kapısız davranış birebir korunur.
+    surus_hedefi: Point = (0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        if self.surus_hedefi == (0.0, 0.0) and self.gate is None:
+            object.__setattr__(self, "surus_hedefi", self.target)
 
 
 def _forward_left_axes(
@@ -824,6 +864,9 @@ class GateFollower:
                     target=self._committed.drive_target,
                     gate=self._committed,
                     used_fallback=False,
+                    surus_hedefi=self._committed.gecis_hedefi(
+                        self._cfg.hull_length_m
+                    ),
                 )
             # Geçildi → serbest bırak, aşağıda yeniden seç.
             # K1: bırakmadan ÖNCE "arkada" olarak işaretle — yoksa bir sonraki
@@ -837,7 +880,10 @@ class GateFollower:
         if fresh is None:
             self._aday = None
             self._aday_sayaci = 0
-            return GateResult(target=coarse_target, gate=None, used_fallback=True)
+            return GateResult(
+                target=coarse_target, gate=None, used_fallback=True,
+                surus_hedefi=coarse_target,
+            )
 
         # Sayaç yalnız YENİ bir algı karesinde ilerler (bkz. `gozlem_no`);
         # aynı kareden gelen ikinci bir kontrol tick'i onayı ilerletemez.
@@ -855,13 +901,17 @@ class GateFollower:
         self.last_diagnostics.aday_onay_sayaci = self._aday_sayaci
 
         if self._aday_sayaci < ONAY_TICK:
-            return GateResult(target=coarse_target, gate=None, used_fallback=True)
+            return GateResult(
+                target=coarse_target, gate=None, used_fallback=True,
+                surus_hedefi=coarse_target,
+            )
 
         self._committed = fresh
         self._aday = None
         self._aday_sayaci = 0
         return GateResult(
-            target=fresh.drive_target, gate=fresh, used_fallback=False
+            target=fresh.drive_target, gate=fresh, used_fallback=False,
+            surus_hedefi=fresh.gecis_hedefi(self._cfg.hull_length_m),
         )
 
 

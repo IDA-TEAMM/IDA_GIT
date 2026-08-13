@@ -546,10 +546,20 @@ def test_kapi_ortasi_ham_gorev_noktasini_ezer(ros_context) -> None:  # noqa: ANN
             assert node._pipe._ref_path[-1][1] == pytest.approx(3.0, abs=1e-6)
         node._on_classified(_classified(dubalar))
         node._on_target(target)
-        # Referansın son noktası kapı ortası (10, 0) olmalı — ham GN (20, 3) değil.
+        # Referansın son noktası kapının ÖTESİ olmalı — ham GN (20, 3) değil.
+        # 🔴 F-K.1 (13.08.2026) — SÖZLEŞME İNCELDİ: eskiden kapı ORTASI (10, 0)
+        # bekleniyordu; artık orta + gövde boyu (10 + 1,04 = 11,04). Sebep
+        # sanal gölde kapalı döngüde ÖLÇÜLDÜ: nişan kapı düzleminin ÜSTÜNDE
+        # bırakılınca MPPI referansı orada bitiyor, `_terminal_goal` referans
+        # sonuna kırpıyor ve araç TAM KAPI ORTASINDA duruyor (ölçüm: konum
+        # (0.02, 24.95), thrust 0,13 N). Düzlem geçilmediği için kilit de
+        # çözülmüyor → görev bir daha ilerlemiyor. Kapı bir VARIŞ değil,
+        # GEÇİLECEK EŞİKTİR. Uzatma = ölçülmüş gövde boyu; gerekçe yarışma
+        # tanımı: geçiş *pruva* girince başlar, ***kıç* çıkınca* biter.
+        # Korunan asıl güvence aynen duruyor: kapı ham GN'yi EZİYOR.
         ref = node._pipe._ref_path
         assert ref is not None
-        assert ref[-1][0] == pytest.approx(10.0, abs=1e-6)
+        assert ref[-1][0] == pytest.approx(10.0 + 1.04, abs=1e-6)
         assert ref[-1][1] == pytest.approx(0.0, abs=1e-6)
     finally:
         node.destroy_node()

@@ -765,3 +765,75 @@ def test_K1_ardisik_parkurda_hedef_GERIYE_gitmez() -> None:
     # ①'in kendi kendini düzelttiğinin kanıtı: eğik yaklaşmada elenen kapı-2,
     # açı düzelince kilitlenip GEÇİLİYOR (yani eleme kalıcı puan kaybı değil).
     assert gf.passed_gate_count >= 2, "kurs boyunca en az 2 kapı geçilmeliydi"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# F-K.1 (13.08.2026) — KAPI VARIŞ NOKTASI DEĞİL, GEÇİLECEK EŞİKTİR
+#
+# 🔴 SANAL GÖLDE ÖLÇÜLDÜ (kapalı döngü, gerçek düğümler, MP'den görev):
+# tekne 25 m sürüp 1. kapıya vardı ve **(0.02, 24.95)'te kilitlendi**;
+# `current_target` (−0.02, 25.04)'te takılı, MPPI thrust (−0.13, +0.05) N =
+# fiilen sıfır. Görev yöneticisi bir sonraki noktaya GEÇMİŞ olmasına rağmen
+# araç durdu.
+#
+# 🔑 ZİNCİR: nişan kapı düzleminin ÜSTÜNDE → MPPI referansı orada BİTER →
+# `mppi._terminal_goal` referans sonuna KIRPAR (kod okundu: `ref[min(n-1,
+# anchor+adim)]`) → terminal gradyanı 2·w·d sıfıra iner → araç kapı ortasında
+# frenler → düzlem geçilmez → `signed_distance > 0` olmaz → kilit çözülmez →
+# hedef bir daha ilerlemez. Kendi kendini kilitleyen döngü.
+#
+# 📏 UZATMA = ÖLÇÜLMÜŞ GÖVDE BOYU (1,04 m), ayarlanabilir eşik DEĞİL. Gerekçe
+# yarışma tanımının kendisi: geçiş süresi *pruva* dubaları geçince başlar,
+# ***kıç* geçince* biter — yani geçmiş sayılmak için tüm tekne düzlemin
+# ötesine çıkmalı. (Aynı ilke pure-pursuit ailesinde de vardır: nişan hep
+# aracın ÖNÜNDEDİR, araçta biten bir terminal nokta değil.)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_FK1_surus_hedefi_kapi_DUZLEMININ_OTESINDE() -> None:
+    g = Gate(left=(-2.0, 25.0), right=(2.0, 25.0), midpoint=(0.0, 25.0),
+             normal=(0.0, 1.0))
+    hedef = g.gecis_hedefi(1.04)
+    assert hedef == pytest.approx((0.0, 26.04), abs=1e-6)
+    # Düzlemin ötesinde: aracı oraya süren MPPI kapıyı GEÇMEK ZORUNDA kalır.
+    assert g.signed_distance(hedef) > 0.0
+
+
+def test_FK1_uzatma_NISANI_bozmaz_kimlik_korunur() -> None:
+    """`midpoint`/`drive_target` KİMLİKTİR (eşleşme + geçiş testi buna bakar);
+    uzatma yalnız KONTROL hedefidir. İkisi karışırsa kapı kendi kendini
+    kaybeder (drift eşiği orta noktaya göre ölçülüyor)."""
+    g = Gate(left=(-2.0, 25.0), right=(2.0, 25.0), midpoint=(0.0, 25.0),
+             normal=(0.0, 1.0))
+    _ = g.gecis_hedefi(1.04)
+    assert g.midpoint == (0.0, 25.0)
+    assert g.drive_target == (0.0, 25.0)
+
+
+def test_FK1_normal_YOKSA_uzatma_YAPILMAZ() -> None:
+    """Eski kurs-ekseni kolu: yön bilinmiyorsa körlemesine uzatmak, hedefi
+    yanlış tarafa (geriye) taşıyabilirdi."""
+    g = Gate(left=(-2.0, 25.0), right=(2.0, 25.0), midpoint=(0.0, 25.0))
+    assert g.gecis_hedefi(1.04) == g.drive_target
+
+
+def test_FK1_KAPI_YOKKEN_surus_hedefi_ham_GN_ile_AYNI() -> None:
+    """Geriye tam uyumluluk: kapısız davranış birebir korunmalı."""
+    takip = GateFollower()
+    sonuc = takip.update((0.0, 0.0), (20.0, 3.0), [], [])
+    assert sonuc.used_fallback is True
+    assert sonuc.surus_hedefi == sonuc.target == (20.0, 3.0)
+
+
+def test_FK1_kilitli_kapida_surus_hedefi_OTEDE_target_NISANDA() -> None:
+    """Uçtan uca: `update()` iki noktayı da doğru döndürmeli."""
+    takip = GateFollower()
+    dubalar = [(10.0, +2.0), (10.0, -2.0)]
+    sonuc = None
+    for i in range(ONAY_TICK + 1):
+        sonuc = takip.update((0.0, 0.0), (20.0, 0.0), dubalar, [], gozlem_no=i)
+    assert sonuc is not None and sonuc.gate is not None
+    assert sonuc.target == pytest.approx((10.0, 0.0), abs=1e-6)
+    # Sürüş hedefi kapının ötesinde ve düzlemi geçmiş konumda.
+    assert sonuc.surus_hedefi[0] > 10.0
+    assert sonuc.gate.signed_distance(sonuc.surus_hedefi) > 0.0

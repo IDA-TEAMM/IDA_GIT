@@ -1058,11 +1058,21 @@ class PlanningNode(Node):
                     "kapı görüş dışı → ham görev noktasına dönüldü (fallback)"
                 )
         if result.gate is not None:
+            # Teşhis kanalı NİŞANI gösterir (kapının kimliği, RViz'de kapı
+            # ortası); kontrole giden nokta ise onun ÖTESİDİR (F-K.1).
             self._publish_gate(result.target)
         else:
             self._warn_sessiz_ret()
         self._publish_gate_count()
-        return result.target
+        # 🔴 F-K.1: MPPI referansı kapının ÖTESİNE kurulur — kapı bir varış
+        # noktası değil, geçilecek eşiktir. Nişan düzlemin üstünde bırakılırsa
+        # referans orada biter, MPPI'nin terminal hedefi `ref[-1]`e kırpılır
+        # (mppi._terminal_goal) ve araç tam kapı ortasında frenler; düzlem
+        # geçilmediği için kilit de çözülmez → görev bir daha ilerlemez.
+        # Sanal gölde ölçüldü: tekne (0.02, 24.95)'te kilitlendi, thrust
+        # 0,13 N. Kapı yokken `surus_hedefi == target` (ham GN) — kapısız
+        # davranış birebir korunur.
+        return result.surus_hedefi
 
     def _publish_edge_buoys(self, edges: list[tuple[float, float]]) -> None:
         """Kenar dubalarını DÜNYA (odom) çerçevesinde yayınla — Dosya-3 katmanı.
