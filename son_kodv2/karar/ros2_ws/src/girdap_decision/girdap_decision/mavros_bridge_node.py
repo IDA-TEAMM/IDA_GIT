@@ -119,6 +119,10 @@ class MavrosBridgeNode(Node):
         # F-S.12: -1 (negatif) = manuel override KAPALI.
         self.declare_parameter("rc_manual_channel", 4)
         self.declare_parameter("rc_manual_threshold_pwm", 1700)
+        # F-S.13: operatör hedef moddan çıkarsa yazılım geri zorlamaz. RC
+        # kanalından BAĞIMSIZ — Mission Planner'dan gelen mod değişimini de
+        # kapsar (rc_manual_channel=-1 iken tek koruma budur).
+        self.declare_parameter("operator_mode_override", True)
         # F-P.24: "Remotes count" nöbetçisi. Sağlıklı hatta 1-3; yüzlere
         # çıkması hattan MAVLink olarak çözülemeyen bayt geldiği anlamına
         # gelir (2026-07-16: 174 → 323; 2026-08-12: 17-38).
@@ -137,6 +141,9 @@ class MavrosBridgeNode(Node):
             ),
             rc_manual_threshold_pwm=int(
                 self.get_parameter("rc_manual_threshold_pwm").value
+            ),
+            operator_override_enabled=bool(
+                self.get_parameter("operator_mode_override").value
             ),
         )
         self._bridge = MavrosBridge(cfg)
@@ -266,12 +273,37 @@ class MavrosBridgeNode(Node):
 
     def _on_state(self, msg: MavState) -> None:
         self._akis_periyodunu_olc()
+        onceki_devir = self._bridge.operator_override
         self._bridge.update_state(
             self._now(), msg.connected, msg.armed, msg.guided, msg.mode
         )
+        self._operator_override_logla(onceki_devir, msg.mode)
         self._check_mode_ack_effect(msg.mode)         # F-P.25
         self._maybe_request_stream_rate()
         self._maybe_auto_guided()
+
+    def _operator_override_logla(self, onceki: bool, mode: str) -> None:
+        """F-S.13: devir kenarını GÖRÜNÜR yap — sessiz mandal en kötüsüdür.
+
+        13.08 koşumunda mod 17 kez GUIDED↔MANUAL çırpındı ve hiçbir yere tek
+        satır bile yazılmadı; kaptan yer istasyonunda hep "GUIDED" gördü
+        (§0.60a). Kenar başına tek satır basılır, her tick değil.
+        """
+        simdi = self._bridge.operator_override
+        if simdi == onceki:
+            return
+        if simdi:
+            self.get_logger().warn(
+                f"OPERATÖR DEVRALDI — mod {self._bridge.config.target_mode} → "
+                f"{mode!r}. Yazılım {self._bridge.config.target_mode} istemeyi "
+                "BIRAKTI (F-S.13); otonomi için yer istasyonundan ya da "
+                f"kumandadan yeniden {self._bridge.config.target_mode} seç."
+            )
+        else:
+            self.get_logger().info(
+                f"operatör {mode} moduna geri verdi — otonomi yeniden devrede "
+                "(F-S.13)"
+            )
 
     def _akis_periyodunu_olc(self) -> None:
         """PAR-04: `/mavros/state` GERÇEK periyodunu ölç ve eşikle karşılaştır.

@@ -107,6 +107,15 @@ bridge:
   rc_kill_threshold_pwm: 1500
   rc_manual_channel: -1
   rc_manual_threshold_pwm: 1700
+  # F-S.13 (13.08.2026, §0.60) — OPERATÖR MOD ÖNCELİĞİ.
+  # Kaptan Mission Planner'dan MANUAL seçtiğinde auto-GUIDED ~20 ms içinde
+  # geri alıyordu: 13.08 koşumunda 17 deneme, 17'si de geri çevrildi, tekneyi
+  # ancak kumandanın MotorEStop'u durdurdu (bant session_20260813_041323).
+  # true = hedef moddan ÇIKIŞ operatör niyeti sayılır, yazılım geri zorlamaz;
+  # otonomi ancak operatör yeniden GUIDED seçince döner.
+  # ⚠️ Bunun bedeli: uçuş kontrolcüsü KENDİ failsafe'iyle GUIDED'dan düşerse
+  # de yazılım geri almaz — moda geri almak operatörün işidir.
+  operator_mode_override: true
 
 # --- B2: Ekran-2 kaynağı (md 3.3.1.1) ---
 # AUTO'da MPPI cmd_vel basmaz → grafikte MPPI thrust'ını göstermek YANILTICI.

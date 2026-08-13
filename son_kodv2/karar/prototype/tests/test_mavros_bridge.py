@@ -399,8 +399,15 @@ def test_rc_manual_none_pwm_pasif() -> None:
 
 
 def test_rc_manual_override_needs_mode_change_bastirir() -> None:
-    """F-S.4: manuel override aktifken görev aktif olsa bile mod zorlanmaz."""
-    b = _active_bridge()
+    """F-S.4: manuel override aktifken görev aktif olsa bile mod zorlanmaz.
+
+    ⚠ F-S.13 (§0.60) burada BİLEREK kapalı: bu test RC yolunu İZOLE ölçüyor,
+    oysa `_active_bridge()` GUIDED'la başlayıp MANUAL'e geçtiği için operatör
+    devir mandalını da kurardı ve iki mekanizma birbirini gölgelerdi.
+    Operatör yolunun kendi nöbetçileri dosyanın sonunda.
+    """
+    b = MavrosBridge(MavrosBridgeConfig(operator_override_enabled=False))
+    b.update_state(0.0, connected=True, armed=True, guided=True, mode="GUIDED")
     b.set_mission_state("PARKUR1")
     b.update_state(0.0, connected=True, armed=True, guided=False, mode="MANUAL")
     assert b.needs_mode_change() is True     # override yok — normal davranış
@@ -410,3 +417,101 @@ def test_rc_manual_override_needs_mode_change_bastirir() -> None:
 
     b.set_rc_manual_override(False)
     assert b.needs_mode_change() is True     # override kalkınca eski davranış
+
+
+# ---------------------------------------------------------------------------
+# F-S.13 — OPERATÖR MOD ÖNCELİĞİ (§0.60, 13.08.2026)
+#
+# Ölçülmüş kusur (bant session_20260813_041323): kaptan yer istasyonundan 17
+# kez MANUAL seçti, auto-GUIDED 17'sini de ~20 ms içinde geri aldı; motorlar
+# durmadı, aracı ancak kumandanın kendi MotorEStop'u durdurdu. RC yolu
+# (F-S.4) yarışma yapılandırmasında `-1` ile KAPALI olduğu için tek koruma
+# yoktu.
+# ---------------------------------------------------------------------------
+
+
+def test_operator_moddan_cikinca_yazilim_GERI_ZORLAMAZ() -> None:
+    """F-S.13: GUIDED → MANUAL kenarı operatör niyetidir; GUIDED istenmez."""
+    b = _active_bridge()
+    b.set_mission_state("PARKUR1")
+    b.update_state(0.0, connected=True, armed=True, guided=True, mode="GUIDED")
+    assert b.operator_override is False
+    assert b.needs_mode_change() is False        # zaten hedefte
+
+    # Operatör (Mission Planner ya da kumanda) MANUAL seçti.
+    b.update_state(1.0, connected=True, armed=True, guided=False, mode="MANUAL")
+    assert b.operator_override is True
+    assert b.needs_mode_change() is False, (
+        "operatör moddan çıktı ama yazılım hâlâ GUIDED zorluyor (§0.60a)"
+    )
+
+
+def test_operator_GUIDED_secince_otonomi_geri_gelir() -> None:
+    """Mandal KALICI DEĞİL — operatör geri verince otonomi devam eder."""
+    b = _active_bridge()
+    b.set_mission_state("PARKUR1")
+    b.update_state(0.0, connected=True, armed=True, guided=True, mode="GUIDED")
+    b.update_state(1.0, connected=True, armed=True, guided=False, mode="MANUAL")
+    assert b.operator_override is True
+
+    # Operatör yeniden GUIDED seçti.
+    b.update_state(2.0, connected=True, armed=True, guided=True, mode="GUIDED")
+    assert b.operator_override is False
+
+    # Sonra FC kendi başına düşerse yine devir sayılır (istenen davranış).
+    b.update_state(3.0, connected=True, armed=True, guided=False, mode="HOLD")
+    assert b.operator_override is True
+    assert b.needs_mode_change() is False
+
+
+def test_gorev_basinda_auto_guided_CALISIR_mandal_kurulmaz() -> None:
+    """Kenar takibi şart: sürekli "mod hedef değil" hâli mandallamamalı.
+
+    Görev MANUAL'de başlar; mandal buradan kurulsaydı auto-GUIDED hiç
+    çalışamaz, tekne asla otonomiye geçemezdi. (`_active_bridge()` KULLANILMAZ
+    — o yardımcı bandı GUIDED'la doldurur, yani gerçek açılış sırası değildir.)
+    """
+    b = MavrosBridge(MavrosBridgeConfig())
+    b.set_mission_state("PARKUR1")
+    b.update_state(0.0, connected=True, armed=True, guided=False, mode="MANUAL")
+    b.update_state(1.0, connected=True, armed=True, guided=False, mode="MANUAL")
+    assert b.operator_override is False
+    assert b.needs_mode_change() is True
+
+
+def test_baglanti_kopmasi_devir_sayilmaz() -> None:
+    """`connected=false`'da mavros mod alanını boş basar — mod değişimi DEĞİL.
+
+    §0.48a'da `mode: ''` bağlantısız hâlin imzasıydı; bunu operatör niyeti
+    saymak, hat her titrediğinde otonomiyi kalıcı olarak kapatırdı.
+    """
+    b = _active_bridge()
+    b.set_mission_state("PARKUR1")
+    b.update_state(0.0, connected=True, armed=True, guided=True, mode="GUIDED")
+    b.update_state(1.0, connected=False, armed=True, guided=False, mode="")
+    assert b.operator_override is False
+    b.update_state(2.0, connected=True, armed=True, guided=False, mode="MANUAL")
+    assert b.needs_mode_change() is True, (
+        "hat kopup geri geldi; operatör dokunmadı — otonomi kendini toparlamalı"
+    )
+
+
+def test_operator_override_kapatilabilir_eski_davranis() -> None:
+    """`operator_override_enabled=false` → 13.08 öncesi davranış birebir."""
+    b = MavrosBridge(MavrosBridgeConfig(operator_override_enabled=False))
+    b.set_mission_state("PARKUR1")
+    b.update_state(0.0, connected=True, armed=True, guided=True, mode="GUIDED")
+    b.update_state(1.0, connected=True, armed=True, guided=False, mode="MANUAL")
+    assert b.operator_override is False
+    assert b.needs_mode_change() is True
+
+
+def test_clear_operator_override_mandali_dusurur() -> None:
+    b = _active_bridge()
+    b.set_mission_state("PARKUR1")
+    b.update_state(0.0, connected=True, armed=True, guided=True, mode="GUIDED")
+    b.update_state(1.0, connected=True, armed=True, guided=False, mode="MANUAL")
+    assert b.operator_override is True
+    b.clear_operator_override()
+    assert b.operator_override is False
+    assert b.needs_mode_change() is True

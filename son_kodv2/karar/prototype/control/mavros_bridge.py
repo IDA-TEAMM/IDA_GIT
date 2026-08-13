@@ -58,6 +58,11 @@ class MavrosBridgeConfig:
     # F-S.4: RC manuel-override eşiği (PWM). ida_topics/control_node.py
     # RC_MANUAL_THRESHOLD ile aynı (bu değerin ÜSTÜ = pilot manuel istiyor).
     rc_manual_threshold_pwm: int = 1700
+    # F-S.13 (2026-08-13, §0.60): operatör hedef moddan ÇIKARSA yazılım geri
+    # zorlamaz. Kaynak fark etmez — Mission Planner'dan da kumandanın mod
+    # anahtarından da gelse `/mavros/state`'te aynı görünür, bu yüzden tek
+    # mekanizma ikisini birden kapsar. False = eski davranış (sonsuz zorlama).
+    operator_override_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -108,6 +113,13 @@ class MavrosBridge:
         # "kavga etmez" (ida_topics/control_node.py manual_override ile aynı
         # güvenlik önceliği: pilot her zaman kazanır).
         self._rc_manual_override: bool = False
+        # F-S.13: operatör hedef moddan çıktı mı? `update_state` KENAR takibiyle
+        # kurar (GUIDED → başka mod), yalnız operatör hedef moda geri dönünce
+        # düşer. Mandal BİLEREK: 13.08 su/tezgah koşumunda kaptan Mission
+        # Planner'dan 17 kez MANUAL seçti, auto-GUIDED her seferinde ~20 ms
+        # içinde geri aldı; motorlar durmadı, aracı ancak kumandanın kendi
+        # MotorEStop'u durdurdu (§0.60a ölçümü, bant session_20260813_041323).
+        self._operator_override: bool = False
 
     # ----- config / durum erişimi -----
 
@@ -133,6 +145,7 @@ class MavrosBridge:
         mode: str,
     ) -> None:
         """Yeni `/mavros/state` mesajını kaydet (t: alınma zamanı, saniye)."""
+        onceki = self._last
         self._last = MavStateSnapshot(
             t=float(t),
             connected=bool(connected),
@@ -145,6 +158,28 @@ class MavrosBridge:
             self._stream_rate_requested = False
         else:
             self._ever_connected = True          # F-M.7: bekçi artık kurulabilir
+        self._operator_override_guncelle(onceki, connected, str(mode))
+
+    def _operator_override_guncelle(
+        self, onceki: Optional[MavStateSnapshot], connected: bool, mode: str
+    ) -> None:
+        """F-S.13: hedef moddan ÇIKIŞ kenarını operatör niyeti sayıp mandalla.
+
+        Yalnız KENAR (hedef mod → başka mod) mandallar; sürekli "mod hedef
+        değil" hâli DEĞİL — yoksa görev başında (mod MANUAL) mandal daha en
+        baştan kurulur ve auto-GUIDED hiç çalışamazdı.
+
+        Bağlantı yokken karar verilmez: `connected=false`'da mavros mod
+        alanını boş (`''`) basar, bu bir mod değişimi değil bilgi yokluğudur
+        (§0.48a'da `mode: ''` bağlantısız hâlin imzasıydı).
+        """
+        if not self._cfg.operator_override_enabled or not connected:
+            return
+        hedef = self._cfg.target_mode
+        if mode == hedef:
+            self._operator_override = False       # operatör geri verdi
+        elif onceki is not None and onceki.connected and onceki.mode == hedef:
+            self._operator_override = True        # operatör hedef moddan çıktı
 
     def is_armed(self) -> bool:
         return self._last is not None and self._last.armed
@@ -242,6 +277,16 @@ class MavrosBridge:
     def rc_manual_override(self) -> bool:
         return self._rc_manual_override
 
+    @property
+    def operator_override(self) -> bool:
+        """Operatör hedef moddan çıktı mı? (F-S.13) True iken GUIDED zorlanmaz."""
+        return self._operator_override
+
+    def clear_operator_override(self) -> None:
+        """Mandalı elle düşür (servis/test yolu). Operatörün GUIDED seçmesi
+        zaten `update_state` içinde otomatik düşürür."""
+        self._operator_override = False
+
     # ----- görev-aktif bayrağı — F14.3 -----
 
     def set_mission_state(self, state_name: str) -> None:
@@ -282,11 +327,16 @@ class MavrosBridge:
         """GUIDED'e geçiş gerekiyor mu?
 
         Koşullar: görev aktif (F14.3) + bağlı + mod hedeften farklı + pilot
-        RC'den manuel istemiyor (F-S.4). Görev aktif değilken (öncesi/sonrası/
-        KILL) veya pilot manuel override'dayken operatörün mod seçimi
-        zorlanmaz — yazılım pilotla GUIDED için kavga etmez.
+        RC'den manuel istemiyor (F-S.4) + operatör hedef moddan çıkmamış
+        (F-S.13). Görev aktif değilken (öncesi/sonrası/KILL), pilot manuel
+        override'dayken ya da operatör moddan çıkmışken operatörün mod seçimi
+        zorlanmaz — yazılım operatörle GUIDED için kavga etmez.
         """
-        if not self._mission_active or self._rc_manual_override:
+        if (
+            not self._mission_active
+            or self._rc_manual_override
+            or self._operator_override
+        ):
             return False
         if self._last is None or not self._last.connected:
             return False

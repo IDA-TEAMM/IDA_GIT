@@ -101,6 +101,8 @@ _BRIDGE_DEFAULTS: dict[str, tuple[object, type]] = {
     "rc_kill_threshold_pwm": (1500, int),
     "rc_manual_channel": (4, int),
     "rc_manual_threshold_pwm": (1700, int),
+    # F-S.13: operatörün mod seçimi kazanır (Mission Planner + kumanda).
+    "operator_mode_override": (True, bool),
 }
 _TELEMETRY_DEFAULTS: dict[str, tuple[object, type]] = {
     "setpoint_source": ("girdap", str),
@@ -729,6 +731,14 @@ def generate_launch_description() -> LaunchDescription:
             default_value=str(hw["bridge"]["rc_manual_threshold_pwm"]),
             description="Bu PWM'in ÜSTÜ → manuel override",
         ),
+        DeclareLaunchArgument(
+            "bridge.operator_mode_override",
+            default_value=_bool_default(hw["bridge"]["operator_mode_override"]),
+            description=(
+                "true: operatör hedef moddan çıkarsa (Mission Planner ya da "
+                "kumanda) yazılım GUIDED'a geri zorlamaz — F-S.13"
+            ),
+        ),
     ]
 
     # --- MAVROS: ArduRover köprüsü ---
@@ -855,6 +865,10 @@ def generate_launch_description() -> LaunchDescription:
             ),
             "rc_manual_threshold_pwm": ParameterValue(
                 LaunchConfiguration("bridge.rc_manual_threshold_pwm"), value_type=int
+            ),
+            "operator_mode_override": ParameterValue(
+                LaunchConfiguration("bridge.operator_mode_override"),
+                value_type=bool,
             ),
         },
     ]
