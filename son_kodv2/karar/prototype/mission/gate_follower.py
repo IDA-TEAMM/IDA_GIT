@@ -956,16 +956,22 @@ class GateFollower:
             vehicle, coarse_target, edge_buoys, self._cfg,
             self.last_diagnostics, obstacles,
             gecilmis=self._gecilen_kapilar,          # K1: arkadakiler aday değil
-            # 🔴 F-K.3 HENÜZ BAĞLI DEĞİL — ÖLÇÜM İKİ YÖNLÜ ÇIKTI.
-            # Statik tarama (35 araç konumu, gerçek geometri): sahte kapı
-            # seçimi **%74 → %3** (yani doğru seçim %26 → %97).
-            # AMA P1 kapalı-döngü saha senaryosunda geçiş ortalaması
-            # **2,02 m → 2,60 m KÖTÜLEŞTİ** (`test_faz2_kapi_takibi_AYNI_
-            # kapilari_daha_ortali_gecirir`). Sebep bulunamadı: kapıların
-            # hepsi paralel (kiriş 90°), yani öğrenilen eksen dönmüyor.
-            # ⇒ GERİLEME SEVK EDİLMEZ. Mekanizma (`select_gate(kurs=...)`) ve
-            # ölçüm testleri DURUYOR; bağlamak için önce kapalı-döngü
-            # gerilemesinin kökü bulunmalı.
+            # 🔴 F-K.3 BAĞLI DEĞİL — KÖK NEDEN BULUNDU (13.08, ölçümle).
+            # Varsayım "çapraz çift = zararlı" idi; BU PARKURDA YANLIŞ:
+            # kapılar 4 m aralıklı ama ±5 m ZİGZAG, yani ardışık gerçek kapı
+            # merkezleri 5 m YANAL atlıyor. Çapraz çiftlerin ortası ise tam
+            # iki kapının ARASINDA — koridor ORTA ÇİZGİSİ, her kapıya yalnız
+            # 2,5 m. Gerçek merkeze nişan almak tekneyi bir sonraki kapıya
+            # ERKEN çekip mevcut kapıyı daha kaçık geçirtiyor.
+            # Ölçüldü (P1 kapalı döngü, geçiş sapması ortalaması):
+            #     mevcut (çapraz çiftler serbest) → 1,91 m · 7 kapı
+            #     F-K.3 sıralama                  → 2,60 m · 5 kapı
+            #     F-K.3 red                       → 2,73 m · 5 kapı
+            # ⇒ Çapraz çift burada YUMUŞATICI görev görüyor. Ayrıca F-K.3'ü
+            # tetikleyen sanal göl kilitlenmesi zaten F-K.1b (havuç) ile
+            # kapandı ("yalnız havuç" koşumu PARKUR TAMAMLANDI).
+            # Mekanizma + ölçüm testleri duruyor; SEYREK kapılı bir parkurda
+            # (aralık ≫ zigzag genliği) yeniden değerlendirilmeli.
             kurs=None,
         )
 
