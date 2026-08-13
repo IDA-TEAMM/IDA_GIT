@@ -86,6 +86,7 @@ def kosum(
     yon_hatasi_rad: float = 0.0,
     model_var: bool = True,
     sure: float = 400.0,
+    huni_tavani: float = HUNI_TAVANI,
 ) -> dict:
     """Kapalı döngüyü bir kez koştur, kapı geçiş metriklerini döndür."""
     kapilar = parkur.kapilar
@@ -146,9 +147,9 @@ def kosum(
                 math.hypot(kx - ox, ky - oy)
                 for j, (ox, oy) in enumerate(kenar) if j != i
             ]
-            m = HUNI_TAVANI if not komsu else max(
+            m = huni_tavani if not komsu else max(
                 0.0,
-                min(HUNI_TAVANI, (min(komsu) - HULL_W - 2 * BUOY_R) / 2.0),
+                min(huni_tavani, (min(komsu) - HULL_W - 2 * BUOY_R) / 2.0),
             )
             engeller.append(CircleObstacle(kx, ky, BUOY_R, margin=m))
         pipe.set_obstacles(engeller)
@@ -247,6 +248,8 @@ def main() -> None:
     ap.add_argument("--model-yok", action="store_true",
                     help="`.pt` yok: hiçbir duba sınıflanmaz (hepsi engel)")
     ap.add_argument("--sure", type=float, default=400.0)
+    ap.add_argument("--huni", type=float, default=HUNI_TAVANI,
+                    help="kapı direği huni payı TAVANI (m) — süpürme ekseni")
     a = ap.parse_args()
 
     parkur = parkuru_oku()
@@ -254,6 +257,7 @@ def main() -> None:
     print(f"parkur: {len(parkur.kapilar)} kapı "
           f"(açıklık {parkur.kapi_genislikleri[0]:.1f} m) · "
           f"{len(parkur.guzergah)} görev noktası")
+    print(f"huni payı tavanı: {a.huni:.2f} m")
     print(f"kip: {'ZOR' if a.zor else 'normal'}"
           f"{' · MODEL YOK' if a.model_yok else ''} · {a.kosum} koşum\n")
     print(f"{'#':>3} {'başlangıç':>16} {'açı':>6} {'kapı':>7} {'GN':>6} "
@@ -261,7 +265,7 @@ def main() -> None:
     oranlar, sapmalar, paylar, carpma = [], [], [], 0
     for i, (poz, aci) in enumerate(basl, 1):
         r = kosum(parkur, baslangic=poz, yon_hatasi_rad=aci,
-                  model_var=not a.model_yok, sure=a.sure)
+                  model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni)
         oran = r["gecilen"] / r["toplam_kapi"]
         oranlar.append(oran)
         paylar.append(r["en_kucuk_pay"])
