@@ -72,13 +72,14 @@ from rclpy.node import Node
 from diagnostic_msgs.msg import DiagnosticArray
 from mavros_msgs.msg import RCIn
 from mavros_msgs.msg import State as MavState
-from mavros_msgs.srv import CommandBool, SetMode, StreamRate
+from mavros_msgs.srv import CommandBool, ParamGet, SetMode, StreamRate
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
 from girdap_decision.qos_profiles import sensor_data_qos
 from girdap_decision.saat_kaynagi import SaatSicramaBekcisi, bayatlik_saati
 from girdap_decision.yeniden_baslama import ResetAbonesi
+from prototype.control.param_denetimi import OLUMCUL, denetle
 from prototype.control.mavros_bridge import MavrosBridge, MavrosBridgeConfig
 
 
@@ -265,6 +266,16 @@ class MavrosBridgeNode(Node):
         # --- Servis istemcileri ---
         self._cli_mode = self.create_client(SetMode, "/mavros/set_mode")
         self._cli_arm = self.create_client(CommandBool, "/mavros/cmd/arming")
+        # 🔴 FC PARAMETRE ÖZ-DENETİMİ — parametreleri belirlemek takımda
+        # BAŞKASININ görevi ve her testten sonra güncelleniyor. 13.08'de
+        # bağlanıldığında 39 parametre değişmiş bulundu: ölçülmüş IMU
+        # konumlarımız sıfırlanmış, batarya izleme kapatılmış, failsafe
+        # eylemi kaldırılmıştı. Farkı elle ayıklamak yarım saat sürdü.
+        # Artık her FCU bağlantısında kendiliğinden taranıyor ve YALNIZ
+        # ölümcül sapmalar bildiriliyor (bkz. prototype/control/param_denetimi).
+        self._cli_param = self.create_client(ParamGet, "/mavros/param/get")
+        self._param_denetlendi = False
+        self._param_okunan: dict = {}
         self._cli_kill = self.create_client(Trigger, "/girdap/mission/kill")
         self._cli_stream = self.create_client(
             StreamRate, "/mavros/set_stream_rate"
@@ -307,6 +318,10 @@ class MavrosBridgeNode(Node):
     # ----- /mavros/state callback -----
 
     def _on_state(self, msg: MavState) -> None:
+        if msg.connected:
+            self._param_denetimi_baslat()
+        else:
+            self._param_denetlendi = False      # yeniden baglanista tekrar dene
         self._akis_periyodunu_olc()
         onceki_devir = self._bridge.operator_override
         self._bridge.update_state(
@@ -339,6 +354,54 @@ class MavrosBridgeNode(Node):
                 f"operatör {mode} moduna geri verdi — otonomi yeniden devrede "
                 "(F-S.13)"
             )
+
+    def _param_denetimi_baslat(self) -> None:
+        """FCU'ya bağlanınca ölümcül parametreleri bir kez oku ve karşılaştır.
+
+        Neden BİR KEZ: parametreler koşu sırasında değişmez; her tick'te
+        okumak MAVLink hattını gereksiz doldurur. Bağlantı koparsa bayrak
+        sıfırlanır, yeniden bağlanınca tekrar denetlenir — parametre
+        sorumlusu tam da o aralıkta değiştirmiş olabilir.
+        """
+        if self._param_denetlendi:
+            return
+        if not self._cli_param.service_is_ready():
+            return                      # mavros henüz servisi açmadı, sonra
+        self._param_denetlendi = True
+        self._param_okunan = {}
+        for ad in OLUMCUL:
+            req = ParamGet.Request()
+            req.param_id = ad
+            fut = self._cli_param.call_async(req)
+            fut.add_done_callback(
+                lambda f, _ad=ad: self._param_yaniti(_ad, f)
+            )
+
+    def _param_yaniti(self, ad: str, future) -> None:  # noqa: ANN001
+        """Tek parametre yanıtı; hepsi gelince raporu bas."""
+        try:
+            r = future.result()
+            # ParamGet: integer VEYA real dolu gelir (tipine göre).
+            deger = float(r.value.integer) if r.value.integer else float(r.value.real)
+            self._param_okunan[ad] = deger if r.success else None
+        except Exception:                               # noqa: BLE001
+            self._param_okunan[ad] = None
+        if len(self._param_okunan) < len(OLUMCUL):
+            return
+
+        bulgular = denetle(self._param_okunan)
+        if not bulgular:
+            self.get_logger().info(
+                f"FC parametre denetimi TEMIZ ({len(OLUMCUL)} olumcul parametre kontrol edildi)"
+            )
+            return
+        self.get_logger().error(
+            f"🔴 FC PARAMETRE SAPMASI — {len(bulgular)} OLUMCUL deger beklenenden farkli. "
+            "Parametreler takimda baskasi tarafindan yonetiliyor; bunlar BILEREK mi "
+            "degistirildi, sor. Ayrinti:"
+        )
+        for b in bulgular:
+            self.get_logger().error(f"   · {b}")
 
     def _akis_periyodunu_olc(self) -> None:
         """PAR-04: `/mavros/state` GERÇEK periyodunu ölç ve eşikle karşılaştır.
