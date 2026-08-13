@@ -245,3 +245,30 @@ def test_SAAT_YOK_teslim_damgasiyla_AYNI_olcute_bagli() -> None:
         "SAAT-YOK durumu her turda yüklemden kurulmuyor (§0.58b: arıza kodu "
         "DURUMDUR, olay değil) — saat kurulunca kendiliğinden düşmeli"
     )
+
+
+def test_kurulum_scripti_HER_IKI_servisi_de_yukler() -> None:
+    """Elle çok satırlı komut 13.08'de terminalde kırıldı ve YARIM kurulum
+    sessizce "tamam" gibi göründü (`cp: missing destination file operand`).
+
+    Kurulum tek satıra indirildi; script iki servisi de yüklemeli — biri
+    unutulursa soğuk açılışta saat yine kurulmaz ve bu ancak sahada anlaşılır.
+    """
+    kur = _SCRIPTS / "saat_servisleri_kur.sh"
+    metin = _oku(kur)
+    for dosya in ("girdap-saat.service", "girdap-saat-gec.service",
+                  "girdap_saat_kur.py"):
+        assert dosya in metin, f"kurulum script'i {dosya} yüklemiyor"
+    assert "systemctl enable girdap-saat-gec.service" in metin, (
+        "geç servis enable edilmezse açılışta hiç koşmaz"
+    )
+    # Yığını yeniden başlatmak AYRI ve bilinçli bir karardır; script yalnız
+    # ÖNERİR (yorum/echo). Çalıştırılabilir bir `systemctl restart` satırı
+    # olmamalı — açıklama metninde adının geçmesi serbest.
+    calisan = [
+        s for s in metin.splitlines()
+        if s.strip().startswith(("systemctl restart", "sudo systemctl restart"))
+    ]
+    assert not calisan, (
+        f"kurulum script'i canlı yığını KENDİLİĞİNDEN yeniden başlatıyor: {calisan}"
+    )
