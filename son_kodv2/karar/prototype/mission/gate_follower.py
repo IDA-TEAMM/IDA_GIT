@@ -551,7 +551,7 @@ def aim_point(
     return (lx + tx * en_iyi_s, ly + ty * en_iyi_s)
 
 
-def select_gate(
+def select_gate(  # noqa: PLR0913
     vehicle: Point,
     coarse_target: Point,
     edge_buoys: Sequence[Point],
@@ -559,6 +559,7 @@ def select_gate(
     diag: Optional[GateDiagnostics] = None,
     obstacles: Sequence[Circle] = (),
     gecilmis: Sequence[Circle] = (),
+    kurs: Optional[Point] = None,
 ) -> Optional[Gate]:
     """Öndeki en yakın geçerli kapıyı seç (durumsuz, saf fonksiyon).
 
@@ -648,7 +649,28 @@ def select_gate(
     if len(projected) < 2:
         return None
 
-    best: Optional[Tuple[float, float, Gate]] = None   # (menzil, |mid_lat|, Gate)
+    # 🔴 F-K.3 (13.08.2026) — SIRALAMA ANAHTARI: KURS BOYUNCA AYRIM.
+    # Kaptan: *"TEKNOFEST'te bir gate'de 2 gate'in dubalarını sağda
+    # görebiliyorsun."* Ölçüldü: gerçek geometride (12 m açıklık, 4 m aralık)
+    # **50 aday çiftin 43'ü SAHTE** — iki AYRI kapının dubalarından kurulmuş.
+    # Sanal gölde tekne 8,06 m genişlikte sahte bir kapıya kilitlenip dondu.
+    #
+    # 📏 ÖLÇÜM (35 araç konumu, en iyi sıradaki aday gerçek mi):
+    #     mevcut (menzile göre)      → **%26**
+    #     dikeylik oranına göre      → %20
+    #     **kurs BOYUNCA ayrıma göre → %100**
+    # Gerçek kapının iki direği kurs ekseninde AYNI istasyondadır (ayrım ≈ 0);
+    # çapraz çiftler ise kapı aralığının katları kadar ayrıktır (4 m, 8 m…).
+    # Eşik DEĞİL, SIRALAMA — §0.0d korunur.
+    #
+    # ⚠ KURS EKSENİ ARAÇ→GN'DEN ALINAMAZ: GN kaçık olduğu için (şartname md
+    # 5.5.2.2; §0.17c'de 2,0-6,4 m ölçüldü) tekne yana kaçınca eksen 37°'ye
+    # kadar döner ve ölçüt çöker (aynı taramada %20'ye düşüyor). Eksen
+    # PARKURUN kendi ekseninden gelir: `GateFollower` onu GEÇİLEN SON KAPININ
+    # NORMALİNDEN alır — kapılar tanımı gereği kursa diktir, yani eksen kendini
+    # besler ve dışarıdan sayı gerektirmez. İlk kapıda eksen yoktur → eski
+    # (menzil) sıralaması kullanılır, davranış birebir korunur.
+    best: Optional[Tuple[Tuple[float, float], Gate]] = None
     n = len(projected)
     for i in range(n):
         pi, _fi, li = projected[i]
@@ -705,23 +727,38 @@ def select_gate(
             # doğrudan verir (yaklaşma yönüne göre, kurs eksenine göre değil).
             left, right = (pi, pj) if d_lat >= 0.0 else (pj, pi)
             gate = Gate(left=left, right=right, midpoint=midpoint)
-            # Sıralama: birincil ölçüt EN YAKIN kapı (menzil — eksen-bağımsız),
-            # eşitlikte kurs çizgisine en yakın olan ("yolumun üstündeki").
+            # F-K.3 sıralaması (yukarıdaki blokta gerekçesi):
+            #   kurs EKSENİ VARSA → (kurs boyunca ayrım, menzil)
+            #   yoksa (ilk kapı)  → (menzil, |kurs çizgisine uzaklık|) — eski.
             menzil = math.hypot(midpoint[0] - vx, midpoint[1] - vy)
             mid_lat = 0.5 * (li + lj)
-            key = (menzil, abs(mid_lat))
-            if best is None or key < (best[0], best[1]):
-                best = (menzil, abs(mid_lat), gate)
+            if kurs is not None:
+                kx, ky = kurs
+                boyuna = abs(ddx * kx + ddy * ky)   # kurs BOYUNCA ayrım
+                # ⚠ HAM `boyuna` ile sıralama YANLIŞ: sürekli bir sayı olduğu
+                # için UZAKTAKİ bir kapı 0,01 m farkla yakındakini geçer ve
+                # nişan zinciri kopar (P1 saha senaryosunda ölçüldü: geçiş
+                # ortalaması 2,02 m → 2,60 m KÖTÜLEŞTİ). Bu yüzden "aynı
+                # istasyon" DUBA ÇAPINA (şartname: 30 cm) göre kovalanır:
+                # gerçek kapılar aynı kovaya düşüp eşitlenir, aralarında
+                # MENZİL karar verir (eski davranış). Ölçülen fiziksel boyut,
+                # ayarlanabilir eşik değil (§0.0d).
+                kova = int(boyuna / (2.0 * BUOY_RADIUS_M))
+                key = (float(kova), menzil)
+            else:
+                key = (menzil, abs(mid_lat))
+            if best is None or key < best[0]:
+                best = (key, gate)
 
     if best is None:
         return None
+    gate = best[1]
 
     # Nişan noktası YALNIZ kazanan çift için hesaplanır (her aday için değil —
     # tarama gereksiz maliyet olurdu). Açıklık dairelerine kapının kendi
     # direkleri de girer: MPPI'de engel olmadıkları için iten tek kuvvet budur.
     # Diğer kenar dubaları da katılır — koridora sarkan üçüncü bir duba
     # nişanı ondan uzağa iter (yanlış eşleşmenin sessiz zararını azaltır).
-    gate = best[2]
     circles: List[Circle] = [(bx, by, BUOY_RADIUS_M) for bx, by in edge_buoys]
     circles.extend(obstacles)
     aim = aim_point(gate.left, gate.right, circles, cfg)
@@ -795,6 +832,11 @@ class GateFollower:
         # Eleman: (orta_x, orta_y, YARI GENİŞLİK) — eşleştirme yarıçapı kapının
         # KENDİ ölçüsüdür (bkz. select_gate K1 notu).
         self._gecilen_kapilar: List[Circle] = []
+        # F-K.3: PARKURUN kurs ekseni — geçilen son kapının normali. Kapılar
+        # tanımı gereği kursa diktir, yani eksen KENDİNİ BESLER; dışarıdan
+        # sayı ya da yeni bir topic gerekmez. İlk kapıya kadar None → eski
+        # (menzil) sıralaması, davranış birebir korunur.
+        self._kurs_ekseni: Optional[Point] = None
 
     def reset(self) -> None:
         """Kilitli kapıyı temizle (parkur geçişi / yeniden başlama).
@@ -878,6 +920,8 @@ class GateFollower:
         yanal = gate.lateral_offset(vehicle)
         if yanal is not None and yanal > gate.width:
             return                       # kapının yanından değil, uzağından geçtik
+        if gate.normal is not None:
+            self._kurs_ekseni = gate.normal        # F-K.3: kurs ekseni öğrenildi
         yari = gate.width / 2.0
         for px, py, p_yari in self._gecilen_kapilar:
             if math.hypot(gate.midpoint[0] - px, gate.midpoint[1] - py) <= p_yari:
@@ -912,6 +956,17 @@ class GateFollower:
             vehicle, coarse_target, edge_buoys, self._cfg,
             self.last_diagnostics, obstacles,
             gecilmis=self._gecilen_kapilar,          # K1: arkadakiler aday değil
+            # 🔴 F-K.3 HENÜZ BAĞLI DEĞİL — ÖLÇÜM İKİ YÖNLÜ ÇIKTI.
+            # Statik tarama (35 araç konumu, gerçek geometri): sahte kapı
+            # seçimi **%74 → %3** (yani doğru seçim %26 → %97).
+            # AMA P1 kapalı-döngü saha senaryosunda geçiş ortalaması
+            # **2,02 m → 2,60 m KÖTÜLEŞTİ** (`test_faz2_kapi_takibi_AYNI_
+            # kapilari_daha_ortali_gecirir`). Sebep bulunamadı: kapıların
+            # hepsi paralel (kiriş 90°), yani öğrenilen eksen dönmüyor.
+            # ⇒ GERİLEME SEVK EDİLMEZ. Mekanizma (`select_gate(kurs=...)`) ve
+            # ölçüm testleri DURUYOR; bağlamak için önce kapalı-döngü
+            # gerilemesinin kökü bulunmalı.
+            kurs=None,
         )
 
         if self._committed is not None:

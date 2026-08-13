@@ -929,3 +929,98 @@ def test_FK2_hizalanma_payi_KAPININ_KENDI_yari_genisligi() -> None:
     genis = _kapi_12m()
     assert dar.yaklasma_hedefi(dar.width / 2.0)[1] == pytest.approx(9.0)
     assert genis.yaklasma_hedefi(genis.width / 2.0)[1] == pytest.approx(8.0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# F-K.3 (13.08.2026) — SAHTE KAPI AYIKLAMA: SIRALAMA "KURS BOYUNCA AYRIM"
+#
+# 🔴 Kaptan: *"TEKNOFEST'te bir gate'de 2 gate'in dubalarını sağda
+# görebiliyorsun, o yüzden bayağı sıkıntı."* Gerçek geometride (§0.17b: 12 m
+# açıklık, 4 m aralık, zigzag ±5) yeniden üretildi: **50 aday çiftin 43'ü
+# SAHTE**; sanal gölde tekne 8,06 m genişlikte sahte bir kapıya kilitlenip
+# dondu (gerçek kapılar 12 m).
+#
+# 📏 ÖLÇÜM — 35 araç konumu, en iyi sıradaki aday gerçek mi:
+#     mevcut (menzile göre)       → %26
+#     dikeylik oranına göre       → %20
+#     **kurs BOYUNCA ayrıma göre  → %100**
+# Gerçek kapının iki direği kurs ekseninde AYNI istasyondadır (ayrım ≈ 0);
+# çapraz çiftler kapı aralığının katları kadar ayrıktır (4 m, 8 m…).
+#
+# ⚠ EKSEN ARAÇ→GN'DEN ALINAMAZ: GN kaçık (§0.17c: 2,0-6,4 m) → tekne yana
+# kaçınca eksen 37°'ye kadar döner ve ölçüt %20'ye çöker. Eksen GEÇİLEN SON
+# KAPININ NORMALİNDEN gelir — kapılar kursa dik olduğu için eksen kendini
+# besler; yeni parametre/topic YOK (§0.0d korunur).
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _gercek_parkur():
+    """§0.17b geometrisi: 8 kapı, 12 m açıklık, 4 m aralık, zigzag ±5."""
+    desen = [0.0, 5.0, 0.0, -5.0]
+    kapilar = [(desen[i % 4], 6.0 + i * 4.0, 6.0) for i in range(8)]
+    dubalar = []
+    for gx, gy, yari in kapilar:
+        dubalar += [(gx - yari, gy), (gx + yari, gy)]
+    return kapilar, dubalar
+
+
+def test_FK3_kurs_ekseni_YOKKEN_sahte_kapi_secilebiliyor_KAYIT() -> None:
+    """Arızanın kendisi — düzeltmenin neyi çözdüğünü donduran kayıt testi."""
+    _, dubalar = _gercek_parkur()
+    g = select_gate((0.92, 4.02), (5.0, 12.0), dubalar, cfg=GateFollowerConfig())
+    assert g is not None
+    assert abs(g.width - 12.0) > 1.0, "eksen yokken sahte seçilmiyorsa test bayat"
+
+
+def test_FK3_kurs_ekseni_VARKEN_GERCEK_kapi_secilir() -> None:
+    _, dubalar = _gercek_parkur()
+    g = select_gate(
+        (0.92, 4.02), (5.0, 12.0), dubalar, cfg=GateFollowerConfig(),
+        kurs=(0.0, 1.0),
+    )
+    assert g is not None
+    assert g.width == pytest.approx(12.0, abs=0.01), (
+        f"kurs ekseni verildiği hâlde sahte kapı seçildi (genişlik {g.width:.2f})"
+    )
+
+
+def test_FK3_COK_KONUMLU_tarama_HEPSINDE_gercek() -> None:
+    """35 araç konumu — ölçümün kendisi teste donduruldu."""
+    _, dubalar = _gercek_parkur()
+    cfg = GateFollowerConfig()
+    denenen = gercek = 0
+    for ax in (-6.0, -3.0, 0.0, 3.0, 6.0):
+        for ay in (0.0, 4.0, 8.0, 12.0, 16.0, 20.0, 24.0):
+            g = select_gate((ax, ay), (0.0, ay + 8.0), dubalar, cfg=cfg,
+                            kurs=(0.0, 1.0))
+            if g is None:
+                continue
+            denenen += 1
+            if abs(g.width - 12.0) < 0.01:
+                gercek += 1
+    assert denenen >= 30, f"tarama yetersiz ({denenen} konum)"
+    # ÖLÇÜLEN: 34/35 (%97). Öncesi 9/35 (%26) — bkz. üstteki blok.
+    # ⚠ KALAN TEK KONUM YAPISAL, düzeltmenin eksiği DEĞİL: araç (6, 24)'te
+    # geniş kapının direğiyle AYNI HİZADA; o direk burun hattının gerisine
+    # düşüyor (`min_forward`) ⇒ GERÇEK kapı aday bile olamıyor, en iyi mevcut
+    # aday zorunlu olarak sahte kalıyor. Bu, "yanda kalan kapı" sorununun
+    # kendisidir (§0.75b) ve ayrı bir iştir.
+    assert gercek >= denenen - 1, f"{denenen - gercek}/{denenen} konumda SAHTE kapı"
+    assert gercek / denenen > 0.9, "sahte kapı ayıklama ölçülen seviyenin altında"
+
+
+def test_FK3_kurs_ekseni_GECILEN_KAPIDAN_ogrenilir() -> None:
+    """Eksen kendini besler: ilk kapı geçilince eksen hazır olur.
+
+    ⚠ Eksen HENÜZ `select_gate`'e BAĞLI DEĞİL (P1 kapalı-döngü gerilemesi,
+    bkz. `gate_follower.update` içindeki not). Bu test öğrenme mekanizmasını
+    dondurur; bağlanınca hazır olsun diye."""
+    takip = GateFollower()
+    assert takip._kurs_ekseni is None
+    dubalar = [(-6.0, 6.0), (6.0, 6.0)]
+    for i in range(ONAY_TICK + 1):
+        takip.update((0.0, 0.0), (0.0, 20.0), dubalar, [], gozlem_no=i)
+    assert takip.committed_gate is not None
+    takip.update((0.0, 8.0), (0.0, 20.0), dubalar, [], gozlem_no=99)  # düzlem geçildi
+    assert takip._kurs_ekseni is not None, "kurs ekseni öğrenilmedi"
+    assert takip._kurs_ekseni[1] > 0.9, "eksen kurs yönünde değil"
