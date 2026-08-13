@@ -47,6 +47,7 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu, NavSatFix
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.saat_kaynagi import bayatlik_saati
 
 # GTSAM'a bağımlı DEĞİL (düz fonksiyon) — heading düzeltmesi için isam2
 # modunda da, bypass'ın kendi kullanımı için de gerekli; ikisi de güvenle
@@ -74,6 +75,9 @@ class FusionNode(Node):
     def __init__(self, **node_kwargs) -> None:
         # node_kwargs → parameter_overrides passthrough (test enjeksiyonu).
         super().__init__("fusion_node", **node_kwargs)
+        # §0.61: girdi bayatlığı (F8.2), velocity_body bayatlığı (F-P.7) ve GPS
+        # hız kapısı tek yönlü saatte. Odom/pose DAMGALARI duvar saatinde kalır.
+        self._saat = bayatlik_saati(self)
 
         # --- Parametreler (config/params.yaml ile override edilebilir) ---
         self.declare_parameter("use_isam2", True)       # false → video bypass
@@ -282,7 +286,7 @@ class FusionNode(Node):
 
     def _mark_input(self) -> None:
         """F8.2: poz kaynağını süren bir girdi geldi — bayatlık saatini sıfırla."""
-        self._last_input_t = self.get_clock().now().nanoseconds * 1e-9
+        self._last_input_t = self._saat()
         if self._stale_warned:
             self._stale_warned = False
             self.get_logger().info("poz kaynağı geri geldi — odom yayını sürüyor")
@@ -311,7 +315,7 @@ class FusionNode(Node):
         self._last_vx = msg.twist.linear.x
         self._last_vy = msg.twist.linear.y
         self._last_wz = msg.twist.angular.z
-        self._last_vel_t = self.get_clock().now().nanoseconds * 1e-9  # F-P.7
+        self._last_vel_t = self._saat()  # F-P.7
         if self._use_isam2:
             self._source.on_velocity(msg.twist.linear.x, msg.twist.linear.y)
         self._n_vel += 1
@@ -321,7 +325,7 @@ class FusionNode(Node):
         gelmediyse False (boot gürültüsü, F-P.1/F8.2 ile aynı ilke)."""
         if self._vel_timeout_s <= 0.0 or self._last_vel_t is None:
             return False
-        now = self.get_clock().now().nanoseconds * 1e-9
+        now = self._saat()
         return (now - self._last_vel_t) > self._vel_timeout_s
 
     def _on_gps(self, msg: NavSatFix) -> None:
@@ -390,7 +394,7 @@ class FusionNode(Node):
         # sonra da uygulanmaz — arac gercekten hareket etmis olabilir. Kapi
         # yalniz ARDISIK ve YAKIN zamanli olcumler arasinda anlamlidir.
         if self._gps_max_hiz > 0.0:
-            simdi = self.get_clock().now().nanoseconds * 1e-9
+            simdi = self._saat()
             onceki = getattr(self, "_son_gps", None)
             if onceki is not None:
                 ox, oy, ot = onceki
@@ -558,7 +562,7 @@ class FusionNode(Node):
 
         # F8.2: girdi akışı kesildiyse DONMUŞ pozu yayınlamaya devam etme.
         if self._pose_timeout_s > 0.0 and self._last_input_t is not None:
-            age = self.get_clock().now().nanoseconds * 1e-9 - self._last_input_t
+            age = self._saat() - self._last_input_t
             if age > self._pose_timeout_s:
                 if not self._stale_warned:
                     self._stale_warned = True
@@ -595,10 +599,7 @@ class FusionNode(Node):
         if self._vel_stale():
             if not self._vel_stale_warned:
                 self._vel_stale_warned = True
-                age = (
-                    self.get_clock().now().nanoseconds * 1e-9
-                    - (self._last_vel_t or 0.0)
-                )
+                age = self._saat() - (self._last_vel_t or 0.0)
                 self.get_logger().warn(
                     f"velocity_body {age:.1f}s'dir sessiz — odom twist'i "
                     "sıfırlandı (F-P.7: bayat hızla MPPI beslenmesin)"

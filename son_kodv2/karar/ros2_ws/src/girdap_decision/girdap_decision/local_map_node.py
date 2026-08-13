@@ -51,6 +51,7 @@ from geometry_msgs.msg import PoseArray
 from nav_msgs.msg import OccupancyGrid, Odometry
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.saat_kaynagi import bayatlik_saati
 from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mapping.bev_renderer import BevConfig, BevRenderer, Mp4Yazici
 from prototype.mapping.local_map import LocalMapDumper
@@ -61,6 +62,9 @@ class LocalMapNode(Node):
 
     def __init__(self, **node_kwargs) -> None:
         super().__init__("local_map_node", **node_kwargs)
+        # §0.61: bayatlık tek yönlü saatte. Oturum klasörü adı (datetime.now)
+        # duvar saatinde kalır — orası mutlak an.
+        self._saat = bayatlik_saati(self)
 
         # --- Parametreler ---
         # ⚠ 1.0 DEĞİL 2.0: şartname "En Az 1 Hz" — tam sınırda koşmak, tek
@@ -228,7 +232,8 @@ class LocalMapNode(Node):
     # ----- yardımcılar -----
 
     def _now(self) -> float:
-        return self.get_clock().now().nanoseconds * 1e-9
+        """Bayatlık saati — TEK YÖNLÜ (§0.61). Mutlak an olarak kullanılmaz."""
+        return self._saat()
 
     def _map_stale(self) -> bool:
         if self._map_timeout <= 0.0 or self._last_map_t is None:

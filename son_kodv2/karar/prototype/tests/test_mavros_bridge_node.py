@@ -740,3 +740,99 @@ def test_KAR02_sebep_disarm_cagrisindan_ONCE_yayinlanir(ros_context) -> None:  #
         assert sira[0] == "sebep", f"sira yanlis: {sira}"
     finally:
         n.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# §0.61 — SİSTEM SAATİ ADIMLANMASI SAHTE FAILSAFE ÜRETMEZ
+# --------------------------------------------------------------------------- #
+
+
+def _sabit_ros_saati(saniye: float):  # noqa: ANN202
+    """`get_clock()` yerine geçen, istenen anı gösteren sahte ROS saati."""
+
+    class _Saat:
+        def now(self):  # noqa: ANN201
+            class _T:
+                nanoseconds = int(saniye * 1e9)
+            return _T()
+
+    return lambda: _Saat()
+
+
+def test_061_sistem_saati_sicramasi_KILL_URETMEZ(ros_context) -> None:  # noqa: ANN001
+    """Canlı arıza birebir (13.08.2026 05:52:11, Jetson).
+
+    `systemd-timesyncd` sistem saatini **+1497,6 s** adımladı; aynı saniyede
+    `FAILSAFE — heartbeat kaybı (1497.6s) → KILL` basıldı ve mandallandı. Oysa
+    hat kopmamıştı: `/mavros/state` `connected: true`, uçuş kontrolcüsünde tek
+    bir failsafe mesajı yok. Aynı imza 11.08 16:05:17'de de var (1195,6 s).
+
+    Senaryo: FCU bağlı görüldü → SİSTEM SAATİ sıçradı (mesaj akışı hiç
+    kesilmedi) → izleme tick'i. KILL OLMAMALI.
+
+    ⚠ Bu test eski kodda (bayatlık `get_clock()`'tan okunurken) KIRMIZI verir;
+    yeşil kalması `_now`ın duvar saatine bağlı OLMADIĞInın kanıtıdır.
+    """
+    n = girdap.MavrosBridgeNode()
+    try:
+        n._on_state(_state_conn(connected=True))
+        # Saat adımı: ROS/duvar saati 1497,6 s ileri fırladı. Hat sağlam,
+        # yeni state mesajı gelmedi ama gerçek zamanda da süre GEÇMEDİ.
+        n.get_clock = _sabit_ros_saati(1_000_000.0)   # type: ignore[method-assign]
+        n._on_monitor()
+        assert n._killed is False, (
+            "saat adımı sahte heartbeat-KILL üretti (§0.61) — bayatlık ölçümü "
+            "duvar saatine geri dönmüş"
+        )
+    finally:
+        n.destroy_node()
+
+
+def test_061_sicrama_sonrasi_GERCEK_heartbeat_kaybi_hala_KILL(ros_context) -> None:  # noqa: ANN001
+    """Ters yön: düzeltme gerçek failsafe'i körleştirmemeli.
+
+    Saat adımından SONRA hat gerçekten koparsa (tek yönlü saatte 6 s geçti)
+    KILL eskisi gibi gelmeli — yoksa §0.61 düzeltmesi güvenliği kapatmış olur.
+    """
+    n = girdap.MavrosBridgeNode()
+    try:
+        t = {"now": 0.0}
+        n._now = lambda: t["now"]                     # tek yönlü sahte saat
+        n._on_state(_state_conn(connected=True))
+        n.get_clock = _sabit_ros_saati(1_000_000.0)   # type: ignore[method-assign]
+        t["now"] = 6.0                                # GERÇEKTEN 6 s geçti
+        n._on_monitor()
+        assert n._killed is True, "gerçek heartbeat kaybı KILL üretmeli"
+    finally:
+        n.destroy_node()
+
+
+def test_061_bayatlik_saati_duvar_saatinden_BAGIMSIZ(ros_context) -> None:  # noqa: ANN001
+    """Kablolama nöbetçisi: `_now` düğümün ROS saatine bakmamalı (donanımda)."""
+    import time as _time
+
+    n = girdap.MavrosBridgeNode()
+    try:
+        assert n._saat is _time.monotonic, (
+            "donanımda bayatlık saati tek yönlü olmalı (saat_kaynagi.bayatlik_saati)"
+        )
+        # Her okumada 1000 s ATLAYAN sahte ROS saati: `_now` buna bağlıysa iki
+        # okuma arasında dev bir fark görünür.
+        sayac = {"t": 0.0}
+
+        def _sicrayan_saat():  # noqa: ANN202
+            sayac["t"] += 1000.0
+
+            class _Saat:
+                def now(self):  # noqa: ANN201
+                    class _T:
+                        nanoseconds = int(sayac["t"] * 1e9)
+                    return _T()
+
+            return _Saat()
+
+        n.get_clock = _sicrayan_saat                  # type: ignore[method-assign]
+        once = n._now()
+        assert abs(n._now() - once) < 1.0, "_now ROS saatine bağlı kalmış"
+    finally:
+        n.destroy_node()

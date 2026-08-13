@@ -77,6 +77,7 @@ from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.saat_kaynagi import SaatSicramaBekcisi, bayatlik_saati
 from prototype.control.mavros_bridge import MavrosBridge, MavrosBridgeConfig
 
 
@@ -256,6 +257,11 @@ class MavrosBridgeNode(Node):
         )
 
         # --- Güvenlik izleme döngüsü ---
+        # §0.61: bayatlık ölçümü SIÇRAMAYA BAĞIŞIK saatle yapılır. Duvar saati
+        # tek adımda 1497,6 s ilerlediğinde heartbeat "kayıp" sayılıp KILL
+        # mandallanmıştı; hat ise hiç kopmamıştı.
+        self._saat = bayatlik_saati(self)
+        self._sicrama_bekcisi = SaatSicramaBekcisi()
         rate = float(self.get_parameter("monitor_rate_hz").value)
         self._timer = self.create_timer(1.0 / rate, self._on_monitor)
 
@@ -267,7 +273,8 @@ class MavrosBridgeNode(Node):
     # ----- zaman -----
 
     def _now(self) -> float:
-        return self.get_clock().now().nanoseconds * 1e-9
+        """Bayatlık saati — TEK YÖNLÜ (§0.61). Mutlak an olarak kullanılmaz."""
+        return self._saat()
 
     # ----- /mavros/state callback -----
 
@@ -550,6 +557,16 @@ class MavrosBridgeNode(Node):
     # ----- güvenlik izleme -----
 
     def _on_monitor(self) -> None:
+        # §0.61: sıçrama artık KILL üretmiyor ama SESSİZ de kalmamalı — kayıt
+        # damgaları bu andan sonra kayar (§0.53e), suda "o an ne oldu"nun
+        # cevabı burada. Erken dönüşlerin ÖNÜNDE: bağlanmadan önce de olur.
+        sapma = self._sicrama_bekcisi.kontrol()
+        if sapma is not None:
+            self.get_logger().warn(
+                f"SISTEM SAATI {sapma:+.1f}s ADIMLANDI (NTP/GPS duzeltmesi) — "
+                "bayatlik olcumleri tek yonlu saatte, failsafe ETKILENMEDI"
+            )
+
         # F-M.7: izleme ancak FC en az bir kez connected=true görüldükten sonra
         # başlar. mavros bağlanamazken de state (connected=false) basar; restart
         # port devrinde >5 sn'lik state boşluğu FC hiç görülmeden KILL

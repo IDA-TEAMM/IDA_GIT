@@ -48,6 +48,7 @@ from vision_msgs.msg import (
 from girdap_decision.image_codec import imgmsg_to_bgr
 from girdap_decision.kamikaze_param import KamikazeHedefKapisi
 from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.saat_kaynagi import bayatlik_saati
 from prototype.perception.camera_buoys import (
     BuoyLocalizer,
     CameraBuoyConfig,
@@ -64,6 +65,7 @@ class PerceptionCameraNode(Node):
         # node_kwargs → parameter_overrides passthrough (test enjeksiyonu,
         # diğer node'larla tutarlı — bkz. perception_fusion_node).
         super().__init__("perception_camera_node", **node_kwargs)
+        self._saat = bayatlik_saati(self)          # §0.61: tek yönlü saat
 
         # --- Parametreler (config perception.camera bloğu) ---
         self.declare_parameter("clahe_clip_limit", 2.0)
@@ -226,7 +228,7 @@ class PerceptionCameraNode(Node):
 
     def _periodic_info(self, n_detections: int) -> None:
         """log_period_s'de bir INFO — her frame'de log seli olmasın."""
-        now = self.get_clock().now().nanoseconds * 1e-9
+        now = self._saat()
         if self._last_log_t is None or now - self._last_log_t >= self._log_period_s:
             self._last_log_t = now
             self.get_logger().info(f"tespit: {n_detections} duba")

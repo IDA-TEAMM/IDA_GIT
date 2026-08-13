@@ -81,6 +81,7 @@ _AKTIF_DURUMLAR = ("PARKUR1", "PARKUR2", "PARKUR3")
 from vision_msgs.msg import Detection3DArray
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.saat_kaynagi import bayatlik_saati
 from prototype.control.mavros_bridge import MavrosBridge, MavrosBridgeConfig
 from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mission.edge_memory import EdgeBuoyMemory
@@ -140,6 +141,9 @@ class PlanningNode(Node):
         # node_kwargs → parameter_overrides passthrough (test enjeksiyonu;
         # diğer node'larla aynı desen).
         super().__init__("planning_node", **node_kwargs)
+        # §0.61: bayatlık/zaman aşımı ölçümleri tek yönlü saatte (duvar saati
+        # adımı sahte "poz bayat / setpoint boşluğu" üretiyordu).
+        self._saat = bayatlik_saati(self)
 
         # --- Parametreler ---
         # F-P.13 (robustness taraması, 2026-07-15): varsayılan buradaydı
@@ -1245,7 +1249,8 @@ class PlanningNode(Node):
         )
 
     def _now(self) -> float:
-        return self.get_clock().now().nanoseconds * 1e-9
+        """Bayatlık saati — TEK YÖNLÜ (§0.61). Mutlak an olarak kullanılmaz."""
+        return self._saat()
 
     def _on_control_step(self) -> None:
         """20 Hz'te MPPI step → thrust komut + Twist setpoint (MAVROS geçitli).

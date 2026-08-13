@@ -70,6 +70,7 @@ from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Bool, Int32, String
 
 from girdap_decision.qos_profiles import latched_qos, sensor_data_qos
+from girdap_decision.saat_kaynagi import bayatlik_saati
 from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mission.mission_manager import (
     FcMissionItem,
@@ -92,6 +93,7 @@ class MissionManagerNode(Node):
     def __init__(self, **node_kwargs) -> None:
         # node_kwargs → parameter_overrides passthrough (test enjeksiyonu).
         super().__init__("mission_manager_node", **node_kwargs)
+        self._saat = bayatlik_saati(self)          # §0.61: tek yönlü saat
 
         self.declare_parameter("mission_source", "file")   # "file" | "fc"
         self.declare_parameter("mission_file", "")
@@ -422,7 +424,8 @@ class MissionManagerNode(Node):
     # ----- yayım -----
 
     def _now(self) -> float:
-        return self.get_clock().now().nanoseconds * 1e-9
+        """Bayatlık saati — TEK YÖNLÜ (§0.61). Mutlak an olarak kullanılmaz."""
+        return self._saat()
 
     def _publish_waypoints_path(self) -> None:
         """F-S.11 (F-S.6 düzeltmesi): YALNIZ o anki aktif waypoint'i

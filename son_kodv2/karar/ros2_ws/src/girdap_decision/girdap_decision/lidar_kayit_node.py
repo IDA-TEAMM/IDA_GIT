@@ -49,6 +49,7 @@ from sensor_msgs.msg import PointCloud2
 from vision_msgs.msg import Detection3DArray
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.saat_kaynagi import bayatlik_saati
 from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mapping.bev_renderer import (
     BevConfig, BevRenderer, Kume, Mp4Yazici, PngSerisiYazici,
@@ -74,6 +75,9 @@ class LidarKayitNode(Node):
 
     def __init__(self, **node_kwargs) -> None:
         super().__init__("lidar_kayit_node", **node_kwargs)
+        # §0.61: bayatlık tek yönlü saatte. Kareye yakılan damga (_damga) ve
+        # oturum klasörü adı duvar saatinde kalır — orası mutlak an.
+        self._saat = bayatlik_saati(self)
 
         # ⚠ 2.0: "En Az 1 Hz"de tam sınırda koşmak, tek atlanan karede ihlal
         # demek (Dosya-3 ile aynı gerekçe).
@@ -297,7 +301,8 @@ class LidarKayitNode(Node):
     # ----- yardımcılar -----
 
     def _now(self) -> float:
-        return self.get_clock().now().nanoseconds * 1e-9
+        """Bayatlık saati — TEK YÖNLÜ (§0.61). Mutlak an olarak kullanılmaz."""
+        return self._saat()
 
     def _veri_bayat(self) -> bool:
         if self._timeout <= 0.0 or self._son_veri_t is None:

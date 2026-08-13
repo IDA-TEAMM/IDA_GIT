@@ -396,7 +396,11 @@ def test_KAR06_imkansiz_SICRAMA_reddediliyor(ros_context) -> None:  # noqa: ANN0
         # Referansi ELLE 100 ms geriye koyuyoruz: gercek sistemde GPS 10 Hz'dir.
         # Iki cagriyi arka arkaya yapmak dt~0 uretir ve kapi (dogru olarak)
         # uygulanmaz — olculemeyecek araliktan hiz cikarilmaz.
-        simdi = node.get_clock().now().nanoseconds * 1e-9
+        # ⚠ §0.61: referans, dugumun KENDI bayatlik saatinden tohumlanir.
+        # `get_clock()` (duvar saati) ile tohumlamak dt'yi ~1,8 milyar saniye
+        # yapar → kapi "uzun sessizlik" sanip hic uygulanmaz, test sahte yesil
+        # verirdi (13.08 suit kosumunda birebir yakalandi).
+        simdi = node._saat()
         node._son_gps = (36.85, 28.27, simdi - 0.1)
         n0 = node._n_gps
         # ~0.01 derece enlem ≈ 1,1 km / 100 ms = 11 km/s — imkansiz
@@ -410,7 +414,7 @@ def test_KAR06_makul_hareket_GECIYOR(ros_context) -> None:  # noqa: ANN001
     """Kapı gerçek hareketi engellememeli — yoksa tekne ilerleyemez."""
     node, _ = _gps_node(ros_context)
     try:
-        simdi = node.get_clock().now().nanoseconds * 1e-9
+        simdi = node._saat()          # §0.61: dugumun kendi bayatlik saati
         node._son_gps = (36.85, 28.27, simdi - 0.1)
         n0 = node._n_gps
         # ~1e-6 derece ≈ 11 cm / 100 ms = 1,1 m/s — teknenin seyir hizi

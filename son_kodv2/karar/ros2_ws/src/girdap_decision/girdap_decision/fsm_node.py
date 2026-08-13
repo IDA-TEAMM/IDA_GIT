@@ -75,6 +75,7 @@ from nav_msgs.msg import Odometry, Path
 from sensor_msgs.msg import Imu
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.saat_kaynagi import bayatlik_saati
 from girdap_decision.yeniden_baslama import (
     RESET_SERVICE,
     ResetYayinci,
@@ -93,6 +94,10 @@ class FSMNode(Node):
     def __init__(self, **node_kwargs) -> None:
         # node_kwargs → parameter_overrides passthrough (test enjeksiyonu).
         super().__init__("fsm_node", **node_kwargs)
+        # §0.61: takılma bekçisi (BOOT/ARM/BEKLEMEDE), çift-yığın denetimi ve
+        # statustext tazeleme periyodu tek yönlü saatte — duvar saati adımı
+        # bunların hepsini aynı anda yalancı olarak ateşliyordu.
+        self._saat = bayatlik_saati(self)
 
         # --- Parametreler ---
         self.declare_parameter("tick_rate_hz", 10.0)
@@ -296,7 +301,7 @@ class FSMNode(Node):
         # KAR-03 BOOT bekçisi
         self._boot_uyari_s = float(self.get_parameter("boot_uyari_s").value)
         self._bekleme_uyari_s = float(self.get_parameter("bekleme_uyari_s").value)
-        self._kilit_baslangic = self.get_clock().now().nanoseconds * 1e-9
+        self._kilit_baslangic = self._saat()
         self._kilit_durum: Optional[MissionState] = None
         self._kilit_uyarildi = False
         self._mavros_mesaji_geldi = False   # /mavros/state HİÇ geldi mi
@@ -765,7 +770,7 @@ class FSMNode(Node):
         """
         if self._cift_denetim_s <= 0.0:
             return
-        simdi = self.get_clock().now().nanoseconds * 1e-9
+        simdi = self._saat()
         if simdi - self._son_cift_denetim < self._cift_denetim_s:
             return
         self._son_cift_denetim = simdi
@@ -822,7 +827,7 @@ class FSMNode(Node):
         | `MOD-YOK` | ARM var, mod `start_on_mode` değil | YKİ'den mod komutu |
         | `BASLAT-YOK` | ARM + mod doğru, görev yine de başlamadı | anormal, log'a bak |
         """
-        simdi = self.get_clock().now().nanoseconds * 1e-9
+        simdi = self._saat()
 
         # 🔴 12.08 CANLI BULGU: ARM da bir BEKLEME durumu ve bekçi onu
         # kapsamıyordu. Sistem yeniden başlatıldığında FSM ARM'da takılı kaldı
@@ -961,7 +966,7 @@ class FSMNode(Node):
             text = f"GIRDAP {state.value} TAKILDI {self._kilit_teshis}"
         else:
             text = f"GIRDAP {state.value}"
-        simdi = self.get_clock().now().nanoseconds * 1e-9
+        simdi = self._saat()
         degisti = text != self._last_statustext
         if not degisti:
             # Değişmedi → yalnız tazeleme periyodu doldu mu diye bak.
