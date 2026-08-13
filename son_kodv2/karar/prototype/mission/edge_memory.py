@@ -137,6 +137,12 @@ class HatirlananKenar:
     #: Bu karede taze görüldü mü — `siniflandir()` her çağrıda tazeler.
     #: `hatirlananlar()` yalnız GÖRÜLMEYENLERİ döndürmek için buna bakar.
     taze: bool = False
+    #: 🔴 F-A.1 (13.08.2026) — TEKRAR SAYACI. Bu konum kaç KARede turuncu
+    #: görüldü. Kayıt, sayaç **2**'ye ulaşana kadar kenar dubası SAYILMAZ →
+    #: engel torbasında kalır (güvenli varsayılan). 2 ayarlanabilir bir eşik
+    #: DEĞİL, "tekrar"ın mantıksal asgarisidir: bir kez görülmek tekrar
+    #: değildir. Ayar parametresi YOK (donmuş kural §0.0d korunur).
+    turuncu_sayaci: int = 0
 
     def cakisiyor(self, x: float, y: float, r: float) -> bool:
         """İki daire çakışıyor mu = aynı fiziksel cisim mi (ayarsız ölçüt)."""
@@ -159,6 +165,8 @@ class EdgeBuoyMemory:
     """
 
     def __init__(self) -> None:
+        self._onaylanan = 0                    # teşhis: onaya ulaşan konum
+        self._onay_bekleyen_kare = 0           # teşhis: onaysız turuncu kare
         self._kayitlar: List[HatirlananKenar] = []
         #: Son `siniflandir` çağrısındaki kenar sınıfı — `hatirlananlar()`
         #: bunu kullanır. Ayrı bir parametre DEĞİL (donmuş kural: ayar yok).
@@ -203,6 +211,18 @@ class EdgeBuoyMemory:
         cisim görülmüyor demektir, **duplikasyon** oluyordur (§0.26b).
         """
         return self._acilan_kayit
+
+    @property
+    def onaylanan(self) -> int:
+        """F-A.1 teşhisi: M-of-N onayını geçip kenar dubası olan konum sayısı."""
+        return self._onaylanan
+
+    @property
+    def onay_bekleyen_kare(self) -> int:
+        """F-A.1 teşhisi: turuncu görülüp ONAYA ULAŞMADIĞI için engel olarak
+        bırakılan kare sayısı. Sahada bu sayı yüksek ve `onaylanan` sıfırsa,
+        kameranın turuncuları tek kare parlamalarıdır (yanlış pozitif)."""
+        return self._onay_bekleyen_kare
 
     @property
     def unutulan(self) -> int:
@@ -254,28 +274,50 @@ class EdgeBuoyMemory:
         self._edge_id = edge_class_id
         kenar = [False] * len(tespitler)
         kullanilan: set[int] = set()          # bir kayıt en fazla bir tespite
+        # 🔴 F-A.1: 1. geçişte İŞLENEN tespitler. `kenar` yetmez — onay
+        # dolmadan kenar bayrağı False kalır ve tespit 2. geçişe düşüp AYNI
+        # cisim için İKİNCİ kayıt açardı (ölçüldü: 2 direk → 3 kayıt).
+        islenen: set[int] = set()
         for k in self._kayitlar:              # H1: tazelik her karede sıfırlanır
             k.taze = False
 
         # --- 1. geçiş: renk ŞU AN görünüyor ---------------------------------
+        # 🔴 F-A.1: "şu an turuncu" TEK BAŞINA yetmez. Kayıt açılır/taşınır ama
+        # kenar bayrağı ancak ONAY dolunca True olur; o ana kadar cisim engel
+        # olarak kalır (güvenli varsayılan bozulmaz).
         for i, (x, y, r, cls) in enumerate(tespitler):
             if cls != edge_class_id:
                 continue
-            kenar[i] = True
             j = self._eslesen_kayit(x, y, r, haric=kullanilan)
             if j is None:
                 self._kayitlar.append(
-                    HatirlananKenar(x, y, r, sinif=cls, taze=True)
+                    HatirlananKenar(x, y, r, sinif=None, taze=True)
                 )
+                j = len(self._kayitlar) - 1
                 self._acilan_kayit += 1
-                kullanilan.add(len(self._kayitlar) - 1)
             else:
-                self._tasi(j, x, y, r, cls)
-                kullanilan.add(j)
+                self._tasi(j, x, y, r, None)
+            kayit = self._kayitlar[j]
+            kayit.turuncu_sayaci += 1
+            # 🔑 EŞİK DEĞİL, TEKRARIN ASGARİSİ. Ölçüldü (13.08, canlı kamera,
+            # 80 kare / 8 945 tespit): kameranın ürettiği turuncuların tamamı
+            # TEK KARE parlamasıydı — aynı konumda sonraki 3/5/10 karede
+            # tekrar sayısı **0**. Yani "≥2 kez" bütün yanlış pozitifleri eler.
+            # Gerçek dubaya bedeli bir kare (~0,12 s @8 kare/s), buna karşılık
+            # §0.17e'nin ölçtüğü görünürlük penceresi ~6 s.
+            if kayit.turuncu_sayaci >= 2:
+                if kayit.sinif != edge_class_id:
+                    self._onaylanan += 1
+                kayit.sinif = edge_class_id       # ONAYLANDI → kenar dubası
+                kenar[i] = True
+            else:
+                self._onay_bekleyen_kare += 1     # henüz engel olarak kalıyor
+            kullanilan.add(j)
+            islenen.add(i)
 
         # --- 2. geçiş: renk görünmüyor --------------------------------------
         for i, (x, y, r, cls) in enumerate(tespitler):
-            if kenar[i]:
+            if i in islenen:                  # 1. geçişte ele alındı
                 continue
             bilinen_farkli = (
                 cls is not None
@@ -304,6 +346,21 @@ class EdgeBuoyMemory:
                 continue
             kenar[i] = self._kayitlar[j].sinif == edge_class_id
             self._tasi(j, x, y, r, cls)
+            # 🔴 F-A.1 — SÖNÜM YOK, BİLİNÇLİ. İki aday kural denendi:
+            #  · "peş peşe" (turuncusuz karede sayacı sıfırla) ve
+            #  · "±1 erime"
+            # ikisi de kapalı alanda ÖLÇÜLEBİLEN yanlış pozitifi eliyor ama
+            # ikisi de GÖLDE ölçülemeyen bir şeyi riske atıyor: kamera gerçek
+            # dubayı aralıklı sınıflandırırsa onay HİÇ dolmaz. Test bunu
+            # gösterdi: %50 turuncu görülen duba ±1 ile 1,0,1,0 salınıp asla
+            # onaylanmıyor → §0.17e'nin ölçülmüş kazancı (12 m'de 1/4 → 4/4)
+            # yok olurdu. Kapı geçişi PUANDIR; yanlış pozitifin bedeli ise
+            # gereksiz bir kaçınmadır. Bu yüzden kanıt ERİMEZ.
+            # ⚠ KALAN RİSK: birbirinden bağımsız İKİ parlama aynı konuma
+            # (eşleşme bandı = tespitin kendi yarıçapı) düşerse onay dolar.
+            # Ölçümde bunun izi YOK (80 karede tek turuncu, 0 tekrar) ama
+            # imkânsız değil. Saha izleme kanalı: `onaylanan` sayacı —
+            # ortalıkta gerçek turuncu duba yokken artıyorsa desen budur.
             self._kayitlar[j].gorulme += 1
             if kenar[i]:
                 self._hatirlanarak_kurtarilan += 1

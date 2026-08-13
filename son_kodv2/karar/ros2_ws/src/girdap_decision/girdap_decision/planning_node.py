@@ -921,7 +921,12 @@ class PlanningNode(Node):
             f"rengi görünmezken kurtarılan tespit "
             f"{self._edge_memory.hatirlanarak_kurtarilan}, "
             f"unutulan {self._edge_memory.unutulan}, "
-            f"sınıfı güncellenen {self._edge_memory.celiskiyle_silinen} "
+            f"sınıfı güncellenen {self._edge_memory.celiskiyle_silinen}, "
+            # F-A.1 teşhisi: onaya ulaşan konum sayısı ve onaysız kaldığı için
+            # ENGEL olarak bırakılan turuncu kare sayısı. İkincisi yüksek,
+            # birincisi sıfırsa kameranın turuncuları tek kare parlamasıdır.
+            f"onaylanan kenar {self._edge_memory.onaylanan} "
+            f"(onaysız turuncu kare {self._edge_memory.onay_bekleyen_kare}) "
             f"(şu an {len(self._edge_buoys)} kenar / kapı takibi)"
         )
 

@@ -456,12 +456,17 @@ def test_turuncu_kenar_dubasi_HEM_kapiya_HEM_huniyle_torbaya_gider(ros_context) 
     node = pn.PlanningNode()
     try:
         node._on_odom(_odom_poz(0.0, 0.0, 0.0))
-        node._on_classified(_classified([
-            (10.0, +2.0, 0.15, 0),      # turuncu kenar (kapı sol)
-            (10.0, -2.0, 0.15, 0),      # turuncu kenar (kapı sağ)
-            (12.0, +1.0, 0.20, 1),      # sarı ENGEL
-            (14.0, -1.0, 0.20, 99),     # eşleşmeyen (CLASS_UNKNOWN) → engel KALIR
-        ]))
+        # 🔴 F-A.1 (13.08.2026): tek kare turuncu ONAY DEĞİL — kenar dubası
+        # olmak için aynı konum ≥2 karede turuncu görülmeli (ölçüm: kameranın
+        # yanlış pozitifleri tek kare parlamasıydı, 0 tekrar). İkinci kare
+        # eklendi; testin korduğu güvence aynen duruyor.
+        for _ in range(2):
+            node._on_classified(_classified([
+                (10.0, +2.0, 0.15, 0),      # turuncu kenar (kapı sol)
+                (10.0, -2.0, 0.15, 0),      # turuncu kenar (kapı sağ)
+                (12.0, +1.0, 0.20, 1),      # sarı ENGEL
+                (14.0, -1.0, 0.20, 99),     # eşleşmeyen (CLASS_UNKNOWN) → engel KALIR
+            ]))
         # İki turuncu kapı takibine gider…
         assert len(node._edge_buoys) == 2
         # …ve torbada 2 normal engel + 2 huni paylı direk bulunur.
@@ -530,6 +535,9 @@ def test_kapi_ortasi_ham_gorev_noktasini_ezer(ros_context) -> None:  # noqa: ANN
         target = PoseStamped()
         target.pose.position.x = 20.0
         target.pose.position.y = 3.0
+        # F-A.1: ilk turuncu kare KENAR ONAYI için harcanır (tek kare
+        # kenar dubası yapmaz) → kapı onay penceresi bir kare kayar.
+        node._on_classified(_classified(dubalar))
         # B5: kapı, `ONAY_TICK` AYRI ALGI KARESİNDE görülmeden kilitlenmez.
         # Onay boyunca referans ham GN'de kalır (kapısız davranışla birebir).
         for _ in range(ONAY_TICK - 1):
@@ -561,10 +569,13 @@ def test_B5_ayni_algi_karesinde_tekrar_hedef_ONAYI_ILERLETMEZ(ros_context) -> No
     )
     try:
         node._on_odom(_odom_poz(0.0, 0.0, 0.0))
-        node._on_classified(_classified([        # TEK algı karesi
-            (10.0, +2.0, 0.15, 0),
-            (10.0, -2.0, 0.15, 0),
-        ]))
+        # F-A.1: kenar onayı için 2 kare (B5'in ölçtüğü şey KAPI onayı,
+        # kenar onayı değil — kapı hâlâ kilitlenmemeli).
+        for _ in range(2):
+            node._on_classified(_classified([
+                (10.0, +2.0, 0.15, 0),
+                (10.0, -2.0, 0.15, 0),
+            ]))
         target = PoseStamped()
         target.pose.position.x = 20.0
         target.pose.position.y = 3.0
@@ -631,6 +642,9 @@ def test_parkur_degisince_kilitli_kapi_birakilir(ros_context) -> None:  # noqa: 
     try:
         node._on_odom(_odom_poz(0.0, 0.0, 0.0))
         dubalar = [(10.0, +2.0, 0.15, 0), (10.0, -2.0, 0.15, 0)]
+        # F-A.1: ilk turuncu kare KENAR ONAYI için harcanır (tek kare
+        # kenar dubası yapmaz) → kapı onay penceresi bir kare kayar.
+        node._on_classified(_classified(dubalar))
         for _ in range(ONAY_TICK):            # B5 onay penceresi (ayrı kareler)
             node._on_classified(_classified(dubalar))
             node._refine_target((20.0, 3.0))
@@ -821,7 +835,8 @@ def _kapidan_gecir(node, kapi_x: float = 10.0) -> None:  # noqa: ANN001
     target = PoseStamped()
     target.pose.position.x = kapi_x + 10.0
     target.pose.position.y = 0.0
-    for _ in range(ONAY_TICK):
+    # F-A.1: ilk kare kenar onayına gider → pencere bir kare uzun.
+    for _ in range(ONAY_TICK + 1):
         node._on_odom(_odom_poz(0.0, 0.0, 0.0))
         node._on_classified(_classified(dubalar))
         node._on_target(target)
