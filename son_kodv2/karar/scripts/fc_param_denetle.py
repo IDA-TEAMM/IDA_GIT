@@ -86,6 +86,9 @@ def main() -> int:
                     help="ölümcül olmayan farkları da listele")
     ap.add_argument("--guncelleme-yok", action="store_true",
                     help="referansı GÜNCELLEME, yalnız rapor ver")
+    ap.add_argument("--yuklenecek", nargs="?", const="", metavar="CIKTI.param",
+                    help="Mission Planner'a YÜKLENECEK tam dosyayı üret "
+                         "(döküm + eksikler + ölümcül düzeltmeler)")
     a = ap.parse_args()
 
     if not a.dokum.exists():
@@ -135,6 +138,12 @@ def main() -> int:
             for k in digerleri:
                 print(f"   {k:<22} {ref.get(k, 'YOK')} -> {yeni.get(k, 'YOK')}")
 
+    # --- Yüklenecek dosya: eksikleri ve ölümcül düzeltmeleri geri koy -------
+    if a.yuklenecek is not None:
+        hedef = Path(a.yuklenecek) if a.yuklenecek else \
+            a.dokum.with_name(a.dokum.stem + "_YUKLENECEK.param")
+        _yuklenecek_uret(hedef, ref, yeni, eksikler, bulgular)
+
     # --- Referansı tazele: ölümcül olmayanları EMER, ölümcülleri KORUR ------
     if not a.guncelleme_yok:
         emilen = _referansi_tazele(a.referans, ref, yeni, {b.ad for b in bulgular})
@@ -149,6 +158,36 @@ def main() -> int:
 
 
 GUNLUK = KOK / "docs" / "fc_param_gunlugu.md"
+
+
+def _yuklenecek_uret(hedef: Path, ref: dict, yeni: dict,
+                     eksikler: list, bulgular: list) -> None:
+    """FC'ye geri yüklenecek TAM dosyayı üret.
+
+    Üç kaynak birleşir:
+      1. FC'de ŞU AN ne varsa (taban) — parametre sorumlusunun işi korunur
+      2. Dökümde HİÇ OLMAYANLAR referanstan geri konur — `BATT_MONITOR=0`
+         yapılınca ArduPilot tüm `BATT_*` ağacını listelemez; o değerler
+         kaybolmuş değil, yalnız GİZLENMİŞTİR. Üst ayar geri açılınca
+         varsayılanla dönerlerse kalibrasyonumuz (`BATT_VOLT_MULT` gibi)
+         sessizce yok olur.
+      3. Ölümcül sapmalar BİZİM değerimizle düzeltilir
+
+    ⚠ Bu dosya FC'ye YÜKLENMEK içindir, referans değildir.
+    """
+    cikti = dict(yeni)
+    for ad in eksikler:
+        cikti[ad] = ref[ad]
+    for b in bulgular:
+        cikti[b.ad] = b.beklenen
+    hedef.write_text("\n".join(f"{k},{cikti[k]!r}" for k in sorted(cikti)) + "\n",
+                     encoding="utf-8")
+    print(f"\n📄 YÜKLENECEK dosya: {hedef}")
+    print(f"   · FC'den alınan          : {len(yeni)}")
+    print(f"   · referanstan geri konan : {len(eksikler)}"
+          + (f"  (ör. {eksikler[0]})" if eksikler else ""))
+    print(f"   · ölümcül düzeltme       : {len(bulgular)}")
+    print("   Mission Planner → Tam Parametre Listesi → Dosyadan Yükle → Yaz")
 
 
 def _referansi_tazele(yol: Path, ref: dict, yeni: dict, olumcul_sapan: set) -> list:
