@@ -66,11 +66,40 @@ EDGE_CLASS_ID = 0
 HUNI_TAVANI = 1.4              # planning_node.gate_post_margin_m
 VARIS_YARICAP = 2.0            # mission.arrival_radius_m
 DWELL_S = 2.0                  # mission.dwell_time_s
-SEYIR_HIZI_MPS = 1.05          # ÖLÇÜLMÜŞ seyir hızı (CLAUDE.md, dinamik log 58)
+def _erisilebilir_seyir_hizi(dyn) -> float:
+    """Modelin ULAŞABİLECEĞİ azami seyir hızı (m/s) — sabit sayı DEĞİL, türev.
+
+    🔑 SCT metriğinin paydası "aracın kendi kısıtları altında erişilebilir
+    asgari süre"dir; o da erişilebilir azami hızdan gelir. Sabit bir sayı
+    yazmak yerine **dinamik modelin kendisinden** türetilir:
+
+        denge:  2·T_max + Xu·u = 0   →   u_max = 2·T_max / |Xu|
+
+    Böylece `dynamics.yaml` güncellenince metrik kendiliğinden düzelir —
+    ölçüm ile plant bir daha ayrışamaz.
+
+    Bugünkü değerlerle: 2×1,455 / 2,48 = **1,17 m/s**. Kaptan teyidi:
+    *"1 m/s diyebilirsin, fazladır yüksek ihtimalle"*; log 58'de gerçek tekne
+    tam gazda **1,26 m/s** ölçülmüştü — üçü aynı bantta.
+    ⚠️ `max_thrust` hâlâ suda doğrulanmadı (dynamics.yaml notu); bu hız
+    yükselirse süre verimi sayıları DÜŞER (aynı süre daha kötü sayılır).
+    """
+    return 2.0 * dyn.p.max_thrust / abs(dyn.p.Xu)
 
 #: 🔴 13.08 — ESKİ VARSAYILAN 400 s ÖLÇÜMÜ KESİYORDU: tekne görevi 574-678 s'de
 #: bitiriyor, 400 s'de GN 3/4'te kalıyordu. Tavan artık bitişi kesmez.
 VARSAYILAN_SURE_S = 900.0
+
+#: 🔴 13.08 — ARAÇ ARTIK ÜRETİM AYARIYLA ÖLÇER (params.yaml: mppi_K/mppi_T).
+#: Önceden hız için K=200/T=30 kullanılıyordu ve **başka bir aracı ölçüyorduk**:
+#: AYNI başlangıç noktalarıyla kapı oranı **%87,5 → %100**, en küçük gövde payı
+#: **0,15 → 0,27 m**. Sebep tasarımda yazılı: `terminal_lookahead_m=3,0` üretim
+#: ufkuna göre seçilmiş (kural: la ≥ seyir × ufuk = 1,05 × 2,5 s); T=30'da ufuk
+#: 1,5 s'ye düşüp terminal hedef ufkun ~2 katı öteye kaçıyor.
+#: ⚠ Bedeli: adım başına ~8 kat hesap. Hızlı yineleme için `--K 200 --T 30`
+#: verilebilir AMA o sayılar üretimle KIYASLANAMAZ.
+URETIM_K = 1000
+URETIM_T = 50
 
 
 def gorev_rotasi(parkur) -> List[Tuple[float, float]]:
@@ -108,6 +137,8 @@ def kosum(
     model_var: bool = True,
     sure: float = VARSAYILAN_SURE_S,
     huni_tavani: float = HUNI_TAVANI,
+    mppi_k: int = URETIM_K,
+    mppi_t: int = URETIM_T,
 ) -> dict:
     """Kapalı döngüyü bir kez koştur, kapı geçiş metriklerini döndür."""
     kapilar = parkur.kapilar
@@ -116,8 +147,15 @@ def kosum(
     dyn = CatamaranDynamics()
     pipe = PlanningPipeline(
         Bounds(-20.0, 60.0, -25.0, 25.0),
+        # ⚠ VARSAYILAN K=200/T=30 HIZ İÇİNDİR, ÜRETİM DEĞİL. Üretim
+        # `params.yaml`: K=1000, T=50 → ufuk 2,5 s. `terminal_lookahead_m=3,0`
+        # ÜRETİM ufkuna göre seçilmişti (kural: la ≥ seyir × ufuk =
+        # 1,05 × 2,5 = 2,62 m). T=30'da ufuk 1,5 s'ye düşer ve terminal hedef
+        # ufkun ~2 katı öteye kaçar — CLAUDE.md bunun MPPI'yi "burnu hedefe
+        # çevir" davranışına ittiğini ölçmüştü. Yani düşük K/T ile ölçülen
+        # yavaşlık ARACIN KENDİ ARTEFAKTI olabilir → `--K/--T` ile sınanır.
         PlanningPipelineConfig(
-            mppi_K=200, mppi_T=30, mppi_terminal_lookahead_m=3.0
+            mppi_K=mppi_k, mppi_T=mppi_t, mppi_terminal_lookahead_m=3.0
         ),
         dynamics=dyn,
     )
@@ -243,7 +281,7 @@ def kosum(
     yol_verimi = en_kisa / alinan_yol if alinan_yol > 1e-6 else float("nan")
     # SCT benzeri süre verimi: erişilebilir asgari süre / gerçek süre.
     # Asgari süre ÖLÇÜLMÜŞ seyir hızından türer (uydurma değil).
-    asgari_sure = en_kisa / SEYIR_HIZI_MPS
+    asgari_sure = en_kisa / _erisilebilir_seyir_hizi(dyn)
     sure_verimi = asgari_sure / t if t > 1e-6 else float("nan")
     return {
         "gecilen": len(gecilen),
@@ -300,6 +338,10 @@ def main() -> None:
     ap.add_argument("--model-yok", action="store_true",
                     help="`.pt` yok: hiçbir duba sınıflanmaz (hepsi engel)")
     ap.add_argument("--sure", type=float, default=400.0)
+    ap.add_argument("--K", type=int, default=URETIM_K,
+                    help=f"MPPI rollout sayısı (varsayılan ÜRETİM {URETIM_K})")
+    ap.add_argument("--T", type=int, default=URETIM_T,
+                    help=f"MPPI ufku (varsayılan ÜRETİM {URETIM_T})")
     ap.add_argument("--huni", type=float, default=HUNI_TAVANI,
                     help="kapı direği huni payı TAVANI (m) — süpürme ekseni")
     a = ap.parse_args()
@@ -309,7 +351,8 @@ def main() -> None:
     print(f"parkur: {len(parkur.kapilar)} kapı "
           f"(açıklık {parkur.kapi_genislikleri[0]:.1f} m) · "
           f"{len(parkur.guzergah)} görev noktası")
-    print(f"huni payı tavanı: {a.huni:.2f} m")
+    print(f"huni payı tavanı: {a.huni:.2f} m · MPPI K={a.K} T={a.T}"
+          f"{'  ← ÜRETİM AYARI' if (a.K, a.T) == (1000, 50) else ''}")
     print(f"kip: {'ZOR' if a.zor else 'normal'}"
           f"{' · MODEL YOK' if a.model_yok else ''} · {a.kosum} koşum\n")
     print(f"{'#':>3} {'başlangıç':>16} {'açı':>6} {'kapı':>7} {'GN':>6} "
@@ -318,7 +361,8 @@ def main() -> None:
     yol_v, sure_v, savrul = [], [], []
     for i, (poz, aci) in enumerate(basl, 1):
         r = kosum(parkur, baslangic=poz, yon_hatasi_rad=aci,
-                  model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni)
+                  model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni,
+                  mppi_k=a.K, mppi_t=a.T)
         oran = r["gecilen"] / r["toplam_kapi"]
         oranlar.append(oran)
         paylar.append(r["en_kucuk_pay"])
@@ -352,7 +396,9 @@ def main() -> None:
               f" · en kötü %{100*min(yol_v):.0f}   (1 = düz gitti)")
     if sure_v:
         print(f"  SÜRE VERİMİ (SCT): ort %{100*statistics.mean(sure_v):.0f}"
-              f" · en kötü %{100*min(sure_v):.0f}   (ölçülmüş 1,05 m/s tabanına göre)")
+              f" · en kötü %{100*min(sure_v):.0f}"
+              f"   (taban: modelin erişilebilir hızı"
+              f" {_erisilebilir_seyir_hizi(CatamaranDynamics()):.2f} m/s)")
     print(f"  savrulma (toplam |Δψ|): ortanca {statistics.median(savrul):.0f}°")
 
 
