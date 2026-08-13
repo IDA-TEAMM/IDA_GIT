@@ -37,6 +37,18 @@ from pathlib import Path
 
 import pytest
 
+# 🔴 13.08 — ROS PAKETİ KAPISI. Bu dosya `girdap_decision`'ı (ROS paketi)
+# import ediyor ama kapısı yoktu; ROS'suz makinede (geliştirme laptopu,
+# Fedora + py3.14) 5 test `ModuleNotFoundError` ile KIRMIZI dönüyordu.
+# Gerçek bir arıza değil, ortam eksikliği — ama her koşumda 5 sahte kırmızı
+# görmek, gerçek kırmızıyı fark etmemize engel olur. Repodaki diğer düğüm
+# testlerinin tamamı (test_fsm_node, test_planning_node, …) bu kapıyı
+# kullanıyor; bu dosya atlanmış.
+pytest.importorskip(
+    "girdap_decision",
+    reason="girdap_decision yok (ROS'suz makine) — Jetson'da/ROS ortamında koş",
+)
+
 _PKG = (
     Path(__file__).resolve().parents[2]
     / "ros2_ws" / "src" / "girdap_decision" / "girdap_decision"

@@ -20,7 +20,26 @@
 
 ## 🔴 AÇIK HATALAR
 
-### [2026-07-14] F-M.9 — USB düşünce mavros ÖLÜYOR + geri gelmiyor (respawn yok) → yığın kalıcı KILL (🔴 video-günü süreklilik riski)
+### ✅ [2026-07-14] F-M.9 — **KAPANDI 2026-08-13** (kaptanın F-P.20 + F-S.15'i)
+
+Özgün şikâyet üç parçaydı, üçü de artık kapalı:
+
+1. **"mavros ölünce geri gelmiyor"** → `hardware.launch.py` artık `apm.launch`
+   include'unu bypass edip `mavros_node`'u doğrudan `Node(... respawn=True,
+   respawn_delay=2.0)` ile açıyor. (`respawn_mavros:=true` argümanı mavros
+   paketinin kendi hatası yüzünden hiçbir şey yapmıyordu — canlı testte ikinci
+   çökmede doğrulanmış.)
+2. **"yığın kalıcı KILL'de kalıyor"** → F-S.15: heartbeat geri gelince mandal
+   histerezisle temizleniyor; artık tek yönlü kapı değil.
+3. **"neden KILL olduğu görünmüyor"** → `/girdap/mission/kill_reason`
+   (KAR-02, `heartbeat_kaybi:<süre>` · `beklenmedik_disarm` · `rc_kill:…` ·
+   `fsm_kill:…`).
+
+⚠ Kalan donanım riski aynı: USB/FTDI fiziksel olarak koparsa respawn de
+bağlanamaz. Yazılım tarafı artık kendini toparlıyor, kablo tarafı mekanik
+ekibin işi.
+
+### [ARŞİV — özgün kayıt] F-M.9 — USB düşünce mavros ÖLÜYOR + geri gelmiyor (respawn yok) → yığın kalıcı KILL (🔴 video-günü süreklilik riski)
 - **Belirti (boot provası SONRASI, 18:55):** Pixhawk USB'si düştü → mavros_node
   `mavconn serial1: receive: End of file` + std::system_error → çöktü (exit -6) → GERİ
   GELMEDİ → köprü 5.5 sn'de doğru KILL bastı → yığın kalıcı KILL'de takıldı (F14.4 latch).
