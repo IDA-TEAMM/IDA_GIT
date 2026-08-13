@@ -66,6 +66,27 @@ EDGE_CLASS_ID = 0
 HUNI_TAVANI = 1.4              # planning_node.gate_post_margin_m
 VARIS_YARICAP = 2.0            # mission.arrival_radius_m
 DWELL_S = 2.0                  # mission.dwell_time_s
+SEYIR_HIZI_MPS = 1.05          # ÖLÇÜLMÜŞ seyir hızı (CLAUDE.md, dinamik log 58)
+
+#: 🔴 13.08 — ESKİ VARSAYILAN 400 s ÖLÇÜMÜ KESİYORDU: tekne görevi 574-678 s'de
+#: bitiriyor, 400 s'de GN 3/4'te kalıyordu. Tavan artık bitişi kesmez.
+VARSAYILAN_SURE_S = 900.0
+
+
+def gorev_rotasi(parkur) -> List[Tuple[float, float]]:
+    """Görev noktaları — **GN5 DAHİL**.
+
+    🔴 13.08 ARTEFAKTI (§0.81c): `parkur.guzergah` yalnız GN1-GN4 döndürüyor;
+    `parkur_dunyasi.oku()` beşinciyi ayrı alana (`gn5`) koyuyor. Oysa
+    **kapı-8'in ortası (34, −1), son görev noktası GN4'ün (32, 5) ÖTESİNDE** —
+    tekne GN4'e varınca görev bitiyor ve kapı-8'e HİÇ gitmiyor. Sonuç: araç
+    kusursuz çalışsa bile ölçüm **7/8 = %87,5** diyordu; GN5 eklenince
+    **8/8 = %100** çıktı. Yani eksik rota, sistematik bir ölçüm hatasıydı.
+    """
+    rota = list(parkur.guzergah)
+    if parkur.gn5 is not None:
+        rota.append(parkur.gn5)
+    return rota
 
 
 def _kesisiyor(a, b, p, q) -> bool:
@@ -85,13 +106,13 @@ def kosum(
     baslangic: Tuple[float, float],
     yon_hatasi_rad: float = 0.0,
     model_var: bool = True,
-    sure: float = 400.0,
+    sure: float = VARSAYILAN_SURE_S,
     huni_tavani: float = HUNI_TAVANI,
 ) -> dict:
     """Kapalı döngüyü bir kez koştur, kapı geçiş metriklerini döndür."""
     kapilar = parkur.kapilar
     dubalar = parkur.dubalar()
-    gn = parkur.guzergah
+    gn = gorev_rotasi(parkur)
     dyn = CatamaranDynamics()
     pipe = PlanningPipeline(
         Bounds(-20.0, 60.0, -25.0, 25.0),
@@ -112,6 +133,10 @@ def kosum(
     gecilen: dict = {}
     en_kucuk_pay = 9.9
     onceki = baslangic
+    # B) VERİMLİLİK — literatürün iki ölçüsü (bkz. dönüş sözlüğü):
+    alinan_yol = 0.0            # SPL payı: fiilen kat edilen yol
+    savrulma_rad = 0.0          # toplam |Δψ| — salınım/geri dönüş göstergesi
+    onceki_psi = float(state[2])
 
     while t < sure and idx < len(gn):
         x, y, psi = float(state[0]), float(state[1]), float(state[2])
@@ -177,6 +202,12 @@ def kosum(
         t += dt
 
         simdi = (float(state[0]), float(state[1]))
+        alinan_yol += math.hypot(simdi[0] - onceki[0], simdi[1] - onceki[1])
+        psi_simdi = float(state[2])
+        savrulma_rad += abs(
+            (psi_simdi - onceki_psi + math.pi) % (2 * math.pi) - math.pi
+        )
+        onceki_psi = psi_simdi
         for bx, by in dubalar:
             pay = math.hypot(bx - simdi[0], by - simdi[1]) - BUOY_R - HULL_W / 2
             en_kucuk_pay = min(en_kucuk_pay, pay)
@@ -200,8 +231,23 @@ def kosum(
             dwell_t = None
 
     sapmalar = list(gecilen.values())
+    # --- VERİMLİLİK ÖLÇÜLERİ (literatür: SPL ve dinamik-farkında türevi SCT) ---
+    # `en_kisa`: başlangıç → GN zinciri düz çizgi toplamı (aracın kısıtları
+    # altında erişilebilir en kısa yol; engeller onu ancak UZATIR).
+    en_kisa = 0.0
+    onceki_nokta = baslangic
+    for hedef in gn:
+        en_kisa += math.hypot(hedef[0] - onceki_nokta[0], hedef[1] - onceki_nokta[1])
+        onceki_nokta = hedef
+    # SPL benzeri yol verimi: en_kisa / alınan_yol ∈ (0, 1]. 1 = kusursuz.
+    yol_verimi = en_kisa / alinan_yol if alinan_yol > 1e-6 else float("nan")
+    # SCT benzeri süre verimi: erişilebilir asgari süre / gerçek süre.
+    # Asgari süre ÖLÇÜLMÜŞ seyir hızından türer (uydurma değil).
+    asgari_sure = en_kisa / SEYIR_HIZI_MPS
+    sure_verimi = asgari_sure / t if t > 1e-6 else float("nan")
     return {
         "gecilen": len(gecilen),
+        "gecilen_index": sorted(gecilen),        # HANGİ kapılar (teşhis)
         "toplam_kapi": len(kapilar),
         "varilan_gn": idx,
         "toplam_gn": len(gn),
@@ -209,6 +255,12 @@ def kosum(
         "en_kucuk_pay": en_kucuk_pay,
         "carpma": en_kucuk_pay <= 0.0,
         "sure": t,
+        "alinan_yol": alinan_yol,
+        "en_kisa_yol": en_kisa,
+        "yol_verimi": yol_verimi,       # SPL benzeri (1 = kusursuz)
+        "asgari_sure": asgari_sure,
+        "sure_verimi": sure_verimi,     # SCT benzeri (1 = kusursuz)
+        "savrulma_derece": math.degrees(savrulma_rad),
     }
 
 
@@ -261,8 +313,9 @@ def main() -> None:
     print(f"kip: {'ZOR' if a.zor else 'normal'}"
           f"{' · MODEL YOK' if a.model_yok else ''} · {a.kosum} koşum\n")
     print(f"{'#':>3} {'başlangıç':>16} {'açı':>6} {'kapı':>7} {'GN':>6} "
-          f"{'sapma':>7} {'pay':>7}")
+          f"{'sapma':>7} {'pay':>7} {'yol%':>6} {'süre%':>6} {'savrul':>8}")
     oranlar, sapmalar, paylar, carpma = [], [], [], 0
+    yol_v, sure_v, savrul = [], [], []
     for i, (poz, aci) in enumerate(basl, 1):
         r = kosum(parkur, baslangic=poz, yon_hatasi_rad=aci,
                   model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni)
@@ -272,10 +325,17 @@ def main() -> None:
         if not math.isnan(r["sapma_ort"]):
             sapmalar.append(r["sapma_ort"])
         carpma += int(r["carpma"])
+        if not math.isnan(r["yol_verimi"]):
+            yol_v.append(r["yol_verimi"])
+        if not math.isnan(r["sure_verimi"]):
+            sure_v.append(r["sure_verimi"])
+        savrul.append(r["savrulma_derece"])
         print(f"{i:3d} ({poz[0]:6.1f},{poz[1]:6.1f}) {math.degrees(aci):5.0f}° "
               f"{r['gecilen']:3d}/{r['toplam_kapi']:<3d} "
               f"{r['varilan_gn']:2d}/{r['toplam_gn']:<3d} "
-              f"{r['sapma_ort']:6.2f}m {r['en_kucuk_pay']:6.2f}m")
+              f"{r['sapma_ort']:6.2f}m {r['en_kucuk_pay']:6.2f}m "
+              f"{100*r['yol_verimi']:5.0f}% {100*r['sure_verimi']:5.0f}% "
+              f"{r['savrulma_derece']:7.0f}°")
 
     oranlar.sort()
     print(f"\n{'='*56}\nKAPI GEÇME ORANI — {len(oranlar)} koşum")
@@ -285,6 +345,15 @@ def main() -> None:
     if sapmalar:
         print(f"  geçiş sapması ortalaması {statistics.mean(sapmalar):.2f} m")
     print(f"  en küçük gövde payı {min(paylar):.2f} m · ÇARPMA {carpma}/{len(oranlar)}")
+    # 🔴 VERİMLİLİK (13.08'de eklendi) — yarışma süresi 20 dk ve ÜÇ parkur
+    # için; P1 tek başına bütçeyi yerse kapı oranı anlamsızlaşır.
+    if yol_v:
+        print(f"  YOL VERİMİ  (SPL): ort %{100*statistics.mean(yol_v):.0f}"
+              f" · en kötü %{100*min(yol_v):.0f}   (1 = düz gitti)")
+    if sure_v:
+        print(f"  SÜRE VERİMİ (SCT): ort %{100*statistics.mean(sure_v):.0f}"
+              f" · en kötü %{100*min(sure_v):.0f}   (ölçülmüş 1,05 m/s tabanına göre)")
+    print(f"  savrulma (toplam |Δψ|): ortanca {statistics.median(savrul):.0f}°")
 
 
 if __name__ == "__main__":
