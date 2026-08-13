@@ -159,6 +159,13 @@ class PlanningNode(Node):
         self.declare_parameter("bounds_x", [0.0, 200.0])
         self.declare_parameter("bounds_y", [0.0, 200.0])
         self.declare_parameter("replan_proximity", 2.0)     # m
+        # F-P.9 — REPLAN FRENİ (13.08.2026). RRT* bu düğümün TEK thread'inde
+        # koşar; blokladığı sürece hem `cmd_vel` susar hem düğüm KENDİ
+        # aboneliklerini işleyemez (sonuç: kendi "poz bayat" bekçisi ateşler).
+        # Fren sabit değil, son planın ölçülen süresine bağlıdır — ayrıntı ve
+        # türetme `PlanningPipelineConfig` içinde.
+        self.declare_parameter("replan_bosluk_katsayisi", 3.0)
+        self.declare_parameter("replan_max_interval_s", 1.9)  # s
         self.declare_parameter("mppi_K", 1000)
         self.declare_parameter("mppi_T", 50)
         self.declare_parameter("heartbeat_timeout_s", 5.0)  # MAVROS geçidi
@@ -259,6 +266,12 @@ class PlanningNode(Node):
 
         cfg = PlanningPipelineConfig(
             replan_proximity=float(self.get_parameter("replan_proximity").value),
+            replan_bosluk_katsayisi=float(
+                self.get_parameter("replan_bosluk_katsayisi").value
+            ),
+            replan_max_interval_s=float(
+                self.get_parameter("replan_max_interval_s").value
+            ),
             mppi_K=int(self.get_parameter("mppi_K").value),
             mppi_T=int(self.get_parameter("mppi_T").value),
             control_mode=control_mode,
@@ -278,7 +291,10 @@ class PlanningNode(Node):
                 self.get_parameter("mppi_ref_window_enabled").value
             ),
         )
-        self._pipe = PlanningPipeline(bounds, cfg)
+        # F-P.9: fren "ne kadar zaman geçti" sorar → düğümün F-S.14 saati
+        # (donanımda monotonic, sim zamanında `/clock`). Boru hattının kendi
+        # `time.monotonic` varsayılanı sim'de bant oynatmayla ayrışırdı.
+        self._pipe = PlanningPipeline(bounds, cfg, saat=self._saat)
 
         # Video bypass: use_rrt=false → global plan atlanır, current_target
         # doğrudan MPPI referansı. Son poz absolute hedef hesabı için tutulur.

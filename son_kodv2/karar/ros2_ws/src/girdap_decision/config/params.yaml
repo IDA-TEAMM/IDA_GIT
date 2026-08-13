@@ -44,6 +44,12 @@ planning_node:
     bounds_x: [0.0, 200.0]   # m, yarışma alanı temsili
     bounds_y: [0.0, 200.0]
     replan_proximity: 2.0    # m, RRT* replan tetiği
+    # F-P.9 (13.08.2026) — REPLAN FRENİ. RRT* planning_node'un TEK thread'inde
+    # koşuyor; Jetson ölçümü: plan() 20 duba 331 ms, 100 engel 510 ms, en kötü
+    # 1491 ms — kontrol bütçesi 100 ms. Aralık SABİT DEĞİL:
+    #   aralık = min(bosluk_katsayisi × son_plan_süresi, max_interval_s)
+    replan_bosluk_katsayisi: 3.0   # kör oran = 1/(1+k) → %25
+    replan_max_interval_s: 1.9     # s, tazelik tavanı = 2,0 m ÷ 1,05 m/s
     mppi_K: 1000             # rollout sayısı (CLAUDE.md)
     mppi_T: 50               # horizon adımı (2.5 s @ dt=0.05)
     # --- MPPI saha tuning yüzeyi (2026-08-02) ---

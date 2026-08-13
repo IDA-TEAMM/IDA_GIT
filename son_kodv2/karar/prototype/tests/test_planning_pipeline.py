@@ -33,6 +33,26 @@ def _fast_cfg() -> PlanningPipelineConfig:
     return PlanningPipelineConfig(mppi_K=200, mppi_T=30)
 
 
+class _IlerletilebilirSaat:
+    """F-P.9 replan frenini testte geçmek için elle sürülen tek yönlü saat.
+
+    Her okumada `adim` kadar ilerler — böylece `plan()` sıfır saniye sürmüş
+    görünmez (fren son planın ÖLÇÜLEN süresinden türer).
+    """
+
+    def __init__(self, adim: float = 0.15) -> None:
+        self.t = 1000.0
+        self.adim = adim
+
+    def __call__(self) -> float:
+        simdi = self.t
+        self.t += self.adim
+        return simdi
+
+    def ilerlet(self, s: float) -> None:
+        self.t += s
+
+
 @pytest.fixture
 def bounds() -> Bounds:
     return Bounds(0.0, 50.0, 0.0, 50.0)
@@ -625,12 +645,29 @@ def test_A3_DEGISMEYEN_engel_kumesi_replan_TETIKLEMEZ(bounds: Bounds) -> None:
 
 
 def test_A3_DEGISEN_engel_rotaya_yakinsa_replan_tetikler(bounds: Bounds) -> None:
-    """Koruma zayıflamadı: gerçekten yeni bir engel hâlâ yeniden planlatır."""
-    pipe = PlanningPipeline(bounds, _fast_cfg())
+    """Koruma zayıflamadı: gerçekten yeni bir engel hâlâ yeniden planlatır.
+
+    🔄 **F-P.9 (13.08.2026) ile sözleşme inceldi: "ANINDA" değil, "≤ tavan".**
+    Replan freni geldiğinden beri engel kaynaklı yeniden planlama en fazla
+    `replan_max_interval_s` (1,9 s) gecikebilir. Gecikme BİLİNÇLİ ve ölçüme
+    dayanıyor:
+      · RRT* bu düğümün TEK thread'inde koşuyor; 0,3-1,5 s bloklama boyunca
+        `cmd_vel` susuyor ve düğüm kendi odom'unu işleyemiyor.
+      · Yakın engelde ANINDA replan, tam da tehlike anında aracı 0,5 s KÖR
+        bırakırdı (ArduPilot son hız komutunu 3 s sürdürür).
+      · Anlık kaçınma zaten MPPI'nin işi: 10 Hz, 1,0 m yumuşak ceza, engel
+        listesi HER karede tazeleniyor (F-P.9 fren yalnız GLOBAL rotayı
+        erteler — `test_FP9_fren_MPPI_ENGELLERINI_GECIKTIRMEZ` bunu bağlar).
+    Test bu yüzden freni saati ilerleterek geçiyor; "yeni engel replan
+    tetikler" güvencesi aynen duruyor.
+    """
+    saat = _IlerletilebilirSaat()
+    pipe = PlanningPipeline(bounds, _fast_cfg(), saat=saat)
     pipe.set_state(np.array([5.0, 5.0, 0.0, 0.0, 0.0, 0.0]))
     pipe.set_waypoints([(45.0, 45.0)])
     pipe.set_obstacles([CircleObstacle(25.0, 25.0, 1.0)])
     kosan = pipe.replan_sayaclari[0]
+    saat.ilerlet(PlanningPipelineConfig().replan_max_interval_s + 0.1)
     pipe.set_obstacles([                              # rotanın üstünde YENİ engel
         CircleObstacle(25.0, 25.0, 1.0), CircleObstacle(15.0, 15.0, 1.5),
     ])

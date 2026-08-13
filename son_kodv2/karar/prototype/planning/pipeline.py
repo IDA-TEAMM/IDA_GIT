@@ -25,8 +25,9 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from dataclasses import dataclass, replace
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -119,6 +120,32 @@ class PlanningPipelineConfig:
     """Boru hattı ayarları — ROS 2 parametre arayüzünden aynı isimle gelir."""
 
     replan_proximity: float = 2.0        # m, RRT* replan tetiği
+    # 🔴 F-P.9 (13.08.2026) — REPLAN FRENLERİ. Sahada ölçüldü (§0.66/§0.69):
+    # `planning_node` tek thread'de koşar (`rclpy.spin`) ve RRT* AYNI thread'de
+    # çalışır. Jetson'da `plan()` 100 engelle ortanca 510 ms / en kötü 1491 ms
+    # sürüyor; kontrol bütçesi 100 ms. Bloklama iki yoldan birden vuruyor:
+    # (a) o sürede `cmd_vel` yayınlanmıyor — ArduPilot GUIDED'da 3 sn komut
+    #     gelmezse aracı DURDURUR, öncesinde ise SON komutu sürdürür (kör sürme);
+    # (b) düğümün kendi abonelikleri işlenmiyor → `_last_odom_t` yaşlanıyor →
+    #     KENDİ bekçisi (F-P.1) "poz bayat" deyip thrust'ı sıfırlıyor.
+    #     Ölçülen kanıt: "poz 2,4 s bayat" yazarken füzyon 50 Hz yayındaydı.
+    # Bu iki fren kökü çözmez (o, planlayıcıyı AYRI SÜRECE almaktır — Python
+    # GIL yüzünden ayrı THREAD yetmez), ama RRT* çağrı sıklığını ~10 Hz'ten
+    # ≤1 Hz'e indirir.
+    # 🔑 FREN SABİT DEĞİL, SON PLANIN SÜRESİNE GÖRE: `aralık = min(katsayı ×
+    # son_plan_süresi, tavan)`. Sabit bir sayı seçilmedi çünkü `plan()` maliyeti
+    # sahneyle 5 kat değişiyor (Jetson ölçümü: 0 duba 173 ms · 20 duba 331 ms ·
+    # 100 engel 510 ms · en kötü 1491 ms). Kural, ağır sahnede kendiliğinden
+    # geri çekilir, ucuz sahnede tepkiselliği bırakır.
+    #: Körlük payı katsayısı. `plan()` koşarken düğüm kördür; kör oran =
+    #: T_plan/(T_plan+aralık) = 1/(1+katsayı). 3.0 → **≤ %25**. 0 → fren kapalı
+    #: (eski davranış birebir).
+    replan_bosluk_katsayisi: float = 3.0
+    #: Frenin tavanı (s) — TAZELİK sınırı. Global rota, tekne `replan_proximity`
+    #: kadar yol almadan tazelenmeli: 2,0 m ÷ **1,05 m/s** (ölçülmüş gerçek
+    #: seyir hızı, CLAUDE.md dinamik log 58) = 1,9 s. Ayrıca ArduPilot'ın 3 s'lik
+    #: GUIDED zaman aşımının altında kalır (aralık + T_plan < 3 s).
+    replan_max_interval_s: float = 1.9
     # F10.2: RRT* örnekleme alanı statik bounds ∪ (start/goal ± bu pay) —
     # odom origin boot konumu olduğundan araç/hedef negatif çeyreğe düşebilir;
     # statik [0,200]² tek başına orada plan üretemez (start bounds dışı →
@@ -198,7 +225,12 @@ class PlanningPipeline:
         cfg: Optional[PlanningPipelineConfig] = None,
         dynamics: Optional[CatamaranDynamics] = None,
         rrt_cfg: Optional[RRTStarConfig] = None,
+        saat: Optional[Callable[[], float]] = None,
     ) -> None:
+        # F-P.9: replan freni "ne kadar zaman GEÇTİ" sorar → TEK YÖNLÜ saat
+        # (F-S.14 kuralı: geçen süre monotonic, mutlak an duvar saati). Testler
+        # ve sim, kendi saatini enjekte edebilsin diye çağrılabilir alınıyor.
+        self._saat: Callable[[], float] = saat or time.monotonic
         self._bounds = bounds
         self.cfg = cfg or PlanningPipelineConfig()
         self._dyn = dynamics or CatamaranDynamics()
@@ -229,6 +261,12 @@ class PlanningPipeline:
         self._engel_imzasi_son: Optional[Tuple] = None
         self._replan_sayisi = 0          # fiilen koşan RRT* sayısı
         self._replan_atlandi = 0         # gereksiz olduğu için atlanan çağrı
+        # F-P.9 fren durumu: son RRT* koşumunun ANI ve SÜRESİ (ikisi de tek
+        # yönlü saatte). Süre "bir sonraki koşuma ne kadar ara verilecek"i
+        # belirler; ölçüm yoksa (ilk plan) fren UYGULANMAZ.
+        self._son_replan_t: Optional[float] = None
+        self._son_plan_suresi_s: Optional[float] = None
+        self._replan_ertelendi = 0       # fren yüzünden ertelenen çağrı
         self._duz_cizgiye_dusuldu = 0    # A1: RRT* reddedip düz çizgiye düşülen tur
         # F-S.10: PID yedek kontrolcü — cfg.control_mode="pid" iken kullanılır.
         self._pid = CascadeHeadingPidController(self.cfg.pid_cfg)
@@ -312,13 +350,39 @@ class PlanningPipeline:
             self._replan_atlandi += 1
             return
         self._engel_imzasi_son = imza
-        if self._ref_path is not None and self._needs_replan(obstacles):
-            self._obstacles = obstacles
+        self._obstacles = obstacles
+        if (
+            self._ref_path is not None
+            and self._needs_replan(obstacles)
+            and not self._replan_frenli()
+        ):
             self._global_replan()
-        else:
-            self._obstacles = obstacles
-            if self._mppi is not None:
-                self._rebuild_mppi()
+        elif self._mppi is not None:
+            # ⚠ FREN GÜVENLİĞİ ZAYIFLATMAZ: engeller her karede MPPI'ye
+            # verilir (soft ceza, 10 Hz). Ertelenen yalnız GLOBAL rotanın
+            # yenilenmesidir; kaçınma katmanı tam hızda çalışmaya devam eder.
+            self._rebuild_mppi()
+
+    def _replan_frenli(self) -> bool:
+        """F-P.9: bu turda RRT* koşmak ERKEN mi (kör kalma payı dolmadı mı)?
+
+        Fren yalnız ENGEL kaynaklı replan'a uygulanır — `set_waypoints`'in
+        (yeni hedef) ve ilk planın yolu buradan geçmez, onlar hiç ertelenmez.
+        Ölçüm yoksa (henüz plan koşmadıysa) fren YOK: soğuk başlangıçta rotayı
+        geciktirmek, tam da aracın kıpırdamadığı ana denk gelirdi.
+        """
+        if self.cfg.replan_bosluk_katsayisi <= 0.0:      # fren kapalı
+            return False
+        if self._son_replan_t is None or self._son_plan_suresi_s is None:
+            return False
+        aralik = min(
+            self.cfg.replan_bosluk_katsayisi * self._son_plan_suresi_s,
+            self.cfg.replan_max_interval_s,
+        )
+        if (self._saat() - self._son_replan_t) >= aralik:
+            return False
+        self._replan_ertelendi += 1
+        return True
 
     @staticmethod
     def _engel_imzasi(obstacles: List[CircleObstacle]) -> Tuple:
@@ -408,16 +472,29 @@ class PlanningPipeline:
         )
         rrt = RRTStar(bounds, self._obstacles, self._rrt_cfg)
         self._replan_sayisi += 1
+        # F-P.9: koşum SÜRESİ ölçülür — bir sonraki koşumun freni bundan
+        # türetilir. Ölçüm başarısız plan için de geçerlidir: bloklama
+        # planın başarısına değil süresine bağlıdır (uzak hedefte RRT* hiç
+        # çözüm bulamadan 1,1 s harcıyor — §0.67a).
+        _t0 = self._saat()
         try:
             path = rrt.plan(start, goal)
         except ValueError as exc:
+            self._plan_suresini_kaydet(_t0)
             return self._rrt_basarisiz(f"plan reddedildi ({exc})", goal)
+        self._plan_suresini_kaydet(_t0)
         if path is None:
             return self._rrt_basarisiz("çözüm bulamadı", goal)
         self._ref_path = path
         self._planlanan_goal = (float(goal[0]), float(goal[1]))   # A3 ölçütü
         self._rebuild_mppi()
         return True
+
+    def _plan_suresini_kaydet(self, t0: float) -> None:
+        """F-P.9: son RRT* koşumunun anını ve süresini yaz (fren girdisi)."""
+        simdi = self._saat()
+        self._son_replan_t = simdi
+        self._son_plan_suresi_s = max(0.0, simdi - t0)
 
     def _rrt_basarisiz(self, sebep: str, goal: Tuple[float, float]) -> bool:
         """RRT* bir plan üretemedi — referans İSTENEN hedefe gidiyorsa koru,
@@ -588,6 +665,21 @@ class PlanningPipeline:
         çalışmıyor demektir. Ölçüm (P2, 40 s): düzeltme öncesi 201/0.
         """
         return self._replan_sayisi, self._replan_atlandi
+
+    @property
+    def replan_ertelendi(self) -> int:
+        """F-P.9 teşhisi: kör kalma payı dolmadığı için ertelenen replan sayısı.
+
+        Sahada `replan_sayisi` ile birlikte okunur: ertelenen/koşan oranı
+        frenin fiilen ne kadar iş kestiğini söyler. Sıfır kalıyorsa fren hiç
+        devreye girmemiş demektir (sahne ucuz ya da katsayı 0).
+        """
+        return self._replan_ertelendi
+
+    @property
+    def son_plan_suresi_s(self) -> Optional[float]:
+        """Son RRT* koşumunun süresi (s) — frenin girdisi; None = hiç koşmadı."""
+        return self._son_plan_suresi_s
 
     @property
     def mission_state(self) -> str:
