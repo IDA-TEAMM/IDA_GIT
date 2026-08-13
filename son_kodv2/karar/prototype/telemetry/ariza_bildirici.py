@@ -120,6 +120,18 @@ SINIF_YOK = ArizaTanimi(
 )
 KAPI_YOK = ArizaTanimi("KAPI-YOK", "kapi secilemedi", SEVIYE_WARNING)
 GPU_YOK = ArizaTanimi("GPU-YOK", "MPPI CPU'da, adim suresi riskli", SEVIYE_WARNING)
+# §0.61h — kaptanın isteği: *"bu veriyi fix oldu ya da olmadı diye pixhawkta
+# göreyim."* Sistem saati GPS'ten kurulamadıysa bu kod ekranda DURUR; saat
+# kurulunca (açılışta seri yoldan ya da sonradan `girdap-saat-gec` ile)
+# KENDİLİĞİNDEN düşer — yani kodun YOKLUĞU "fix alındı, saat kuruldu"
+# demektir. Ölçüt çekirdeğin `adjtimex` STA_UNSYNC bayrağı (teslim
+# damgalarının dayandığı ölçütün AYNISI, `saat_guveni.py`) — "tarih makul mü"
+# değil "bir referansa göre düzeltildi mi".
+# ⚠ Seviye WARNING ve liste SONUNDA: saat yokluğu görevi durdurmaz, veri
+# geçerlidir; yalnız mutlak saat iddia edilmez. Gerçek arızaları GÖLGELEMEZ.
+SAAT_YOK = ArizaTanimi(
+    "SAAT-YOK", "saat GPS'ten kurulmadi (fix?)", SEVIYE_WARNING
+)
 
 #: Öncelik sırasıyla bütün tanımlar (üstteki en kritik).
 ARIZALAR: tuple[ArizaTanimi, ...] = (
@@ -136,6 +148,7 @@ ARIZALAR: tuple[ArizaTanimi, ...] = (
     SINIF_YOK,
     KAPI_YOK,
     GPU_YOK,
+    SAAT_YOK,
 )
 
 

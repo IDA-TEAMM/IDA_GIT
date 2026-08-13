@@ -98,12 +98,14 @@ from prototype.telemetry.ariza_bildirici import (
     KAPI_YOK,
     KONTROL_HATA,
     RRT_RED,
+    SAAT_YOK,
     SEBEP_TUREVLI_ARIZALAR,
     SETPOINT_BOSLUK,
     SINIF_YOK,
     ArizaBildirici,
     sebepten_kodla,
 )
+from prototype.telemetry.saat_guveni import saat_guvenilir_mi
 from prototype.planning.pipeline import PlanningPipeline, PlanningPipelineConfig
 from prototype.planning.rrt_star import Bounds, CircleObstacle
 
@@ -1455,6 +1457,17 @@ class PlanningNode(Node):
                 and self._gate.last_diagnostics.n_edge_buoys >= 2
             ),
         )
+
+        # SAAT-YOK (§0.61h): sistem saati bir referansa (GPS) göre kuruldu mu?
+        # Kaptanın isteği — *"fix oldu ya da olmadı diye pixhawkta göreyim"*.
+        # Kodun VARLIĞI "kurulmadı", YOKLUĞU "kuruldu" demek; `girdap-saat-gec`
+        # fix gelince saati kurunca bu kod KENDİLİĞİNDEN düşer (§0.58b: arıza
+        # kodu DURUMDUR, olay değil). Ölçüt teslim damgalarınınkiyle AYNI
+        # (`saat_guveni`, çekirdek STA_UNSYNC) — ikisi ayrışamaz.
+        # ⚠ 1 Hz'de bir `adjtimex` salt-okunur çağrısı: yetki istemez, ağ
+        # istemez, saniyenin çok altında sürer.
+        saat_ok, _gerekce = saat_guvenilir_mi()
+        self._ariza.ayarla(SAAT_YOK, aktif=not saat_ok)
 
         # SETPOINT / CMDVEL: olay tabanlı — son olaydan `ariza_olay_tutma_s`
         # sonra düşer (bir olay "düzelmez", bu yüzden durum yüklemi yazılamaz).

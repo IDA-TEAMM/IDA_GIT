@@ -78,6 +78,7 @@ from std_srvs.srv import Trigger
 
 from girdap_decision.qos_profiles import sensor_data_qos
 from girdap_decision.saat_kaynagi import SaatSicramaBekcisi, bayatlik_saati
+from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.control.mavros_bridge import MavrosBridge, MavrosBridgeConfig
 
 
@@ -115,6 +116,15 @@ class MavrosBridgeNode(Node):
         # F-S.12: -1 (negatif) = RC kill yolu KAPALI. Yarışmada RC yok.
         self.declare_parameter("rc_kill_channel", 7)
         self.declare_parameter("rc_kill_threshold_pwm", 1500)
+        # F-S.15: OTOMATİK kaynaklı KILL, sebebi geçtikten sonra kendini
+        # temizler (heartbeat geri geldi / araç yeniden ARM edildi). Operatör
+        # kaynaklı KILL (RC anahtarı, yer istasyonu) temizlenMEZ — yalnız
+        # `/girdap/mission/reset` ile. false → eski mandallı davranış.
+        # ⚠ Temizleme aracı ARM ETMEZ ve thrust vermez; yalnız köprünün
+        # İZLEMESİNİ geri açar. Eski hâlde tek bir KILL'den sonra heartbeat
+        # bekçisi oturumun sonuna kadar KAPALI kalıyordu.
+        self.declare_parameter("kill_otomatik_temizleme", True)
+        self.declare_parameter("kill_temizleme_bekleme_s", 3.0)
         # F-S.4: RC manuel-override — ida_topics ile aynı varsayılanlar
         # (RC kanal 5, 0-indexed 4; PWM eşiği 1700).
         # F-S.12: -1 (negatif) = manuel override KAPALI.
@@ -148,6 +158,12 @@ class MavrosBridgeNode(Node):
             ),
         )
         self._bridge = MavrosBridge(cfg)
+        self._kill_oto_temizle = bool(
+            self.get_parameter("kill_otomatik_temizleme").value
+        )
+        self._kill_temizleme_bekleme_s = float(
+            self.get_parameter("kill_temizleme_bekleme_s").value
+        )
         self._rc_kill_channel = int(self.get_parameter("rc_kill_channel").value)
         self._rc_manual_channel = int(
             self.get_parameter("rc_manual_channel").value
@@ -164,6 +180,12 @@ class MavrosBridgeNode(Node):
 
         # Latching durumlar
         self._killed = False
+        # F-S.15: KILL artık "kim tetikledi"yi de taşıyor — kurtarma politikası
+        # kaynağa göre AYRI (bkz. `_kill_toparlanmayi_dene`). Kod zaten
+        # "sebep etiketinde de ayrı, çünkü kurtarma politikası farklı" diyordu
+        # (F-S.1 yorumu); eksik olan politikanın kendisiydi.
+        self._kill_kaynagi: Optional[str] = None
+        self._kill_saglikli_t: Optional[float] = None
         self._was_armed = False
         # PAR-04 akış ölçümü
         self._akis_pencere = max(2, int(self.get_parameter("akis_denetim_pencere").value))
@@ -262,6 +284,12 @@ class MavrosBridgeNode(Node):
         # mandallanmıştı; hat ise hiç kopmamıştı.
         self._saat = bayatlik_saati(self)
         self._sicrama_bekcisi = SaatSicramaBekcisi()
+        # F-S.15: köprü şimdiye kadar sıfırlama yayınının DIŞINDAYDI. Operatör
+        # `/girdap/mission/reset` çağırınca FSM KILL'den çıkıyor, planlama
+        # sürüyor — ama köprünün `_killed` mandalı asılı kaldığı için heartbeat
+        # / beklenmedik-disarm / RC-kill izlemesinin ÜÇÜ DE kapalı kalıyordu.
+        # Yani yeniden başlama sonrası tekne FAILSAFE'SİZ sürüyordu.
+        self._reset = ResetAbonesi(self, self._yeniden_basla)
         rate = float(self.get_parameter("monitor_rate_hz").value)
         self._timer = self.create_timer(1.0 / rate, self._on_monitor)
 
@@ -556,6 +584,87 @@ class MavrosBridgeNode(Node):
 
     # ----- güvenlik izleme -----
 
+    #: F-S.15: sebebi GÖZLENEBİLİR ve GEÇİCİ olan KILL kaynakları — sebep
+    #: ortadan kalkınca mandal kendini temizler. Buraya YAZILMAYAN her kaynak
+    #: (RC anahtarı, yer istasyonu/FSM kill'i) operatör niyetidir ve YALNIZ
+    #: `/girdap/mission/reset` ile temizlenir: donanım/operatör her zaman kazanır.
+    _OTOMATIK_KILL_KAYNAKLARI = ("heartbeat_kaybi", "beklenmedik_disarm")
+
+    def _kill_toparlanmayi_dene(self) -> bool:
+        """KILL mandalı temizlenebilir mi? Temizlediyse True.
+
+        🔑 NEDEN GÜVENLİ: temizleme aracı **ARM ETMEZ** ve thrust vermez. KILL
+        anında FCU zaten disarm edildi; mandalın kalkması yalnız köprünün
+        İZLEMESİNİ geri açar. Tekne ancak operatör yeniden ARM edip görev
+        durumu ARM→BEKLEMEDE→PARKUR zincirini geçerse hareket eder. Yani
+        toparlanma "motorları geri veren" bir işlem değil, "bekçiyi geri açan"
+        bir işlemdir.
+
+        ⚠ Görev durumu KILL'den KENDİLİĞİNDEN çıkmaz — o operatörün yeniden
+        başlama hakkıdır (md 5.5.3.1, puan sıfırlanır) ve otomatikleştirilemez.
+        """
+        if not self._kill_oto_temizle:
+            return False
+        if self._kill_kaynagi not in self._OTOMATIK_KILL_KAYNAKLARI:
+            return False
+
+        now = self._now()
+        son = self._bridge.last_state
+        # `connected=false` DE bir /mavros/state mesajıdır: heartbeat tazedir
+        # ama hat yoktur (§0.48a'daki `mode: ''` hâli). İkisi birden şart.
+        saglikli = (
+            son is not None
+            and son.connected
+            and self._bridge.heartbeat_alive(now)
+        )
+        if self._kill_kaynagi == "beklenmedik_disarm":
+            # Beklenmedik disarm'ın sebebi ancak araç YENİDEN ARM edilince
+            # geçmiş sayılır — bu zaten operatörün (ya da FC'nin) eylemidir.
+            saglikli = saglikli and self._bridge.is_armed()
+
+        if not saglikli:
+            self._kill_saglikli_t = None
+            return False
+
+        # Histerezis: hat çırpınırken KILL→temizle→KILL sarmalına girmesin.
+        if self._kill_saglikli_t is None:
+            self._kill_saglikli_t = now
+            return False
+        if (now - self._kill_saglikli_t) < self._kill_temizleme_bekleme_s:
+            return False
+
+        self._kill_temizle(
+            f"{self._kill_kaynagi} sebebi gecti "
+            f"({self._kill_temizleme_bekleme_s:.0f}s saglikli)"
+        )
+        return True
+
+    def _kill_temizle(self, neden: str) -> None:
+        """Mandalı düşür ve bunu GÖRÜNÜR yap (sessiz mandal en kötüsüdür)."""
+        eski = self._kill_kaynagi
+        self._killed = False
+        self._kill_kaynagi = None
+        self._kill_saglikli_t = None
+        # F-M.2 kenar takibi: mandal boyunca arm durumu değişmiş olabilir;
+        # eski değerle devam etmek sahte "beklenmedik disarm" üretirdi.
+        self._was_armed = self._bridge.is_armed()
+        self.get_logger().warn(
+            f"KILL MANDALI TEMIZLENDI (eski sebep: {eski}) — {neden}. "
+            "Bekci yeniden acildi; arac ARM EDILMEDI, thrust verilmedi."
+        )
+        self._pub_kill_reason.publish(String(data=f"temizlendi:{eski}"))
+
+    def _yeniden_basla(self) -> None:
+        """`/girdap/mission/reset` fan-out'u: KAYNAĞI NE OLURSA OLSUN temizle.
+
+        Operatör kaynaklı KILL'in (RC anahtarı, yer istasyonu) tek çıkışı
+        budur. ⚠ RC anahtarı HÂLÂ kill konumundaysa bir sonraki `/mavros/rc/in`
+        mesajı KILL'i derhâl geri koyar — donanım her zaman kazanır (çekirdek
+        `MissionFSM.reset()` de aynı ilkeyle çalışıyor).
+        """
+        if self._killed:
+            self._kill_temizle("operator yeniden baslatma (md 5.5.3.1)")
+
     def _on_monitor(self) -> None:
         # §0.61: sıçrama artık KILL üretmiyor ama SESSİZ de kalmamalı — kayıt
         # damgaları bu andan sonra kayar (§0.53e), suda "o an ne oldu"nun
@@ -572,8 +681,15 @@ class MavrosBridgeNode(Node):
         # port devrinde >5 sn'lik state boşluğu FC hiç görülmeden KILL
         # latch'liyordu (journal 2026-07-14 18:13). İlk bağlantı öncesi thrust'ı
         # control_gate zaten "FCU baglantisi yok" ile kesiyor.
-        if not self._bridge.ever_connected or self._killed:
+        if not self._bridge.ever_connected:
             return
+        if self._killed:
+            # F-S.15: eskiden burada KOŞULSUZ dönülüyordu — tek bir KILL,
+            # oturumun geri kalanında bekçiyi tamamen kapatıyordu. Artık önce
+            # toparlanma denenir; temizlenemezse (operatör kaynaklı KILL) yine
+            # dönülür.
+            if not self._kill_toparlanmayi_dene():
+                return
 
         now = self._now()
 
@@ -754,6 +870,10 @@ class MavrosBridgeNode(Node):
         otomatik disarm/hold), FC parametresi olarak ayrı doğrulanmalı.
         """
         self._killed = True
+        # F-S.15: kaynak sınıfı = sebebin ilk parçası (`heartbeat_kaybi:6.2s`
+        # → `heartbeat_kaybi`). Kurtarma politikası buna bakar.
+        self._kill_kaynagi = sebep.split(":", 1)[0]
+        self._kill_saglikli_t = None
         # KAR-02: sebebi ÖNCE yayınla — disarm çağrısı hat kopukken bloke
         # olabilir, teşhis onun arkasında kalmasın.
         self._pub_kill_reason.publish(String(data=sebep))

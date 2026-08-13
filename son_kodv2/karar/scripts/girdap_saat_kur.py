@@ -429,28 +429,97 @@ def _iso(t: float) -> str:
     return datetime.fromtimestamp(t, tz=timezone.utc).isoformat(timespec="seconds")
 
 
-def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--port", default="/dev/pixhawk",
-                    help="FC seri portu (hardware.yaml fcu_url ile AYNI olmali)")
-    ap.add_argument("--baud", type=int, default=921600)
-    ap.add_argument("--zaman-asimi", type=float, default=90.0,
-                    help="gecerli SYSTEM_TIME icin beklenecek azami sure (s)")
-    ap.add_argument("--kuru", action="store_true",
-                    help="saati KURMA, yalnizca oku ve farki bildir (testte)")
-    a = ap.parse_args(argv)
+def gps_saati_al_ros(zaman_asimi: float, log, armdayken_kur: bool = False):
+    """GPS zamanini MAVROS'un `/mavros/time_reference` konusundan al.
 
-    def log(s: str) -> None:
-        # systemd journald'a gider; tarih YAZMIYORUZ (saat henuz yanlis olabilir,
-        # yaniltici olur) — journald kendi damgasini basar.
-        print(f"[girdap-saat] {s}", flush=True)
+    🔴 NEDEN BU YOL VAR (§0.61g): seri yol acilista TEK ATIS ve ZORUNLU OLARAK
+    kisa — `girdap-karar` bu servisi bekliyor (`Before=`), ve MAVROS ayaga
+    kalkinca `/dev/pixhawk`'i tekeline aliyor; iki surec ayni portu ACAMAZ.
+    Ama olculen gercek (§0.59a): saat servisi acilisin **61. saniyesinde**
+    kosuyor, GPS fix **171. saniyede** geliyor → soguk acilista zaman asimi
+    NEREDEYSE KESIN, ve sahada internet olmadigi icin (md 4.1 WiFi yasak)
+    saat bir daha HIC kurulmuyor → md 4.2 teslim damgalari bozuk kaliyor.
 
-    t, kod = gps_saati_al(a.port, a.baud, a.zaman_asimi, log)
-    if t is None:
-        log(f"SAAT KURULMADI (kod {kod}) — teslimler saat_guvenilir=false "
-            "ile damgalanmali")
-        return kod
+    Cozum: fix geldikten SONRA, yigin ayaktayken, seri porta hic dokunmadan
+    ayni zamani MAVROS'un kendi konusundan almak. `sys_time` eklentisi zaten
+    beyaz listede (mavros_overrides.yaml) ve `time_unix_usec` gecerli olur
+    olmaz yayina basliyor — yani "fix var mi" sorusunun cevabi konunun
+    KENDISI: fix yokken hic mesaj gelmez.
 
+    ⚠ ARM KAPISI (`armdayken_kur=False`): kosu sirasinda saati adimlamak
+    Dosya-2'nin `zaman` sutununu dosyanin ORTASINDA kaydirir. Acilis ile gorev
+    baslangici arasinda ~6,5 dakika var (§0.59a) — saat orada kurulur. Arac
+    ARM'liyken beklenir; disarm olunca kurulur.
+
+    Donus: (unix_saniye, cikis_kodu). Zaman bulunamazsa (None, kod).
+    """
+    try:
+        import rclpy
+        from rclpy.node import Node
+        from rclpy.qos import (
+            DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy,
+        )
+        from sensor_msgs.msg import TimeReference
+        from mavros_msgs.msg import State as MavState
+    except Exception as e:                       # noqa: BLE001
+        log(f"ROS ortami yok ({e!r}) — --kaynak ros kullanilamaz")
+        return None, 4
+
+    # ⚠ mavros topic'leri BEST_EFFORT yayinlar; rclpy varsayilani RELIABLE ve
+    # uyusmazlik SESSIZCE veri kaybina yol acar (CLAUDE.md kritik notu).
+    qos = QoSProfile(
+        reliability=ReliabilityPolicy.BEST_EFFORT,
+        durability=DurabilityPolicy.VOLATILE,
+        history=HistoryPolicy.KEEP_LAST,
+        depth=10,
+    )
+
+    durum = {"t": None, "armed": False, "state_geldi": False}
+
+    def _on_time(msg) -> None:                   # noqa: ANN001
+        # `time_ref` = FC'nin bildirdigi UNIX zamani (SYSTEM_TIME'dan).
+        durum["t"] = float(msg.time_ref.sec) + float(msg.time_ref.nanosec) * 1e-9
+
+    def _on_state(msg) -> None:                  # noqa: ANN001
+        durum["armed"] = bool(msg.armed)
+        durum["state_geldi"] = True
+
+    rclpy.init()
+    dugum = Node("girdap_saat_gec")
+    dugum.create_subscription(TimeReference, "/mavros/time_reference", _on_time, qos)
+    dugum.create_subscription(MavState, "/mavros/state", _on_state, qos)
+    log(f"MAVROS bekleniyor: /mavros/time_reference (azami {zaman_asimi:.0f} s)")
+
+    bitis = time.monotonic() + zaman_asimi       # §0.61: TEK YONLU saat —
+    arm_bildirildi = False                       # duvar saati zaten sicrayacak
+    try:
+        while time.monotonic() < bitis:
+            rclpy.spin_once(dugum, timeout_sec=1.0)
+            t = durum["t"]
+            if t is None or t <= 0.0:
+                continue
+            if durum["armed"] and not armdayken_kur:
+                if not arm_bildirildi:
+                    arm_bildirildi = True
+                    log("GPS zamani GELDI ama arac ARM'li — kosu ortasinda "
+                        "saat adimlanmaz (Dosya-2 zaman sutunu kayar). "
+                        "Disarm bekleniyor.")
+                continue
+            return t, 0
+        log("zaman asimi — /mavros/time_reference'tan gecerli zaman gelmedi "
+            "(GPS fix yok? MAVROS bagli mi?)")
+        return None, 2
+    finally:
+        dugum.destroy_node()
+        rclpy.shutdown()
+
+
+def saati_uygula(t: float, log, kuru: bool = False) -> int:
+    """Okunan GPS zamanini sisteme UYGULA — iki kaynak da bunu kullanir.
+
+    Ayni is iki yerde yazilmasin: tolerans · root denetimi · clock_settime ·
+    RTC yazimi · STA_UNSYNC temizligi ve SIRASI burada TEK yerde durur.
+    """
     simdi = time.time()
     fark = t - simdi
     log(f"sistem saati {_iso(simdi)} · fark {fark:+.1f} s")
@@ -460,7 +529,7 @@ def main(argv=None) -> int:
         sta_unsync_temizle(log)
         return 0
 
-    if a.kuru:
+    if kuru:
         log("--kuru verildi: saat KURULMADI (yalniz olcum)")
         return 0
 
@@ -492,6 +561,43 @@ def main(argv=None) -> int:
     # temizleme ortada yapiliyordu ve bayrak geri geliyordu.
     sta_unsync_temizle(log)
     return 0
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("--kaynak", choices=("seri", "ros"), default="seri",
+                    help="seri: FC portundan (acilis, MAVROS'tan ONCE) · "
+                         "ros: /mavros/time_reference'tan (yigin ayaktayken)")
+    ap.add_argument("--port", default="/dev/pixhawk",
+                    help="FC seri portu (hardware.yaml fcu_url ile AYNI olmali)")
+    ap.add_argument("--baud", type=int, default=921600)
+    ap.add_argument("--zaman-asimi", type=float, default=90.0,
+                    help="gecerli SYSTEM_TIME icin beklenecek azami sure (s)")
+    ap.add_argument("--armdayken-kur", action="store_true",
+                    help="(yalniz --kaynak ros) arac ARM'liyken de saati kur — "
+                         "VARSAYILAN HAYIR: kosu ortasinda adimlamak Dosya-2'nin "
+                         "zaman sutununu dosyanin ortasinda kaydirir")
+    ap.add_argument("--kuru", action="store_true",
+                    help="saati KURMA, yalnizca oku ve farki bildir (testte)")
+    a = ap.parse_args(argv)
+
+    def log(s: str) -> None:
+        # systemd journald'a gider; tarih YAZMIYORUZ (saat henuz yanlis olabilir,
+        # yaniltici olur) — journald kendi damgasini basar.
+        etiket = "girdap-saat" if a.kaynak == "seri" else "girdap-saat-gec"
+        print(f"[{etiket}] {s}", flush=True)
+
+    if a.kaynak == "ros":
+        t, kod = gps_saati_al_ros(a.zaman_asimi, log, a.armdayken_kur)
+    else:
+        t, kod = gps_saati_al(a.port, a.baud, a.zaman_asimi, log)
+
+    if t is None:
+        log(f"SAAT KURULMADI (kod {kod}) — teslimler saat_guvenilir=false "
+            "ile damgalanmali")
+        return kod
+
+    return saati_uygula(t, log, kuru=a.kuru)
 
 
 if __name__ == "__main__":
