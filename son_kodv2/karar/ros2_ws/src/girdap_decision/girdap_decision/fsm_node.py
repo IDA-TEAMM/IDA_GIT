@@ -187,6 +187,12 @@ class FSMNode(Node):
         )
         self._parkur_etiketleri: list[int] = []   # dosyadan; senkron beklemede
         self._parkur_senkron_sonucu: Optional[bool] = None
+        # 🔴 13.08 (belge madde 0 / B5.2): senkron sonucu YALNIZ ROS log'una
+        # yazılıyordu. Operatör sahada Mission Planner'a bakıyor; senkron
+        # tutmazsa PARKUR2/PARKUR3'e HİÇ geçilmez, yani KAMİKAZE YAPILMAZ ve
+        # bunu ancak koşu bittikten sonra bag'den anlardık. Sonuç artık YKİ
+        # ekranına da gidiyor — boksta, koşudan ÖNCE görülsün diye.
+        self._senkron_ilani: Optional[str] = None
         self._parkur = self._build_parkur_logic()
         self._parkur_state_last = self._parkur.state       # geçiş log tespiti
 
@@ -572,6 +578,7 @@ class FSMNode(Node):
         beklenen = len(self._parkur_etiketleri)
         if gelen != beklenen:
             self._parkur_senkron_sonucu = False
+            self._senkron_ilani = f"PARKUR SENKRON YOK {gelen}!={beklenen}wp"
             self.get_logger().error(
                 f"🔴 PARKUR SENKRONU YOK: FC gorevi {gelen} waypoint "
                 f"iceriyor, mission_file {beklenen} etiket. Index'ler "
@@ -583,6 +590,7 @@ class FSMNode(Node):
             return
 
         self._parkur_senkron_sonucu = True
+        self._senkron_ilani = f"PARKUR SENKRON OK {gelen}wp"
         try:
             self._parkur = ParkurTransitionLogic(self._parkur_etiketleri)
         except ValueError as exc:
@@ -958,6 +966,11 @@ class FSMNode(Node):
             MissionState.PARKUR1, MissionState.PARKUR2, MissionState.PARKUR3
         ):
             text = f"GIRDAP {state.value} {self._parkur.state.value}"
+        elif self._senkron_ilani:
+            # Tek atış: bir kez gönderilir, sonra normal duruma dönülür.
+            # Kilit teşhisinden ÖNCE gelir çünkü bu bir KURULUM doğrulaması —
+            # operatör görevi yükledikten hemen sonra görmeli.
+            text = f"GIRDAP {self._senkron_ilani}"
         elif self._kilit_teshis:
             # KAR-03/KAR-08: yalnız "BOOT" / "BEKLEMEDE" yazmak operatöre
             # HİÇBİR ŞEY söylemiyor — sebep aynı satırda gitmeli.
@@ -989,12 +1002,22 @@ class FSMNode(Node):
         # Mission Planner mesaj akışında diğer satırların arasında kaybolur.
         if state is MissionState.KILL:
             msg.severity = StatusText.CRITICAL
+        elif self._senkron_ilani:
+            # Tek atış: bir kez gönderilir, sonra normal duruma dönülür.
+            # Kilit teşhisinden ÖNCE gelir çünkü bu bir KURULUM doğrulaması —
+            # operatör görevi yükledikten hemen sonra görmeli.
+            text = f"GIRDAP {self._senkron_ilani}"
+        elif self._senkron_ilani and "YOK" in self._senkron_ilani:
+            msg.severity = StatusText.ERROR
         elif self._kilit_teshis:
             msg.severity = StatusText.ERROR
         else:
             msg.severity = StatusText.NOTICE
         msg.text = text[:50]
         self._pub_statustext.publish(msg)
+        # Tek atışlık ilan gönderildi → düşür; bir sonraki tick normal duruma
+        # döner. Sürekli basmak, asıl görev durumunu ekrandan siler.
+        self._senkron_ilani = None
 
 
 def main(args: list[str] | None = None) -> None:

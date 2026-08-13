@@ -1084,3 +1084,73 @@ def test_KAR08_ARM_durumunda_da_teshis_basilir(ros_context, tmp_path) -> None:  
         )
     finally:
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# Belge madde 0 / B5.2 (2026-08-13) — parkur senkronu OPERATÖRE bildiriliyor.
+# --------------------------------------------------------------------------- #
+
+
+def _statustext_yakala(node):  # noqa: ANN001, ANN201
+    yollanan = []
+    node._pub_statustext.get_subscription_count = lambda: 1
+    node._pub_statustext.publish = lambda m: yollanan.append(m)
+    return yollanan
+
+
+def test_MADDE0_senkron_YOKSA_operator_ekraninda(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 Senkron tutmazsa PARKUR2/PARKUR3'e HİÇ geçilmez — kamikaze yapılmaz.
+
+    Bu, koşu bittikten sonra bag'den anlaşılacak bir şey olamaz: puanı
+    doğrudan yok eder. Operatör görevi yükledikten hemen sonra, BOKSTA
+    görmeli.
+    """
+    node = _fc_node(tmp_path)
+    try:
+        if node._pub_statustext is None:
+            pytest.skip("statustext kapalı")
+        yollanan = _statustext_yakala(node)
+        node._on_waypoints(_path(7))              # dosyada 3 etiket var
+        node._publish_statustext(MissionState.BOOT)
+        assert yollanan, "statustext hic yollanmadi"
+        m = yollanan[-1]
+        assert "SENKRON YOK" in m.text and "7!=3" in m.text, f"gelen: {m.text!r}"
+        assert len(m.text) <= 50, "MAVLink STATUSTEXT 50 karakter"
+        from mavros_msgs.msg import StatusText
+        assert m.severity == StatusText.ERROR, "MP akisinda kaybolmamali"
+    finally:
+        node.destroy_node()
+
+
+def test_MADDE0_senkron_VARSA_da_bildiriliyor(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Olumlu teyit de gerekli: operatör "sistem parkurları gördü mü" sorusunu
+    ekrandan cevaplayabilmeli, sessizlikten çıkarım yapmak zorunda kalmamalı."""
+    node = _fc_node(tmp_path)
+    try:
+        if node._pub_statustext is None:
+            pytest.skip("statustext kapalı")
+        yollanan = _statustext_yakala(node)
+        node._on_waypoints(_path(3))              # dosyadaki etiket sayisi
+        node._publish_statustext(MissionState.BOOT)
+        assert "SENKRON OK 3wp" in yollanan[-1].text, f"gelen: {yollanan[-1].text!r}"
+    finally:
+        node.destroy_node()
+
+
+def test_MADDE0_ilan_TEK_ATIS(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔑 Sürekli basmak asıl görev durumunu ekrandan siler — bir kez gönderilip
+    normal duruma dönülmeli."""
+    node = _fc_node(tmp_path)
+    try:
+        if node._pub_statustext is None:
+            pytest.skip("statustext kapalı")
+        yollanan = _statustext_yakala(node)
+        node._on_waypoints(_path(3))
+        node._publish_statustext(MissionState.BOOT)
+        node._last_statustext = ""                # periyot kapısını atla
+        node._publish_statustext(MissionState.BOOT)
+        assert "SENKRON" not in yollanan[-1].text, (
+            f"ilan tekrar basildi: {yollanan[-1].text!r}"
+        )
+    finally:
+        node.destroy_node()
