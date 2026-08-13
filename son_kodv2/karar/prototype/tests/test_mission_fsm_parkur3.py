@@ -117,3 +117,33 @@ def test_KILL_P3ten_de_calisir() -> None:
     fsm = MissionFSM(); obs = _p3e_getir(fsm)
     fsm.tick(Observation(**{**obs.__dict__, "kill_switch_active": True}))
     assert fsm.state is MissionState.KILL
+
+
+# ─────────── Eyüp (13.08): "1. wp Parkur-1, 2.cisi Parkur-2" ───────────
+def test_IKI_WAYPOINTLI_gercek_gorev_P3e_gecer():
+    """🔴 GERÇEK GÖREV BİÇİMİ: hakem **2 görev noktası** veriyor —
+    1'incisi Parkur-1'in son noktası, 2'ncisi Parkur-2'nin. İkincisine
+    varılınca (`mission_complete`) Parkur-3 açılmalı.
+
+    Akış: wp1'e yaklaş → PARKUR2 · wp2'ye var → **PARKUR3**.
+    """
+    fsm = MissionFSM()
+    _p1e_getir(fsm)
+
+    # 1. waypoint (Parkur-1'in son noktası) → PARKUR2
+    fsm.tick(Observation(kill_switch_off=True, dist_to_last_wp_p1=0.5))
+    assert fsm.state is MissionState.PARKUR2
+
+    # 2. waypoint (Parkur-2'nin son noktası) = görevin sonu → PARKUR3
+    fsm.tick(Observation(kill_switch_off=True, mission_complete=True,
+                         p3_bekleniyor=True))
+    assert fsm.state is MissionState.PARKUR3
+
+
+def test_IKI_WAYPOINT_renk_yokken_ESKI_davranis():
+    """Aynı görev, renk yüklü değil → Parkur-3 açılmaz, görev biter."""
+    fsm = MissionFSM()
+    _p1e_getir(fsm)
+    fsm.tick(Observation(kill_switch_off=True, dist_to_last_wp_p1=0.5))
+    fsm.tick(Observation(kill_switch_off=True, mission_complete=True))
+    assert fsm.state is MissionState.TAMAMLANDI
