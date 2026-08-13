@@ -166,6 +166,12 @@ class PlanningNode(Node):
         # türetme `PlanningPipelineConfig` içinde.
         self.declare_parameter("replan_bosluk_katsayisi", 3.0)
         self.declare_parameter("replan_max_interval_s", 1.9)  # s
+        # F-P.10 — RRT* AYRI SÜREÇTE. Ampirik ölçüm (bu Jetson, 10 Hz döngü,
+        # CUDA'lı ebeveyn): senkron planda döngünün en kötü gecikmesi 370,7 ms,
+        # asenkron kolda 1,1 ms. ⚠ Ayrı THREAD yetmez (Python GIL); işçi
+        # `spawn` ile kurulur (`fork` CUDA bağlamını bozar).
+        self.declare_parameter("plan_isci_enabled", True)
+        self.declare_parameter("plan_isci_zaman_asimi_s", 5.0)  # s
         self.declare_parameter("mppi_K", 1000)
         self.declare_parameter("mppi_T", 50)
         self.declare_parameter("heartbeat_timeout_s", 5.0)  # MAVROS geçidi
@@ -271,6 +277,12 @@ class PlanningNode(Node):
             ),
             replan_max_interval_s=float(
                 self.get_parameter("replan_max_interval_s").value
+            ),
+            plan_isci_enabled=bool(
+                self.get_parameter("plan_isci_enabled").value
+            ),
+            plan_isci_zaman_asimi_s=float(
+                self.get_parameter("plan_isci_zaman_asimi_s").value
             ),
             mppi_K=int(self.get_parameter("mppi_K").value),
             mppi_T=int(self.get_parameter("mppi_T").value),
@@ -1286,6 +1298,10 @@ class PlanningNode(Node):
         try:
             gate = self._bridge.control_gate(self._now())
             self._log_backend()      # MPPI kurulur kurulmaz bir kez yazar
+            # F-P.10: ayrı süreçteki RRT* bitirdiyse yolu BURADA kur. Maliyet
+            # bir kuyruk yoklaması; sonuç yoksa hiçbir şey olmaz. MPPI'den
+            # ÖNCE çağrılır ki taze yol aynı turda kullanılsın.
+            self._pipe.plan_sonucunu_isle()
 
             # KAR-04: sebepleri SIRAYLA topla — bir komutu birden fazla kilit
             # sifirlayabilir ve hepsini bilmek gerekir. Yalniz ilkini yazmak,
@@ -1724,6 +1740,11 @@ def main(args: list[str] | None = None) -> None:
     try:
         rclpy.spin(node)
     finally:
+        # F-P.10: işçi sürecini düzgünce durdur. Düğüm kurulumu yarıda
+        # kaldıysa `_pipe` olmayabilir — kapanış yolu asla çökmemeli.
+        pipe = getattr(node, "_pipe", None)
+        if pipe is not None:
+            pipe.kapat()
         node.destroy_node()
         rclpy.shutdown()
 

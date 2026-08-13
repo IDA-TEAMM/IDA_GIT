@@ -50,6 +50,12 @@ planning_node:
     #   aralık = min(bosluk_katsayisi × son_plan_süresi, max_interval_s)
     replan_bosluk_katsayisi: 3.0   # kör oran = 1/(1+k) → %25
     replan_max_interval_s: 1.9     # s, tazelik tavanı = 2,0 m ÷ 1,05 m/s
+    # F-P.10 — RRT* AYRI SÜREÇTE (spawn; fork CUDA baglamini bozar). Olcum:
+    # senkron planda 10 Hz dongunun en kotu gecikmesi 370,7 ms → asenkron 1,1 ms.
+    # ⚠ Ayri THREAD yetmez: Python GIL islemci bagimli isde paralellik vermez.
+    # false → eski senkron davranis (bant oynatma/hata ayiklama icin).
+    plan_isci_enabled: true
+    plan_isci_zaman_asimi_s: 5.0   # s, ~3x en kotu olculen plan (1,49 s)
     mppi_K: 1000             # rollout sayısı (CLAUDE.md)
     mppi_T: 50               # horizon adımı (2.5 s @ dt=0.05)
     # --- MPPI saha tuning yüzeyi (2026-08-02) ---

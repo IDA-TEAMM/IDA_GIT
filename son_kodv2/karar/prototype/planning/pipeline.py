@@ -27,7 +27,7 @@ import logging
 import math
 import time
 from dataclasses import dataclass, replace
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -48,6 +48,9 @@ from prototype.planning.rrt_star import (
 
 # Aracın hareket ettiği parkur durumları (bunların dışında motor stop)
 _ACTIVE_STATES = ("PARKUR1", "PARKUR2", "PARKUR3")
+
+if TYPE_CHECKING:                      # yalnız tip denetimi için
+    from prototype.planning.plan_isci import PlanIscisi
 
 
 @dataclass(frozen=True)
@@ -146,6 +149,17 @@ class PlanningPipelineConfig:
     #: seyir hızı, CLAUDE.md dinamik log 58) = 1,9 s. Ayrıca ArduPilot'ın 3 s'lik
     #: GUIDED zaman aşımının altında kalır (aralık + T_plan < 3 s).
     replan_max_interval_s: float = 1.9
+    # 🔴 F-P.10 (13.08.2026) — RRT* AYRI SÜREÇTE (bkz. `plan_isci.py`).
+    # Ampirik ölçüm (bu Jetson, 10 Hz döngü, CUDA'lı ebeveyn): senkron planda
+    # döngünün en kötü gecikmesi **370,7 ms**, asenkron kolda **1,1 ms** —
+    # yani planlama hiç yokmuş gibi. Ayrı THREAD yetmez (GIL); ayrı SÜREÇ şart.
+    #: ⚠ VARSAYILAN **KAPALI**. Prototip/çevrimdışı kullanım (viz, senaryo
+    #: koşumu, birim testler) planı AYNI turda ister — asenkron kol orada
+    #: belirlenimsizlik üretirdi. Üretimde `planning_node` açar (params.yaml
+    #: `plan_isci_enabled: true`); açık olduğunda İLK plan yine senkrondur.
+    plan_isci_enabled: bool = False
+    #: İşçiden yanıt beklenecek üst süre (s) — aşılırsa işçi öldürülüp yenilenir.
+    plan_isci_zaman_asimi_s: float = 5.0
     # F10.2: RRT* örnekleme alanı statik bounds ∪ (start/goal ± bu pay) —
     # odom origin boot konumu olduğundan araç/hedef negatif çeyreğe düşebilir;
     # statik [0,200]² tek başına orada plan üretemez (start bounds dışı →
@@ -226,6 +240,7 @@ class PlanningPipeline:
         dynamics: Optional[CatamaranDynamics] = None,
         rrt_cfg: Optional[RRTStarConfig] = None,
         saat: Optional[Callable[[], float]] = None,
+        isci: Optional["PlanIscisi"] = None,
     ) -> None:
         # F-P.9: replan freni "ne kadar zaman GEÇTİ" sorar → TEK YÖNLÜ saat
         # (F-S.14 kuralı: geçen süre monotonic, mutlak an duvar saati). Testler
@@ -267,6 +282,13 @@ class PlanningPipeline:
         self._son_replan_t: Optional[float] = None
         self._son_plan_suresi_s: Optional[float] = None
         self._replan_ertelendi = 0       # fren yüzünden ertelenen çağrı
+        # F-P.10 asenkron planlama durumu. İşçi TEMBEL kurulur: ilk asenkron
+        # ihtiyaç doğana kadar süreç başlatılmaz (her boru hattı nesnesi bir
+        # süreç doğurmasın — testler yüzlerce nesne kuruyor).
+        self._isci: Optional["PlanIscisi"] = isci
+        self._bekleyen_goal: Optional[Tuple[float, float]] = None
+        self._gonderim_t: Optional[float] = None
+        self._asenkron_plan = 0          # teşhis: işçiye giden istek sayısı
         self._duz_cizgiye_dusuldu = 0    # A1: RRT* reddedip düz çizgiye düşülen tur
         # F-S.10: PID yedek kontrolcü — cfg.control_mode="pid" iken kullanılır.
         self._pid = CascadeHeadingPidController(self.cfg.pid_cfg)
@@ -470,6 +492,31 @@ class PlanningPipeline:
             min(b.y_min, start[1] - pay, goal[1] - pay),
             max(b.y_max, start[1] + pay, goal[1] + pay),
         )
+        # F-P.10: ARAÇ HAREKETTEYKEN plan AYRI SÜREÇTE koşar. İlk plan
+        # (`_ref_path is None`) bilerek SENKRON kalır: görev başında araç
+        # duruyor ve `cmd_vel` akışı yok — orada bloklamak zararsız, referanssız
+        # kalmak zararlıdır (A1: `_ref_path` None → MPPI kurulmaz → araç
+        # kıpırdamaz). İşçi meşgulse bu tur ATLANIR (senkrona DÜŞÜLMEZ; düşmek
+        # tam da kaçındığımız bloklamayı geri getirirdi).
+        if self._ref_path is not None:
+            isci = self._plan_iscisi()
+            if isci is not None:
+                if isci.mesgul:
+                    return False
+                simdi = self._saat()
+                if isci.gonder(
+                    bounds, self._obstacles, self._rrt_cfg, start, goal, simdi
+                ):
+                    self._replan_sayisi += 1
+                    self._asenkron_plan += 1
+                    self._bekleyen_goal = (float(goal[0]), float(goal[1]))
+                    self._gonderim_t = simdi
+                    # Fren, gönderim anından işler: uçuşta istek varken
+                    # yenisini üretmeye çalışmayalım.
+                    self._son_replan_t = simdi
+                    return False        # yol henüz yok; MEVCUT referans korunur
+                # gönderilemedi (işçi düştü) → aşağıdaki senkron kol yedek
+
         rrt = RRTStar(bounds, self._obstacles, self._rrt_cfg)
         self._replan_sayisi += 1
         # F-P.9: koşum SÜRESİ ölçülür — bir sonraki koşumun freni bundan
@@ -489,6 +536,51 @@ class PlanningPipeline:
         self._planlanan_goal = (float(goal[0]), float(goal[1]))   # A3 ölçütü
         self._rebuild_mppi()
         return True
+
+    def _plan_iscisi(self) -> Optional["PlanIscisi"]:
+        """F-P.10 işçisini (gerekiyorsa) kur; kapalıysa/kurulamıyorsa None.
+
+        Tembel kurulum: süreç ancak ilk asenkron ihtiyaçta doğar. İşçi bir kez
+        `kullanilabilir=False` olursa (spawn yok/izin yok) bir daha denenmez —
+        boru hattı sessizce senkron kolda çalışmayı sürdürür.
+        """
+        if not self.cfg.plan_isci_enabled:
+            return None
+        if self._isci is None:
+            from prototype.planning.plan_isci import PlanIscisi
+            self._isci = PlanIscisi(self.cfg.plan_isci_zaman_asimi_s)
+        return self._isci if self._isci.kullanilabilir else None
+
+    def plan_sonucunu_isle(self) -> bool:
+        """F-P.10: işçiden gelen planı KUR (bloklamaz). True = referans değişti.
+
+        Düğüm bunu kontrol adımında çağırır — maliyeti bir kuyruk yoklamasıdır.
+        Sonuç yoksa hiçbir şey olmaz; MPPI mevcut referansla sürmeye devam eder.
+        """
+        if self._isci is None or not self._isci.mesgul:
+            return False
+        sonuc = self._isci.sonuc_al(self._saat())
+        if sonuc is None:
+            return False
+        yol, hata = sonuc
+        if self._gonderim_t is not None:
+            self._plan_suresini_kaydet(self._gonderim_t)
+        goal = self._bekleyen_goal or (
+            self._waypoints[-1] if self._waypoints else (0.0, 0.0)
+        )
+        self._bekleyen_goal = None
+        self._gonderim_t = None
+        if yol is None:
+            return self._rrt_basarisiz(hata or "çözüm bulamadı", goal)
+        self._ref_path = yol
+        self._planlanan_goal = (float(goal[0]), float(goal[1]))   # A3 ölçütü
+        self._rebuild_mppi()
+        return True
+
+    def kapat(self) -> None:
+        """Boru hattını kapat — işçi süreci varsa düzgünce durdurulur."""
+        if self._isci is not None:
+            self._isci.kapat()
 
     def _plan_suresini_kaydet(self, t0: float) -> None:
         """F-P.9: son RRT* koşumunun anını ve süresini yaz (fren girdisi)."""
