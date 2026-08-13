@@ -145,9 +145,54 @@ def test_gec_servisi_yiginla_AYNI_alan_adinda() -> None:
     )
 
 
-def test_gec_servisi_root_kosar() -> None:
-    """`clock_settime` + `adjtimex(ADJ_STATUS)` CAP_SYS_TIME ister."""
-    assert "User=root" in _oku(_GEC)
+def test_gec_servisi_ROOT_KOSMAZ_yiginla_ayni_kullanicida() -> None:
+    """🔴 13.08 canlı ölçümü: `User=root` iken veri HİÇ AKMADI.
+
+    Servis 4 dakika boyunca `/mavros/time_reference`'ı alamadı; aynı anda aynı
+    konuda `ros2 topic echo` (kullanıcı `girdap`) mesajı ANINDA aldı.
+
+    Sebep: RMW = FastDDS, aynı makinede **paylaşımlı bellek** taşıması
+    kullanıyor ve yayıncı veriyi **okuyucunun** `/dev/shm` segmentine YAZAR.
+    Root'un açtığı segment `0644` → yayıncı (mavros, kullanıcı `girdap`) oraya
+    yazamaz. Keşif UDP'den yapıldığı için abone GÖRÜNÜR, veri akmaz.
+    Ters yön çalışır (root okuyabilir), bu yüzden hata tek yönlü ve sessizdir.
+
+    Gereken şey root değil CAP_SYS_TIME'dır (`clock_settime` +
+    `adjtimex(ADJ_STATUS)`) — ambient yetenekle tam o veriliyor.
+    """
+    metin = _oku(_GEC)
+    # ⚠ Yalnız YÖNERGE satırları sayılır; açıklama metninde `User=root`'un
+    # neden yanlış olduğu ANLATILIYOR ve bu bilgi kalmalı.
+    yonergeler = [
+        s.strip() for s in metin.splitlines() if not s.strip().startswith("#")
+    ]
+    assert "User=root" not in yonergeler, (
+        "geç servis root koşamaz — FastDDS paylaşımlı belleği kullanıcılar "
+        "arasında tek yönlü çalışır, veri SESSİZCE akmaz (§0.61j)"
+    )
+    assert "User=girdap" in yonergeler, "yığınla aynı kullanıcı olmalı"
+    assert "AmbientCapabilities=CAP_SYS_TIME" in metin, (
+        "saat kurma yetkisi yok — clock_settime PermissionError verir"
+    )
+
+
+def test_kurucu_EUID_yerine_ISLEMI_sinar() -> None:
+    """`os.geteuid() != 0` kapısı CAP_SYS_TIME'lı kullanıcıyı yanlışlıkla eler.
+
+    Doğru sınav "root musun" değil, "işlem izinli mi" — o da denemekle
+    anlaşılır. Kapı geri gelirse geç servis (root DEĞİL) saati hiç kuramaz.
+    """
+    metin = _oku(_KURUCU)
+    # Yorum satırları hariç: kapının NEDEN kaldırıldığı orada anlatılıyor.
+    kod = [
+        s for s in metin.splitlines() if not s.strip().startswith("#")
+    ]
+    assert not any("os.geteuid() != 0" in s for s in kod), (
+        "euid kapısı geri gelmiş — CAP_SYS_TIME ile koşan servis elenir"
+    )
+    assert "except PermissionError:" in metin, (
+        "yetki hatası ayrı yakalanmalı, mesajı teşhis edilebilir olsun"
+    )
 
 
 # ------------------------------------------------------------ script yüzeyi

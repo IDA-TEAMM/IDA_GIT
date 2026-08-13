@@ -64,8 +64,28 @@ StartLimitIntervalSec=0
 Type=simple
 Restart=on-failure
 RestartSec=60
-# root SART: clock_settime + adjtimex(ADJ_STATUS) CAP_SYS_TIME ister.
-User=root
+# 🔴🔴 ROOT KOSMAZ — YIGINLA AYNI KULLANICI (13.08 canli olcum, §0.61j).
+# Ilk surum `User=root` idi ve servis 4 dakika boyunca /mavros/time_reference'i
+# HIC alamadi; ayni anda ayni konuda `ros2 topic echo` (kullanici girdap)
+# mesaji ANINDA aldi.
+# Sebep: RMW = FastDDS ve ayni makinede PAYLASIMLI BELLEK tasimasi kullaniyor.
+# Yayinci veriyi OKUYUCUNUN /dev/shm segmentine YAZAR. Root'un actigi segment
+# 0644 (`-rw-r--r-- root root`) → yayinci (mavros, kullanici `girdap`) oraya
+# YAZAMAZ. Kesif UDP uzerinden yapildigi icin abone GORUNUR ama veri HIC
+# AKMAZ — sessiz arizanin ders kitabi ornegi. (Olculdu: /dev/shm'de 91 segment
+# girdap, 47 segment root.) Ters yon calisir, o yuzden hata tek yonlu ve
+# kolayca gozden kacar.
+#
+# 🔑 Gereken sey root DEGIL, `clock_settime` + `adjtimex(ADJ_STATUS)` icin
+# CAP_SYS_TIME'dir. Ambient yetenekle tam onu veriyoruz: DDS yigINLA ayni
+# kullanicida konusur, yetki ise yalnizca saatle sinirli kalir (root'tan
+# daha guvenli).
+# ⚠️ `hwclock --systohc` bu kullanicida basarisiz olabilir (/dev/rtc yazma
+# hakki yok) — script bunu zaten yutuyor ve RTC'de pil de YOK (§0.53e), yani
+# pratikte kayip sifir.
+User=girdap
+AmbientCapabilities=CAP_SYS_TIME
+CapabilityBoundingSet=CAP_SYS_TIME
 # Yigin ile AYNI alan adi — yoksa konu hic gorunmez (girdap-karar.service:47).
 Environment=ROS_DOMAIN_ID=42
 # 30 dakika: soguk fix (~3 dk) + EKF oturmasi + gerekirse bir kosu boyunca

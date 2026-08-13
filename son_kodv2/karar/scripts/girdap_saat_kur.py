@@ -533,12 +533,24 @@ def saati_uygula(t: float, log, kuru: bool = False) -> int:
         log("--kuru verildi: saat KURULMADI (yalniz olcum)")
         return 0
 
-    if os.geteuid() != 0:
-        log("root degil — saat kurulamaz (systemd servisi root kosar)")
-        return 3
-
+    # 🔴 EUID KAPISI KALDIRILDI (13.08, §0.61j). Eski kod `os.geteuid() != 0`
+    # ile root SARTI koyuyordu; oysa gereken sey root DEGIL, **CAP_SYS_TIME**
+    # yetkisidir. Fark onemli cikti: ROS yolu (`--kaynak ros`) root kosarsa
+    # FastDDS'in paylasimli bellek tasimasi COKUYOR — yayinci (mavros, `girdap`
+    # kullanicisi) okuyucunun /dev/shm segmentine yazmak zorunda, ama root'un
+    # segmenti 0644 oldugu icin yazamiyor. Kesif UDP'den oldugu icin abone
+    # GORUNUYOR, veri hic akmiyor (13.08 07:02'de canli olcuLDU: servis 4
+    # dakika bekledi, ayni anda ayni kullanicidaki `ros2 topic echo` mesaji
+    # aninda aldi). Cozum: servis yigINLA AYNI kullanicida kosar ve yalniz
+    # CAP_SYS_TIME alir. O yuzden burada euid'e degil, ISLEMIN KENDISINE
+    # bakilir — dogru sinav zaten budur.
     try:
         time.clock_settime(time.CLOCK_REALTIME, t)
+    except PermissionError:
+        log("saat kurulamadi: CAP_SYS_TIME yok. Servis "
+            "`AmbientCapabilities=CAP_SYS_TIME` ile kosmali "
+            "(elle denerken: sudo).")
+        return 3
     except Exception as e:
         log(f"clock_settime basarisiz: {e}")
         return 3
