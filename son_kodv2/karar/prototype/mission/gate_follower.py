@@ -177,6 +177,94 @@ class Gate:
         """Sürülecek nokta: nişan varsa o, yoksa geometrik orta."""
         return self.aim if self.aim is not None else self.midpoint
 
+    def yaklasma_hedefi(self, geri: float) -> Point:
+        """🔴 F-K.2 (13.08.2026) — KAPININ ÖNÜNDEKİ HİZALANMA NOKTASI.
+
+        Kapıya **eğik** yaklaşan araç, kapıya varmadan yanına düşer; o noktadan
+        çift artık "kapı" gibi görünmez (iki duba görüş hattı BOYUNCA dizilir,
+        `select_gate`'in dikeylik testi haklı olarak reddeder) ⇒ **kapı bir
+        daha seçilemez ve kalıcı olarak kaçırılır.**
+
+        📏 Sanal gölde ölçüldü (gerçek geometri: 8 kapı, 12 m açıklık, 4 m
+        aralık, zigzag ±5 m): tekne **5/8** kapı geçti, sonra parkurun sağına
+        kaçtı — iz `(1.5, 12.1) → (8.5, 28.5) → (9.7, 23.7) → (8.1, 12.4)`,
+        ψ 252-282°, yani **geri geri** salınıma girdi. Logda 5 kez *"çift
+        kursa DİK DEĞİL"*. Şartname P2 puanı **oransal** `(G2/KD2)×40` →
+        8 kapıda 3 kaçırmak **15 puan**.
+
+        🔑 Çözüm literatürün kalıbı: **mesafelen → DİK yaklaş → geç.** Nişan
+        önce kapının **önündeki** hizalanma noktasıdır; araç oraya varınca
+        kapı normaliyle hizalanmış olur, sonra `gecis_hedefi` onu düzlemin
+        ötesine taşır (F-K.1). RoboBoat kuralı da geçişin kapıdan **önce**
+        başlamasını şart koşar.
+
+        `geri` uydurulmaz: **kapının kendi yarı genişliği** (öz-ölçekli, dış
+        eşik yok — modülün donmuş kuralı §0.0d). 12 m kapıda 6 m ≈ ölçülmüş
+        seyir hızıyla (1,05 m/s) ~6 s hizalanma payı.
+
+        `normal` yoksa uzatma gibi bu da YAPILMAZ — yön bilinmeden geri
+        gitmek aracı parkurdan uzaklaştırırdı.
+        """
+        if self.normal is None:
+            return self.drive_target
+        mx, my = self.midpoint
+        nx, ny = self.normal
+        return (mx - nx * geri, my - ny * geri)
+
+    def surus_noktasi(self, arac: Point, geri: float, uzatma: float) -> Point:
+        """İKİ FAZLI sürüş hedefi: hizalan → geç. **ASLA GERİYE nişan almaz.**
+
+        🔴 Kaptanın uyarısı (13.08): *"korkum şu, Parkur-3'te modelin geriye
+        gitmesi."* Haklı ve tasarımın gerçek açığına işaret ediyor — araç
+        yaklaşma noktasını ÇOKTAN GEÇMİŞSE oraya nişan almak **geri gitmek**
+        demektir. Kapı takibi `gate_following_enabled` tek parametresine bağlı
+        olduğu için PARKUR3'te de etkindir, yani risk teoriktir değil.
+
+        🔑 GARANTİ: faz seçimi aracın kapı normali üzerindeki İŞARETLİ
+        MESAFESİNE bakar (`signed_distance`):
+          · `d < −geri` → araç hizalanma noktasının **gerisinde**; hedef
+            YAKLAŞMA noktası — tanım gereği **ileride** (d = −geri > d).
+          · aksi hâlde → hedef ÇIKIŞ noktası (kapı düzleminin ötesi, F-K.1).
+        Her iki dalda da hedefin normal üzerindeki izdüşümü aracınkinden
+        BÜYÜKTÜR ⇒ normal yönünde geri hareket komutu üretilemez.
+        (Literatürdeki LOS/waypoint-switching kuralının ta kendisi: geçilen
+        noktaya bir daha nişan alınmaz.)
+
+        ⚠ Yanal hareket geri hareket DEĞİLDİR: araç kapının yanına düşmüşse
+        hizalanmak için yana gider, ileri bileşeni yine pozitiftir.
+        """
+        d = self.signed_distance(arac)
+        if d is None:
+            return self.drive_target
+        # 🔴 HİZALANMA FAZI ÖLÇÜLDÜ VE GERİ ALINDI (13.08). Fikir doğruydu
+        # (literatür: mesafelen → dik yaklaş → geç) ama bu parkurda ÇALIŞMIYOR:
+        # hizalanma payı kapının yarı genişliği (12 m kapıda **6 m**) iken
+        # kapılar **4 m aralıklı** → bir sonraki kapının yaklaşma noktası bir
+        # öncekinin GERİSİNE düşüyor, çekişler çatışıyor. Sanal gölde ölçüldü:
+        #     yalnız çıkış (F-K.1)      → 5 kapı, takıldı
+        #     hizalanma + çıkış (F-K.2) → **1 kapı**, tekne dondu
+        #     yalnız havuç              → parkur TAMAMLANDI
+        # `yaklasma_hedefi` yöntemi ve testleri KALIYOR (seyrek kapılı bir
+        # parkurda doğru araç olabilir), ama sürüş yolundan ÇIKARILDI.
+        # ⚠ Yeniden açılacaksa önce hizalanma payı ile KAPI ARALIĞI
+        # kıyaslanmalı: pay < aralık olmadan bu faz kullanılamaz.
+        del geri
+        # 🔴 ÇIKIŞ HAVUCU HER ZAMAN ARACIN ÖNÜNDE. Sabit `uzatma` yetmez:
+        # araç düzlemi `uzatma`dan FAZLA geçmişse (kilit henüz bırakılmamış
+        # olabilir — bırakma bir sonraki `update`'te olur, araç bu arada yol
+        # alır) sabit nokta ARKADA kalır ve GERİ komut üretir. Özellik testi
+        # bunu yakaladı: araç d=3,97 iken hedef d=1,04 (kaptanın korktuğu hâl).
+        # Çözüm pure-pursuit havucunun kendisi: hedef, düzlem ile aracın
+        # DAHA İLERİDEKİNDEN `uzatma` kadar öteye konur.
+        ileri = max(uzatma, d + uzatma)
+        mx, my = self.midpoint
+        nx, ny = self.normal                       # d not None ⇒ normal var
+        ax, ay = self.drive_target                 # kiriş üzerindeki nişan
+        # Nişanın yanal bileşeni korunur (engelden açık yer), ileri bileşen
+        # havuçtan gelir.
+        yanal = (ax - mx) * (-ny) + (ay - my) * nx
+        return (mx + nx * ileri - ny * yanal, my + ny * ileri + nx * yanal)
+
     def gecis_hedefi(self, uzatma: float) -> Point:
         """🔴 F-K.1 (13.08.2026) — SÜRÜLECEK NOKTA KAPININ ÖTESİNDEDİR.
 
@@ -864,8 +952,10 @@ class GateFollower:
                     target=self._committed.drive_target,
                     gate=self._committed,
                     used_fallback=False,
-                    surus_hedefi=self._committed.gecis_hedefi(
-                        self._cfg.hull_length_m
+                    surus_hedefi=self._committed.surus_noktasi(
+                        vehicle,
+                        self._committed.width / 2.0,      # öz-ölçekli hizalanma payı
+                        self._cfg.hull_length_m,
                     ),
                 )
             # Geçildi → serbest bırak, aşağıda yeniden seç.
@@ -911,7 +1001,9 @@ class GateFollower:
         self._aday_sayaci = 0
         return GateResult(
             target=fresh.drive_target, gate=fresh, used_fallback=False,
-            surus_hedefi=fresh.gecis_hedefi(self._cfg.hull_length_m),
+            surus_hedefi=fresh.surus_noktasi(
+                vehicle, fresh.width / 2.0, self._cfg.hull_length_m
+            ),
         )
 
 

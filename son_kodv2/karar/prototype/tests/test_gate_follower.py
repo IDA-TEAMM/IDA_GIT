@@ -834,6 +834,98 @@ def test_FK1_kilitli_kapida_surus_hedefi_OTEDE_target_NISANDA() -> None:
         sonuc = takip.update((0.0, 0.0), (20.0, 0.0), dubalar, [], gozlem_no=i)
     assert sonuc is not None and sonuc.gate is not None
     assert sonuc.target == pytest.approx((10.0, 0.0), abs=1e-6)
-    # Sürüş hedefi kapının ötesinde ve düzlemi geçmiş konumda.
-    assert sonuc.surus_hedefi[0] > 10.0
-    assert sonuc.gate.signed_distance(sonuc.surus_hedefi) > 0.0
+    # 🔄 F-K.2 ile iki fazlı: araç 10 m uzakta ve hizalanma payı (yarı genişlik
+    # 2 m) dışında → bu fazda hedef HİZALANMA noktasıdır, çıkış değil. İkisi de
+    # aracın İLERİSİNDEDİR; asıl güvence budur (F-K.1'in kapı ortasında
+    # bitmeme kuralı `test_FK2_hizalanma_noktasi_GECILINCE_CIKISA_gecilir`de).
+    d_arac = sonuc.gate.signed_distance((0.0, 0.0))
+    d_hedef = sonuc.gate.signed_distance(sonuc.surus_hedefi)
+    assert d_hedef is not None and d_arac is not None and d_hedef > d_arac
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# F-K.2 (13.08.2026) — İKİ FAZLI SÜRÜŞ: HİZALAN → GEÇ, ASLA GERİYE GİTME
+#
+# 🔴 SANAL GÖLDE ÖLÇÜLDÜ (gerçek geometri: 8 kapı, 12 m açıklık, 4 m aralık,
+# zigzag ±5 m): tekne 5/8 kapı geçti, sonra parkurun SAĞINA kaçtı ve geri geri
+# salınıma girdi — iz (1.5,12.1)→(8.5,28.5)→(9.7,23.7)→(8.1,12.4), ψ 252-282°.
+# Sebep: kapının YANINA düşen araç için iki duba görüş hattı BOYUNCA dizilir;
+# `select_gate`'in dikeylik testi onları haklı olarak reddeder ⇒ kapı bir daha
+# seçilemez. Şartname P2 puanı ORANSAL `(G2/KD2)×40` → 3 kaçan kapı = 15 puan.
+#
+# 🔑 Çözüm literatürün kalıbı: mesafelen → DİK yaklaş → geç.
+#
+# 🔴🔴 KAPTANIN UYARISI: *"korkum şu, Parkur-3'te modelin geriye gitmesi."*
+# Kapı takibi `gate_following_enabled` TEK parametresine bağlı (parkura bağlı
+# DEĞİL) → PARKUR3'te de etkin. Naif bir yaklaşma noktası, araç onu geçmişken
+# GERİ komut üretirdi. Aşağıdaki testler bunun imkânsız olduğunu donduruyor.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _kapi_12m() -> Gate:
+    return Gate(left=(-6.0, 14.0), right=(6.0, 14.0), midpoint=(0.0, 14.0),
+                normal=(0.0, 1.0))
+
+
+def test_FK2_HIZALANMA_FAZI_SURUS_YOLUNDA_DEGIL() -> None:
+    """🔴 ÖLÇÜLDÜ VE GERİ ALINDI: hizalanma payı (yarı genişlik 6 m) kapı
+    aralığından (4 m) BÜYÜK olunca bir sonraki kapının yaklaşma noktası bir
+    öncekinin gerisine düşüyor. Sanal gölde: yalnız çıkış 5 kapı · hizalanma+
+    çıkış **1 kapı** (tekne dondu) · yalnız havuç **parkur TAMAMLANDI**.
+    `yaklasma_hedefi` yöntemi duruyor ama sürüş yolunda DEĞİL."""
+    g = _kapi_12m()
+    # Uzaktayken bile hedef kapının ÖTESİ (havuç), gerisi değil.
+    hedef = g.surus_noktasi((0.0, 0.0), 6.0, 1.04)
+    assert hedef == pytest.approx((0.0, 15.04), abs=1e-6)
+
+
+def test_FK2_yaklasma_hedefi_YONTEMI_DURUYOR() -> None:
+    """Seyrek kapılı parkurda gerekebilir; yeniden açılacaksa önce hizalanma
+    payı ile KAPI ARALIĞI kıyaslanmalı (pay < aralık şartı)."""
+    g = _kapi_12m()
+    assert g.yaklasma_hedefi(6.0) == pytest.approx((0.0, 8.0), abs=1e-6)
+
+
+def test_FK2_ASLA_GERIYE_nisan_ALINMAZ_rastgele_tarama() -> None:
+    """🔴 KAPTANIN KORKUSU — özellik testi (200 konum × 8 yön).
+
+    Her araç konumu ve her kapı yönelimi için: hedefin kapı normali üzerindeki
+    izdüşümü, aracınkinden BÜYÜK olmalı. Yani normal yönünde geri komut
+    üretilemez — Parkur-3 dahil.
+    """
+    import random
+
+    rastgele = random.Random(11)
+    for _ in range(200):
+        aci = rastgele.uniform(-math.pi, math.pi)
+        nx, ny = math.cos(aci), math.sin(aci)
+        mx, my = rastgele.uniform(-40, 40), rastgele.uniform(-40, 40)
+        yari = rastgele.uniform(1.0, 10.0)
+        tx, ty = -ny, nx                       # kiriş yönü
+        g = Gate(
+            left=(mx + tx * yari, my + ty * yari),
+            right=(mx - tx * yari, my - ty * yari),
+            midpoint=(mx, my), normal=(nx, ny),
+        )
+        arac = (rastgele.uniform(-40, 40), rastgele.uniform(-40, 40))
+        hedef = g.surus_noktasi(arac, yari, 1.04)
+        d_arac = g.signed_distance(arac)
+        d_hedef = g.signed_distance(hedef)
+        assert d_hedef is not None and d_arac is not None
+        assert d_hedef > d_arac + 1e-9, (
+            f"GERİYE nişan: araç d={d_arac:.2f} → hedef d={d_hedef:.2f}"
+        )
+
+
+def test_FK2_normal_YOKSA_iki_faz_da_devre_disi() -> None:
+    g = Gate(left=(-6.0, 14.0), right=(6.0, 14.0), midpoint=(0.0, 14.0))
+    assert g.surus_noktasi((0.0, 0.0), 6.0, 1.04) == g.drive_target
+
+
+def test_FK2_hizalanma_payi_KAPININ_KENDI_yari_genisligi() -> None:
+    """Öz-ölçekli: dış eşik yok (donmuş kural §0.0d). Dar kapı → kısa pay."""
+    dar = Gate(left=(-1.0, 10.0), right=(1.0, 10.0), midpoint=(0.0, 10.0),
+               normal=(0.0, 1.0))
+    genis = _kapi_12m()
+    assert dar.yaklasma_hedefi(dar.width / 2.0)[1] == pytest.approx(9.0)
+    assert genis.yaklasma_hedefi(genis.width / 2.0)[1] == pytest.approx(8.0)

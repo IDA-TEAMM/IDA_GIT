@@ -557,10 +557,13 @@ def test_kapi_ortasi_ham_gorev_noktasini_ezer(ros_context) -> None:  # noqa: ANN
         # GEÇİLECEK EŞİKTİR. Uzatma = ölçülmüş gövde boyu; gerekçe yarışma
         # tanımı: geçiş *pruva* girince başlar, ***kıç* çıkınca* biter.
         # Korunan asıl güvence aynen duruyor: kapı ham GN'yi EZİYOR.
+        # F-K.1: hedef kapı ortası DEĞİL, ötesi (10 + gövde boyu 1,04).
+        # (F-K.2'nin hizalanma fazı ölçümle elendi — sürüş yolunda değil.)
         ref = node._pipe._ref_path
         assert ref is not None
         assert ref[-1][0] == pytest.approx(10.0 + 1.04, abs=1e-6)
         assert ref[-1][1] == pytest.approx(0.0, abs=1e-6)
+        assert ref[-1][0] > 0.0, "hedef aracin gerisinde"
     finally:
         node.destroy_node()
 
