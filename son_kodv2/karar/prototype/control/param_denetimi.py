@@ -60,6 +60,11 @@ OLUMCUL: Dict[str, Beklenti] = {
     "INS_POS1_X": Beklenti(-0.055, "IMU konumu ÖLÇÜLDÜ; sıfırsa EKF yanlış kol mesafesi kullanır"),
     "INS_POS1_Y": Beklenti(-0.1375, "IMU konumu ÖLÇÜLDÜ (Pixhawk 13,75 cm iskeleye kayık)"),
     "INS_POS1_Z": Beklenti(-0.155, "IMU konumu ÖLÇÜLDÜ"),
+    "GPS1_POS_X": Beklenti(-0.035, "GPS anteni konumu ÖLÇÜLDÜ; sıfır/ters ise EKF kol mesafesini yanlış kullanır"),
+    "GPS1_POS_Y": Beklenti(-0.16, "GPS anteni ÖLÇÜLDÜ −0.16 (iskele). 13.08'de FC'de +0.16 bulundu — İŞARET TERS, 32 cm'lik yanlış kol"),
+    "GPS1_POS_Z": Beklenti(-0.365, "GPS anteni konumu ÖLÇÜLDÜ"),
+    # --- Eyleyici: 0 iken ölü bant aşılamaz, düşük komutlar motoru döndürmez
+    "MOT_THR_MIN": Beklenti(10.0, "0 = ölü bant telafisi yok; MPPI'nin küçük itki komutları motoru hiç döndürmez"),
     # --- Güvenlik: yanlışken tekne bozuk kestirimle sürmeye devam eder ---
     "FS_ACTION": Beklenti(2.0, "0 = failsafe'te HİÇBİR ŞEY yapma; EKF bozulunca motorlar komut almaya devam eder"),
     "ARMING_CHECK": Beklenti(1.0, "0 = tüm ön kontroller kapalı; tekne bozuk kestirimle ARM olur ve her şey yeşil görünür (§0.41)"),

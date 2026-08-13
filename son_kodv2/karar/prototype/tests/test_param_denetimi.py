@@ -13,6 +13,8 @@ from prototype.control.param_denetimi import OLUMCUL, Bulgu, denetle, ozet
 #: 13.08.2026 16:00'da Pixhawk'ta GERÇEKTEN bulunan değerler.
 GERCEK_13_08 = {
     "INS_POS1_X": 0.0, "INS_POS1_Y": 0.0, "INS_POS1_Z": 0.0,
+    "GPS1_POS_X": -0.035, "GPS1_POS_Y": 0.16, "GPS1_POS_Z": -0.365,
+    "MOT_THR_MIN": 0.0,
     "FS_ACTION": 0.0, "ARMING_CHECK": 1.0, "BATT_MONITOR": 0.0,
     "SR2_EXT_STAT": 10.0, "SR2_EXTRA1": 10.0, "SR2_POSITION": 10.0,
 }
@@ -21,11 +23,21 @@ DOGRU = {ad: b.deger for ad, b in OLUMCUL.items()}
 
 
 def test_13_agustos_gercek_sapmasi_YAKALANIYOR() -> None:
-    """O günün gerçek Pix durumu → tam 5 ölümcül bulgu."""
+    """O günün gerçek Pix durumu → tam 7 ölümcül bulgu.
+
+    ⚠ 13.08 akşamı liste 9'dan 13'e çıkarıldı: `GPS1_POS_X/Y/Z` ve
+    `MOT_THR_MIN` eksikti. Eksik olmalarının bedeli somut — bu dördü ölümcül
+    listede olmadığı için REFERANS DOSYASINA bozuk dökümden dondular
+    (`GPS1_POS_Y=+0.16` işareti ters, `MOT_THR_MIN=0`). Yani denetleyici
+    onları hem yakalamıyor hem de yanlış değeri "doğru" diye saklıyordu.
+    🔑 Ders: ölümcül liste yalnız uyarı üretmiyor, REFERANSIN NEYİ KORUYACAĞINI
+    da belirliyor — listeye almadığın her değer bozuk hâliyle donabilir.
+    """
     b = denetle(GERCEK_13_08)
     adlar = {x.ad for x in b}
     assert adlar == {
-        "INS_POS1_X", "INS_POS1_Y", "INS_POS1_Z", "FS_ACTION", "BATT_MONITOR"
+        "INS_POS1_X", "INS_POS1_Y", "INS_POS1_Z", "GPS1_POS_Y",
+        "MOT_THR_MIN", "FS_ACTION", "BATT_MONITOR",
     }, f"beklenmeyen bulgu kumesi: {adlar}"
 
 
