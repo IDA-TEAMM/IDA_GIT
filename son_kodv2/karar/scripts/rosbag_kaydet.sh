@@ -80,6 +80,54 @@ SAAT_LOG="$CIKTI_KOK/session_${DAMGA}_saat.txt"
 ) &
 SAAT_NOBETCI_PID=$!
 
+# ─────────────────────────────────────────────────────────────────────────────
+# F-F.13 (14.08.2026, §0.99g) — UÇUŞ KONTROLCÜSÜ YOKSA KAYIT **SESSİZ KALMASIN**
+#
+# 🔴 Ölçülen olay: 16:04'te başlayan oturum **78 dakika** koştu ve içinde
+# kullanılabilir TEK satır yoktu — `/dev/pixhawk` ilk saniyeden itibaren yoktu,
+# hız/poz/RC/engel topic'leri **sıfır mesaj**. Köprü yer istasyonuna 461 kez
+# "MAVROS-YOK" yolladı ama kimse görmedi; arıza ancak akşam bant incelenirken
+# fark edildi. Aynı hâl 18:28 oturumunda da tekrarladı.
+#
+# TASARIM: kayıt **ASLA reddedilmez** — bağlantı koşum ORTASINDA düşerse o ana
+# kadarki veri en değerli şeydir. Bunun yerine olay, sonradan bakan kişinin
+# kaçıramayacağı bir yere yazılır: oturum dizininin İÇİNE bir işaret dosyası.
+# 60 s beklenir (açılışta udev/enumerasyon yarışı meşru), sonra bakılır.
+(
+    sleep 60
+    [ -e /dev/pixhawk ] && exit 0
+    ISARET="${CIKTI}/UCUS_KONTROLCUSU_YOK.txt"
+    {
+        echo "# ⚠️ BU KAYIT BÜYÜK OLASILIKLA BOŞTUR — F-F.13"
+        echo "#"
+        echo "# Kayit basladiktan 60 saniye sonra /dev/pixhawk YOKTU."
+        echo "# Yani ucus kontrolcusu bagli degil: hiz, poz, RC ve engel"
+        echo "# topic'leri bu kayitta MUHTEMELEN SIFIR mesaj icerir."
+        echo "#"
+        echo "# Sebep genelde fizikseldir: TELEM2 FTDI kablosu takili degil,"
+        echo "# tekne beslemesi kesik, ya da USB-C'den baglandiysa /dev/pixhawk"
+        echo "# symlink'i olusmamis (bkz. GIRDAP_DURUM 0.99m)."
+        echo "#"
+        echo "kontrol_zamani_iso=$(date -Is)"
+        echo "kayit_adi=session_${DAMGA}"
+        echo "dev_pixhawk=YOK"
+        echo "ttyUSB/ttyACM=$(ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null | tr '\n' ' ')"
+    } > "$ISARET"
+    echo "🔴 UCUS KONTROLCUSU YOK — '$ISARET' yazildi; bu kayit muhtemelen bos." >&2
+    # Sonradan gelirse onu da yaz: bandin hangi anindan itibaren veri var?
+    while :; do
+        sleep 30
+        if [ -e /dev/pixhawk ]; then
+            {
+                echo "ucus_kontrolcusu_geri_geldi_iso=$(date -Is)"
+                echo "# Bu andan SONRAKI parcalarda veri olmasi beklenir."
+            } >> "$ISARET"
+            exit 0
+        fi
+    done
+) &
+FC_NOBETCI_PID=$!
+
 # §0.25d "Kaydedilecek doğru liste" — karar yığınının çekirdek çıktıları.
 # 11.08.2026 (§0.33): setpoint_velocity + rc/in + state + diagnostics
 # EKLENDİ — eski liste komutu (cmd_vel) ve güvenlik durumunu (RC kill,
@@ -108,6 +156,16 @@ VARSAYILAN=(
     /mavros/local_position/velocity_body
     /mavros/setpoint_velocity/cmd_vel_unstamped
     /mavros/rc/in
+    # F-F.2 (14.08, §0.99k): rc/in KOMUTU gösterir, rc/out UÇUŞ KONTROLCÜSÜNÜN
+    # MOTORA NE VERDİĞİNİ. İkisi olmadan "GUIDED'da kumanda motorları sürebiliyor
+    # mu" sorusu bantla CEVAPLANAMIYOR — 14.08'de iki ayrı koşumda denendi,
+    # ikisinde de elde yalnız komut vardı. Ucuz: ~10 Hz, 16 kanal.
+    /mavros/rc/out
+    # F-F.17 (14.08, §0.99p): PUSULA. 14.08 akşamı canlı ölçümde manyetik alanın
+    # EĞİM AÇISI 1,4° çıktı (Bolu'da ~58° olmalı) — ciddi bir yönelim şüphesi.
+    # Ama günün BANTLARINDAN geriye dönük doğrulanamadı, çünkü bu topic kayıtta
+    # yoktu. Pusula açık kalem olduğu sürece (§0.91) kaydı ZORUNLU.
+    /mavros/imu/mag
     /mavros/state
     # 12.08 (PAR-03): FC'nin pre-arm RET SEBEBİ buradan gelir. Araç 14
     # oturumda hiç ARM edilemedi ve sebebi hiçbir kayıtta yoktu — yalnız
@@ -248,6 +306,7 @@ temizle() {
     [ -n "${ROSBAG_PID:-}" ] && wait "$ROSBAG_PID" 2>/dev/null || true
     [ -n "${TEGRA_PID:-}" ] && kill "$TEGRA_PID" 2>/dev/null || true
     [ -n "${SAAT_NOBETCI_PID:-}" ] && kill "$SAAT_NOBETCI_PID" 2>/dev/null || true
+    [ -n "${FC_NOBETCI_PID:-}" ] && kill "$FC_NOBETCI_PID" 2>/dev/null || true
     [ -n "${SYNC_PID:-}" ] && kill "$SYNC_PID" 2>/dev/null || true
     sync            # son kalanları da indir
 }
