@@ -1164,3 +1164,38 @@ def test_MADDE0_ilan_TEK_ATIS(ros_context, tmp_path) -> None:  # noqa: ANN001
         )
     finally:
         node.destroy_node()
+
+
+def test_MADDE0_olumlu_teyit_EMERGENCY_DEGIL(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 13/14.08 KUSURUNUN NÖBETÇİSİ (kaptan yakaladı).
+
+    `_publish_statustext`'te iki `elif` vardı; ikincisinin koşulu birincisinin
+    ALT KÜMESİ olduğu için hiç çalışmıyor, `severity` atanmıyor ve varsayılan
+    **0 = EMERGENCY** kalıyordu. Yani olumlu teyit (`SENKRON OK`) bile
+    MAVLink'in en yüksek seviyesinden gidiyordu.
+
+    Neden ölümcül: Mission Planner'da EMERGENCY ekranı kilitleyen en yüksek
+    uyarı. Her görev yüklemesinde olumlu teyit bile EMERGENCY basarsa operatör
+    GERÇEK acil durumu ayırt edemez — "gerçek arızayı gölgeleme" kuralının
+    tam ihlali.
+
+    Bu test iki seviyeyi birden dondurur: olumlu → NOTICE, olumsuz → ERROR.
+    """
+    from mavros_msgs.msg import StatusText
+    for wp, beklenen, iz in ((3, StatusText.NOTICE, "OK"),
+                             (7, StatusText.ERROR, "YOK")):
+        node = _fc_node(tmp_path)
+        try:
+            if node._pub_statustext is None:
+                pytest.skip("statustext kapalı")
+            yollanan = _statustext_yakala(node)
+            node._on_waypoints(_path(wp))
+            node._publish_statustext(MissionState.BOOT)
+            m = yollanan[-1]
+            assert iz in m.text, f"{wp}wp icin metin yanlis: {m.text!r}"
+            assert m.severity == beklenen, (
+                f"{iz} icin severity {m.severity}, beklenen {beklenen} "
+                f"(0 = EMERGENCY, ekrani kilitler)"
+            )
+        finally:
+            node.destroy_node()
