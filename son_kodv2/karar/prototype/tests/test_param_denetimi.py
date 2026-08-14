@@ -16,6 +16,8 @@ GERCEK_13_08 = {
     "GPS1_POS_X": -0.035, "GPS1_POS_Y": 0.16, "GPS1_POS_Z": -0.365,
     "MOT_THR_MIN": 0.0,
     "FS_ACTION": 0.0, "ARMING_CHECK": 1.0, "BATT_MONITOR": 0.0,
+    "FRAME_CLASS": 2.0, "SERVO1_FUNCTION": 74.0, "SERVO3_FUNCTION": 73.0,
+    "BATT_VOLT_MULT": 5.091626, "SERIAL2_BAUD": 921.0, "ARMING_REQUIRE": 1.0,
     "SR2_EXT_STAT": 10.0, "SR2_EXTRA1": 10.0, "SR2_POSITION": 10.0,
 }
 
@@ -74,10 +76,25 @@ def test_LOG_parametreleri_BILEREK_listede_yok() -> None:
     assert not any(ad in OLUMCUL for ad in ("WP_SPEED", "CRUISE_SPEED"))
 
 
-def test_baglanti_parametreleri_listede_YOK() -> None:
-    """SERIAL*_BAUD en ölümcül olan — ama yanlışsa MAVROS hiç bağlanmaz ve bu
-    denetim zaten koşamaz. Hat kendi kanıtıdır; listeye koymak anlamsız."""
-    assert not any("BAUD" in ad for ad in OLUMCUL)
+def test_TELEM2_baud_listede_TELEM1_DEGIL() -> None:
+    """🔑 14.08'de gerekçe DEĞİŞTİ, çünkü denetleyici yer değiştirdi.
+
+    Önce şöyle yazmıştım: *"`SERIAL*_BAUD` listeye girmez; yanlışsa MAVROS
+    hiç bağlanmaz ve denetim zaten koşamaz — hat kendi kanıtıdır."* O gerekçe
+    **düğüm tarafındaki** denetleyici içindi (MAVROS'tan `param/get` okuyordu).
+
+    Denetleyici artık LAPTOPTA ve `.param` DOSYASI okuyor; dosyayı Mission
+    Planner'dan **telemetri radyosu** (SERIAL1) üzerinden alıyorsun. Yani
+    `SERIAL2_BAUD` (TELEM2 = Jetson hattı) bozukken bile denetim çalışır —
+    ve o bozukken MAVROS hiç bağlanmadığı için otonominin tamamı ölür,
+    üstelik Mission Planner sorunsuz göründüğü için fark edilmez.
+    ⇒ TELEM2 listede OLMALI.
+
+    SERIAL1 (telemetri radyosu) listede DEĞİL: o bozuksa dökümü zaten
+    alamazsın, yani kendi kanıtıdır.
+    """
+    assert "SERIAL2_BAUD" in OLUMCUL, "TELEM2 baud'u izlenmeli"
+    assert "SERIAL1_BAUD" not in OLUMCUL, "SERIAL1 kendi kanitidir"
 
 
 def test_statustext_50_karakteri_asmiyor() -> None:

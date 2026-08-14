@@ -69,6 +69,19 @@ OLUMCUL: Dict[str, Beklenti] = {
     # olması "yanlışlıkla" açıklamasını zayıflatıyor — parametre sorumlusuna
     # NEDEN sıfırlandığı sorulmalı, yoksa üçüncü kez olur ve o sefer suda olur.
     "MOT_THR_MIN": Beklenti(10.0, "0 = olu bant telafisi yok; MPPI'nin kucuk itki komutlari motoru hic dondurmez. Deger SU TESTINDEN GECTI (10.08). 2. kez sifirlandi — sorumluya NEDEN diye sor"),
+    # --- Donanım kimliği: yanlışsa araç FİZİKSEL olarak yanlış davranır ---
+    # 14.08'de eklendi. Bunlar hiç değişmemesi gereken değerler; değiştiyse
+    # gerçekten sorun var demektir, o yüzden yanlış alarm riski düşük.
+    # Listede OLMAMALARININ bedeli iki yönlü: yakalanmıyorlardı VE referansa
+    # bozuk hâlleriyle donabiliyorlardı (13.08'de GPS1_POS_Y ve MOT_THR_MIN'de
+    # tam bu oldu).
+    "FRAME_CLASS": Beklenti(2.0, "2 = tekne. Yanlissa ArduPilot bambaska bir arac gibi surer"),
+    "SERVO1_FUNCTION": Beklenti(74.0, "ThrottleRight — sag motor. Yanlissa motorlar ters/olu"),
+    "SERVO3_FUNCTION": Beklenti(73.0, "ThrottleLeft — sol motor"),
+    "BATT_VOLT_MULT": Beklenti(5.091626, "PM06 KALIBRASYON degeri; varsayilana donerse voltaj yanlis okunur ve batarya failsafe'i yanlis esikte tetiklenir"),
+    "SERIAL2_BAUD": Beklenti(921.0, "TELEM2 = Jetson hatti; MAVROS fcu_url ile ayni olmali, uyusmazsa MAVROS HIC baglanmaz"),
+    "ARMING_REQUIRE": Beklenti(1.0, "0 = arm sarti yok"),
+
     # --- Güvenlik: yanlışken tekne bozuk kestirimle sürmeye devam eder ---
     "FS_ACTION": Beklenti(2.0, "0 = failsafe'te HİÇBİR ŞEY yapma; EKF bozulunca motorlar komut almaya devam eder"),
     "ARMING_CHECK": Beklenti(1.0, "0 = tüm ön kontroller kapalı; tekne bozuk kestirimle ARM olur ve her şey yeşil görünür (§0.41)"),
