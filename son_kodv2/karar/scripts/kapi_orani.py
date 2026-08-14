@@ -51,6 +51,10 @@ from prototype.mission.gate_follower import (                     # noqa: E402
     GateFollowerConfig,
 )
 from prototype.mission.parkur_dunyasi import oku as parkuru_oku   # noqa: E402
+from prototype.mission.parkur_siniri import (                     # noqa: E402
+    ParkurDisiSayaci,
+    ParkurSiniri,
+)
 from prototype.planning.pipeline import (                         # noqa: E402
     PlanningPipeline,
     PlanningPipelineConfig,
@@ -197,6 +201,11 @@ def kosum(
     gate = GateFollower(GateFollowerConfig(HULL_W, HULL_L))
     hafiza = EdgeBuoyMemory()
 
+    # F-S.16 — HAKEM ölçüsü: parkur dışına çıkış. Sınır SAHNENİN gerçek kenar
+    # dubalarından kurulur (araç onu algıdan türetecek, ölçüm ise hakem gibi
+    # gerçeği bilir). Ayrıntı: `prototype/mission/parkur_siniri.py`.
+    pdc = ParkurDisiSayaci(ParkurSiniri.kapilardan(kapilar))
+
     state = np.array(
         [baslangic[0], baslangic[1], yon_hatasi_rad, 0.0, 0.0, 0.0]
     )
@@ -274,6 +283,7 @@ def kosum(
         t += dt
 
         simdi = (float(state[0]), float(state[1]))
+        parkur_durumu = pdc.adim(simdi, t)
         alinan_yol += math.hypot(simdi[0] - onceki[0], simdi[1] - onceki[1])
         psi_simdi = float(state[2])
         savrulma_rad += abs(
@@ -304,6 +314,7 @@ def kosum(
                     default=float("inf"),
                 ),
                 "gn": idx,
+                "parkur_durumu": parkur_durumu,     # F-S.16
             })
 
         if math.hypot(
@@ -317,6 +328,7 @@ def kosum(
         else:
             dwell_t = None
 
+    pdc.bitir(t)
     sapmalar = list(gecilen.values())
     # --- VERİMLİLİK ÖLÇÜLERİ (literatür: SPL ve dinamik-farkında türevi SCT) ---
     # `en_kisa`: başlangıç → GN zinciri düz çizgi toplamı (aracın kısıtları
@@ -348,6 +360,16 @@ def kosum(
         "asgari_sure": asgari_sure,
         "sure_verimi": sure_verimi,     # SCT benzeri (1 = kusursuz)
         "savrulma_derece": math.degrees(savrulma_rad),
+        # --- F-S.16 parkur dışına çıkma (şartname s.24-25) ---
+        "pdc": pdc.etkin_cikis,              # şartnamenin saydığı PDÇ
+        "pdc_ham": pdc.cikis_sayisi,         # epizot adedi (40 sn kuralı öncesi)
+        "pdc_sure": pdc.toplam_sure,         # dışarıda geçen toplam süre (s)
+        "pdc_en_uzun": pdc.en_uzun_sure,     # en uzun tek epizot (s)
+        # 🔑 Derinlik olmadan PDÇ yanıltır: sınırı 0,8 m aşmak (ardışık iki
+        # duba arasını düz birleştirme YORUMUNUN payı kadar) ile 6 m dışarı
+        # savrulmak aynı sayıyı üretir. §0.86a'nın "SPL %107" dersi.
+        "pdc_derinlik": pdc.en_derin,        # en derin aşma (m)
+        "pdc_puan": pdc.puan(1),             # P1 formülü: 24 − 6×PDÇ
     }
 
 
@@ -512,9 +534,11 @@ def main() -> None:
     print(f"kip: {'ZOR' if a.zor else 'normal'}"
           f"{' · MODEL YOK' if a.model_yok else ''} · {a.kosum} koşum\n")
     print(f"{'#':>3} {'başlangıç':>16} {'açı':>6} {'kapı':>7} {'GN':>6} "
-          f"{'sapma':>7} {'pay':>7} {'yol%':>6} {'süre%':>6} {'savrul':>8}")
+          f"{'sapma':>7} {'pay':>7} {'yol%':>6} {'süre%':>6} {'savrul':>8} "
+          f"{'PDÇ':>5} {'dışsn':>6} {'derin':>6}")
     oranlar, sapmalar, paylar, carpma = [], [], [], 0
     yol_v, sure_v, savrul = [], [], []
+    pdc_list, pdc_sure, pdc_puan, pdc_uzun, pdc_derin = [], [], [], [], []
     for i, (poz, aci) in enumerate(basl, 1):
         r = kosum(parkur, baslangic=poz, yon_hatasi_rad=aci,
                   model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni,
@@ -530,12 +554,18 @@ def main() -> None:
         if not math.isnan(r["sure_verimi"]):
             sure_v.append(r["sure_verimi"])
         savrul.append(r["savrulma_derece"])
+        pdc_list.append(r["pdc"])
+        pdc_sure.append(r["pdc_sure"])
+        pdc_puan.append(r["pdc_puan"])
+        pdc_uzun.append(r["pdc_en_uzun"])
+        pdc_derin.append(r["pdc_derinlik"])
         print(f"{i:3d} ({poz[0]:6.1f},{poz[1]:6.1f}) {math.degrees(aci):5.0f}° "
               f"{r['gecilen']:3d}/{r['toplam_kapi']:<3d} "
               f"{r['varilan_gn']:2d}/{r['toplam_gn']:<3d} "
               f"{r['sapma_ort']:6.2f}m {r['en_kucuk_pay']:6.2f}m "
               f"{100*r['yol_verimi']:5.0f}% {100*r['sure_verimi']:5.0f}% "
-              f"{r['savrulma_derece']:7.0f}°")
+              f"{r['savrulma_derece']:7.0f}° "
+              f"{r['pdc']:5d} {r['pdc_sure']:6.0f} {r['pdc_derinlik']:5.2f}m")
 
     oranlar.sort()
     print(f"\n{'='*56}\nKAPI GEÇME ORANI — {len(oranlar)} koşum")
@@ -556,6 +586,23 @@ def main() -> None:
               f"   (taban: modelin erişilebilir hızı"
               f" {_erisilebilir_seyir_hizi(CatamaranDynamics()):.2f} m/s)")
     print(f"  savrulma (toplam |Δψ|): ortanca {statistics.median(savrul):.0f}°")
+    # 🔴 F-S.16 (14.08) — 54 puanlık kalem; kapı oranıyla BİRLİKTE okunmalı,
+    # çünkü kapı oranını artıran her değişiklik bunu kötüleştirebilir (§0.80).
+    print(f"\n  PARKUR DIŞINA ÇIKMA (şartname s.24-25, hakem ölçüsü)")
+    print(f"    PDÇ: ortalama {statistics.mean(pdc_list):.2f}"
+          f" · ortanca {statistics.median(pdc_list):.1f}"
+          f" · en kötü {max(pdc_list)}"
+          f" · hiç çıkmayan koşum {sum(1 for v in pdc_list if v == 0)}"
+          f"/{len(pdc_list)}")
+    print(f"    dışarıda geçen süre: ortalama {statistics.mean(pdc_sure):.0f} s"
+          f" · en uzun tek epizot {max(pdc_uzun):.0f} s"
+          f" ({'40 sn kuralı TETİKLENDİ' if max(pdc_uzun) > 40 else '40 sn altı'})")
+    print(f"    en derin aşma: {max(pdc_derin):.2f} m"
+          f" · koşum ortancası {statistics.median(pdc_derin):.2f} m"
+          f"   (gövde yarı genişliği {HULL_W/2:.2f} m — bunun altı SIĞ,"
+          f" yorum payı kadar)")
+    print(f"    P1 SINIR PUANI (24 üzerinden): ortalama"
+          f" {statistics.mean(pdc_puan):.1f} · en kötü {min(pdc_puan):.1f}")
 
 
 if __name__ == "__main__":
