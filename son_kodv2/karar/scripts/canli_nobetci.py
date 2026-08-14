@@ -389,12 +389,22 @@ class Nobetci(Node):
             elif math.isfinite(fark):
                 self._temizle("POZ-AYRISMA", f"fark {fark:.1f} m")
 
-        # 3) ACİL DURDURMA — 14.08'de kosum sonuna kadar HIGH kaldi
+        # 3) ACİL DURDURMA — kumandaya BİLEREK atanmış bir tuş (kaptan,
+        # 14.08): "sıkıntı yok". Bu yüzden HIGH olması tek başına arıza
+        # DEĞİL — operatörün kasıtlı seçimi olabilir.
+        # 🔑 Alarm YALNIZ çelişki varken: araç **sürmesi beklenen** durumdayken
+        # (GUIDED + armed, yani görev komutu akıyor) motorların kesik olması.
+        # 14.08'de tam bu çelişki 227 saniye boyunca fark edilmedi.
+        # Diğer hâllerde sessizce not düşülür.
+        surus_bekleniyor = self._armed and self._mod == "GUIDED"
         if self._rc10 is not None:
-            if self._rc10 > ESTOP_HIGH_PWM:
+            if self._rc10 > ESTOP_HIGH_PWM and surus_bekleniyor:
                 self._alarm("ESTOP",
-                            f"kumanda MotorEStop HIGH (pwm={self._rc10}) — "
-                            "motorlar KESIK, ARM da reddedilir")
+                            f"GUIDED+armed ama MotorEStop HIGH (pwm={self._rc10}) "
+                            "— komut akiyor, motorlar KESIK")
+            elif self._rc10 > ESTOP_HIGH_PWM:
+                self._temizle("ESTOP", f"MotorEStop HIGH (pwm={self._rc10}) — "
+                                       "gorev modunda degil, normal")
             else:
                 self._temizle("ESTOP", f"MotorEStop LOW (pwm={self._rc10})")
 
