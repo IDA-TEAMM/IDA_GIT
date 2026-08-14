@@ -80,9 +80,14 @@ from std_msgs.msg import Float32MultiArray, Int32, String
 _AKTIF_DURUMLAR = ("PARKUR1", "PARKUR2", "PARKUR3")
 from vision_msgs.msg import Detection3DArray
 
-from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.qos_profiles import latched_qos, sensor_data_qos
 from girdap_decision.saat_kaynagi import bayatlik_saati
 from prototype.control.cmd_slew import EgimSinirlayici, EgimSinirlayiciConfig
+from prototype.control.pivot_kapisi import (
+    PivotKapisi,
+    PivotKapisiConfig,
+    pivot_itkisi,
+)
 from prototype.control.mavros_bridge import MavrosBridge, MavrosBridgeConfig
 from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mission.edge_memory import EdgeBuoyMemory
@@ -467,8 +472,19 @@ class PlanningNode(Node):
         # her oturumda BASKA bir kilit devredeydi (BOOT / KILL / BEKLEMEDE) —
         # ama bag'e bakan kisi bunu ancak dort ayri topic'i capraz okuyarak
         # cikarabildi. Sebep, komutun KENDI yaninda yayinlanmali.
+        # F-F.10 (14.08, §0.98o): LATCH'Lİ yayın. Bu topic yalnız METİN
+        # DEĞİŞTİĞİNDE yayınlanır; volatile QoS'ta yayına sonradan bağlanan
+        # tüketici (canlı nöbetçi · `ros2 topic echo` · **yeniden açılan
+        # Mission Planner**) bir sonraki değişime kadar KÖR kalıyordu — nöbetçi
+        # ilk 90 saniye "kilit: YOK" sandı, oysa araç `FSM-DISI(KILL)` idi.
+        # ⚠ mission_manager'daki "latched abone bir ÖNCEKİ koşunun mesajını
+        # alır" uyarısı BURAYA GEÇMEZ: orada yayıncı MAVROS'tur ve koşumlar
+        # arasında yaşar; burada yayıncı bu düğümdür — düğüm yeniden doğduğunda
+        # geçmişi de sıfırlanır, bayat değer taşınamaz.
+        # ⚠ Geriye uyumlu: TRANSIENT_LOCAL yayıncı, VOLATILE aboneyle uyumludur
+        # (yayıncının sunduğu ≥ abonenin istediği) — mevcut tüketiciler etkilenmez.
         self._pub_inhibit = self.create_publisher(
-            String, "/girdap/control/inhibit_reason", 10
+            String, "/girdap/control/inhibit_reason", latched_qos(depth=1)
         )
         self._son_inhibit = ""
         # 🔴 KAR-10 (12.08): ArduPilot GUIDED modunda setpoint akisi KESILIRSE
@@ -503,6 +519,25 @@ class PlanningNode(Node):
                 ),
             )
         )
+        # F-F.20 (14.08, §1.01): PIVOT KAPISI — hedef arkadayken önce dön.
+        # 14.08 ölçümü: waypoint dönüşünde 8 m ilerlemek 45,4 s ve 21,2 m yol
+        # aldı (verim 0,38); komutun %36,7'si GERİ ve işaret 139 kez değişti.
+        # Eşikler teknenin KENDİ uçuş kontrolcüsü ayarlarından: `WP_PIVOT_ANGLE`
+        # =60 (tetik) ve ArduPilot'un "10° içinde devam et" kuralı (bırakma).
+        # ⚠ Bunlar ArduPilot'ta KURULU ama GUIDED'da hız setpoint'i
+        # gönderdiğimiz için uçuş kontrolcüsünün seyir mantığı devre dışı —
+        # yani doğru davranışı bizim katmanımızda geri kurmak zorundayız.
+        self.declare_parameter("pivot_tetik_derece", 60.0)
+        self.declare_parameter("pivot_birak_derece", 10.0)
+        self.declare_parameter("pivot_ufuk_m", 3.0)
+        self._pivot = PivotKapisi(
+            PivotKapisiConfig(
+                tetik_derece=float(self.get_parameter("pivot_tetik_derece").value),
+                birak_derece=float(self.get_parameter("pivot_birak_derece").value),
+                ufuk_m=float(self.get_parameter("pivot_ufuk_m").value),
+            )
+        )
+        self._pivot_sayaci = 0
         self._isci_uyarildi = False
         # 🔴 14.08: bekçiyi kapatmak SESSİZ olmamalı. LiDAR yokken bilerek
         # sürmek meşru bir test ihtiyacı (gate/dataset koşusu), ama biri test
@@ -1428,6 +1463,11 @@ class PlanningNode(Node):
                     sebepler.append(f"FSM-DISI({self._pipe.mission_state})")
                 else:
                     sebepler.append("KONTROLCU-HAZIR-DEGIL")
+            # F-F.20 — PIVOT KAPISI. Yeri BİLİNÇLİ: MPPI'den SONRA (onun
+            # kararını ezer) ama bütün bekçilerden ÖNCE (bekçi sıfırı pivotu
+            # her zaman ezer, yani kapı hiçbir duruşu geciktiremez).
+            u = self._pivot_uygula(u)
+
             if gate.zero_thrust:                     # disarm / KILL → motor stop
                 u = np.zeros(2)
                 sebepler.append("DISARM-VEYA-KILL")
@@ -1534,6 +1574,12 @@ class PlanningNode(Node):
             metin += "|BEKCI-KAPALI:" + "+".join(kapali)
         if not gate.allow_cmd_vel:
             metin += "|SETPOINT-KAPALI"
+        # F-F.20: pivot bir KİLİT DEĞİL (itki üretiliyor, araç bilerek dönüyor)
+        # — bu yüzden `sebepler`e girmez, arıza koduna çevrilmez. Ama operatör
+        # için ayrımı hayati: 14.08'de araç 45 saniye yerinde salındı ve dışarıdan
+        # "takıldı mı?" ile "dönüyor" birbirinden ayırt edilemedi.
+        if self._pivot.aktif:
+            metin += "|PIVOT"
         if metin == self._son_inhibit:
             return
         self._son_inhibit = metin
@@ -1730,6 +1776,31 @@ class PlanningNode(Node):
         # Olay ZAMANI kaydedilir, arıza değil: `_ariza_durumlardan_guncelle`
         # kodu `ariza_olay_tutma_s` boyunca aktif tutar, sonra düşürür.
         self._son_setpoint_bosluk_t = simdi
+
+    def _pivot_uygula(self, u: np.ndarray) -> np.ndarray:
+        """F-F.20: yön hatası büyükse itkiyi SAF DÖNÜŞLE değiştir.
+
+        Kapı kapalıysa (`pivot_tetik_derece <= 0`), referans yoksa ya da hata
+        küçükse `u` **dokunulmadan** döner — yani eski davranış birebir korunur.
+        """
+        durum = self._pipe._state
+        aktif, hata = self._pivot.guncelle(
+            float(durum[0]), float(durum[1]), float(durum[2]),
+            self._pipe.global_path,
+        )
+        if not aktif or hata is None:
+            return u
+        self._pivot_sayaci += 1
+        self.get_logger().info(
+            f"PIVOT: yön hatası {math.degrees(hata):+.0f}° > "
+            f"{self._pivot.config.tetik_derece:.0f}° — yerinde dönülüyor "
+            f"(bırakma {self._pivot.config.birak_derece:.0f}°). "
+            "İleri komut sıfırlandı; araç TAKILMADI, bilerek dönüyor (F-F.20).",
+            throttle_duration_sec=2.0,
+        )
+        return np.asarray(
+            pivot_itkisi(hata, float(self._pipe._dyn.p.max_thrust)), dtype=float
+        )
 
     def _publish_cmd_vel(self, u: np.ndarray, *, egim_sinirla: bool = True) -> None:
         # 🛟 `egim_sinirla=False` → EĞİM SINIRLAYICI TAMAMEN BYPASS (F-F.18).

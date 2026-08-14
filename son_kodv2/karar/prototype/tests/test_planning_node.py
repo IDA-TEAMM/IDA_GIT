@@ -1611,3 +1611,110 @@ def test_ff18_sinir_sifirda_eski_davranis(ros_context) -> None:  # noqa: ANN001
         )
     finally:
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# F-F.20 — PIVOT KAPISI (14.08.2026, GIRDAP_DURUM §1.01)
+# Ölçülen arıza: waypoint dönüşünde 8 m ilerlemek 45,4 s ve 21,2 m yol aldı
+# (verim 0,38); komutun %36,7'si GERİ, işaret 139 kez değişti. Araç dönmek
+# yerine ileri-geri saldırıyordu.
+# 🛟 İKİNCİ test GÜVENLİK SIRALAMASINI dondurur: pivot MPPI'yi ezer ama
+# bekçiler pivotu ezer — kapı hiçbir duruşu geciktiremez.
+# --------------------------------------------------------------------------- #
+
+
+def _pivot_dugumu(tetik: float = 60.0):
+    """Referansı ARKAYA koyup pivot koşulunu kuran düğüm."""
+    import numpy as np
+
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("pivot_tetik_derece", Parameter.Type.DOUBLE, tetik)
+        ]
+    )
+    # araç orijinde, doğuya bakıyor (ψ=0); referans BATIDA (180° hata)
+    node._pipe.set_state(np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    node._pipe.set_reference_direct(-50.0, 0.0)
+    return node
+
+
+def test_ff20_pivot_ILERI_komutu_sifirlar(ros_context) -> None:  # noqa: ANN001
+    """Hedef arkadayken: ileri hız 0, dönüş komutu var."""
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    node = _pivot_dugumu()
+    try:
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+        node._saat = lambda: 100.0
+
+        u = node._pivot_uygula(np.array([1.0, 1.0]))   # MPPI "tam ileri" deseydi
+        assert node._pivot.aktif is True
+        assert float(u[0] + u[1]) == pytest.approx(0.0), "pivot ilerliyor"
+        node._publish_cmd_vel(u, egim_sinirla=False)
+        assert yakalanan[-1].linear.x == pytest.approx(0.0)
+        assert abs(yakalanan[-1].angular.z) > 0.0
+    finally:
+        node.destroy_node()
+
+
+def test_ff20_BEKCI_pivotu_EZER(ros_context) -> None:  # noqa: ANN001
+    """🛟 GÜVENLİK: pivot bekçi zincirinden ÖNCE uygulanır; `zero_thrust`
+    geldiğinde komut SIFIR olmalı — pivot bir duruşu asla geciktiremez."""
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    from prototype.control.mavros_bridge import ControlGate, GateState
+
+    node = _pivot_dugumu()
+    try:
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+        node._saat = lambda: 100.0
+        node._bridge.control_gate = lambda *_a, **_k: ControlGate(  # type: ignore[assignment]
+            state=GateState.HOLD, allow_cmd_vel=True,
+            zero_thrust=True, reason="test",
+        )
+        node._on_control_step()
+        assert yakalanan, "cmd_vel hiç yayınlanmadı"
+        assert yakalanan[-1].linear.x == 0.0, "BEKÇİ SIFIRI PIVOTA YENİLDİ"
+        assert yakalanan[-1].angular.z == 0.0, "BEKÇİ SIFIRI PIVOTA YENİLDİ"
+    finally:
+        node.destroy_node()
+
+
+def test_ff20_kapi_sifirda_MPPI_dokunulmaz(ros_context) -> None:  # noqa: ANN001
+    """0 → eski davranış birebir; MPPI'nin itkisi değişmeden geçer."""
+    import numpy as np
+
+    node = _pivot_dugumu(tetik=0.0)
+    try:
+        u = node._pivot_uygula(np.array([1.0, 1.0]))
+        assert node._pivot.aktif is False
+        assert float(u[0]) == pytest.approx(1.0)
+        assert float(u[1]) == pytest.approx(1.0)
+    finally:
+        node.destroy_node()
+
+
+def test_ff20_operator_PIVOT_gorur(ros_context) -> None:  # noqa: ANN001
+    """Operatör 'takıldı mı, bilerek mi dönüyor' ayrımını görebilmeli —
+    14.08'de araç 45 saniye salındı ve dışarıdan ayırt edilemedi."""
+    import numpy as np
+
+    from prototype.control.mavros_bridge import ControlGate, GateState
+    from std_msgs.msg import String
+
+    node = _pivot_dugumu()
+    try:
+        metinler: list[String] = []
+        node._pub_inhibit.publish = metinler.append   # type: ignore[assignment]
+        node._pivot_uygula(np.array([1.0, 1.0]))      # pivotu aç
+        node._publish_inhibit([], ControlGate(
+            state=GateState.ACTIVE, allow_cmd_vel=True,
+            zero_thrust=False, reason="test",
+        ))
+        assert metinler and "|PIVOT" in metinler[-1].data
+    finally:
+        node.destroy_node()
