@@ -13,6 +13,7 @@ Kapsam:
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import replace
 
@@ -758,3 +759,49 @@ def test_fs17_kutu_yalnizca_buyur_asla_kucultmez():
     ortak = pipe._etkin_sinir()
     assert ortak.x_min <= -5.0 and ortak.x_max >= 5.0
     assert ortak.y_min <= -5.0 and ortak.y_max >= 5.0
+
+
+# --------------------------------------------------------------------------- #
+# 14.08 — F-S.17 EKİ: arena dışı hedef SESSİZ kalmamalı
+# --------------------------------------------------------------------------- #
+
+
+def _boru_hatti_arena(bounds: Bounds) -> PlanningPipeline:
+    """Sade boru hattı (yalnız sınır kutusu davranışı sınanıyor)."""
+    return PlanningPipeline(bounds=bounds)
+
+
+def test_ARENA_ICI_hedefte_uyari_YOK(caplog) -> None:
+    """Pay içinde kalan hedef normaldir — gürültü üretilmemeli."""
+    pipe = _boru_hatti_arena(Bounds(0.0, 200.0, 0.0, 200.0))
+    pipe.set_state(np.array([10.0, 10.0, 0.0, 0.0, 0.0, 0.0]))
+    with caplog.at_level(logging.WARNING):
+        pipe.set_waypoints([(120.0, 150.0)])
+    assert pipe.arena_tasma_sayisi == 0
+    assert "ARENA DIŞI" not in caplog.text
+
+
+def test_PAY_ICINDEKI_tasma_uyari_URETMIYOR() -> None:
+    """`bounds_margin_m` kadar genişleme TASARIM — arıza sayılmaz."""
+    pipe = _boru_hatti_arena(Bounds(0.0, 200.0, 0.0, 200.0))
+    pipe.set_state(np.array([5.0, 5.0, 0.0, 0.0, 0.0, 0.0]))
+    # 13.08 gerçek donanım vakası: hedef (27,3, −23,7) → 23,7 m dışarıda,
+    # pay 30 m olduğu için bu HÂLÂ normal sayılır (F-S.17 tam da bunu çözdü).
+    pipe.set_waypoints([(27.3, -23.7)])
+    assert pipe.arena_tasma_sayisi == 0
+
+
+def test_ARENA_DISI_hedef_BAGIRIYOR(caplog) -> None:
+    """🔴 Bozuk hedef (yanlış orijin / 0.0-0.0 yer tutucu) sessiz kalmamalı.
+
+    F-S.17 kutuyu hedefe uydurarak kilidi çözdü; bedeli, hedefin NEREYE
+    düşerse düşsün kabul edilmesiydi. Araç artık durmuyor — o yüzden
+    "gitmiyor" diye fark edilemez; tek savunma bağırmaktır.
+    """
+    pipe = _boru_hatti_arena(Bounds(0.0, 200.0, 0.0, 200.0))
+    pipe.set_state(np.array([10.0, 10.0, 0.0, 0.0, 0.0, 0.0]))
+    with caplog.at_level(logging.WARNING):
+        pipe.set_waypoints([(5000.0, 200.0)])         # 4,8 km dışarıda
+    assert pipe.arena_tasma_sayisi > 0
+    assert "ARENA DIŞI HEDEF" in caplog.text
+    assert "GÖREVİ DOĞRULA" in caplog.text

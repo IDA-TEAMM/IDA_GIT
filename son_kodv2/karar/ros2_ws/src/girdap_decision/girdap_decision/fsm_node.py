@@ -516,27 +516,30 @@ class FSMNode(Node):
     def _on_gate_passed(self, msg: Bool) -> None:
         """Perception duba ikilisi geçiş tespiti → PARKUR2→PARKUR3 tetiği.
 
-        🔴 **AÇIK TUZAK — bir yayıncı eklenmeden ÖNCE çözülmeli.**
-        Burası gelen HERHANGİ bir `True`'yu "Parkur-2'nin SON ikilisi geçildi"
-        sayıp `MissionFSM`'i doğrudan PARKUR3'e (kamikaze) atar → **ilk kapıda**
-        Parkur-2 yarıda kesilir; md 5.5.2.4'ün *"en az iki duba ikilisi"* şartı
-        sağlanmaz ve md 657 gereği Parkur-3'ün **145 puanı hiç açılmaz**.
+        ✅ **14.08 — AÇIK TUZAK KAPATILDI: B seçeneği uygulandı.**
 
-        ⚠ Bugün **canlı bir arıza DEĞİL**: `/perception/gate_passed`'i üreten
-        gerçek bir yayıncı yok — algı katmanı bunu tam bu yüzden bilerek kapalı
-        tutuyor (`GATE_PASSED_YAYINLA=False`) ve `yarisma_simulasyonu.py`
-        sahtedir. Ama "yayıncıyı açalım" diyen ilk kişi Parkur-2'yi kırar.
-        `GateFollower.passed_gate_count` (B3) bağlanmadan önce sıra bunda.
+        ESKİDEN burası gelen HERHANGİ bir `True`'yu "Parkur-2'nin SON ikilisi
+        geçildi" sayıp `MissionFSM`'i doğrudan PARKUR3'e (kamikaze) atıyordu →
+        **ilk kapıda** Parkur-2 yarıda kesilirdi; md 5.5.2.4'ün *"en az iki duba
+        ikilisi"* şartı sağlanmaz ve md 657 gereği Parkur-3'ün **145 puanı hiç
+        açılmazdı**. Canlı arıza değildi (bu topic'i üreten yayıncı yok; algı
+        `GATE_PASSED_YAYINLA=False` tutuyor) ama "yayıncıyı açalım" diyen ilk
+        kişi Parkur-2'yi kırardı — yayıncı eklenmeden çözülmesi istenmişti.
 
-        İki yol var, seçim yapılmadı:
-          **A)** Tetiği bırak ama **şartname sayısını** şart koş: geçiş ancak
-             sayaç ≥ 2 iken kabul edilsin. Basit; ama P3'ü kendi kapı
-             sayacımıza bağlar → algı zinciri suda doğrulanmamışken (B0 açık,
-             YOLO modeli yok) tek bir yanlış negatif 145 puanı götürür.
-          **B)** Geçişi **waypoint ilerlemesinden** sür (§14.8: *"P2→P3 = son P2
-             noktası VE büyük duba görüldü"*), sayacı yalnız **kanıt/telemetri**
-             olarak kullan. Şartnameye daha yakın; `ParkurTransitionLogic`
-             zaten waypoint-index tabanlı, yani altyapı var.
+        **Seçilen yol (B):** geçişi **waypoint ilerlemesi** sürer
+        (`Observation.p2_waypoints_done`, `_on_waypoint_reached`'te set edilir);
+        bu sinyal yalnız **kanıt/telemetri**dir. Gerekçe: CLAUDE.md FSM ilkesi
+        *"geçiş waypoint-index + parkur etiketi ile; duba sayısına bağlı akış
+        tasarlamak YASAK"* (md 5.5.2.2) + P1→P2 zaten böyle çalışıyor + iki
+        katman (MissionFSM ↔ ParkurTransitionLogic) artık çelişemiyor.
+
+        A seçeneği (sayaç ≥ 2 şartı) REDDEDİLDİ: P3'ü kendi kapı sayacımıza
+        bağlardı; algı zinciri suda doğrulanmamışken tek yanlış negatif 145
+        puanı götürürdü.
+
+        ⚠ Yayıncı açıldığında burası artık güvenlidir — ama `GateFollower.
+        passed_gate_count` (B3) bağlanınca bu kanalın **kanıt** rolünü koru,
+        tetiğe terfi ettirme.
         """
         if msg.data:
             self._obs.last_gate_passed_p2 = True
@@ -623,6 +626,14 @@ class FSMNode(Node):
             and 2 in self._parkur.last_index_of_parkur
         ):
             self._obs.dist_to_last_wp_p1 = 0.0
+        # 🔴 14.08 — P2→P3'ün YETKİLİ tetiği (yukarıdaki P1→P2 deseninin eşi).
+        # Aynı korumayla: parkur-3 etiketli waypoint YOKSA beslenmez, yoksa
+        # tek/iki parkurlu görevde sahte kamikaze geçişi olurdu.
+        if (
+            idx == self._parkur.last_index_of_parkur.get(2)
+            and 3 in self._parkur.last_index_of_parkur
+        ):
+            self._obs.p2_waypoints_done = True
         self._parkur.current_waypoint_reached(idx)
         self._emit_parkur_transition()
 
@@ -696,6 +707,12 @@ class FSMNode(Node):
         onceki = self._fsm.state.value
         self._fsm.yeniden_basla("YKI yeniden baslama servisi (md 5.5.3.1)")
         self._parkur.reset()
+        # 14.08: gorev ilerleme bayraklari da sifirlanir. Yoksa yeniden
+        # baslatilan arac Parkur-1'i kosarken ESKI kosumdan kalan
+        # p2_waypoints_done ile PARKUR2'ye girer girmez kamikazeye atlar.
+        self._obs.p2_waypoints_done = False
+        self._obs.last_gate_passed_p2 = False
+        self._obs.dist_to_last_wp_p1 = math.inf
         n = self._reset_pub.yayinla()
         self.get_logger().warn(
             f"YENIDEN BASLAMA #{n} (md 5.5.3.1): {onceki} -> "
@@ -729,8 +746,12 @@ class FSMNode(Node):
             new_state = self._fsm.state          # başladıysa PARKUR1 yayınlansın
 
         # Tek atış sinyalleri tüketildiğinde sıfırla
-        if self._obs.last_gate_passed_p2 and new_state is MissionState.PARKUR3:
+        if new_state is MissionState.PARKUR3:
             self._obs.last_gate_passed_p2 = False
+            # 14.08: yetkili tetik de tüketilir — yoksa yeniden başlamadan
+            # sonra PARKUR2'ye dönüldüğünde bayrak hâlâ True olur ve araç
+            # Parkur-2'yi hiç koşmadan kamikazeye geçer.
+            self._obs.p2_waypoints_done = False
         if self._obs.shock_detected_p3 and new_state is MissionState.TAMAMLANDI:
             self._obs.shock_detected_p3 = False
 

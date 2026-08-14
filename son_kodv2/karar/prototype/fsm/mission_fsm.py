@@ -73,7 +73,12 @@ class Observation:
         kill_switch_off       — Pixhawk RC kanalı + yazılım flag'i
         kill_switch_active    — kill onaylandı (sıfırlanmaz)
         dist_to_last_wp_p1    — RRT* hedef listesindeki son wp'ye anlık mesafe
-        last_gate_passed_p2   — görev kütüphanesi (gate geometri kontrolü)
+        p2_waypoints_done     — 🔴 PARKUR2→PARKUR3'ün TEK YETKİLİ tetiği:
+                                görev yöneticisi Parkur-2'nin SON waypoint'ine
+                                vardı (waypoint-index katmanı). Bkz. aşağıdaki
+                                `_next_state` notu.
+        last_gate_passed_p2   — kapı geçişi KANITI/telemetrisi. ⚠ TEK BAŞINA
+                                GEÇİŞ YAPTIRMAZ (14.08; eskiden yapardı)
         shock_detected_p3     — IMU |a| spike eşiği (ham high-rate kanal)
         mission_complete      — görev yöneticisi TÜM waypoint'leri bitirdi
                                 (video senaryosu terminal koşulu; kamikaze
@@ -85,6 +90,7 @@ class Observation:
     kill_switch_active: bool = False
 
     dist_to_last_wp_p1: float = math.inf
+    p2_waypoints_done: bool = False
     last_gate_passed_p2: bool = False
     shock_detected_p3: bool = False
     mission_complete: bool = False
@@ -256,8 +262,34 @@ class MissionFSM:
                 f"son wp {obs.dist_to_last_wp_p1:.2f} m ≤ "
                 f"{self.P1_TO_P2_DIST:.1f} m",
             )
-        if s is MissionState.PARKUR2 and obs.last_gate_passed_p2:
-            return MissionState.PARKUR3, "son duba ikilisi geçildi"
+        # 🔴 14.08 — AÇIK TUZAK KAPATILDI (fsm_node._on_gate_passed §B seçeneği).
+        # ESKİDEN: `obs.last_gate_passed_p2` TEK BAŞINA buradan PARKUR3'e
+        # atıyordu. `/perception/gate_passed`'ten gelen HERHANGİ bir True —
+        # yani **ilk kapı** — Parkur-2'yi yarıda keserdi. Sonucu md 5.5.2.4'ün
+        # *"en az iki duba ikilisi"* şartı sağlanmaz, md 657 gereği Parkur-3'ün
+        # **145 puanı hiç açılmaz**. Bugün canlı arıza değildi çünkü o topic'i
+        # üreten yayıncı yok (algı `GATE_PASSED_YAYINLA=False`) — ama "yayıncıyı
+        # açalım" diyen ilk kişi Parkur-2'yi kırardı. Yayıncı eklenmeden ÖNCE
+        # çözülmesi isteniyordu; çözüldü.
+        #
+        # ARTIK: tetik **waypoint ilerlemesi** (`p2_waypoints_done`). Gerekçe:
+        #   · CLAUDE.md kuralı: *"geçiş waypoint-index + parkur etiketi ile;
+        #     duba sayısına bağlı akış tasarlamak YASAK"* (md 5.5.2.2).
+        #   · PARKUR1→PARKUR2 zaten böyle (son wp mesafesi) — simetrik oldu.
+        #   · İki katman artık ÇELİŞMİYOR: `ParkurTransitionLogic` de aynı
+        #     waypoint index'inden sürülüyor. Eskiden MissionFSM PARKUR3'e
+        #     geçerken parkur katmanı PARKUR2'de kalabiliyordu.
+        #   · Algı zinciri suda doğrulanmamışken (YOLO modeli yok) tek bir
+        #     yanlış POZİTİF 145 puanı götürüyordu; artık götüremez.
+        # `last_gate_passed_p2` KANIT olarak duruyor (telemetri/geçiş gerekçesi),
+        # geçişi TEK BAŞINA yaptırmaz.
+        if s is MissionState.PARKUR2 and obs.p2_waypoints_done:
+            gerekce = (
+                "Parkur-2 son waypoint'i (kapı geçişi de doğrulandı)"
+                if obs.last_gate_passed_p2
+                else "Parkur-2 son waypoint'i"
+            )
+            return MissionState.PARKUR3, gerekce
         if s is MissionState.PARKUR3 and obs.shock_detected_p3:
             return MissionState.TAMAMLANDI, "IMU şok algılandı"
         return None

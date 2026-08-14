@@ -209,6 +209,7 @@ def test_last_gate_passed_output_derivation() -> None:
                          dist_to_last_wp_p1=1.0))                   # PARKUR2
     assert fsm.last_gate_passed is False
     fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
+                         p2_waypoints_done=True,
                          last_gate_passed_p2=True))                 # PARKUR3
     assert fsm.state is MissionState.PARKUR3
     assert fsm.last_gate_passed is True
@@ -229,7 +230,7 @@ def test_full_mission_sequence() -> None:
     fsm.request_start()
     fsm.tick(Observation(**on))                        # PARKUR1
     fsm.tick(Observation(**on, dist_to_last_wp_p1=1.0))  # PARKUR2
-    fsm.tick(Observation(**on, last_gate_passed_p2=True))  # PARKUR3
+    fsm.tick(Observation(**on, p2_waypoints_done=True))    # PARKUR3
     fsm.tick(Observation(**on, shock_detected_p3=True))    # TAMAMLANDI
 
     assert fsm.state is MissionState.TAMAMLANDI
@@ -238,3 +239,64 @@ def test_full_mission_sequence() -> None:
     assert chain == [
         "ARM", "BEKLEMEDE", "PARKUR1", "PARKUR2", "PARKUR3", "TAMAMLANDI",
     ]
+
+
+# --------------------------------------------------------------------------- #
+# 14.08 — AÇIK TUZAK: kapı sinyali TEK BAŞINA kamikazeye atmamalı
+# --------------------------------------------------------------------------- #
+
+
+def _parkur2_ye_getir() -> MissionFSM:
+    """BOOT → … → PARKUR2 (yardımcı)."""
+    fsm = MissionFSM()
+    on = dict(boot_ok=True, kill_switch_off=True)
+    fsm.tick(Observation(boot_ok=True))
+    fsm.tick(Observation(**on))
+    fsm.request_start()
+    fsm.tick(Observation(**on))
+    fsm.tick(Observation(**on, dist_to_last_wp_p1=1.0))
+    assert fsm.state is MissionState.PARKUR2
+    return fsm
+
+
+def test_ILK_KAPI_parkur2_yi_YARIDA_KESMIYOR() -> None:
+    """🔴 REGRESYON KİLİDİ (md 5.5.2.4 + md 657).
+
+    `/perception/gate_passed`'ten gelen tek bir True — yani İLK kapı — eskiden
+    MissionFSM'i doğrudan PARKUR3'e (kamikaze) atıyordu. Sonuç: *"en az iki
+    duba ikilisi"* şartı sağlanmaz, Parkur-3'ün 145 puanı hiç açılmaz.
+    Yayıncı açıldığı gün bu test kırmızıya dönmeli.
+    """
+    fsm = _parkur2_ye_getir()
+    on = dict(boot_ok=True, kill_switch_off=True)
+
+    for _ in range(50):                       # kapı sinyali yağmuru
+        fsm.tick(Observation(**on, last_gate_passed_p2=True))
+
+    assert fsm.state is MissionState.PARKUR2, (
+        "kapı sinyali TEK BAŞINA Parkur-2'yi kesti — 145 puan açılmıyor"
+    )
+
+
+def test_P2_P3_gecisini_WAYPOINT_ILERLEMESI_yapar() -> None:
+    """Yetkili tetik waypoint ilerlemesidir (CLAUDE.md FSM ilkesi, md 5.5.2.2)."""
+    fsm = _parkur2_ye_getir()
+    on = dict(boot_ok=True, kill_switch_off=True)
+
+    fsm.tick(Observation(**on, p2_waypoints_done=True))
+
+    assert fsm.state is MissionState.PARKUR3
+    _, _, gerekce = fsm.history[-1]
+    assert "waypoint" in gerekce
+
+
+def test_kapi_kaniti_gecis_GEREKCESINE_yaziliyor() -> None:
+    """Kapı kanıtı geçişi yapmaz ama gerekçeye geçer (telemetri değeri korunur)."""
+    fsm = _parkur2_ye_getir()
+    on = dict(boot_ok=True, kill_switch_off=True)
+
+    fsm.tick(Observation(**on, p2_waypoints_done=True, last_gate_passed_p2=True))
+
+    assert fsm.state is MissionState.PARKUR3
+    _, _, gerekce = fsm.history[-1]
+    assert "kapı geçişi de doğrulandı" in gerekce

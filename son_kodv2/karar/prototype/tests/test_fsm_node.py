@@ -1199,3 +1199,101 @@ def test_MADDE0_olumlu_teyit_EMERGENCY_DEGIL(ros_context, tmp_path) -> None:  # 
             )
         finally:
             node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# 14.08 — AÇIK TUZAK kapanışının DÜĞÜM tarafı (yalnız Jetson/ROS ortamında koşar)
+# --------------------------------------------------------------------------- #
+
+
+def test_KAPI_SINYALI_tek_basina_kamikazeye_ATMIYOR(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 md 5.5.2.4 + md 657 — Parkur-2 ilk kapıda kesilmemeli.
+
+    `/perception/gate_passed` bugün yayıncısızdır; açıldığı gün bu test
+    kırmızıya dönerek uyarır.
+    """
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
+    try:
+        _drive_to_parkur1(node)
+        node._on_waypoint_reached(Int32(data=0))          # parkur-1 SON wp
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR2
+
+        for _ in range(20):                                # kapı sinyali yağmuru
+            node._on_gate_passed(Bool(data=True))
+            node._on_tick()
+
+        assert node._fsm.state is MissionState.PARKUR2, (
+            "kapı sinyali tek başına Parkur-2'yi kesti — 145 puan açılmıyor"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_PARKUR2_SON_waypointi_kamikazeyi_ACAR(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Yetkili tetik: parkur-2'nin SON waypoint'ine varış → PARKUR3."""
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
+    try:
+        _drive_to_parkur1(node)
+        node._on_waypoint_reached(Int32(data=0))          # parkur-1 SON wp
+        node._on_tick()
+        node._on_waypoint_reached(Int32(data=1))          # parkur-2 ARA wp
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR2, "ara wp erken geçirdi"
+        node._on_waypoint_reached(Int32(data=2))          # parkur-2 SON wp
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR3
+    finally:
+        node.destroy_node()
+
+
+def test_PARKUR3_YOKSA_sahte_kamikaze_gecisi_OLMUYOR(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """P1→P2'deki BULGU 1 korumasının eşi: parkur-3 etiketi yoksa beslenmez."""
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2])   # parkur-3 YOK
+    try:
+        _drive_to_parkur1(node)
+        node._on_waypoint_reached(Int32(data=0))
+        node._on_tick()
+        node._on_waypoint_reached(Int32(data=2))          # parkur-2 SON wp
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR2, (
+            "parkur-3 hiç yokken sahte kamikaze geçişi oldu"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_YENIDEN_BASLAMA_gorev_ilerlemesini_SIFIRLIYOR(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 md 5.5.3.1 — yeniden başlatılan araç parkurları BAŞTAN koşmalı.
+
+    Bulundu 14.08: `_yeniden_basla` `_parkur.reset()` yapıyordu ama
+    `Observation` bayraklarına dokunmuyordu. Eski koşumdan kalan
+    `dist_to_last_wp_p1=0.0` yeniden başlatmadan sonra PARKUR1'e girer girmez
+    PARKUR2'yi tetikliyordu; aynı şekilde `p2_waypoints_done` doğrudan
+    kamikazeye atardı. Yani yeniden başlama hakkı kullanılınca araç parkurları
+    ATLAYARAK koşuyordu.
+    """
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
+    try:
+        _drive_to_parkur1(node)
+        node._on_waypoint_reached(Int32(data=0))
+        node._on_tick()
+        node._on_waypoint_reached(Int32(data=2))          # parkur-2 SON wp
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR3
+
+        node._yeniden_basla(Trigger.Request(), Trigger.Response())
+        assert node._obs.p2_waypoints_done is False
+        assert node._obs.last_gate_passed_p2 is False
+
+        node._fsm.request_start()
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR1, (
+            "yeniden başlatılan araç PARKUR1'de başlamadı"
+        )
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR1, (
+            "eski görev ilerlemesi taşındı — parkurlar atlanıyor (md 5.5.3.1)"
+        )
+    finally:
+        node.destroy_node()

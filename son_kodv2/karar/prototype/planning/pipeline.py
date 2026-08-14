@@ -282,6 +282,10 @@ class PlanningPipeline:
         self._son_replan_t: Optional[float] = None
         self._son_plan_suresi_s: Optional[float] = None
         self._replan_ertelendi = 0       # fren yüzünden ertelenen çağrı
+        #: son bildirilen arena taşması (m) — tekrar uyarı eşiği için
+        self._arena_tasmasi_m = 0.0
+        #: arena dışı hedefle planlanan tur sayısı (teşhis; 0 = hep içeride)
+        self.arena_tasma_sayisi = 0
         # F-P.10 asenkron planlama durumu. İşçi TEMBEL kurulur: ilk asenkron
         # ihtiyaç doğana kadar süreç başlatılmaz (her boru hattı nesnesi bir
         # süreç doğurmasın — testler yüzlerce nesne kuruyor).
@@ -440,6 +444,21 @@ class PlanningPipeline:
         ⚠ Kutu yalnız BÜYÜR (statik kutuyla `min`/`max`); yani sınırın koruma
         işlevi kaybolmaz, yalnız "hedefin kendisi duvarın dışında" patolojisi
         imkânsızlaşır. Gerçek parkur sınırı F-S.16'da algıdan türetilecek.
+
+        🔴 **14.08 EKİ — büyüme artık SESSİZ DEĞİL.** F-S.17 kilidi çözdü ama
+        yerine ikinci bir sessizlik bıraktı: hedef **nereye düşerse düşsün**
+        kutu ona uyacak şekilde genişliyor ve kimse haber vermiyordu. Yani
+        bozuk bir hedef — yanlış ENU orijini, hatalı `home`, yanlış çerçevede
+        yüklenmiş görev, `competition_mission.yaml`'ın 0.0/0.0 yer tutucuları —
+        "araç durdu" yerine **"araç 3000 km ötedeki bir noktaya doğru yola
+        çıktı"** üretir; ikincisi daha kötüdür ve teşhisi daha zordur.
+        Bildirilen arenanın dışına taşan her hedef artık **BAĞIRIR**
+        (ana belge madde 5: hataları bağıran mekanizmalar).
+
+        Eşik **ayarlanabilir bir sayı değil, arenanın kendi ölçeği** (kapı
+        seçimindeki disiplinin aynısı): hedef, bildirilen arenayı kendi
+        genişliğinden DAHA ÇOK aşıyorsa çerçeve neredeyse kesin yanlıştır.
+        Gerekçe `_arena_tasmasini_bildir`'de.
         """
         b, pay = self._bounds, self.cfg.bounds_margin_m
         xs = [b.x_min, b.x_max]
@@ -450,7 +469,57 @@ class PlanningPipeline:
         for px, py in noktalar:
             xs += [px - pay, px + pay]
             ys += [py - pay, py + pay]
-        return Bounds(min(xs), max(xs), min(ys), max(ys))
+        etkin = Bounds(min(xs), max(xs), min(ys), max(ys))
+        self._arena_tasmasini_bildir(etkin)
+        return etkin
+
+    def _arena_tasmasini_bildir(self, etkin: Bounds) -> None:
+        """Etkin kutu bildirilen arenayı aşıyorsa BAĞIR (bkz. `_etkin_sinir`).
+
+        Ölçü **payı çıkarılmış** taşmadır: `bounds_margin_m` kadar genişleme
+        tasarımın kendisidir, arıza değil. Geriye kalan sayı "hedef, bildirilen
+        arenanın kaç metre dışında" demektir.
+
+        🔑 **EŞİK NEDEN ARENANIN KENDİ BOYU (ayarlanabilir sayı DEĞİL).**
+        `params.yaml`'daki kutu kendi yorumunda *"yarışma alanı temsili"* —
+        yani ÖLÇÜLMÜŞ bir arena değil, yer tutucu. Onun için "arenayı 1 m aşan
+        her hedef" uyarısı **her gerçek görevde** çalardı: 13.08 donanım
+        koşumundaki (27,3, −23,7) hedefi bile 23,7 m dışarıdaydı ve o hedef
+        DOĞRUYDU. Her koşuda çalan uyarı, operatörün uyarılara bakmayı
+        bırakmasıdır — kapatmak istediğimiz sessizliğin daha kötü hâli.
+
+        Ayırt edici olan **büyüklük mertebesi**: hedef arenayı KENDİ boyundan
+        daha çok aşıyorsa artık "kenarda biraz taşmış görev" değil, **çerçeve
+        hatası**dır — yanlış ENU orijini, hatalı home, yanlış çerçevede
+        yüklenmiş görev ya da `competition_mission.yaml`'ın 0.0/0.0 yer
+        tutucuları (bunlar Gine Körfezi'ni gösterir → binlerce km). Ölçü
+        arenanın kendinden türediği için ölçek-bağımsızdır: 200 m'lik alanda da
+        2 km'lik alanda da aynı mantık çalışır, elle ayar gerekmez.
+        """
+        b, pay = self._bounds, self.cfg.bounds_margin_m
+        tasma = max(
+            b.x_min - etkin.x_min, etkin.x_max - b.x_max,
+            b.y_min - etkin.y_min, etkin.y_max - b.y_max,
+        ) - pay
+        olcek = max(b.x_max - b.x_min, b.y_max - b.y_min)
+        if tasma <= olcek:
+            self._arena_tasmasi_m = 0.0
+            return
+        self.arena_tasma_sayisi += 1
+        if abs(tasma - self._arena_tasmasi_m) > 1.0:
+            self._arena_tasmasi_m = tasma
+            hedef = self._waypoints[-1] if self._waypoints else None
+            _log.warning(
+                "ARENA DIŞI HEDEF: hedef bildirilen arenanın %.0f m dışında — "
+                "arenanın KENDİ boyu (%.0f m) kadarını aşıyor, yani bu bir "
+                "ÇERÇEVE HATASI (hedef=%s, arena x[%.0f,%.0f] y[%.0f,%.0f]). "
+                "Kutu hedefe uyacak şekilde BÜYÜTÜLDÜ (F-S.17), yani araç "
+                "DURMAZ — oraya doğru yola çıkar. Yanlış ENU orijini / hatalı "
+                "home / yanlış çerçevede yüklenmiş görev / 0.0-0.0 yer tutucu "
+                "waypoint olabilir. GÖREVİ DOĞRULA.",
+                tasma, olcek, hedef,
+                b.x_min, b.x_max, b.y_min, b.y_max,
+            )
 
     @staticmethod
     def _engel_imzasi(obstacles: List[CircleObstacle]) -> Tuple:
