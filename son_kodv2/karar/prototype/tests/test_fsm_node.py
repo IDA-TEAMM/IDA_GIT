@@ -1361,27 +1361,56 @@ def test_GECIT_YETERLIYSE_olumlu_teyit_NORMAL_seviyede(ros_context, tmp_path) ->
         node.destroy_node()
 
 
-def test_TEK_ATISLIK_ILAN_parkur_metnine_YUTULMUYOR(ros_context, tmp_path) -> None:  # noqa: ANN001
-    """🔴 14.08 bulundu: PARKUR* durum metni ilanın önündeydi.
+def test_TEK_ATISLIK_ILAN_periyodu_BEKLEMEDEN_gidiyor(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 İlan, durum metni değişmedi diye tazeleme periyodunu BEKLEMEMELİ.
 
-    İlan o dalda hiç kullanılmadan `_senkron_ilani = None` ile düşürülüyordu —
-    araç bir parkurdayken üretilen HER tek atışlık ilan (parkur senkronu, geçit
-    şartı) operatöre ulaşmadan sessizce çöpe gidiyordu.
+    14.08 mutasyon turunda bulundu — hem de önceki testim boş çıktığı için.
+    İlk teşhisim "ilan parkurdayken operatöre hiç ulaşmıyor" idi; YANLIŞTI,
+    seviye zinciri `text`i ilanla yeniden atıyordu. Gerçek kusur: kısma kararı
+    (`degisti` + `statustext_periyot_s`) DURUM metnine, yayın ise İLANA göre
+    yapılıyordu. Araç bir parkurda dururken durum metni değişmez → ilan
+    **10 s'ye kadar bekler**. İlan tam da beklememesi gereken şeydir: parkur
+    senkronu kurulum doğrulaması, geçit şartı ise koşu-içi telafi penceresi.
+
+    Kurgu: önce normal durum metni yayınlanır (periyot saati başlar), sonra
+    periyot DOLMADAN ilan konur. İlan aynı çağrıda gitmelidir.
     """
     node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
     try:
         _drive_to_parkur1(node)
-        assert node._fsm.state is MissionState.PARKUR1
-        node._senkron_ilani = "PARKUR SENKRON OK 4wp"
-        node._ilan_ciddi = False
         yayinlanan: list[str] = []
         node._pub_statustext = _SahteStatusTextYayinci(yayinlanan)
+        node._statustext_periyot_s = 10.0
+
+        node._publish_statustext(node._fsm.state)          # durum metni gitti
+        assert yayinlanan, "durum metni hic yayinlanmadi (kurgu bozuk)"
+        yayinlanan.clear()
+
+        node._senkron_ilani = "PARKUR SENKRON OK 4wp"      # periyot DOLMADAN
+        node._ilan_ciddi = False
         node._publish_statustext(node._fsm.state)
+
         assert any("SENKRON OK" in t for t in yayinlanan), (
-            "parkurdayken ilan yutuldu — operatör hiç görmüyor"
+            "ilan tazeleme periyodunu bekledi — kurulum dogrulamasi 10 s gec"
+        )
+        assert node._last_statustext == "GIRDAP PARKUR SENKRON OK 4wp", (
+            "_last_statustext yayinlanmayan bir metni kaydetti"
         )
     finally:
         node.destroy_node()
+
+
+def test_ILAN_SEVIYESI_metinle_AYNI_kaynaktan(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Metin tek noktada atanır; seviye zinciri onu YENİDEN atamamalı.
+
+    İki ayrı yerde `text` atamak, kaptanın 14.08'de ölü dal olarak yakaladığı
+    hatanın kaynağıydı. Bu test o birleştirmeyi donduruyor.
+    """
+    kaynak = Path(girdap.__file__).read_text(encoding="utf-8")
+    seviye_blogu = kaynak[kaynak.index("msg = StatusText()"):]
+    assert 'text = f"GIRDAP {self._senkron_ilani}"' not in seviye_blogu, (
+        "seviye zinciri metni yeniden atiyor — tek atama noktasi bozuldu"
+    )
 
 
 class _SahteStatusTextYayinci:

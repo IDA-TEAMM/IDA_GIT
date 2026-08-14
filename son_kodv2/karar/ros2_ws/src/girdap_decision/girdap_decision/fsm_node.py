@@ -1063,12 +1063,24 @@ class FSMNode(Node):
         # PARKUR* durumlarında parkur katmanını da göster (ikisi ayrı otorite:
         # MissionFSM görev yaşam döngüsü, ParkurTransitionLogic waypoint
         # ilerlemesi — sahada ayrıştıklarında bunu görmek teşhis için kritik).
-        # 🔴 14.08 — TEK ATIŞLIK İLAN EN ÖNDE. Önceden PARKUR* durum metni
-        # önce geliyordu ve ilan o dalda hiç kullanılmadan aşağıda
-        # `self._senkron_ilani = None` ile DÜŞÜRÜLÜYORDU: yani araç bir
-        # parkurdayken üretilen her tek atışlık ilan (parkur senkronu, geçit
-        # şartı denetimi) operatöre HİÇ ULAŞMADAN çöpe gidiyordu. Sessizce.
-        # İlan bir tick sürer; durum metni bir sonraki tick'te geri gelir.
+        # 🔴 14.08 — TEK ATIŞLIK İLAN EN ÖNDE (metin TEK YERDE atanır).
+        #
+        # ⚠ Buradaki ilk teşhisim YANLIŞTI, kayda geçsin: "parkurdayken ilan
+        # operatöre hiç ulaşmıyor" demiştim; ulaşıyordu — aşağıdaki SEVİYE
+        # zinciri `text`i ilanla yeniden atıyordu. Mutasyon turu yakaladı
+        # (düzeltmeyi geri aldım, test yine geçti → test de iddia da boştu).
+        #
+        # GERÇEK KUSUR daha küçük ama gerçek: kısma/yineleme kararı
+        # (`degisti` + `statustext_periyot_s`) DURUM metnine göre veriliyor,
+        # yayınlanan ise İLAN oluyordu. Araç bir parkurda dururken durum metni
+        # değişmediği için ilan **tazeleme periyodu (10 s) dolana kadar
+        # bekliyordu**; üstelik `_last_statustext` hiç yayınlanmamış bir
+        # metni kaydediyordu. İlan tam da beklememesi gereken şeydir.
+        #
+        # ⇒ İlan en öne alındı: karar da yayın da AYNI metin üzerinden.
+        # Seviye zincirindeki yedek `text` ataması kaldırıldı — iki ayrı yerde
+        # metin atamak, kaptanın 14.08'de ölü dal olarak yakaladığı hatanın
+        # tam da kaynağıydı; tek atama noktası bırakıldı.
         if self._senkron_ilani:
             # Kilit teşhisinden ÖNCE gelir çünkü bu bir KURULUM doğrulaması —
             # operatör görevi yükledikten hemen sonra görmeli.
@@ -1108,10 +1120,7 @@ class FSMNode(Node):
         if state is MissionState.KILL:
             msg.severity = StatusText.CRITICAL
         elif self._senkron_ilani:
-            # Tek atış: bir kez gönderilir, sonra normal duruma dönülür.
-            # Kilit teşhisinden ÖNCE gelir çünkü bu bir KURULUM doğrulaması —
-            # operatör görevi yükledikten hemen sonra görmeli.
-            text = f"GIRDAP {self._senkron_ilani}"
+            # ⚠ Burada `text` ATANMAZ — metin yukarıdaki tek noktada kuruldu.
             # 🔴 14.08 — SEVİYE BURADA ATANMALI. Önceden ayrı bir
             # `elif self._senkron_ilani and "YOK" in ...` dalı vardı; koşulu bu
             # dalın ALT KÜMESİ olduğu için **hiç çalışmıyordu** (ölü kod) →
