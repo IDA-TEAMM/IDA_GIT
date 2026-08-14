@@ -82,6 +82,7 @@ from vision_msgs.msg import Detection3DArray
 
 from girdap_decision.qos_profiles import sensor_data_qos
 from girdap_decision.saat_kaynagi import bayatlik_saati
+from prototype.control.cmd_slew import EgimSinirlayici, EgimSinirlayiciConfig
 from prototype.control.mavros_bridge import MavrosBridge, MavrosBridgeConfig
 from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mission.edge_memory import EdgeBuoyMemory
@@ -483,6 +484,25 @@ class PlanningNode(Node):
         )
         self._son_setpoint_t: float | None = None
         self._setpoint_bosluk_sayaci = 0
+        # F-F.18 (14.08, §0.99u): cmd_vel EĞİM SINIRLAYICI.
+        # Su koşumunda ardışık komut farkı **azami 0,982 m/s** ölçüldü (10 Hz'te);
+        # teknenin fiilen yaptığı hızlanma ise %99'da 0,87-0,95 m/s². Yani
+        # komutun büyük kısmı takip edilemez ve düşük hız bölgesinde araç
+        # **iki katı** gidiyor (+0,34 m/s) — kapıya yaklaşırken çarpma riski.
+        # Varsayılan 0,8 m/s²: hem ölçülen %99'un altında hem `ATC_ACCEL_MAX`
+        # (1,0) ile yarışmıyor. Açısal eksen ölçülmediği için KAPALI (0.0).
+        self.declare_parameter("cmd_vel_azami_ivme_mps2", 0.8)
+        self.declare_parameter("cmd_vel_azami_acisal_ivme_rps2", 0.0)
+        self._egim = EgimSinirlayici(
+            EgimSinirlayiciConfig(
+                azami_ivme_mps2=float(
+                    self.get_parameter("cmd_vel_azami_ivme_mps2").value
+                ),
+                azami_acisal_ivme_rps2=float(
+                    self.get_parameter("cmd_vel_azami_acisal_ivme_rps2").value
+                ),
+            )
+        )
         self._isci_uyarildi = False
         # 🔴 14.08: bekçiyi kapatmak SESSİZ olmamalı. LiDAR yokken bilerek
         # sürmek meşru bir test ihtiyacı (gate/dataset koşusu), ama biri test
@@ -1438,11 +1458,17 @@ class PlanningNode(Node):
             self._publish_thrust(u)
             if gate.allow_cmd_vel:                   # yalnız GUIDED + armed
                 self._setpoint_akisini_denetle()
-                self._publish_cmd_vel(u)
+                # F-F.18 güvenlik sözleşmesi: `sebepler` doluysa bu tur bir
+                # BEKÇİ duruşudur (u yukarıda sıfırlandı) — eğim sınırlayıcı
+                # devre dışı, duruş ANINDA gider. Yalnız normal sürüşte yumuşat.
+                self._publish_cmd_vel(u, egim_sinirla=not sebepler)
             else:
                 # Geçit kapandı → sayaç sıfırlanır, yoksa bir sonraki arm'da
                 # kasıtlı sessizlik "kesinti" diye raporlanır.
                 self._son_setpoint_t = None
+                # Sınırlayıcı da düşer: bir sonraki arm'da eski komuttan
+                # rampalamak, aradaki duruşu yok sayıp araca sıçrama yaptırırdı.
+                self._egim.sifirla()
         except Exception as exc:                     # kontrol adımı ASLA çökmemeli
             self.get_logger().error(
                 f"kontrol adımı hatası → motorlar DURDURULDU: {exc!r}",
@@ -1705,7 +1731,15 @@ class PlanningNode(Node):
         # kodu `ariza_olay_tutma_s` boyunca aktif tutar, sonra düşürür.
         self._son_setpoint_bosluk_t = simdi
 
-    def _publish_cmd_vel(self, u: np.ndarray) -> None:
+    def _publish_cmd_vel(self, u: np.ndarray, *, egim_sinirla: bool = True) -> None:
+        # 🛟 `egim_sinirla=False` → EĞİM SINIRLAYICI TAMAMEN BYPASS (F-F.18).
+        # Bu bayrak bir ayar değil, GÜVENLİK SÖZLEŞMESİdir: bu node'daki bütün
+        # bekçiler (`DISARM-VEYA-KILL`, `POZ-SACMA`, `POZ-BAYAT`, `ENGEL-BAYAT`,
+        # kontrol adımı çökmesi) `u = zeros(2)` yazarak durur ve AYNI yayın
+        # yolundan geçer. Sınırlayıcı simetrik uygulanırsa o duruşlar da rampaya
+        # girer, yani sınırlayıcı deponun TÜM güvenlik kapılarını sakatlar.
+        # Bekçi kaynaklı sıfır bu yüzden hiç uğramaz + sınırlayıcı sıfırlanır.
+        #
         # Diferansiyel thruster → ileri sürat + yaw rate.
         #
         # 🔴 2026-08-06 (ÖLÇÜLDÜ, GIRDAP_DURUM §0.7d): eski formül
@@ -1744,11 +1778,17 @@ class PlanningNode(Node):
         # söylüyor; eski 2,0× hata bunu kısmen sönümlüyordu. Yani sahada fark
         # küçük görünebilir — ama iki hatanın birbirini götürmesine güvenilmez.
         p = self._pipe._dyn.p
-        twist = Twist()
-        twist.linear.x = float((u[0] + u[1]) / max(1e-6, abs(p.Xu)))
-        twist.angular.z = float(
+        hedef_u = float((u[0] + u[1]) / max(1e-6, abs(p.Xu)))
+        hedef_r = float(
             (u[1] - u[0]) * (p.thruster_spacing / 2.0) / max(1e-6, abs(p.Nr))
         )
+        if egim_sinirla:
+            hedef_u, hedef_r = self._egim.uygula(hedef_u, hedef_r, self._saat())
+        else:
+            self._egim.sifirla()
+        twist = Twist()
+        twist.linear.x = hedef_u
+        twist.angular.z = hedef_r
         self._pub_cmd_vel.publish(twist)
         self._cmd_vel_kadans_denetle()
 
@@ -1822,7 +1862,8 @@ class PlanningNode(Node):
         bir şey kalmaz — MAVROS kendi setpoint-timeout failsafe'ine düşer."""
         try:
             self._publish_thrust(np.zeros(2))
-            self._publish_cmd_vel(np.zeros(2))
+            # F-F.18: fail-safe duruşu ASLA rampalanmaz (güvenlik sözleşmesi).
+            self._publish_cmd_vel(np.zeros(2), egim_sinirla=False)
         except Exception:                            # yayım da çöktü — son çare
             pass
 

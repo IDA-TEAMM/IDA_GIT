@@ -1492,3 +1492,122 @@ def test_ff1_makul_poz_ENGELLENMEZ(ros_context) -> None:  # noqa: ANN001
         assert abs(float(node._pipe._state[0]) - 123.4) < 1e-6
     finally:
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# F-F.18 — cmd_vel EĞİM SINIRLAYICI (14.08.2026, GIRDAP_DURUM §0.99u)
+# Ölçülen arıza: ardışık komut farkı azami 0,982 m/s (10 Hz'te), teknenin
+# fiili hızlanması %99'da 0,87-0,95 m/s² → komut takip edilemiyor, düşük hız
+# bölgesinde araç iki katı gidiyor.
+# 🛟 Aşağıdaki İKİNCİ test GÜVENLİK SÖZLEŞMESİni dondurur: bu node'un bütün
+# bekçileri `u = zeros(2)` yazarak durur ve AYNI yayın yolundan geçer —
+# sınırlayıcı onları rampalarsa TÜM güvenlik kapıları sakatlanır.
+# --------------------------------------------------------------------------- #
+
+
+def test_ff18_cmd_vel_egim_sinirlanir(ros_context) -> None:  # noqa: ANN001
+    """Ardışık komut sıçraması ivme tavanına kırpılmalı."""
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("cmd_vel_azami_ivme_mps2", Parameter.Type.DOUBLE, 0.8)
+        ]
+    )
+    try:
+        p = node._pipe._dyn.p
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+        t = [100.0]
+        node._saat = lambda: t[0]                      # sahte saat
+
+        node._publish_cmd_vel(np.zeros(2))             # tohumlama → 0
+        assert yakalanan[-1].linear.x == pytest.approx(0.0)
+
+        t[0] += 0.1                                    # 10 Hz
+        node._publish_cmd_vel(np.array([p.max_thrust, p.max_thrust]))
+        # Sınırsız olsaydı 2·max_thrust/|Xu| ≈ 1,17 m/s fırlardı
+        assert yakalanan[-1].linear.x == pytest.approx(0.08), (
+            "eğim sınırlayıcı devrede değil — 0,8 m/s² × 0,1 s = 0,08 bekleniyor"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_ff18_BEKCI_durusu_ASLA_rampalanmaz(ros_context) -> None:  # noqa: ANN001
+    """🛟 GÜVENLİK: `egim_sinirla=False` sıfırı ANINDA geçirmeli.
+
+    Bu bayrak bir ayar değil sözleşmedir. Rampalanırsa `POZ-SACMA`,
+    `ENGEL-BAYAT`, `DISARM-VEYA-KILL` ve fail-safe duruşlarının hepsi gecikir.
+    """
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    node = pn.PlanningNode()
+    try:
+        p = node._pipe._dyn.p
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+        t = [100.0]
+        node._saat = lambda: t[0]
+
+        node._publish_cmd_vel(np.array([p.max_thrust, p.max_thrust]))
+        assert yakalanan[-1].linear.x > 1.0             # tam gazda
+
+        t[0] += 0.1
+        node._publish_cmd_vel(np.zeros(2), egim_sinirla=False)
+        assert yakalanan[-1].linear.x == 0.0, (
+            "BEKÇİ DURUŞU RAMPALANDI — güvenlik kapıları sakatlandı"
+        )
+        assert yakalanan[-1].angular.z == 0.0
+    finally:
+        node.destroy_node()
+
+
+def test_ff18_failsafe_sinirlayiciyi_bypass_eder(ros_context) -> None:  # noqa: ANN001
+    """`_safe_stop()` (kontrol adımı çökmesi) da anında sıfır basmalı."""
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    node = pn.PlanningNode()
+    try:
+        p = node._pipe._dyn.p
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+        t = [100.0]
+        node._saat = lambda: t[0]
+
+        node._publish_cmd_vel(np.array([p.max_thrust, p.max_thrust]))
+        t[0] += 0.1
+        node._safe_stop()
+        assert yakalanan[-1].linear.x == 0.0, "fail-safe duruşu rampalandı"
+    finally:
+        node.destroy_node()
+
+
+def test_ff18_sinir_sifirda_eski_davranis(ros_context) -> None:  # noqa: ANN001
+    """0 → sınır kapalı; A/B ölçümü için eski davranış birebir geri gelmeli."""
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("cmd_vel_azami_ivme_mps2", Parameter.Type.DOUBLE, 0.0)
+        ]
+    )
+    try:
+        p = node._pipe._dyn.p
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+        t = [100.0]
+        node._saat = lambda: t[0]
+
+        node._publish_cmd_vel(np.zeros(2))
+        t[0] += 0.1
+        node._publish_cmd_vel(np.array([p.max_thrust, p.max_thrust]))
+        assert yakalanan[-1].linear.x == pytest.approx(
+            2.0 * p.max_thrust / abs(p.Xu), rel=1e-6
+        )
+    finally:
+        node.destroy_node()

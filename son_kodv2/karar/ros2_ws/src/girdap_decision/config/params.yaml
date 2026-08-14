@@ -43,6 +43,18 @@ planning_node:
                              # hareket). CUDA portu gelince 50 Hz'e çıkılır (CLAUDE.md).
     bounds_x: [0.0, 200.0]   # m, yarışma alanı temsili
     bounds_y: [0.0, 200.0]
+    # F-F.18 (14.08.2026, GIRDAP_DURUM §0.99u) — cmd_vel EĞİM SINIRLAYICI.
+    # 14.08 su koşumunda ölçüldü: ardışık komut farkı azami **0,982 m/s**
+    # (10 Hz'te), komut 0,4 m/s altında kesintisiz ortanca **0,2 s** duruyor.
+    # Teknenin fiilen yaptığı hızlanma %99'da 0,87-0,95 m/s² → komut takip
+    # EDİLEMEZ ve düşük hız bölgesinde araç iki katı gidiyor (+0,34 m/s).
+    # 0,8: ölçülen %99'un altında + `ATC_ACCEL_MAX`(1,0) ile yarışmıyor.
+    # 0 → sınır kapalı (eski davranış, A/B ölçümü için).
+    cmd_vel_azami_ivme_mps2: 0.8
+    # ⚠ Açısal eksen KAPALI: yaw ivmesi ÖLÇÜLMEDİ. dynamics.yaml'ın inertia_z'si
+    # CFD değeri ve dosyanın kendi notu "suda doğrulanmadı" diyor — ölçülmemiş
+    # sayıdan sınır türetilmez. Diferansiyel step testi yapılınca açılacak.
+    cmd_vel_azami_acisal_ivme_rps2: 0.0
     replan_proximity: 2.0    # m, RRT* replan tetiği
     # F-P.9 (13.08.2026) — REPLAN FRENİ. RRT* planning_node'un TEK thread'inde
     # koşuyor; Jetson ölçümü: plan() 20 duba 331 ms, 100 engel 510 ms, en kötü
