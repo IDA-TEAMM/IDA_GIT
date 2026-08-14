@@ -13,6 +13,7 @@ Kapsam:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 from dataclasses import replace
@@ -771,14 +772,51 @@ def _boru_hatti_arena(bounds: Bounds) -> PlanningPipeline:
     return PlanningPipeline(bounds=bounds)
 
 
-def test_ARENA_ICI_hedefte_uyari_YOK(caplog) -> None:
+class _UyariYakala(logging.Handler):
+    """`caplog` YERİNE doğrudan handler — bkz. test_mppi.py §2026-08-10.
+
+    🔴 `caplog` YALNIZ rclpy PYTHONPATH'te DEĞİLKEN çalışır: ROS'un kurduğu
+    logging yönlendiricisi propagate yolunu atlar. Bu test dosyası hem
+    laptopta (rclpy yok → caplog çalışır) hem container/Jetson'da (rclpy var →
+    caplog SESSİZCE boş döner) koşuyor; caplog kullansaydı ROS ortamında
+    "uyarı basılmadı" diye yanlış kırmızı verirdi — 14.08'de tam bu oldu.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.kayitlar: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.kayitlar.append(record.getMessage())
+
+    @property
+    def metin(self) -> str:
+        return "\n".join(self.kayitlar)
+
+
+@contextlib.contextmanager
+def _uyarilari_dinle():                                    # noqa: ANN201
+    """`prototype.planning.pipeline` WARN'larını topla (ROS'tan bağımsız)."""
+    logger = logging.getLogger("prototype.planning.pipeline")
+    h = _UyariYakala()
+    eski = logger.level
+    logger.addHandler(h)
+    logger.setLevel(logging.WARNING)
+    try:
+        yield h
+    finally:
+        logger.removeHandler(h)
+        logger.setLevel(eski)
+
+
+def test_ARENA_ICI_hedefte_uyari_YOK() -> None:
     """Pay içinde kalan hedef normaldir — gürültü üretilmemeli."""
     pipe = _boru_hatti_arena(Bounds(0.0, 200.0, 0.0, 200.0))
     pipe.set_state(np.array([10.0, 10.0, 0.0, 0.0, 0.0, 0.0]))
-    with caplog.at_level(logging.WARNING):
+    with _uyarilari_dinle() as log:
         pipe.set_waypoints([(120.0, 150.0)])
     assert pipe.arena_tasma_sayisi == 0
-    assert "ARENA DIŞI" not in caplog.text
+    assert "ARENA DIŞI" not in log.metin
 
 
 def test_PAY_ICINDEKI_tasma_uyari_URETMIYOR() -> None:
@@ -791,7 +829,7 @@ def test_PAY_ICINDEKI_tasma_uyari_URETMIYOR() -> None:
     assert pipe.arena_tasma_sayisi == 0
 
 
-def test_ARENA_DISI_hedef_BAGIRIYOR(caplog) -> None:
+def test_ARENA_DISI_hedef_BAGIRIYOR() -> None:
     """🔴 Bozuk hedef (yanlış orijin / 0.0-0.0 yer tutucu) sessiz kalmamalı.
 
     F-S.17 kutuyu hedefe uydurarak kilidi çözdü; bedeli, hedefin NEREYE
@@ -800,8 +838,8 @@ def test_ARENA_DISI_hedef_BAGIRIYOR(caplog) -> None:
     """
     pipe = _boru_hatti_arena(Bounds(0.0, 200.0, 0.0, 200.0))
     pipe.set_state(np.array([10.0, 10.0, 0.0, 0.0, 0.0, 0.0]))
-    with caplog.at_level(logging.WARNING):
+    with _uyarilari_dinle() as log:
         pipe.set_waypoints([(5000.0, 200.0)])         # 4,8 km dışarıda
     assert pipe.arena_tasma_sayisi > 0
-    assert "ARENA DIŞI HEDEF" in caplog.text
-    assert "GÖREVİ DOĞRULA" in caplog.text
+    assert "ARENA DIŞI HEDEF" in log.metin
+    assert "GÖREVİ DOĞRULA" in log.metin

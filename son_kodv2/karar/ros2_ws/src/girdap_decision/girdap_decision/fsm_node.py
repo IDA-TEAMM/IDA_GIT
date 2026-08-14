@@ -193,8 +193,15 @@ class FSMNode(Node):
         # bunu ancak koşu bittikten sonra bag'den anlardık. Sonuç artık YKİ
         # ekranına da gidiyor — boksta, koşudan ÖNCE görülsün diye.
         self._senkron_ilani: Optional[str] = None
+        #: tek atışlık ilanın seviyesi. None → metinde "YOK" arayan eski sezgi.
+        self._ilan_ciddi: Optional[bool] = None
         self._parkur = self._build_parkur_logic()
         self._parkur_state_last = self._parkur.state       # geçiş log tespiti
+        #: algının bildirdiği geçilen FARKLI geçit sayısı (md 5.5.2.4 denetimi).
+        #: -1 = algıdan hiç haber gelmedi (sayaç 0'dan AYIRT EDİLİR: 0 "hiç
+        #: geçit geçmedik" demek, -1 "ölçen kimse yok" demek — ikisi farklı
+        #: arıza ve farklı mesaj gerektirir).
+        self._gecit_sayisi = -1
 
         # Son alınan poz / mavros durumu
         self._pose_xy: Optional[Tuple[float, float]] = None
@@ -257,6 +264,16 @@ class FSMNode(Node):
         )
         self._sub_gate = self.create_subscription(
             Bool, "/perception/gate_passed", self._on_gate_passed, 10
+        )
+        # 🔴 14.08 — ALGININ BASTIĞI AMA KİMSENİN DİNLEMEDİĞİ SAYAÇ.
+        # `duba_gecis_navigator` 04.08'den beri `/perception/gate_count`
+        # (geçilen FARKLI geçit sayısı) yayınlıyor; karar tarafında hiçbir
+        # abonesi yoktu. Algı ekibi `gate_passed` bayrağını tam da bu yüzden
+        # kapalı tutup (GATE_PASSED_YAYINLA=False) "dürüst olanı" bu sayaçla
+        # veriyordu — biz okumayınca md 5.5.2.4'ün "en az iki duba ikilisi"
+        # şartını ölçen tek kanal boşa akıyordu.
+        self._sub_gate_count = self.create_subscription(
+            Int32, "/perception/gate_count", self._on_gate_count, 10
         )
         # Görev yöneticisi tüm waypoint'leri bitirdi → TAMAMLANDI terminal (F12.2).
         # Video senaryosu (tek parkur, kamikaze yok) buradan temiz durur.
@@ -544,6 +561,23 @@ class FSMNode(Node):
         if msg.data:
             self._obs.last_gate_passed_p2 = True
 
+    def _on_gate_count(self, msg: Int32) -> None:
+        """Algının geçilen FARKLI geçit sayısı — md 5.5.2.4 denetim kanalı.
+
+        Geçişi SÜRMEZ (yetkili tetik waypoint ilerlemesi, bkz.
+        `_on_gate_passed`). İki işi var:
+          1. Parkur-2 bitmeden önce şartnamenin **en az iki duba ikilisi**
+             şartının tutup tutmadığını ölçmek,
+          2. tutmuyorsa YKİ ekranına BAĞIRMAK — çünkü bunu koşu bitmeden
+             öğrenirsek hâlâ düzeltilebilir; sonradan öğrenirsek puan gitmiştir.
+
+        ⚠ Sayaç **engellemez**: algı zinciri suda doğrulanmadı (YOLO modeli
+        yok), tek bir yanlış negatif Parkur-3'ün 145 puanını kapatırdı. Aynı
+        gerekçeyle A seçeneği reddedilmişti; burada da ölçüp söylüyoruz,
+        karar vermiyoruz.
+        """
+        self._gecit_sayisi = int(msg.data)
+
     def _on_mission_complete(self, msg: Bool) -> None:
         """Görev yöneticisi tüm waypoint'leri bitirdi → TAMAMLANDI terminal.
 
@@ -725,6 +759,51 @@ class FSMNode(Node):
         )
         return res
 
+    #: md 5.5.2.4 — Parkur-2'nin sayılması için gereken EN AZ duba ikilisi.
+    #: Şartnameden gelir, ayar değildir; `params.yaml`'a taşınmamalı.
+    ASGARI_GECIT = 2
+
+    def _gecit_sartini_denetle(self) -> None:
+        """Parkur-2 biterken md 5.5.2.4 şartı tuttu mu — TUTMADIYSA BAĞIR.
+
+        Parkur-2 puanı (G2/KD2 ×40) ve ödül sıralamasının kapısı buradan
+        geçiyor; üstelik md 657 gereği Parkur-3'ün 145 puanı da Parkur-2
+        tamamlanmadan açılmıyor. Koşu SIRASINDA öğrenilirse hâlâ telafi
+        edilebilir, sonradan öğrenilirse edilemez.
+
+        Üç hâl ayrı ayrı raporlanır — hepsi "eksik" değil:
+          * sayaç yok (-1)  → ölçen kimse yok (algı düğümü kapalı/çökmüş).
+                              Bu bir ALGI arızasıdır, parkur ihlali değil.
+          * sayaç < 2       → gerçek şartname riski.
+          * sayaç ≥ 2       → sessiz kalma, olumlu teyidi de yaz (operatör
+                              "ölçüldü mü" diye merak etmesin).
+        """
+        n = self._gecit_sayisi
+        if n < 0:
+            self.get_logger().warn(
+                "PARKUR-2 bitti ama GECIT SAYACI HIC GELMEDI "
+                "(/perception/gate_count). md 5.5.2.4'un 'en az iki duba "
+                "ikilisi' sarti OLCULEMEDI — algi dugumu kosuyor mu?"
+            )
+            self._senkron_ilani = "GECIT SAYACI YOK"
+            self._ilan_ciddi = True
+        elif n < self.ASGARI_GECIT:
+            self.get_logger().error(
+                f"PARKUR-2 {n} gecitle bitti — md 5.5.2.4 EN AZ "
+                f"{self.ASGARI_GECIT} duba ikilisi istiyor. Parkur-2 "
+                f"sayilmayabilir (G2/KD2 x40) ve md 657 geregi Parkur-3'un "
+                f"145 puani ACILMAYABILIR."
+            )
+            self._senkron_ilani = f"PARKUR2 EKSIK GECIT {n}<{self.ASGARI_GECIT}"
+            self._ilan_ciddi = True
+        else:
+            self.get_logger().info(
+                f"PARKUR-2 {n} gecitle tamamlandi (md 5.5.2.4 asgari "
+                f"{self.ASGARI_GECIT} SAGLANDI)."
+            )
+            self._senkron_ilani = f"PARKUR2 GECIT OK {n}"
+            self._ilan_ciddi = False
+
     # ----- tick döngüsü -----
 
     def _on_tick(self) -> None:
@@ -747,6 +826,7 @@ class FSMNode(Node):
 
         # Tek atış sinyalleri tüketildiğinde sıfırla
         if new_state is MissionState.PARKUR3:
+            self._gecit_sartini_denetle()
             self._obs.last_gate_passed_p2 = False
             # 14.08: yetkili tetik de tüketilir — yoksa yeniden başlamadan
             # sonra PARKUR2'ye dönüldüğünde bayrak hâlâ True olur ve araç
@@ -983,15 +1063,20 @@ class FSMNode(Node):
         # PARKUR* durumlarında parkur katmanını da göster (ikisi ayrı otorite:
         # MissionFSM görev yaşam döngüsü, ParkurTransitionLogic waypoint
         # ilerlemesi — sahada ayrıştıklarında bunu görmek teşhis için kritik).
-        if state in (
-            MissionState.PARKUR1, MissionState.PARKUR2, MissionState.PARKUR3
-        ):
-            text = f"GIRDAP {state.value} {self._parkur.state.value}"
-        elif self._senkron_ilani:
-            # Tek atış: bir kez gönderilir, sonra normal duruma dönülür.
+        # 🔴 14.08 — TEK ATIŞLIK İLAN EN ÖNDE. Önceden PARKUR* durum metni
+        # önce geliyordu ve ilan o dalda hiç kullanılmadan aşağıda
+        # `self._senkron_ilani = None` ile DÜŞÜRÜLÜYORDU: yani araç bir
+        # parkurdayken üretilen her tek atışlık ilan (parkur senkronu, geçit
+        # şartı denetimi) operatöre HİÇ ULAŞMADAN çöpe gidiyordu. Sessizce.
+        # İlan bir tick sürer; durum metni bir sonraki tick'te geri gelir.
+        if self._senkron_ilani:
             # Kilit teşhisinden ÖNCE gelir çünkü bu bir KURULUM doğrulaması —
             # operatör görevi yükledikten hemen sonra görmeli.
             text = f"GIRDAP {self._senkron_ilani}"
+        elif state in (
+            MissionState.PARKUR1, MissionState.PARKUR2, MissionState.PARKUR3
+        ):
+            text = f"GIRDAP {state.value} {self._parkur.state.value}"
         elif self._kilit_teshis:
             # KAR-03/KAR-08: yalnız "BOOT" / "BEKLEMEDE" yazmak operatöre
             # HİÇBİR ŞEY söylemiyor — sebep aynı satırda gitmeli.
@@ -1035,10 +1120,15 @@ class FSMNode(Node):
             # seviyesinden gidiyordu. Bu §0.58b'nin "gerçek arızayı gölgeleme"
             # kuralının ihlali: her görev yüklemesinde EMERGENCY gören operatör
             # gerçek acil durumu ayırt edemez.
-            msg.severity = (
-                StatusText.ERROR if "YOK" in self._senkron_ilani
-                else StatusText.NOTICE
+            # 14.08: sezgi (metinde "YOK" geçiyor mu) TEK kaynak olamaz —
+            # "PARKUR2 EKSIK GECIT 1<2" da ciddidir ama içinde "YOK" yok.
+            # `_ilan_ciddi` açıkça verilmişse o kazanır; verilmemişse eski
+            # sezgi aynen çalışır (kaptanın 14.08 düzeltmesi korunur).
+            ciddi = (
+                self._ilan_ciddi if self._ilan_ciddi is not None
+                else ("YOK" in self._senkron_ilani)
             )
+            msg.severity = StatusText.ERROR if ciddi else StatusText.NOTICE
         elif self._kilit_teshis:
             msg.severity = StatusText.ERROR
         else:
@@ -1048,6 +1138,7 @@ class FSMNode(Node):
         # Tek atışlık ilan gönderildi → düşür; bir sonraki tick normal duruma
         # döner. Sürekli basmak, asıl görev durumunu ekrandan siler.
         self._senkron_ilani = None
+        self._ilan_ciddi = None
 
 
 def main(args: list[str] | None = None) -> None:

@@ -1282,7 +1282,7 @@ def test_YENIDEN_BASLAMA_gorev_ilerlemesini_SIFIRLIYOR(ros_context, tmp_path) ->
         node._on_tick()
         assert node._fsm.state is MissionState.PARKUR3
 
-        node._yeniden_basla(Trigger.Request(), Trigger.Response())
+        node._on_reset_srv(Trigger.Request(), Trigger.Response())
         assert node._obs.p2_waypoints_done is False
         assert node._obs.last_gate_passed_p2 is False
 
@@ -1297,3 +1297,101 @@ def test_YENIDEN_BASLAMA_gorev_ilerlemesini_SIFIRLIYOR(ros_context, tmp_path) ->
         )
     finally:
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# 14.08 — md 5.5.2.4 geçit şartı denetimi (algının gate_count'u BAĞLANDI)
+# --------------------------------------------------------------------------- #
+
+
+def _parkur3e_surukle(node) -> None:                        # noqa: ANN001
+    """labels=[1,2,2,3] görevinde PARKUR3'e kadar götür."""
+    _drive_to_parkur1(node)
+    node._on_waypoint_reached(Int32(data=0))
+    node._on_tick()
+    node._on_waypoint_reached(Int32(data=2))
+    node._on_tick()
+
+
+def test_GECIT_SAYACI_HIC_GELMEZSE_bagiriyor(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Algı düğümü kapalı/çökmüşse şart ÖLÇÜLEMEZ — bu da söylenmeli.
+
+    "0 geçit" ile "ölçen kimse yok" farklı arızalardır; ikisi aynı mesajı
+    verirse operatör algı çöküşünü parkur ihlali sanır.
+    """
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
+    try:
+        _parkur3e_surukle(node)
+        assert node._fsm.state is MissionState.PARKUR3
+        assert node._senkron_ilani == "GECIT SAYACI YOK"
+        assert node._ilan_ciddi is True
+    finally:
+        node.destroy_node()
+
+
+def test_GECIT_EKSIKSE_sartname_riski_bagiriliyor(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """md 5.5.2.4: iki duba ikilisi altında Parkur-2 sayılmayabilir."""
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
+    try:
+        _drive_to_parkur1(node)
+        node._on_gate_count(Int32(data=1))              # yalnız 1 geçit
+        node._on_waypoint_reached(Int32(data=0))
+        node._on_tick()
+        node._on_waypoint_reached(Int32(data=2))
+        node._on_tick()
+        assert node._senkron_ilani == "PARKUR2 EKSIK GECIT 1<2"
+        assert node._ilan_ciddi is True
+    finally:
+        node.destroy_node()
+
+
+def test_GECIT_YETERLIYSE_olumlu_teyit_NORMAL_seviyede(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Olumlu teyit de yazılır ama ciddi DEĞİL (kaptanın 14.08 ölü-dal dersi)."""
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
+    try:
+        _drive_to_parkur1(node)
+        node._on_gate_count(Int32(data=3))
+        node._on_waypoint_reached(Int32(data=0))
+        node._on_tick()
+        node._on_waypoint_reached(Int32(data=2))
+        node._on_tick()
+        assert node._senkron_ilani == "PARKUR2 GECIT OK 3"
+        assert node._ilan_ciddi is False
+    finally:
+        node.destroy_node()
+
+
+def test_TEK_ATISLIK_ILAN_parkur_metnine_YUTULMUYOR(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 14.08 bulundu: PARKUR* durum metni ilanın önündeydi.
+
+    İlan o dalda hiç kullanılmadan `_senkron_ilani = None` ile düşürülüyordu —
+    araç bir parkurdayken üretilen HER tek atışlık ilan (parkur senkronu, geçit
+    şartı) operatöre ulaşmadan sessizce çöpe gidiyordu.
+    """
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
+    try:
+        _drive_to_parkur1(node)
+        assert node._fsm.state is MissionState.PARKUR1
+        node._senkron_ilani = "PARKUR SENKRON OK 4wp"
+        node._ilan_ciddi = False
+        yayinlanan: list[str] = []
+        node._pub_statustext = _SahteStatusTextYayinci(yayinlanan)
+        node._publish_statustext(node._fsm.state)
+        assert any("SENKRON OK" in t for t in yayinlanan), (
+            "parkurdayken ilan yutuldu — operatör hiç görmüyor"
+        )
+    finally:
+        node.destroy_node()
+
+
+class _SahteStatusTextYayinci:
+    """`_pub_statustext` yerine geçen sahte — metni toplar, aboneli görünür."""
+
+    def __init__(self, kutu: list) -> None:                  # noqa: ANN001
+        self._kutu = kutu
+
+    def get_subscription_count(self) -> int:
+        return 1
+
+    def publish(self, msg) -> None:                          # noqa: ANN001
+        self._kutu.append(msg.text)
