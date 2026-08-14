@@ -181,6 +181,12 @@ class PlanningNode(Node):
         # 10 Hz sürmeye devam ediyordu → GPS/EKF kesilse bile araç KÖR sürer.
         # Eşik fusion'ın pose_timeout_s'iyle aynı mantıkta (1 s); 0 → kapalı.
         self.declare_parameter("odom_timeout_s", 1.0)
+        # F-F.1 (§0.98a): pozun MAKULLÜK kapısı — `fusion_node`'dakinin ikizi.
+        # Burada da var çünkü poz kaynağı tek değil: `use_isam2:=false` video
+        # kolunda uçuş kontrolcüsünün pozu iletilir, sanal gölde sahte kaynak
+        # yayınlar. Kapıyı yalnız üreticiye koymak, üretici değişince korumayı
+        # sessizce kaybettirirdi. 0 -> kapalı.
+        self.declare_parameter("poz_makul_menzil_m", 5000.0)
         # F-P.2 (robustness taraması): obstacle_map için de F-P.1 ile aynı
         # bekçi — perception_lidar_node kaynağı (Livox sürücüsü/USB) donarsa
         # son bilinen engel listesi SONSUZA DEK kullanılmasın (var olmayan
@@ -387,6 +393,12 @@ class PlanningNode(Node):
         self._odom_timeout = float(self.get_parameter("odom_timeout_s").value)
         self._last_odom_t: float | None = None
         self._stale_warn_t = 0.0
+        # F-F.1: son gelen odom makul müydü? Kapı listesinde POZ-SACMA üretir.
+        self._poz_makul_menzil = float(
+            self.get_parameter("poz_makul_menzil_m").value
+        )
+        self._poz_sacma = False
+        self._poz_sacma_warn_t = 0.0
         # F-P.2: obstacle_map bayatlık takibi
         self._obstacle_timeout = float(
             self.get_parameter("obstacle_timeout_s").value
@@ -646,9 +658,47 @@ class PlanningNode(Node):
         psi = 2.0 * math.atan2(q.z, q.w)             # z-eksen quaternion → yaw
         v = msg.twist.twist.linear
         w = msg.twist.twist.angular
+
+        # 🔴 F-F.1 (§0.98a): SAÇMA POZ MPPI DURUMUNA GİRMEZ.
+        # `_last_odom_t` bilerek YUKARIDA güncellendi: mesaj GELDİ, kaynak
+        # susmuş değil. Onu güncellememek POZ-BAYAT üretirdi ve operatöre
+        # yanlış yeri gösterirdi ("kaynak sustu" ≠ "kaynak saçmalıyor").
+        # `set_state` ATLANIR — bozuk durum MPPI'ye girerse warm-start,
+        # kayan referans çapası ve kenar hafızası da kirlenir; sonraki
+        # sağlıklı poz gelse bile bunlar geri gelmez.
+        if not self._poz_makul(p.x, p.y, psi):
+            self._poz_sacma = True
+            return
+        self._poz_sacma = False
+
         self._pipe.set_state(np.array([p.x, p.y, psi, v.x, v.y, w.z]))
         self._last_xy = (p.x, p.y)               # bypass absolute hedef için
         self._last_psi = psi                     # gövde→dünya dönüşümü için
+
+    def _poz_makul(self, x: float, y: float, psi: float) -> bool:
+        """F-F.1: gelen poz sonlu ve makul menzilde mi (§0.98a).
+
+        `fusion_node._poz_makul` ile aynı ölçüt; ikisi ayrı ayrı durur çünkü
+        poz kaynağı değişebilir (iSAM2 / uçuş kontrolcüsü geçişi / sanal göl).
+        `isfinite` menzil testinden ÖNCE gelmeli: `nan` her karşılaştırmada
+        `False` döndürür, yani `hypot(nan,nan) <= menzil` testi `nan`'ı
+        "makul" saymaz ama `nan` psi'yi tek başına yakalayamaz.
+        """
+        if self._poz_makul_menzil <= 0.0:
+            return True
+        if (math.isfinite(x) and math.isfinite(y) and math.isfinite(psi)
+                and math.hypot(x, y) <= self._poz_makul_menzil):
+            return True
+        simdi = self._now()
+        if simdi - self._poz_sacma_warn_t >= 5.0:
+            self._poz_sacma_warn_t = simdi
+            self.get_logger().error(
+                f"🔴 POZ SACMA: x={x:.3e} y={y:.3e} psi={psi:.3e} "
+                f"(sinir {self._poz_makul_menzil:.0f} m) — MPPI durumu "
+                "GUNCELLENMEDI, thrust sifirlanacak. Fuzyon diverjansi "
+                "olabilir (§0.98a); kacis: use_isam2:=false."
+            )
+        return False
 
     # ----- frame dönüşümü -----
 
@@ -1361,6 +1411,12 @@ class PlanningNode(Node):
             if gate.zero_thrust:                     # disarm / KILL → motor stop
                 u = np.zeros(2)
                 sebepler.append("DISARM-VEYA-KILL")
+            if self._poz_sacma:                       # F-F.1: poz patladı → kör sürme
+                # POZ-BAYAT'tan ÖNCE: ikisi aynı anda doğru olabilir (saçma
+                # poz akarken kaynak sonra susarsa), ama operatöre gösterilecek
+                # olan SEBEP budur — "bayat" onu yanlış yere bakmaya iter.
+                u = np.zeros(2)
+                sebepler.append("POZ-SACMA")
             if self._odom_stale():                   # F-P.1: poz bayat → kör sürme
                 u = np.zeros(2)
                 self._warn_stale_odom()

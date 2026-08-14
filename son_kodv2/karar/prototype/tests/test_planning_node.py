@@ -1434,3 +1434,61 @@ def test_bekci_KAPALIYKEN_sessiz_kalmiyor(ros_context) -> None:  # noqa: ANN001
         )
     finally:
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------
+# F-F.1 (§0.98a) — SAÇMA POZ KAPISI (planning_node tarafı, savunma derinliği)
+#
+# Kapı `fusion_node`'da da var; burada TEKRAR var çünkü poz kaynağı tek değil
+# (use_isam2:=false kolunda uçuş kontrolcüsü, sanal gölde sahte kaynak).
+# --------------------------------------------------------------------------
+
+
+def test_ff1_sacma_poz_MPPI_DURUMUNA_GIRMEZ(ros_context) -> None:  # noqa: ANN001
+    """10¹⁴⁹'luk poz `set_state`'e ULAŞMAMALI.
+
+    Bozuk durum bir kez girerse warm-start (U_nominal), kayan referans çapası
+    ve kenar hafızası da kirlenir; sonraki sağlıklı poz bunları geri getirmez.
+    """
+    node = pn.PlanningNode()
+    try:
+        node._on_odom(_odom_poz(10.0, 20.0, 0.0))        # sağlıklı taban
+        saglikli = np.array(node._pipe._state, copy=True)
+
+        node._on_odom(_odom_poz(1.63e149, -7.05e148, 0.0))
+        assert node._poz_sacma is True, "saçma poz işaretlenmedi (F-F.1)"
+        assert np.allclose(node._pipe._state, saglikli), (
+            "saçma poz MPPI durumuna girdi — set_state atlanmıyor"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_ff1_sacma_poz_POZ_SACMA_SEBEBI_URETIR(ros_context) -> None:  # noqa: ANN001
+    """Kapı listesinde `POZ-SACMA` görünmeli — telsize giden kod bundan türer.
+
+    Ölçülen arızada `inhibit_reason` bütün koşum boyunca `YOK` diyordu; yani
+    sistem 'sürmemem için sebep yok' derken hiç sürmüyordu (§0.98b).
+    """
+    from prototype.telemetry.ariza_bildirici import POZ_SACMA, sebepten_kodla
+
+    node = pn.PlanningNode()
+    try:
+        node._on_odom(_odom_poz(float("nan"), 0.0, 0.0))
+        assert node._poz_sacma is True
+        assert POZ_SACMA in sebepten_kodla(["POZ-SACMA"]), (
+            "POZ-SACMA sebep→arıza eşlemesi yok; operatör telsizde göremez"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_ff1_makul_poz_ENGELLENMEZ(ros_context) -> None:  # noqa: ANN001
+    """KARŞIT NÖBETÇİ: normal poz durumu güncellemeye devam etmeli."""
+    node = pn.PlanningNode()
+    try:
+        node._on_odom(_odom_poz(123.4, -56.7, 0.3))
+        assert node._poz_sacma is False, "makul poz saçma sayıldı — kapı dar"
+        assert abs(float(node._pipe._state[0]) - 123.4) < 1e-6
+    finally:
+        node.destroy_node()

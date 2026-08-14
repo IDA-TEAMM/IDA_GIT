@@ -209,6 +209,36 @@ class FusionNode(Node):
         self._gps_kapi_pencere_s = float(self.get_parameter("gps_kapi_pencere_s").value)
         self._gps_kapi_min_dt_s = float(self.get_parameter("gps_kapi_min_dt_s").value)
         self._son_gps = None
+
+        # 🔴 F-F.1 (14.08.2026, §0.98a) — POZUN MAKULLÜK KAPISI.
+        # Ölçülen olay: 14.08 su koşumunda iSAM2 çözümü diverge etti ve bu
+        # düğüm `x=1,6e149` gibi bir pozu **10 Hz düzenlilikte** yayınlamaya
+        # devam etti. Uçuş kontrolcüsünün kendi pozu aynı anda sağlıklıydı
+        # (−8, 9 m). Aşağı akıştaki hiçbir bekçi görmedi çünkü üçü de
+        # TAZELİK ölçüyor: KAR-05 "hiç girdi geldi mi", F8.2 "girdi bayat mı",
+        # F-P.7 "hız bayat mı". Poz taze ve düzenliydi — yalnızca anlamsızdı.
+        # Sonuç: MPPI kendini (182, −931)'de sanıp bir süre GERİ komut verdi,
+        # sonra itki sıfırlandı ve GUIDED penceresi boyunca öyle kaldı.
+        #
+        # Kapı KAR-05'in kuralını sürdürür: **yalan söyleme, sus.** Değer
+        # makul değilse yayınlanmaz; tüketiciler zaten yokluğu doğru işliyor
+        # (POZ-YOK/POZ-BAYAT). Ayrıca `planning_node` aynı denetimi girişte
+        # tekrar yapar (savunma derinliği) ve orada `POZ-SACMA` sebebi
+        # üretilir — operatör telsizden arızanın ADINI görür.
+        #
+        # 5000 m nasıl seçildi: ENU orijini koşum başında araca çakılıyor
+        # (`_orijini_kaydet`) ve yarışma alanı birkaç yüz metre. 5 km hiçbir
+        # meşru koşumda aşılmaz ama equirectangular yaklaşımın bozulmadığı
+        # bölgede kalır. Ayarlanabilir bir eşik DEĞİL, "imkânsız"ın sınırı —
+        # KAR-06'daki `gps_max_hiz_mps=10` ile aynı mantık.
+        # 0 -> kapı kapalı (geriye tam uyum).
+        self.declare_parameter("poz_makul_menzil_m", 5000.0)
+        self._poz_makul_menzil = float(
+            self.get_parameter("poz_makul_menzil_m").value
+        )
+        self._poz_sacma_sayaci = 0
+        self._poz_sacma_uyari_t: float | None = None
+
         self._diag_timer = self.create_timer(5.0, self._log_diag)
 
         mode = "iSAM2" if self._use_isam2 else "MAVROS EKF geçişi (video)"
@@ -527,6 +557,48 @@ class FusionNode(Node):
             f"{merkez[1]:.7f}) — respawn'da bu deger geri yuklenecek"
         )
 
+    def _poz_makul(self, x: float, y: float, psi: float) -> bool:
+        """F-F.1: poz sonlu ve makul menzilde mi? Değilse yayın YAPILMAZ.
+
+        İki ayrı bozulma yakalanır:
+          1. `nan`/`inf` — filtre çöktüğünde ilk çıkan değer genelde budur;
+             karşılaştırma operatörleri `nan` ile hep `False` döndüğü için
+             menzil testi TEK BAŞINA yetmez, `isfinite` şart.
+          2. sonlu ama saçma büyüklük — 14.08'de ölçülen hâl (10¹⁴⁹).
+
+        ψ de denetlenir: `atan2` üretmesi gerektiği için normalde sonludur,
+        ama diverjansta `nan` olur ve `sin/cos` sessizce `nan` quaternion
+        üretip aşağı akışa taşırdı.
+        """
+        if self._poz_makul_menzil <= 0.0:
+            return True                       # kapı kapalı (geriye uyum)
+        sonlu = math.isfinite(x) and math.isfinite(y) and math.isfinite(psi)
+        if sonlu and math.hypot(x, y) <= self._poz_makul_menzil:
+            if self._poz_sacma_sayaci:
+                self.get_logger().info(
+                    f"poz makul araliga dondu ({self._poz_sacma_sayaci} "
+                    "mesaj atlanmisti) — odom yayini sürüyor"
+                )
+                self._poz_sacma_sayaci = 0
+                self._poz_sacma_uyari_t = None
+            return True
+
+        self._poz_sacma_sayaci += 1
+        # Telsiz/günlük seli olmasın: ilk olayda ve sonra 5 saniyede bir.
+        simdi = self._saat()
+        if (self._poz_sacma_uyari_t is None
+                or simdi - self._poz_sacma_uyari_t >= 5.0):
+            self._poz_sacma_uyari_t = simdi
+            self.get_logger().error(
+                f"🔴 POZ SACMA: x={x:.3e} y={y:.3e} psi={psi:.3e} — "
+                f"sonlu={sonlu}, menzil siniri {self._poz_makul_menzil:.0f} m. "
+                f"odom YAYINLANMIYOR ({self._poz_sacma_sayaci} mesaj atlandi). "
+                "Fuzyon cozumu diverge etmis olabilir (§0.98a): pusula hatasi "
+                "→ celiskili kisit → iSAM2 kacisi. Kacis yolu: "
+                "use_isam2:=false (ucus kontrolcusunun kendi pozu)."
+            )
+        return False
+
     def _on_publish_timer(self) -> None:
         try:
             x, y, psi = self._source.current_pose()
@@ -571,6 +643,10 @@ class FusionNode(Node):
                         "KESİLDİ (bayat pozla plan yapılmasın)"
                     )
                 return
+
+        # F-F.1: makullük kapısı — bkz. __init__'teki gerekçe (§0.98a).
+        if not self._poz_makul(x, y, psi):
+            return
 
         now = self.get_clock().now().to_msg()
         qz = math.sin(psi / 2.0)

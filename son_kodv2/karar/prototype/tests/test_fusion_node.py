@@ -422,3 +422,102 @@ def test_KAR06_makul_hareket_GECIYOR(ros_context) -> None:  # noqa: ANN001
         assert node._n_gps == n0 + 1, "makul hareket reddedildi"
     finally:
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------
+# F-F.1 (§0.98a) — POZUN MAKULLÜK KAPISI
+#
+# 14.08.2026 su koşumunda `/girdap/fusion/pose` iSAM2 diverjansıyla 10¹⁴⁹
+# mertebesine çıktı ve düğüm bunu 10 Hz düzenlilikte yayınlamaya devam etti.
+# Mevcut üç kapı (KAR-05 · F8.2 · F-P.7) tazelik ölçtüğü için hiçbiri görmedi.
+# Aşağıdaki iki nöbetçi kapıyı ve KARŞITINI (yanlış pozitif) donduruyor.
+# --------------------------------------------------------------------------
+
+
+def _bypass_node_ve_yardimci():                          # noqa: ANN202
+    """Bypass modunda düğüm + yayıncı/dinleyici (gtsam GEREKMEZ)."""
+    node = girdap.FusionNode(
+        parameter_overrides=[
+            Parameter("use_isam2", Parameter.Type.BOOL, False),
+        ]
+    )
+    helper = rclpy.create_node("test_fusion_ff1_helper")
+    pose_pub = helper.create_publisher(
+        PoseStamped, "/mavros/local_position/pose", 10
+    )
+    odoms: list[Odometry] = []
+    helper.create_subscription(
+        Odometry, "/girdap/fusion/odom", odoms.append, 10
+    )
+    return node, helper, pose_pub, odoms
+
+
+def _pompala(node, helper, pose_pub, pose, sure_s: float) -> None:  # noqa: ANN001
+    deadline = time.monotonic() + sure_s
+    while time.monotonic() < deadline:
+        pose_pub.publish(pose)
+        rclpy.spin_once(helper, timeout_sec=0.01)
+        for _ in range(6):
+            rclpy.spin_once(node, timeout_sec=0.01)
+
+
+def test_ff1_sacma_poz_YAYINLANMAZ(ros_context) -> None:  # noqa: ANN001
+    """10¹⁴⁹'luk poz odom'a ÇIKMAMALI — KAR-05'in kuralı: yalan söyleme, sus.
+
+    Ölçülen arıza birebir bu: değer taze ve düzenliydi, yalnız anlamsızdı;
+    aşağı akış onu 'geçerli poz' sanıp geri komut üretti (§0.98a).
+    """
+    node, helper, pose_pub, odoms = _bypass_node_ve_yardimci()
+    try:
+        pose = PoseStamped()
+        pose.pose.position.x = 1.63e149          # 14.08'de ÖLÇÜLEN büyüklük
+        pose.pose.position.y = 7.05e148
+        pose.pose.orientation.w = 1.0
+        _pompala(node, helper, pose_pub, pose, 2.0)
+        assert not odoms, (
+            f"saçma poz yayınlandı ({len(odoms)} mesaj) — F-F.1 kapısı yok "
+            "ya da menzil eşiği devre dışı"
+        )
+    finally:
+        helper.destroy_node()
+        node.destroy_node()
+
+
+def test_ff1_nan_poz_YAYINLANMAZ(ros_context) -> None:   # noqa: ANN001
+    """`nan` poz da elenmeli — menzil testi TEK BAŞINA yakalayamaz.
+
+    `nan <= menzil` her zaman False döner, yani menzil testi nan'ı 'makul'
+    saymaz; ama işaret şu ki `isfinite` olmadan nan bir ψ sessizce nan
+    quaternion üretip aşağı akışa taşınırdı.
+    """
+    node, helper, pose_pub, odoms = _bypass_node_ve_yardimci()
+    try:
+        pose = PoseStamped()
+        pose.pose.position.x = float("nan")
+        pose.pose.position.y = float("inf")
+        pose.pose.orientation.w = 1.0
+        _pompala(node, helper, pose_pub, pose, 2.0)
+        assert not odoms, "nan/inf poz yayınlandı — isfinite kapısı yok"
+    finally:
+        helper.destroy_node()
+        node.destroy_node()
+
+
+def test_ff1_makul_poz_ENGELLENMEZ(ros_context) -> None:  # noqa: ANN001
+    """KARŞIT NÖBETÇİ: normal poz geçmeye devam etmeli.
+
+    Kapının yanlış pozitif üretmediğini dondurur — yoksa 'arıza yok' diye
+    bütün yığını susturan bir düzeltme yapmış olurduk.
+    """
+    node, helper, pose_pub, odoms = _bypass_node_ve_yardimci()
+    try:
+        pose = PoseStamped()
+        pose.pose.position.x = 123.4             # makul saha ölçeği
+        pose.pose.position.y = -56.7
+        pose.pose.orientation.w = 1.0
+        _pompala(node, helper, pose_pub, pose, 3.0)
+        assert odoms, "makul poz yayınlanmadı — kapı fazla dar"
+        assert abs(odoms[-1].pose.pose.position.x - 123.4) < 1e-6
+    finally:
+        helper.destroy_node()
+        node.destroy_node()
