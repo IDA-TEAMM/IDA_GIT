@@ -39,6 +39,7 @@ Keyframe throttle (graf büyümesi):
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
 from typing import Optional, Tuple
@@ -47,6 +48,8 @@ import gtsam
 import numpy as np
 
 from prototype.fusion.isam2_smoother import ISAM2Smoother, ISAM2SmootherConfig
+
+_log = logging.getLogger(__name__)
 
 # WGS-84 yarı-büyük yarıçapı (ENU projeksiyonu için yeterli yaklaşım)
 _EARTH_R = 6378137.0
@@ -133,11 +136,49 @@ class FusionPipeline:
         self._lat0: Optional[float] = None
         self._lon0: Optional[float] = None
         self._cos_lat0: float = 1.0
+        #: NaN/Inf reddi bir kez WARN basar (sel olmasın), sayaç her zaman artar.
+        self._n_non_finite_rejected: int = 0
+        self._non_finite_warned: bool = False
 
     # ----- callback API (ROS 2 mesaj alanlarıyla 1:1 eşleşir) -----
 
+    def _reddet_non_finite(self, kaynak: str, *degerler: float) -> bool:
+        """🔴 14.08 — SONLU DEĞER KAPISI (bkz. `fusion_node._on_gps` KAR-06 ile
+        aynı aile). Jetson günlüğünde 13.08 22:46'da `fusion_node` **SIGSEGV**
+        ile öldü (exit code -11) — Python istisnası DEĞİL, native çökme, hiçbir
+        traceback bırakmadı. `_flush()`'un yakaladığı `IndeterminantLinear
+        SystemException` (bkz. o metodun docstring'i, 11.08 olayı) bu değil;
+        bu istisna FIRLATMADAN önce sistemi öldüren bir sınıf.
+
+        Kesin kök neden bir çekirdek dökümü olmadan KANITLANAMAZ — ama GTSAM'ın
+        Eigen tabanlı Cholesky çözücüsü NaN/Inf girdisinde C++ tarafında
+        segfault ÜRETEBİLİR (yönetilen bir istisna değil). Bu üç giriş noktası
+        (GPS lat/lon, IMU açısal hız + heading, body hızı) DIŞ DONANIMDAN
+        gelir — sistem sınırı. `_on_gps`'teki sıfır-kovaryans ve yenilik
+        kapıları da AYNI gerekçeyle var (kötü niyetli/bozuk veri); bu kapı
+        onların YANINDA, NaN/Inf boşluğunu kapatıyor.
+
+        Neden burada, ROS düğümünde DEĞİL: bu sınıf `sanal_gol.py`'nin sahte
+        beslemesini de besliyor — kapı ROS-bağımsız katmanda olursa HER iki
+        yol da korunur.
+        """
+        if all(math.isfinite(v) for v in degerler):
+            return False
+        self._n_non_finite_rejected += 1
+        if not self._non_finite_warned:
+            self._non_finite_warned = True
+            _log.error(
+                "%s: NaN/Inf DEĞER REDDEDİLDİ (%s) — geçerli bir sensör bunu "
+                "üretmez. Muhtemel sebep: bozuk sürücü/hat. Kabul edilseydi "
+                "GTSAM'a native çökme (SIGSEGV) riskiyle giderdi.",
+                kaynak, degerler,
+            )
+        return True
+
     def on_velocity(self, vx_body: float, vy_body: float) -> None:
         """Body-frame hız akümülatörünü güncelle (TwistStamped.linear)."""
+        if self._reddet_non_finite("on_velocity", vx_body, vy_body):
+            return
         self._vx_body = vx_body
         self._vy_body = vy_body
 
@@ -156,6 +197,9 @@ class FusionPipeline:
             düzeltmesi atlanır (eski davranış).
         Dönüş: True ise smoother'a yeni key yazıldı.
         """
+        degerler = (t, omega_z) if psi is None else (t, omega_z, psi)
+        if self._reddet_non_finite("on_imu", *degerler):
+            return False
         if psi is not None:
             self._last_psi_sample = psi
         if self._last_imu_t is None:
@@ -188,6 +232,9 @@ class FusionPipeline:
         config gps_sigma_xy. Reddedilmiş fix'ler buraya HİÇ gelmemeli
         (bkz. fusion.gps_quality.sigma_for_status).
         """
+        degerler = (lat, lon) if sigma_xy is None else (lat, lon, sigma_xy)
+        if self._reddet_non_finite("on_gps", *degerler):
+            return
         if self._lat0 is None:
             # İlk fix → origin. Smoother başlangıçtan beri (0,0)'da; origin
             # buraya pinlenir. add_gps eklemeden update yapma; X(0) zaten
