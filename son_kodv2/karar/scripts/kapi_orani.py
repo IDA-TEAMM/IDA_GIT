@@ -129,6 +129,31 @@ def _kesisiyor(a, b, p, q) -> bool:
     return ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0))
 
 
+def _sinir_kutusu(parkur, baslangic, gn) -> Bounds:
+    """MPPI sınır kutusu — SAHNEDEN türer, elle yazılmaz (§0.86).
+
+    🔴 14.08.2026'DA BULUNDU: kutu `Bounds(-20, 60, -25, 25)` diye sabit
+    yazılmıştı. A maddesiyle eklenen **GN5 = (90, 0)** bu kutunun **30 m
+    DIŞINDA** kaldı. `w_boundary=1000` bir DUVAR olduğu için tekne
+    `x = 59,9`'da durup 900 s'lik tavana kadar orada bekledi — 26 m
+    yakınında hiçbir duba yokken, itkinin %13'üyle. Ölçülen "52 m yol
+    678 s, **13× yavaş**" sayısı işte bu bekleyiştir; kontrolcünün
+    yavaşlığı DEĞİL (§0.86a).
+
+    👉 Ders §0.81c'nin (GN5 artefaktı) aynısı: **sahneyi tarif eden her
+    sayı sahneden türetilir.** Kutu artık duba + görev noktası + başlangıç
+    kümesinin sınırlayıcı dikdörtgeni + pay.
+    """
+    xs = [b[0] for b in parkur.dubalar()] + [p[0] for p in gn] + [baslangic[0]]
+    ys = [b[1] for b in parkur.dubalar()] + [p[1] for p in gn] + [baslangic[1]]
+    # Pay: RRT*/MPPI'nin manevra için kutunun içinde yer bulması gerekir.
+    # Terminal lookahead (3 m) + engel payı (1 m) + tekne boyu mertebesinde
+    # bir marj yerine, sahnenin kendi ölçeğinin beşte biri alınır — parkur
+    # büyürse pay da büyür, uydurma sabit kalmaz.
+    pay = max(10.0, 0.2 * max(max(xs) - min(xs), max(ys) - min(ys)))
+    return Bounds(min(xs) - pay, max(xs) + pay, min(ys) - pay, max(ys) + pay)
+
+
 def kosum(
     parkur,
     *,
@@ -139,14 +164,23 @@ def kosum(
     huni_tavani: float = HUNI_TAVANI,
     mppi_k: int = URETIM_K,
     mppi_t: int = URETIM_T,
+    iz: Optional[List[dict]] = None,
 ) -> dict:
-    """Kapalı döngüyü bir kez koştur, kapı geçiş metriklerini döndür."""
+    """Kapalı döngüyü bir kez koştur, kapı geçiş metriklerini döndür.
+
+    `iz` verilirse her adım için bir kayıt eklenir (`--iz` kipi, §0.86).
+    🔑 NEDEN İTKİ DE KAYDEDİLİYOR: "yavaşlık" tek başına iki farklı arızayı
+    aynı sayıya indirger. Ayıran şey KOMUTun kendisidir —
+      · itki YÜKSEK + hız ~0  → kuvvetler dengede: **sıkışma** (yerel minimum)
+      · itki ~0    + hız ~0  → kontrolcü gitmemeyi SEÇİYOR: **maliyet işlevi**
+    İkisi tamamen farklı iş gerektirir; iz olmadan ayrılamazlar.
+    """
     kapilar = parkur.kapilar
     dubalar = parkur.dubalar()
     gn = gorev_rotasi(parkur)
     dyn = CatamaranDynamics()
     pipe = PlanningPipeline(
-        Bounds(-20.0, 60.0, -25.0, 25.0),
+        _sinir_kutusu(parkur, baslangic, gn),
         # ⚠ VARSAYILAN K=200/T=30 HIZ İÇİNDİR, ÜRETİM DEĞİL. Üretim
         # `params.yaml`: K=1000, T=50 → ufuk 2,5 s. `terminal_lookahead_m=3,0`
         # ÜRETİM ufkuna göre seçilmişti (kural: la ≥ seyir × ufuk =
@@ -257,6 +291,21 @@ def kosum(
                 )
         onceki = simdi
 
+        if iz is not None:
+            iz.append({
+                "t": t,
+                "x": simdi[0], "y": simdi[1],
+                "hiz": math.hypot(float(state[3]), float(state[4])),
+                "surge": float(state[3]),
+                "itki": float(u[0] + u[1]),        # net ileri komut (N)
+                "itki_mutlak": float(abs(u[0]) + abs(u[1])),
+                "en_yakin_engel": min(
+                    (math.hypot(bx - simdi[0], by - simdi[1]) for bx, by in dubalar),
+                    default=float("inf"),
+                ),
+                "gn": idx,
+            })
+
         if math.hypot(
             state[0] - gn[idx][0], state[1] - gn[idx][1]
         ) <= VARIS_YARICAP:
@@ -331,6 +380,106 @@ def baslangiclar(parkur, zor: bool, adet: int) -> List[Tuple[Tuple[float, float]
     return out
 
 
+#: `--iz` eşikleri. DURGUN eşiği erişilebilir hızın onda biri — sabit sayı
+#: değil, plant'tan türer (§0.85a'nın karar ölçütü: |v| < 0,1 m/s).
+DURGUN_ORAN = 0.10          # u_max'ın bu kadarının altı "durgun"
+EPIZOT_ASGARI_S = 3.0       # bundan uzun durgunluk bir "duraklama epizodu"
+
+
+def _iz_kosumu(parkur, a) -> None:
+    """TEK koşum + hız/itki izi → yavaşlığın kökünü ayır (§0.86).
+
+    Çıktı, §0.85a'da tanımlanan karar ölçütünü doğrudan verir:
+    durgun geçen sürenin oranı **>%50 → H2 (duraklama)**, **<%20 → H1
+    (düzgün sürünme)**. Aradaki bant "ikisi de var" demektir ve iz
+    epizot tablosuyla hangisinin baskın olduğunu gösterir.
+    """
+    dyn = CatamaranDynamics()
+    u_max = _erisilebilir_seyir_hizi(dyn)
+    itki_max = 2.0 * dyn.p.max_thrust
+    durgun_esik = DURGUN_ORAN * u_max
+    poz, aci = baslangiclar(parkur, a.zor, 1)[0]
+
+    iz: List[dict] = []
+    r = kosum(parkur, baslangic=poz, yon_hatasi_rad=aci,
+              model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni,
+              mppi_k=a.K, mppi_t=a.T, iz=iz)
+    if not iz:
+        print("iz boş — koşum hiç adım atmadı")
+        return
+
+    dt = iz[1]["t"] - iz[0]["t"] if len(iz) > 1 else 0.1
+    hizlar = [k["hiz"] for k in iz]
+    durgun = [k for k in iz if k["hiz"] < durgun_esik]
+    oran = len(durgun) / len(iz)
+
+    print(f"parkur: {len(parkur.kapilar)} kapı · MPPI K={a.K} T={a.T} "
+          f"· başlangıç ({poz[0]:.1f}, {poz[1]:.1f}) {math.degrees(aci):.0f}°")
+    print(f"erişilebilir hız {u_max:.2f} m/s · durgun eşiği {durgun_esik:.3f} m/s "
+          f"· azami itki {itki_max:.2f} N\n")
+    print(f"süre {r['sure']:.0f} s · yol {r['alinan_yol']:.1f} m "
+          f"· kapı {r['gecilen']}/{r['toplam_kapi']} · GN {r['varilan_gn']}/{r['toplam_gn']}")
+    print(f"hız: ortalama {statistics.mean(hizlar):.3f} · "
+          f"ortanca {statistics.median(hizlar):.3f} · "
+          f"tepe {max(hizlar):.3f} m/s")
+
+    print(f"\n{'='*60}\nKARAR ÖLÇÜTÜ — durgun geçen süre: "
+          f"%{100*oran:.1f}  ({len(durgun)*dt:.0f} / {len(iz)*dt:.0f} s)")
+    if oran > 0.50:
+        print("  → **H2 baskın**: yavaşlık DURAKLAMA epizotlarından geliyor.")
+    elif oran < 0.20:
+        print("  → **H1 baskın**: tekne her yerde yavaş (düzgün sürünme).")
+    else:
+        print("  → KARIŞIK: ikisi de var, epizot tablosuna bak.")
+
+    # Durgunken itki ne yapıyor? Asıl ayırt edici bu.
+    if durgun:
+        itki_durgun = statistics.mean(k["itki_mutlak"] for k in durgun)
+        print(f"\nDURGUNKEN İTKİ: ortalama {itki_durgun:.3f} N "
+              f"(azaminin %{100*itki_durgun/itki_max:.0f}'i)")
+        if itki_durgun > 0.5 * itki_max:
+            print("  → komut VAR ama tekne gitmiyor: **kuvvetler dengede / "
+                  "sıkışma** (yerel minimum).")
+        elif itki_durgun < 0.2 * itki_max:
+            print("  → komut da YOK: kontrolcü gitmemeyi SEÇİYOR → "
+                  "**maliyet işlevi** (ilerlemeyi ödüllendiren terim eksik).")
+        else:
+            print("  → ara değer: kısmi itki; iki mekanizma karışık.")
+
+    # Duraklama epizotları
+    epizotlar, bas = [], None
+    for k in iz:
+        if k["hiz"] < durgun_esik:
+            if bas is None:
+                bas = k
+        elif bas is not None:
+            if k["t"] - bas["t"] >= EPIZOT_ASGARI_S:
+                epizotlar.append((bas, k))
+            bas = None
+    if bas is not None and iz[-1]["t"] - bas["t"] >= EPIZOT_ASGARI_S:
+        epizotlar.append((bas, iz[-1]))
+
+    print(f"\n{EPIZOT_ASGARI_S:.0f} sn'den uzun duraklama: {len(epizotlar)} adet")
+    if epizotlar:
+        toplam = sum(b["t"] - a0["t"] for a0, b in epizotlar)
+        print(f"  toplam {toplam:.0f} s (koşumun %{100*toplam/r['sure']:.0f}'i)")
+        print(f"  {'başlangıç':>10} {'süre':>7} {'konum':>16} "
+              f"{'en yakın duba':>14} {'GN':>4}")
+        for a0, b in sorted(epizotlar, key=lambda e: e[0]["t"] - e[1]["t"])[:10]:
+            print(f"  {a0['t']:9.0f}s {b['t']-a0['t']:6.0f}s "
+                  f"({a0['x']:6.1f},{a0['y']:6.1f}) "
+                  f"{a0['en_yakin_engel']:13.2f}m {a0['gn']:4d}")
+
+    # Hız dağılımı — sürünme mi, dur-kalk mı, gözle görülür olsun
+    print("\nhız dağılımı:")
+    kenarlar = [0.0, durgun_esik, 0.3, 0.6, 0.9, u_max, 99.0]
+    adlar = ["durgun", f"<0.30", "<0.60", "<0.90", f"<{u_max:.2f}", "üstü"]
+    for i, ad in enumerate(adlar):
+        n = sum(1 for h in hizlar if kenarlar[i] <= h < kenarlar[i + 1])
+        print(f"  {ad:>8} {'█' * max(0, round(40 * n / len(hizlar))):<40} "
+              f"%{100*n/len(hizlar):4.1f}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Kapı geçme oranı ölçümü")
     ap.add_argument("--kosum", type=int, default=12, help="koşum sayısı")
@@ -344,7 +493,14 @@ def main() -> None:
                     help=f"MPPI ufku (varsayılan ÜRETİM {URETIM_T})")
     ap.add_argument("--huni", type=float, default=HUNI_TAVANI,
                     help="kapı direği huni payı TAVANI (m) — süpürme ekseni")
+    ap.add_argument("--iz", action="store_true",
+                    help="TEK koşumun hız/itki izini çıkar (yavaşlığın kökü: "
+                         "düzgün sürünme mi, duraklama epizotları mı?)")
     a = ap.parse_args()
+
+    if a.iz:
+        _iz_kosumu(parkuru_oku(), a)
+        return
 
     parkur = parkuru_oku()
     basl = baslangiclar(parkur, a.zor, a.kosum)
