@@ -997,7 +997,6 @@ class FSMNode(Node):
         msg = StatusText()
         msg.header.stamp = self.get_clock().now().to_msg()
         # KILL operatörün ANINDA görmesi gereken tek durum → kırmızı seviye.
-        # KILL operatörün ANINDA görmesi gereken tek durum → kırmızı seviye.
         # KAR-03 BOOT kilidi de görev-durduran bir arıza; NOTICE seviyesinde
         # Mission Planner mesaj akışında diğer satırların arasında kaybolur.
         if state is MissionState.KILL:
@@ -1007,8 +1006,18 @@ class FSMNode(Node):
             # Kilit teşhisinden ÖNCE gelir çünkü bu bir KURULUM doğrulaması —
             # operatör görevi yükledikten hemen sonra görmeli.
             text = f"GIRDAP {self._senkron_ilani}"
-        elif self._senkron_ilani and "YOK" in self._senkron_ilani:
-            msg.severity = StatusText.ERROR
+            # 🔴 14.08 — SEVİYE BURADA ATANMALI. Önceden ayrı bir
+            # `elif self._senkron_ilani and "YOK" in ...` dalı vardı; koşulu bu
+            # dalın ALT KÜMESİ olduğu için **hiç çalışmıyordu** (ölü kod) →
+            # `severity` atanmadan kalıyor, varsayılan **0 = EMERGENCY** oluyordu.
+            # Sonuç: OLUMLU teyit (`SENKRON OK`) bile MAVLink'in EN YÜKSEK
+            # seviyesinden gidiyordu. Bu §0.58b'nin "gerçek arızayı gölgeleme"
+            # kuralının ihlali: her görev yüklemesinde EMERGENCY gören operatör
+            # gerçek acil durumu ayırt edemez.
+            msg.severity = (
+                StatusText.ERROR if "YOK" in self._senkron_ilani
+                else StatusText.NOTICE
+            )
         elif self._kilit_teshis:
             msg.severity = StatusText.ERROR
         else:

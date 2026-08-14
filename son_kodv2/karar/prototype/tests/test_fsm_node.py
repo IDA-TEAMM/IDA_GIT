@@ -1133,6 +1133,16 @@ def test_MADDE0_senkron_VARSA_da_bildiriliyor(ros_context, tmp_path) -> None:  #
         node._on_waypoints(_path(3))              # dosyadaki etiket sayisi
         node._publish_statustext(MissionState.BOOT)
         assert "SENKRON OK 3wp" in yollanan[-1].text, f"gelen: {yollanan[-1].text!r}"
+        # 🔴 14.08 — SEVİYE DE SINANIYOR. Bu satır yokken bir ölü dal fark
+        # edilmeden geçti: `severity` hiç atanmıyordu ve varsayılan
+        # **0 = EMERGENCY** kalıyordu, yani OLUMLU teyit MAVLink'in en yüksek
+        # seviyesinden gidiyordu. Metni sınayıp seviyeyi sınamamak, mesajın
+        # operatör ekranındaki ASIL etkisini ölçmemek demek.
+        from mavros_msgs.msg import StatusText
+        assert yollanan[-1].severity == StatusText.NOTICE, (
+            f"olumlu teyit NOTICE olmalı, gelen severity={yollanan[-1].severity} "
+            "(0=EMERGENCY gerçek arızayı gölgeler, §0.58b)"
+        )
     finally:
         node.destroy_node()
 
