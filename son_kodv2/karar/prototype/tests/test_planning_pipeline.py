@@ -733,16 +733,21 @@ def test_fs17_sicak_yolda_da_sinir_tazelenir():
     pipe.compute_control()
     ilk = pipe._mppi
     assert ilk is not None
+    ilk_y_min = ilk.bounds.y_min
 
-    # Aynı parkur, aynı cfg → kontrolcü KORUNMALI; ama hedef kutu dışına kaçtı.
-    pipe.set_waypoints([(27.3, -23.7)])
+    # ⚠ İKİNCİ HEDEF, İLK KUTUNUN PAYINDAN DAHA UZAĞA konmalı. Aksi hâlde
+    # ilk kurulumun `bounds_margin_m` payı hedefi zaten kapsar ve test,
+    # tazeleme kaldırılsa bile geçer (mutasyon turunda tam bu yaşandı:
+    # ilk kutu y_min=-30 idi ve -23,7'yi kendiliğinden içeriyordu).
+    uzak = (27.3, ilk_y_min - 50.0)
+    pipe.set_waypoints([uzak])
     pipe.compute_control()
 
     assert pipe._mppi is ilk, "kontrolcü yeniden kuruldu — warm-start koruması bozuldu"
     b = pipe._mppi.bounds
-    assert b.y_min <= -23.7, (
-        f"sıcak yolda sınır tazelenmedi (y_min={b.y_min}) — "
-        "araç ilerledikçe eski kutuyla kalır"
+    assert b.y_min <= uzak[1], (
+        f"sıcak yolda sınır tazelenmedi (y_min={b.y_min}, hedef y={uzak[1]}) — "
+        "araç ilerledikçe MPPI eski kutuyla kalır"
     )
 
 
