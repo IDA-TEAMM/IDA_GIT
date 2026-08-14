@@ -406,6 +406,52 @@ class PlanningPipeline:
         self._replan_ertelendi += 1
         return True
 
+    def _etkin_sinir(self) -> Bounds:
+        """İKİ PLANLAYICININ ORTAK sınır kutusu = statik kutu ∪ (start/goal ± pay).
+
+        🔴 **14.08.2026 — F-S.17. Bu daha önce YALNIZ RRT\\*'a uygulanıyordu**
+        (F10.2), MPPI ham `self._bounds`'u alıyordu. Sonuç: iki planlayıcı
+        dünyanın nerede bittiği konusunda ANLAŞMIYORDU — RRT* kutunun dışına
+        rahatça yol çiziyor, MPPI `w_boundary=1000` duvarıyla o yolu takip
+        etmeyi reddediyordu. Araç sessizce duruyordu; ne hata ne uyarı.
+
+        **İki yerde ölçüldü:**
+          · Sanal ölçüm (§0.86a): GN5=(90,0) kutunun 30 m dışındaydı → tekne
+            `x=59,9`'da durup 900 s tavana kadar bekledi (26 m yakınında duba
+            yok, itki %13). Kutu düzeltilince **900 s → 220 s**.
+          · Gerçek donanım (§0.87c): 13.08 GUIDED koşumunda görev hedefi
+            **(27,3, −23,7)**, `params.yaml`'daki kutu ise `y ∈ [0, 200]` →
+            hedef **23,7 m dışarıda**.
+
+        **Neden bu doğru çözüm (dış kaynak):**
+          · **MPC yinelemeli uygulanabilirlik (recursive feasibility):** sert
+            durum kısıtı referansı dışarıda bırakırsa problem UYGULANAMAZ olur;
+            literatürün standart çaresi kısıtı yumuşatmak ya da hedefi
+            uygulanabilir kümeye taşımaktır. `w_boundary=1000` adı ceza olsa da
+            öteki terimlerin (w_track 5, w_terminal 50) yanında fiilen SERT.
+          · **Nav2 pratiği:** hedef global costmap'in dışındaysa planlama
+            "her zaman başarısız olur" ve bunu **uyarı basarak** yapar. Bizim
+            eşdeğer durumumuz **sessiz** — asıl tehlike buydu.
+          · **Hiyerarşik planlama literatürü:** katmanlar farklı kısıt kümesi
+            kullanınca yerel kontrolcü global yolu reddeder ve sistem kilide
+            girer; çözüm katmanları CASCADE etmek değil, kısıt yönetimini
+            BİRLEŞTİRMEK.
+
+        ⚠ Kutu yalnız BÜYÜR (statik kutuyla `min`/`max`); yani sınırın koruma
+        işlevi kaybolmaz, yalnız "hedefin kendisi duvarın dışında" patolojisi
+        imkânsızlaşır. Gerçek parkur sınırı F-S.16'da algıdan türetilecek.
+        """
+        b, pay = self._bounds, self.cfg.bounds_margin_m
+        xs = [b.x_min, b.x_max]
+        ys = [b.y_min, b.y_max]
+        noktalar = [(float(self._state[0]), float(self._state[1]))]
+        if self._waypoints:
+            noktalar.append(self._waypoints[-1])
+        for px, py in noktalar:
+            xs += [px - pay, px + pay]
+            ys += [py - pay, py + pay]
+        return Bounds(min(xs), max(xs), min(ys), max(ys))
+
     @staticmethod
     def _engel_imzasi(obstacles: List[CircleObstacle]) -> Tuple:
         """Engel kümesinin içerik imzası (sıra bağımsız, cm çözünürlüğünde).
@@ -483,15 +529,8 @@ class PlanningPipeline:
             return False
         start = (float(self._state[0]), float(self._state[1]))
         goal = self._waypoints[-1]
-        # F10.2: örnekleme alanı = statik bounds ∪ (start/goal ± pay).
-        # start/goal'in daima alan içinde kalmasını garanti eder.
-        b, pay = self._bounds, self.cfg.bounds_margin_m
-        bounds = Bounds(
-            min(b.x_min, start[0] - pay, goal[0] - pay),
-            max(b.x_max, start[0] + pay, goal[0] + pay),
-            min(b.y_min, start[1] - pay, goal[1] - pay),
-            max(b.y_max, start[1] + pay, goal[1] + pay),
-        )
+        # F10.2 → F-S.17: örnekleme alanı artık MPPI ile ORTAK (`_etkin_sinir`).
+        bounds = self._etkin_sinir()
         # F-P.10: ARAÇ HAREKETTEYKEN plan AYRI SÜREÇTE koşar. İlk plan
         # (`_ref_path is None`) bilerek SENKRON kalır: görev başında araç
         # duruyor ve `cmd_vel` akışı yok — orada bloklamak zararsız, referanssız
@@ -691,13 +730,20 @@ class PlanningPipeline:
         if self._ref_path is None:
             return
         new_cfg = self._active_mppi_cfg()
+        sinir = self._etkin_sinir()                  # F-S.17: RRT* ile AYNI kutu
         if self._mppi is not None and new_cfg == self._mppi.cfg:
+            # ⚠ SICAK YOL — kontrolcü korunur (warm-start, F11.1). Sınır
+            # `cfg`'nin parçası DEĞİL, ayrı bir kurucu argümanı; bu yüzden
+            # burada ELLE tazelenmeli. Tazelenmezse araç ilerledikçe MPPI eski
+            # kutuyla kalır ve F-S.17 yalnız parkur geçişlerinde düzelir —
+            # yani hatanın en sinsi hâli geri gelir.
+            self._mppi.bounds = sinir
             self._mppi.set_obstacles(self._obstacles)
             self._mppi.set_reference(self._ref_path, spacing=self.cfg.ref_spacing)
             return
         onceki = self._mppi
         self._mppi = MPPIController(
-            self._dyn, self._bounds, self._obstacles, new_cfg
+            self._dyn, sinir, self._obstacles, new_cfg
         )
         self._mppi.set_reference(self._ref_path, spacing=self.cfg.ref_spacing)
         if onceki is not None:

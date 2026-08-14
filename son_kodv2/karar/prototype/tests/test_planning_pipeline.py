@@ -672,3 +672,84 @@ def test_A3_DEGISEN_engel_rotaya_yakinsa_replan_tetikler(bounds: Bounds) -> None
         CircleObstacle(25.0, 25.0, 1.0), CircleObstacle(15.0, 15.0, 1.5),
     ])
     assert pipe.replan_sayaclari[0] > kosan
+
+
+# ---------------------------------------------------------------------------
+# F-S.17 — MPPI SINIR KUTUSU RRT* İLE AYNI OLMALI (14.08.2026)
+# ---------------------------------------------------------------------------
+# İki yerde ölçülen arıza: hedef statik kutunun dışında kalınca MPPI
+# `w_boundary` duvarıyla aracı sessizce durduruyordu (sanal: 900 s tavan;
+# gerçek donanım 13.08 GUIDED: hedef y=-23,7, kutu y∈[0,200]).
+# RRT* aynı hedefe F10.2 sayesinde sorunsuz yol çiziyordu → iki planlayıcı
+# anlaşmıyordu. Bu testler o anlaşmayı DONDURUR.
+
+
+def _sinir_testi_pipe(bounds, hedef):
+    dyn = CatamaranDynamics()
+    pipe = PlanningPipeline(bounds, _fast_cfg(), dynamics=dyn)
+    pipe.set_mission_state("PARKUR1")
+    pipe.set_state(np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    pipe.set_waypoints([hedef])
+    return pipe
+
+
+def test_fs17_kutu_disindaki_hedef_mppi_sinirina_alinir():
+    """Statik kutunun DIŞINDAKİ hedef, MPPI'nin kutusunun İÇİNDE kalmalı."""
+    bounds = Bounds(0.0, 200.0, 0.0, 200.0)      # params.yaml'ın yer tutucusu
+    hedef = (27.3, -23.7)                         # 13.08 sahada verilen hedef
+    pipe = _sinir_testi_pipe(bounds, hedef)
+    pipe.compute_control()                        # MPPI'yi kurdurur
+
+    assert pipe._mppi is not None, "MPPI kurulmadı — test kalıbı bozuk"
+    b = pipe._mppi.bounds
+    assert b.y_min <= hedef[1] <= b.y_max, (
+        f"hedef y={hedef[1]} MPPI kutusunun ({b.y_min}, {b.y_max}) DIŞINDA — "
+        "F-S.17 geriledi: araç duvara dayanıp sessizce durur"
+    )
+    assert b.x_min <= hedef[0] <= b.x_max
+
+
+def test_fs17_mppi_ve_rrt_yildiz_ayni_kutuyu_gorur():
+    """İki planlayıcı TEK kısıt kümesi paylaşmalı (hiyerarşik uyum)."""
+    bounds = Bounds(0.0, 200.0, 0.0, 200.0)
+    pipe = _sinir_testi_pipe(bounds, (27.3, -23.7))
+    pipe.compute_control()
+
+    ortak = pipe._etkin_sinir()
+    b = pipe._mppi.bounds
+    assert (b.x_min, b.x_max, b.y_min, b.y_max) == (
+        ortak.x_min, ortak.x_max, ortak.y_min, ortak.y_max
+    ), "MPPI ile RRT* farklı kutu görüyor — F-S.17'nin tam olarak yasakladığı hâl"
+
+
+def test_fs17_sicak_yolda_da_sinir_tazelenir():
+    """⚠ EN SİNSİ HÂL: `cfg` değişmeyince kontrolcü korunur (warm-start).
+
+    Sınır `cfg`'nin parçası olmadığı için o yolda ELLE tazelenmezse MPPI eski
+    kutuyla kalır ve arıza yalnız parkur geçişlerinde düzelir.
+    """
+    bounds = Bounds(0.0, 200.0, 0.0, 200.0)
+    pipe = _sinir_testi_pipe(bounds, (10.0, 10.0))
+    pipe.compute_control()
+    ilk = pipe._mppi
+    assert ilk is not None
+
+    # Aynı parkur, aynı cfg → kontrolcü KORUNMALI; ama hedef kutu dışına kaçtı.
+    pipe.set_waypoints([(27.3, -23.7)])
+    pipe.compute_control()
+
+    assert pipe._mppi is ilk, "kontrolcü yeniden kuruldu — warm-start koruması bozuldu"
+    b = pipe._mppi.bounds
+    assert b.y_min <= -23.7, (
+        f"sıcak yolda sınır tazelenmedi (y_min={b.y_min}) — "
+        "araç ilerledikçe eski kutuyla kalır"
+    )
+
+
+def test_fs17_kutu_yalnizca_buyur_asla_kucultmez():
+    """Sınırın koruma işlevi kaybolmamalı: statik kutu daima ALT sınır."""
+    bounds = Bounds(-5.0, 5.0, -5.0, 5.0)
+    pipe = _sinir_testi_pipe(bounds, (1.0, 1.0))   # hedef zaten içeride
+    ortak = pipe._etkin_sinir()
+    assert ortak.x_min <= -5.0 and ortak.x_max >= 5.0
+    assert ortak.y_min <= -5.0 and ortak.y_max >= 5.0
