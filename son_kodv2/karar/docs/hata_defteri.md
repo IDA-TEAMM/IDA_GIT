@@ -1177,3 +1177,51 @@ kazancı bu riski almadan veriyor.
 1. `PreArm: Logging failed` geri gelmiyor.
 2. Yeni oturumun `.BIN` dosyası **553 MB'a kıyasla belirgin küçük** — teşhisin
    sayısal kanıtı bu olacak.
+
+
+---
+
+## 2026-08-14 — A4.2 KAPANDI: "DDS keşif arızası" diye teşhis ettiğim şey YOKMUŞ
+
+Tabloda A4.2 şöyle duruyordu: *"Discovery Server yok — ağ değişince yeni
+süreçler kör."* **Öncül yanlıştı ve yanlış teşhis bana aitti.**
+
+### Gerçekte olan
+
+`ros2 node list` / `topic hz` / `param get` SSH'tan boş dönüyordu. Bunu bir
+hafta boyunca *"DDS ağ arayüzünü katılımcı oluşturulurken bağlıyor, ethernet
+LiDAR'a takılınca yeni süreçler kör kalıyor"* diye yorumladım ve buna
+dayanarak ölçümleri geçersiz saydım.
+
+Ölçüm bunu çürüttü:
+
+| Kanıt | Sonuç |
+|---|---|
+| `ROS_DOMAIN_ID=42` export edilince `ros2 node list` → **30 düğüm**, `topic hz` → **10,001 Hz** | Keşifte sorun YOK |
+| `/dev/shm`'de **5 adet `fastrtps_*`** segmenti | Aynı-makine keşfi paylaşımlı bellek üzerinden, **ağdan bağımsız** |
+| `.bashrc` 6-8: `case $- in *i*) ;; *) return;;` · `export ROS_DOMAIN_ID=42` **123. satırda** | Etkileşimsiz kabuk erken dönüyor, export'a **hiç ulaşmıyor** |
+| Etkileşimsiz kabukta `ROS_DOMAIN_ID=[]` | Doğrudan doğrulandı |
+
+⇒ CLI **domain 0**'da, yığın **42**'de koşuyordu. Discovery Server'a gerek yok.
+
+### Asıl kusur ve neden önemli
+
+Kusur ağda değil, **görünürlükte**: her SSH ölçümü ve her betik sessizce
+yanlış domain'de koşup hiçbir şey görmüyor. *"Hiçbir şey görünmüyor"* ile
+*"hiçbir şey çalışmıyor"* ayırt edilemez hale geliyor — sahada bu, 10 Hz
+yayın yapan sağlıklı bir yığında **"sistem çöktü"** paniğine dönüşür.
+Bu haftanın tekrar eden ailesi: sessizce **yanlış negatif** üreten kusur.
+
+### Düzeltme
+
+- `scripts/girdap_ortam.sh` — sourcelanınca domain'i ayarlar **ve ekrana
+  yazar**. Sessizce doğru yapmak yetmez; yanlış domain'in fark edilebilir
+  olması gerekiyor.
+- Jetson `~/.bashrc`: export etkileşimlilik kontrolünün **üstüne** alındı
+  (yedek: `~/.bashrc.yedek-14agustos`). Doğrulandı: düz `ssh makine 'ros2
+  node list'` artık **30 düğüm** görüyor.
+
+🔑 **Ders:** bir hafta boyunca ölçümlerimi "ağ bozuk" diye çöpe attım; sebep
+tek bir eksik ortam değişkeniydi. Bir ölçüm boş dönüyorsa, önce **ölçüm
+aracının kendi ortamı** doğrulanmalı — araca güvenip sistemi suçlamak,
+olmayan bir arızayı kovalamaya yol açıyor.
