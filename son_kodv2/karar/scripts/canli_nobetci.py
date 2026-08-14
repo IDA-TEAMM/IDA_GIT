@@ -51,9 +51,9 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
-from geometry_msgs.msg import PoseStamped, PoseArray, Twist
+from geometry_msgs.msg import PoseStamped, PoseArray, Twist, TwistStamped
 from nav_msgs.msg import Odometry
-from std_msgs.msg import String, Float32MultiArray
+from std_msgs.msg import String, Float32MultiArray, Float64
 from sensor_msgs.msg import NavSatFix
 
 try:                                        # mavros yoksa da çekirdek koşsun
@@ -172,6 +172,12 @@ class Nobetci(Node):
         self._baslangic = time.monotonic()
         self._parametreler: dict[str, float] = {}
         self._fcu_gorulen: dict[str, float] = {}
+        self._kill_sebep = ""
+        self._pusula_der: float | None = None
+        self._gps_yon_der: float | None = None
+        self._gps_hiz: float | None = None
+        self._sistem_thread = threading.Thread(
+            target=self._sistem_dongusu, daemon=True)
 
         # --- abonelikler (hepsi salt okur) ---
         self.create_subscription(
@@ -191,6 +197,20 @@ class Nobetci(Node):
             PoseArray, "/perception/obstacle_map", self._on_engel, sensor_qos)
         self.create_subscription(
             NavSatFix, "/mavros/global_position/global", self._on_gps, sensor_qos)
+        # KILL SEBEBİ — §0.98p: KILL'e neden girildiği en büyük teşhis boşluğuydu
+        self.create_subscription(
+            String, "/girdap/mission/kill_reason", self._on_kill_reason, 10)
+        # Kendi arıza/durum mesajlarımız (operatör ekranına gidenler)
+        if _MAVROS:
+            self.create_subscription(
+                StatusText, "/mavros/statustext/send", self._on_kendi_mesaj,
+                sensor_qos)
+            self.create_subscription(
+                Float64, "/mavros/global_position/compass_hdg",
+                self._on_pusula, sensor_qos)
+            self.create_subscription(
+                TwistStamped, "/mavros/global_position/raw/gps_vel",
+                self._on_gps_hiz, sensor_qos)
 
         if _MAVROS:
             self.create_subscription(
@@ -199,10 +219,8 @@ class Nobetci(Node):
                 RCIn, "/mavros/rc/in", self._on_rc, sensor_qos)
             self.create_subscription(
                 StatusText, "/mavros/statustext/recv", self._on_status, sensor_qos)
-            from geometry_msgs.msg import PoseStamped as _PS
             self.create_subscription(
-                _PS, "/mavros/local_position/pose", self._on_fc_poz, sensor_qos)
-            from geometry_msgs.msg import TwistStamped
+                PoseStamped, "/mavros/local_position/pose", self._on_fc_poz, sensor_qos)
             self.create_subscription(
                 TwistStamped, "/mavros/local_position/velocity_body",
                 self._on_vel, sensor_qos)
@@ -211,6 +229,7 @@ class Nobetci(Node):
         self._param_thread = threading.Thread(
             target=self._param_dongusu, daemon=True)
         self._param_thread.start()
+        self._sistem_thread.start()
 
         self._bas("BILGI", "NOBETCI", "canli nobetci basladi — salt okur, "
                   f"gunluk: {self._log.name}")
@@ -309,6 +328,37 @@ class Nobetci(Node):
         self._fcu_gorulen[metin] = simdi
         self._bas("BILGI", "FCU", metin)
 
+    def _on_kill_reason(self, m: String) -> None:
+        """§0.98p: KILL'in SEBEBİ. Kurtarma politikası sebebe göre değişiyor."""
+        if m.data and m.data != self._kill_sebep:
+            self._kill_sebep = m.data
+            if m.data.startswith("temizlendi"):
+                self._bas("BILGI", "KILL-TEMIZ", m.data)
+            else:
+                self._bas("ALARM", "KILL-SEBEP",
+                          f"{m.data} — cikis: "
+                          "ros2 service call /girdap/mission/reset "
+                          "std_srvs/srv/Trigger {}")
+
+    def _on_kendi_mesaj(self, m) -> None:                  # noqa: ANN001
+        """Operatör ekranına GİDEN kendi mesajlarımız — kritik olanları geçir."""
+        metin = m.text
+        if any(k in metin for k in ("SENKRON", "POZ-SACMA", "KILL", "BASLAT-YOK")):
+            simdi = time.monotonic()
+            onceki = self._fcu_gorulen.get(metin)
+            if onceki is None or simdi - onceki >= FCU_TEKRAR_S:
+                self._fcu_gorulen[metin] = simdi
+                self._bas("ALARM", "EKRAN", metin)
+
+    def _on_pusula(self, m: Float64) -> None:
+        self._pusula_der = float(m.data)
+
+    def _on_gps_hiz(self, m: TwistStamped) -> None:
+        vx, vy = m.twist.linear.x, m.twist.linear.y
+        self._gps_hiz = math.hypot(vx, vy)
+        # ENU'da rota açısı: kuzeyden saat yönünde (pusula ile aynı sözleşme)
+        self._gps_yon_der = (math.degrees(math.atan2(vx, vy))) % 360.0
+
     # ----------------------------------------------------------- kurallar
     def _degerlendir(self) -> None:
         simdi = time.monotonic()
@@ -388,7 +438,16 @@ class Nobetci(Node):
                     self._sp_sifir_bas = None
 
             # 6) HIZ TAKİP EDİLMİYOR — CRUISE_THROTTLE kanıtı (§0.98k)
+            #
+            # ⚠ ACİL DURDURMA AKTİFKEN BU KURAL KOŞMAZ. 14.08 14:53'te tam
+            # bunu yaptı: e-stop HIGH (motorlar fiziksel olarak kesik) iken
+            # "uçuş kontrolcüsü hızı tutturamıyor, CRUISE_THROTTLE şüpheli"
+            # dedi. Teşhis YANLIŞTI — motor dönmüyorken hız tutulamaz, bu
+            # ayarla ilgili değil. Bir nöbetçinin en pahalı hatası, operatörü
+            # yanlış yere baktırmaktır (§0.93d'nin `BASLAT-YOK` dersi).
+            estop_aktif = self._rc10 is not None and self._rc10 > ESTOP_HIGH_PWM
             if (self._sp_son is not None and self._vx is not None
+                    and not estop_aktif
                     and self._sp_son[0] > 0.3):
                 if self._vx < HIZ_TAKIP_ORANI * self._sp_son[0]:
                     self._hiz_takip_bas = self._hiz_takip_bas or simdi
@@ -415,6 +474,28 @@ class Nobetci(Node):
         elif self._engel_t:
             self._temizle("ENGEL-BAYAT", f"{self._engel_n} engel akiyor")
 
+        # 7b) PUSULA TUTARLILIĞI — §0.91'in arızasını SUDA yakalar
+        #
+        # Tezgâhta `xy diff` ölçümü kapalı alan yüzünden hüküm vermiyordu
+        # (§0.91e). Bu kural bunun yerine FİZİKSEL bir tutarlılık bakıyor:
+        # tekne ileri giderken GPS'in gördüğü GİDİŞ YÖNÜ ile pusulanın
+        # söylediği BAŞ AÇISI birbirini tutmalı. §0.91b'nin hesabı 41°'lik
+        # bir baş açısı hatasına denk geliyordu — bu kural onu doğrudan ölçer.
+        # ⚠ Yalnız yeterince hızlıyken: yavaşta gidiş yönü gürültüdür.
+        # ⚠ Yanal sürüklenme (akıntı/rüzgâr) da fark üretir; bu yüzden eşik
+        # geniş (35°) ve kural "pusula bozuk" demez, "tutarsız" der.
+        if (self._pusula_der is not None and self._gps_yon_der is not None
+                and self._gps_hiz is not None
+                and self._gps_hiz >= PUSULA_MIN_HIZ):
+            fark = abs((self._pusula_der - self._gps_yon_der + 180.0) % 360.0 - 180.0)
+            if fark > PUSULA_SAPMA_DER:
+                self._alarm("PUSULA-TUTARSIZ",
+                            f"pusula {self._pusula_der:.0f}° ↔ GPS gidis yonu "
+                            f"{self._gps_yon_der:.0f}° = {fark:.0f}° fark "
+                            f"(hiz {self._gps_hiz:.2f} m/s) — §0.91")
+            else:
+                self._temizle("PUSULA-TUTARSIZ", f"fark {fark:.0f}°")
+
         # 8) GPS fix
         if self._gps_status is not None and self._gps_status < 0:
             self._alarm("GPS-YOK", "GPS fix YOK (status=-1)")
@@ -432,6 +513,154 @@ class Nobetci(Node):
                       f"sp={self._sp_son[0] if self._sp_son else None} "
                       f"engel={self._engel_n} estop={self._rc10} "
                       f"aktif_alarm={sorted(self._aktif) or 'yok'}")
+
+    # ----------------------------------------------------------- sistem
+    def _sistem_dongusu(self) -> None:
+        """Donanım/işletim sistemi denetimleri — ROS'un göremediği katman.
+
+        Hepsi §0.95b'nin saha kontrol listesinden: bunlar sahada tekneyi
+        durduran ama ROS konularında hiç görünmeyen arızalar.
+        """
+        time.sleep(5.0)
+        while rclpy.ok():
+            try:
+                self._sistem_denetle()
+            except Exception as exc:           # noqa: BLE001 — nöbetçi ölmemeli
+                self._bas("BILGI", "SISTEM-HATA", f"denetim atlandi: {exc!r}")
+            time.sleep(SISTEM_PERIYOT_S)
+
+    def _sistem_denetle(self) -> None:
+        # 1) Kamera USB — §0.95b/1: 8 saatte iki kez düştü, düğüm 359 kez öldü
+        try:
+            lsusb = subprocess.run(["lsusb"], capture_output=True, text=True,
+                                   timeout=10.0).stdout
+            if KAMERA_USB_KIMLIK in lsusb:
+                self._temizle("KAMERA-USB", "OAK kamera USB'de görünüyor")
+            else:
+                self._alarm("KAMERA-USB",
+                            f"OAK kamera ({KAMERA_USB_KIMLIK}) USB'de YOK — "
+                            "konnektoru mekanik olarak sabitle; kosu ortasinda "
+                            "duserse kapi takibi biter")
+        except Exception:                      # noqa: BLE001
+            pass
+
+        # 2) LiDAR hattı — §0.95b/2: ayırt edici TEK satır.
+        # Mid-360 100 Mb'lik bir cihaz; 1000Mb/s ya da Unknown ise kablonun
+        # ucunda LiDAR YOK (§0.63'ün imzası, iki kez birebir doğrulandı).
+        try:
+            hiz = subprocess.run(["ethtool", LIDAR_ARAYUZ], capture_output=True,
+                                 text=True, timeout=10.0).stdout
+            satir = next((s.strip() for s in hiz.splitlines() if "Speed:" in s), "")
+            if "100Mb/s" in satir:
+                self._temizle("LIDAR-HAT", satir)
+            elif satir:
+                self._alarm("LIDAR-HAT",
+                            f"{LIDAR_ARAYUZ} {satir} — Mid-360 100Mb'lik bir "
+                            "cihaz; kablonun ucunda LiDAR YOK olabilir (§0.63)")
+        except Exception:                      # noqa: BLE001
+            pass
+
+        # 3) Disk — rosbag kesintisiz yazıyor; dolarsa teslim dosyaları biter
+        try:
+            import shutil
+            kul = shutil.disk_usage(str(Path.home()))
+            bos_yuzde = 100.0 * kul.free / kul.total
+            if bos_yuzde < DISK_MIN_YUZDE:
+                self._alarm("DISK",
+                            f"disk %{bos_yuzde:.1f} bos ({kul.free / 1e9:.1f} GB) "
+                            "— rosbag/teslim dosyalari kesilebilir")
+            else:
+                self._temizle("DISK", f"%{bos_yuzde:.0f} bos")
+        except Exception:                      # noqa: BLE001
+            pass
+
+        # 4) Sıcaklık — §0.83'ün aşırı akım/kısıtlama hikâyesi
+        try:
+            sicakliklar = []
+            for yol in Path("/sys/devices/virtual/thermal").glob("thermal_zone*/temp"):
+                try:
+                    sicakliklar.append(int(yol.read_text().strip()) / 1000.0)
+                except Exception:              # noqa: BLE001
+                    continue
+            if sicakliklar:
+                en_yuksek = max(sicakliklar)
+                if en_yuksek > SICAKLIK_UYARI_C:
+                    self._alarm("SICAKLIK",
+                                f"en yuksek {en_yuksek:.0f} °C — Jetson "
+                                "kisitlamaya girebilir (§0.83)")
+                else:
+                    self._temizle("SICAKLIK", f"en yuksek {en_yuksek:.0f} °C")
+        except Exception:                      # noqa: BLE001
+            pass
+
+        # 5) Teslim dosyaları — şartname md 4.2, her gecikmiş dosya 5 ceza puanı.
+        # Yalnız SÜRÜŞ sırasında bakılır: durağan tezgâhta üretilmemesi normal.
+        if self._armed and self._fsm.startswith("PARKUR"):
+            # ⚠ RECURSIVE olmalı: 14.08 ilk koşumda tek seviyeli glob
+            # `local_map/*` yalnız oturum DİZİNİNİ gördü, kareler ise
+            # `oturum_*/png_yedek/frame_*.png` altında yazılıyordu → 489 kare
+            # üretilirken "455 s'dir guncellenmedi" diye YANLIŞ ALARM verdi.
+            for ad, kok in (
+                ("Dosya-2 telemetri", "girdap_logs/telemetry"),
+                ("Dosya-3 yerel harita", "girdap_logs/local_map"),
+            ):
+                try:
+                    yeni = max(
+                        (q.stat().st_mtime
+                         for q in (Path.home() / kok).rglob("*") if q.is_file()),
+                        default=0.0,
+                    )
+                    yas = time.time() - yeni
+                    if yeni == 0.0 or yas > 120.0:
+                        self._alarm(
+                            f"TESLIM-{ad.split()[0]}",
+                            f"{ad} {int(yas) if yeni else '∞'} s'dir "
+                            "guncellenmedi — sartname 4.2, gecikme 5 ceza puani")
+                    else:
+                        self._temizle(f"TESLIM-{ad.split()[0]}", f"{ad} taze")
+                except Exception:              # noqa: BLE001
+                    pass
+
+        self._ozet_yaz()
+
+    def _ozet_yaz(self) -> None:
+        """Oturum özetini md olarak yaz — kaptan: *"bide kaydetsin otomatik"*.
+
+        GIRDAP_DURUM.md'ye DOĞRUDAN yazılmaz (tek dosya kuralı §0.31c orada
+        insan eliyle düzenlenen bir anlatı tutuyor; otomatik ekleme onu
+        çakıştırır). Bunun yerine devralan oturumun kopyalayabileceği hazır
+        bir özet üretilir.
+        """
+        try:
+            yol = Path(self._log.name).with_suffix(".ozet.md")
+            satirlar = [
+                f"# Nöbetçi oturum özeti — {datetime.now():%d.%m.%Y %H:%M}",
+                "",
+                f"- Günlük: `{self._log.name}`",
+                f"- Süre: {(time.monotonic() - self._baslangic) / 60.0:.0f} dk",
+                f"- Son durum: mod **{self._mod}/{self._armed}** · "
+                f"görev **{self._fsm or '-'}**",
+                f"- Füzyon pozu: {self._fuzyon_poz} · uçuş kontrolcüsü: {self._fc_poz}",
+                f"- Acil durdurma (RC10): {self._rc10}",
+                f"- Son KILL sebebi: {self._kill_sebep or 'yok'}",
+                "",
+                "## Şu an aktif alarmlar",
+                "",
+            ]
+            if self._aktif:
+                satirlar += [f"- 🔴 **{k}** — {v}" for k, v in sorted(self._aktif.items())]
+            else:
+                satirlar.append("- ✅ aktif alarm yok")
+            satirlar += ["", "## Okunan uçuş kontrolcüsü parametreleri", ""]
+            for ad, deger in sorted(self._parametreler.items()):
+                beklenen = BEKLENEN_PARAMETRELER.get(ad)
+                isaret = ("" if beklenen is None
+                          else (" ✅" if abs(deger - beklenen) <= 1e-6
+                                else f" 🔴 (beklenen {beklenen})"))
+                satirlar.append(f"- `{ad}` = {deger}{isaret}")
+            yol.write_text("\n".join(satirlar) + "\n", encoding="utf-8")
+        except Exception:                      # noqa: BLE001
+            pass
 
     # ----------------------------------------------------------- parametre
     def _param_dongusu(self) -> None:
