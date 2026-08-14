@@ -472,6 +472,22 @@ class PlanningNode(Node):
         self._son_setpoint_t: float | None = None
         self._setpoint_bosluk_sayaci = 0
         self._isci_uyarildi = False
+        # 🔴 14.08: bekçiyi kapatmak SESSİZ olmamalı. LiDAR yokken bilerek
+        # sürmek meşru bir test ihtiyacı (gate/dataset koşusu), ama biri test
+        # için kapatıp unutursa yarışmaya KÖR girilir. Kapalıysa hem açılışta
+        # hem her kilit raporunda görünür.
+        if self._obstacle_timeout <= 0.0:
+            self.get_logger().error(
+                "🔴 ENGEL BEKCISI KAPALI (obstacle_timeout_s=0) — arac engel "
+                "verisi OLMADAN da surer. Bu yalniz bilincli bir test icin "
+                "olmali; yarisma kosusunda ACIK olmak zorunda (Parkur-2 duba "
+                "kacinmasi buna bagli)."
+            )
+        if self._odom_timeout <= 0.0:
+            self.get_logger().error(
+                "🔴 POZ BEKCISI KAPALI (odom_timeout_s=0) — arac bayat/hic "
+                "olmayan pozla surer."
+            )
         self._isci_zaman_asimi_son = 0
         # Dosya-3: yerel maliyet haritası (RViz + local_map_node PNG dumper).
         self._pub_map = self.create_publisher(
@@ -1428,6 +1444,12 @@ class PlanningNode(Node):
         şişirir ve asıl geçiş anını gürültüye gömer.
         """
         metin = ",".join(sebepler) if sebepler else "YOK"
+        # Kapatılmış bekçi, kilit raporunda da görünür: operatör "sebep YOK"
+        # okuyup güvende sanmasın — bekçi kapalıysa zaten sebep üretilemez.
+        kapali = [ad for ad, v in (("ENGEL", self._obstacle_timeout),
+                                   ("POZ", self._odom_timeout)) if v <= 0.0]
+        if kapali:
+            metin += "|BEKCI-KAPALI:" + "+".join(kapali)
         if not gate.allow_cmd_vel:
             metin += "|SETPOINT-KAPALI"
         if metin == self._son_inhibit:

@@ -1405,3 +1405,32 @@ def test_RRT_RED_abonesiz_donemde_BAYAT_alarm_uretmez(ros_context) -> None:  # n
         assert RRT_RED.kod not in node._ariza.aktif_kodlar
     finally:
         node.destroy_node()
+
+
+def test_bekci_KAPALIYKEN_sessiz_kalmiyor(ros_context) -> None:  # noqa: ANN001
+    """🔴 Bekçiyi kapatmak meşru ama SESSİZ olmamalı.
+
+    LiDAR yokken bilerek sürmek gerçek bir test ihtiyacı (14.08'de gate ve
+    dataset koşusu tam bunu istedi). Ama biri test için `obstacle_timeout_s=0`
+    yapıp unutursa yarışmaya **kör** girilir — Parkur-2 duba kaçınması engel
+    verisine bağlı.
+
+    Bu yüzden kapalı bekçi hem açılışta ERROR basar hem de kilit raporunda
+    görünür: operatör "sebep YOK" okuyup güvende sanmamalı, çünkü bekçi
+    kapalıyken zaten sebep ÜRETİLEMEZ.
+    """
+    from rclpy.parameter import Parameter
+    node = pn.PlanningNode(parameter_overrides=[
+        Parameter("obstacle_timeout_s", value=0.0),
+    ])
+    try:
+        sebep = []
+        node._pub_inhibit.publish = lambda m: sebep.append(m.data)
+        node._pipe.set_mission_state("PARKUR1")
+        node._last_odom_t = node._now()
+        node._on_control_step()
+        assert sebep and "BEKCI-KAPALI:ENGEL" in sebep[-1], (
+            f"kapali bekci kilit raporunda gorunmuyor: {sebep[-1]!r}"
+        )
+    finally:
+        node.destroy_node()
