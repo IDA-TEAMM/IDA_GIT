@@ -63,10 +63,13 @@ from __future__ import annotations
 
 import functools
 import math
+import threading
 from typing import Callable, Optional
 
 import numpy as np
 import rclpy
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 from geometry_msgs.msg import Pose, PoseArray, PoseStamped, Twist
@@ -141,6 +144,20 @@ def _guard(fn: Callable[..., None]) -> Callable[..., None]:
             )
 
     return _wrapped
+
+
+def _pipe_kilidiyle(f):
+    """FAZ 5 (§1.17): `self._pipe`'a dokunan geri çağrı bu kilitle sarılır.
+
+    Tek RLock → kilitlenme yapısal olarak imkânsız; varsayılan gruptaki
+    çağrılar kendi aralarında zaten seri olduğundan tek gerçek yarış algı
+    grubu ↔ kontrol grubu arasındadır ve bedeli yukarıdaki blokta ölçülü.
+    """
+    @functools.wraps(f)
+    def _sarili(self, *a, **k):
+        with self._pipe_kilidi:
+            return f(self, *a, **k)
+    return _sarili
 
 
 class PlanningNode(Node):
@@ -437,6 +454,28 @@ class PlanningNode(Node):
         self._last_obstacle_t: float | None = None
         self._obstacle_stale_warn_t = 0.0
 
+        # 🔴 FAZ 5 (15.08, GIRDAP_DURUM §1.17a-b) — İKİ İŞ PARÇACIĞI, TEK KİLİT.
+        # Ölçüldü: tek iş parçacıklı `rclpy.spin`'de algı işlemesi kontrol
+        # zamanlayıcısını boğuyordu (kadans↔hafıza korelasyonu r=+0,94; 317
+        # "sınıflı algı gelmiyor" uyarısının %100'ü sahteydi — akış sürüyordu,
+        # iş parçacığı tıkalıydı). Resmî Humble deseni uygulanıyor: ağır algı
+        # geri çağrıları AYRI MutuallyExclusiveCallbackGroup'ta koşar
+        # (kendi içinde seri — `_edge_memory` kilitsiz güvenli kalır), geri
+        # kalan her şey düğümün varsayılan grubunda kalır; `main()`
+        # MultiThreadedExecutor(num_threads=2) kurar.
+        # ⚠ Paylaşılan durum kuralı: `self._pipe`'a DOKUNAN her geri çağrı
+        # `_pipe_kilidiyle` sarılıdır (aşağıdaki dekoratör). Tek kilit →
+        # kilitlenme (deadlock) yapısal olarak imkânsız; RLock → aynı iş
+        # parçacığının iç içe çağrıları serbest. Bedeli sınırlı: algı, kontrol
+        # adımının MPPI süresi kadar (~60 ms) bekleyebilir; kontrol ise artık
+        # en fazla vektörleştirilmiş taramanın süresi (~6 ms, §1.18) kadar.
+        # GIL notu: saf Python taramaları FAZ 5'te numpy'ye alındı; numpy/cupy
+        # çekirdekleri GIL'i bıraktığı için iki grup gerçekten örtüşebiliyor.
+        self._pipe_kilidi = threading.RLock()
+        # Araştırma uyarısı (docs.ros.org Humble): gruba referans tutulmazsa
+        # geri çağrılar HİÇ çağrılmaz — bu yüzden üye değişken.
+        self._grup_algi = MutuallyExclusiveCallbackGroup()
+
         # --- Subscribers ---
         self._sub_odom = self.create_subscription(
             Odometry, "/girdap/fusion/odom", self._on_odom, 10
@@ -448,7 +487,8 @@ class PlanningNode(Node):
             MavState, "/mavros/state", self._on_mav_state, 10
         )
         self._sub_obs = self.create_subscription(
-            PoseArray, "/perception/obstacle_map", self._on_obstacles, 10
+            PoseArray, "/perception/obstacle_map", self._on_obstacles, 10,
+            callback_group=self._grup_algi,       # FAZ 5: ağır algı ayrı iş parçacığı
         )
         # F-S.9 füzyon çıktısı — sınıflı engeller. Aktığı anda obstacle_map'in
         # yerine geçer; turuncu kenar dubaları buradan kapı takibine gider.
@@ -457,6 +497,7 @@ class PlanningNode(Node):
             "/perception/classified_obstacles",
             self._on_classified,
             10,
+            callback_group=self._grup_algi,       # FAZ 5: ağır algı ayrı iş parçacığı
         )
         self._sub_wp = self.create_subscription(
             Path, "/girdap/mission/waypoints", self._on_waypoints, 10
@@ -714,6 +755,7 @@ class PlanningNode(Node):
     # ----- subscriber callback'leri -----
 
     @_guard
+    @_pipe_kilidiyle
     def _on_odom(self, msg: Odometry) -> None:
         """ENU pose + velocity → durum vektörü [x, y, ψ, u, v, r]."""
         self._last_odom_t = self._now()          # F-P.1: bayatlık saati
@@ -793,6 +835,7 @@ class PlanningNode(Node):
         )
 
     @_guard
+    @_pipe_kilidiyle
     def _on_obstacles(self, msg: PoseArray) -> None:
         """PLACEHOLDER şema: position.{x,y} merkez, orientation.z yarıçap.
 
@@ -869,6 +912,7 @@ class PlanningNode(Node):
         # guncelle`'de her turda `_classified_taze()` yüklemiyle kurulur;
         # akış dönünce kendiliğinden düşer.
 
+    @_pipe_kilidiyle
     def _on_classified(self, msg: Detection3DArray) -> None:
         """Sınıflı engeller → kapı dubaları AYRIŞTIRILIR, gerisi engel kalır.
 
@@ -1338,6 +1382,7 @@ class PlanningNode(Node):
         # turuncu duba görünüyor" yüklemiyle kurulur; kapı kilitlenince düşer.
 
     @_guard
+    @_pipe_kilidiyle
     def _on_waypoints(self, msg: Path) -> None:
         """F-S.6/F-S.11: mission_manager_node current_target'la AYNI referansta
         (base_link-göreli ENU ÖTELEMESİ) TEK aktif waypoint yayınlar — burada
@@ -1362,6 +1407,7 @@ class PlanningNode(Node):
                 self._publish_path(path)
 
     @_guard
+    @_pipe_kilidiyle
     def _on_target(self, msg: PoseStamped) -> None:
         """Video bypass: mission_manager hedefi → düz çizgi MPPI referansı.
 
@@ -1380,6 +1426,7 @@ class PlanningNode(Node):
             self._publish_path(path)
 
     @_guard
+    @_pipe_kilidiyle
     def _on_mission_state(self, msg: String) -> None:
         # Parkur değişince kilitli kapıyı BIRAK: Parkur-1'in son kapısına
         # kilitliyken Parkur-2'ye geçilirse eski kapı hedefi taşınmamalı
@@ -1466,6 +1513,7 @@ class PlanningNode(Node):
         """Bayatlık saati — TEK YÖNLÜ (§0.61). Mutlak an olarak kullanılmaz."""
         return self._saat()
 
+    @_pipe_kilidiyle
     def _on_control_step(self) -> None:
         """20 Hz'te MPPI step → thrust komut + Twist setpoint (MAVROS geçitli).
 
@@ -1729,6 +1777,7 @@ class PlanningNode(Node):
                 ),
             )
 
+    @_pipe_kilidiyle
     def _ariza_gonder(self) -> None:
         """Sırası gelen arıza kodunu STATUSTEXT ile yer istasyonuna yolla.
 
@@ -1985,6 +2034,7 @@ class PlanningNode(Node):
             pass
 
     @_guard
+    @_pipe_kilidiyle
     def _publish_local_map(self) -> None:
         """Dosya-3: araç merkezli yerel maliyet haritası (OccupancyGrid).
 
@@ -2021,8 +2071,14 @@ class PlanningNode(Node):
 def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = PlanningNode()
+    # 🔴 FAZ 5 (§1.17a): tek iş parçacıklı spin, algı taramasının kontrol
+    # zamanlayıcısını boğmasına yol açıyordu (kadans 10 → 1,9 Hz, r=+0,94).
+    # İki iş parçacığı yeter ve bilerek 2: varsayılan grup da algı grubu da
+    # kendi içinde MutuallyExclusive — daha fazla iş parçacığı yalnız rclpy
+    # yürütücü ek yükü getirir (bilinen sorun: rclpy #1223/#1452).
+    executor = MultiThreadedExecutor(num_threads=2)
     try:
-        rclpy.spin(node)
+        rclpy.spin(node, executor=executor)
     finally:
         # F-P.10: işçi sürecini düzgünce durdur. Düğüm kurulumu yarıda
         # kaldıysa `_pipe` olmayabilir — kapanış yolu asla çökmemeli.

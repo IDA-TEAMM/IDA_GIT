@@ -15,6 +15,7 @@ rclpy gerektirir → .venv'de SKIP.
 from __future__ import annotations
 
 import numpy as np
+import re
 import pytest
 
 rclpy = pytest.importorskip("rclpy", reason="rclpy yok (.venv) — ROS ortamında koş")
@@ -1793,3 +1794,74 @@ def test_FAZ2_hicbir_gecilebilir_komsu_yoksa_TAVAN(ros_context) -> None:  # noqa
             )
     finally:
         node.destroy_node()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FAZ 5 (15.08.2026, GIRDAP_DURUM §1.17-§1.18) — YÜRÜTÜCÜ AÇLIĞI
+#
+# 🔴 SAHA ARIZASI: tek iş parçacıklı `rclpy.spin`'de algı işlemesi kontrol
+# zamanlayıcısını boğdu — kadans 10 → 1,9 Hz (kadans↔hafıza r=+0,94), 317
+# "sınıflı algı gelmiyor" uyarısının %100'ü sahte çıktı (bant akıyordu,
+# iş parçacığı tıkalıydı). Düzeltme resmî Humble deseni: ağır algı ayrı
+# MutuallyExclusiveCallbackGroup + MultiThreadedExecutor(2) + `_pipe`'a her
+# dokunuşu saran TEK RLock (`_pipe_kilidiyle`).
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_FAZ5_algi_ayri_callback_grubunda(ros_context) -> None:  # noqa: ANN001
+    """Ağır algı aboneleri (classified + obstacle_map) AYRI MutEx grupta;
+    kontrol zamanlayıcısı varsayılan grupta kalır — ayrım kaybolursa tek
+    iş parçacığı düzenine sessizce geri dönülür (1,9 Hz arızası geri gelir)."""
+    from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+    node = pn.PlanningNode()
+    try:
+        assert isinstance(node._grup_algi, MutuallyExclusiveCallbackGroup)
+        assert node._sub_classified.callback_group is node._grup_algi
+        assert node._sub_obs.callback_group is node._grup_algi
+        # kontrol zamanlayıcısı algı grubunda OLMAMALI (yoksa ayrım anlamsız)
+        assert node._timer.callback_group is not node._grup_algi
+        # varsayılan gruptaki hafif aboneler de algı grubuna kaymamalı
+        assert node._sub_odom.callback_group is not node._grup_algi
+    finally:
+        node.destroy_node()
+
+
+def test_FAZ5_pipe_dokunuslari_kilitli(ros_context) -> None:  # noqa: ANN001
+    """`self._pipe` kullanan HER geri çağrı `_pipe_kilidiyle` sarılı olmalı.
+
+    Kaynak taraması: sınıf gövdesinde `self._pipe` geçen her metot,
+    dekore edilmişler listesinde olmalı — yeni bir `_pipe` kullanıcısı
+    eklenir de kilit unutulursa bu test kırmızıya döner (veri yarışı,
+    ancak gölde ve nadiren patlar; CI'da yakalanmalı)."""
+    import inspect
+
+    kaynak = inspect.getsource(pn.PlanningNode)
+    kilitli: set[str] = set()
+    metotlar = re.findall(
+        r"(@_pipe_kilidiyle\s+)?def (\w+)\(self", kaynak
+    )
+    for dekorlu, ad in metotlar:
+        if dekorlu:
+            kilitli.add(ad)
+    for dekorlu, ad in metotlar:
+        metot = getattr(pn.PlanningNode, ad, None)
+        if metot is None:
+            continue
+        govde = inspect.getsource(metot)
+        if "self._pipe." in govde and ad not in kilitli:
+            # yardımcılar kilitli bir geri çağrıdan çağrılıyorsa serbest —
+            # ama DOĞRUDAN abone/zamanlayıcı geri çağrıları mutlaka kilitli.
+            assert not ad.startswith("_on_") and ad not in (
+                "_publish_local_map", "_ariza_gonder"
+            ), f"{ad} self._pipe kullanıyor ama _pipe_kilidiyle sarılı değil"
+
+
+def test_FAZ5_main_cok_is_parcacikli_yurutucu() -> None:
+    """`main()` MultiThreadedExecutor kurmalı — tek iş parçacıklı spin'e
+    dönüş, 1,9 Hz arızasının sessizce geri gelmesi demektir."""
+    import inspect
+
+    kaynak = inspect.getsource(pn.main)
+    assert "MultiThreadedExecutor" in kaynak, (
+        "main() tek iş parçacıklı spin'e dönmüş — FAZ 5 geri alınmış (§1.17a)"
+    )
