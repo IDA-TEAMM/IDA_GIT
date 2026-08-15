@@ -100,8 +100,14 @@ def test_ham_noktalar_cizilir_islem_zinciri_gorunur():
 
 
 def test_sinif_renkleri_kareye_giriyor():
+    """SINIFLANMIŞ üç sınıf halkalı çizilir.
+
+    ⚠ 99 (UNKNOWN) bilerek DIŞARIDA: 15.08.2026'dan beri sınıflanmamış kümeye
+    halka/etiket çizilmiyor (BevConfig.gizle_siniflanmamis). Gerekçe ve ölçüm
+    aşağıdaki `test_siniflanmamis_kume_halkasiz_ama_kumesi_gorunur`'de.
+    """
     r = BevRenderer(BevConfig(genislik_px=300, yukseklik_px=300, menzil_m=15.0))
-    for sinif in (0, 1, 2, 99):
+    for sinif in (0, 1, 2):
         kare = r.render_lidar(
             (0.0, 0.0),
             kumeler=[Kume(merkez=(0.0, 6.0), yaricap=0.5, sinif=sinif,
@@ -110,9 +116,38 @@ def test_sinif_renkleri_kareye_giriyor():
         assert _renk_var(kare, SINIF_RENK[sinif]), f"sınıf {sinif} çizilmedi"
 
 
-def test_sinifsiz_kume_UNKNOWN_sayilir():
-    """Füzyon eşleşmediyse sınıf düşer; engel yine ÇİZİLMELİ (kaybolmamalı)."""
-    r = BevRenderer(BevConfig(genislik_px=200, yukseklik_px=200, menzil_m=15.0))
+def test_siniflanmamis_kume_halkasiz_ama_kumesi_gorunur():
+    """15.08.2026 kaptan kararı: sınıflanmamış kümeye "?" halkası/etiketi YOK.
+
+    🔴 **Neden değişti.** Gerçek göl koşumunda (session_20260814_153256)
+    sınıflı akıştaki tespitlerin **%98,6'sı** CLASS_UNKNOWN=99 idi
+    (315 543 / 320 126). Kare, üstünde "?" yazan yüzlerce gri halkayla
+    doluyor ve gerçekten sınıflanmış üç-beş nesne görünmez oluyordu.
+
+    🔑 **Ama küme KAYBOLMAZ** — şartname md 493 *"kümeleme, ayırma vs.
+    görünecek şekilde"* diyor. Silinen yalnız 3. katman (sınıf halkası +
+    etiket); 1. katman (ham nokta) ve 2. katman (küme rengi) duruyor.
+    Kümeleri tamamen silseydik teslim dosyası boşalır, madde ihlal edilirdi.
+    """
+    cfg = BevConfig(genislik_px=200, yukseklik_px=200, menzil_m=15.0)
+    r = BevRenderer(cfg)
+    kume = Kume(merkez=(0.0, 6.0), yaricap=0.5,
+                noktalar=[(0.0, 6.0), (0.1, 6.1), (-0.1, 5.9)])
+    kare = r.render_lidar((0.0, 0.0), kumeler=[kume])
+
+    assert not _renk_var(kare, SINIF_RENK[99]), (
+        'sınıflanmamış kümeye gri "?" halkası çizilmemeli'
+    )
+    bos = r.render_lidar((0.0, 0.0), kumeler=[])
+    assert not (kare == bos).all(), (
+        "küme rengi kaybolmamalı — md 493 'ayırma' görünürlüğü"
+    )
+
+
+def test_gizleme_kapatilinca_UNKNOWN_halkasi_geri_gelir():
+    """A/B kolu: bayrak False → 15.08 öncesi davranış birebir."""
+    r = BevRenderer(BevConfig(genislik_px=200, yukseklik_px=200, menzil_m=15.0,
+                              gizle_siniflanmamis=False))
     kare = r.render_lidar(
         (0.0, 0.0), kumeler=[Kume(merkez=(0.0, 6.0), yaricap=0.5)]
     )

@@ -51,6 +51,7 @@ from geometry_msgs.msg import PoseArray
 from nav_msgs.msg import OccupancyGrid, Odometry
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.sigterm_kapanis import sigterm_kapanisi_kur
 from girdap_decision.saat_kaynagi import bayatlik_saati
 from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mapping.bev_renderer import BevConfig, BevRenderer, Mp4Yazici
@@ -335,6 +336,10 @@ class LocalMapNode(Node):
 
 def main(args: Optional[list] = None) -> None:
     rclpy.init(args=args)
+    # 🔴 SIGTERM kapısı: `systemctl stop/restart` bu sinyali gönderir ve
+    # işlenmezse süreç ANINDA ölür → `finally` çalışmaz → mp4'ün moov atomu
+    # yazılmaz → TESLİM DOSYASI OYNATILAMAZ (15.08 arızası, bkz. modül).
+    sigterm_kapanisi_kur()
     node = LocalMapNode()
     try:
         rclpy.spin(node)

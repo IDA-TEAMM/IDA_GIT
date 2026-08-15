@@ -91,6 +91,7 @@ from prototype.control.pivot_kapisi import (
 from prototype.control.mavros_bridge import MavrosBridge, MavrosBridgeConfig
 from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mission.edge_memory import EdgeBuoyMemory
+from prototype.perception.fusion import CLASS_UNKNOWN
 from prototype.mission.gate_follower import (
     BUOY_RADIUS_M,
     GateFollower,
@@ -243,6 +244,11 @@ class PlanningNode(Node):
         # classified_obstacles aktığında obstacle_map'in yerine geçsin mi?
         # false → eski davranış (sınıfsız harita), kapı dubaları da engel kalır.
         self.declare_parameter("use_classified_obstacles", True)
+        # Dosya-3 haritasına yalnız SINIFLANMIŞ nesneler çizilsin mi?
+        # True (kaptan kararı 15.08) → CLASS_UNKNOWN=99 haritada YOK.
+        # False → eski davranış (kontrol torbasının tamamı çizilir).
+        # ⚠ Her iki hâlde de KONTROL yolu aynıdır; bu salt çizim ayarı.
+        self.declare_parameter("harita_yalniz_siniflandirilmis", True)
         # 🔑 Kapı seçiminde AYARLANABİLİR EŞİK YOK (2026-08-03 kararı: "tahmine
         # dayalı hiçbir şey olmasın"). Geriye yalnız ÖLÇÜLMÜŞ tekne boyutları
         # kalıyor; genişlik bandı / menzil / derinlik toleransı / bırakma
@@ -332,6 +338,9 @@ class PlanningNode(Node):
         self._edge_class_id = int(self.get_parameter("edge_buoy_class_id").value)
         self._use_classified = bool(
             self.get_parameter("use_classified_obstacles").value
+        )
+        self._harita_yalniz_siniflandirilmis = bool(
+            self.get_parameter("harita_yalniz_siniflandirilmis").value
         )
         self._gate = GateFollower(
             GateFollowerConfig(
@@ -826,6 +835,11 @@ class PlanningNode(Node):
         ]
         self._obstacles_world = [(o.cx, o.cy, o.r) for o in obstacles]
         self._pipe.set_obstacles(obstacles)
+        # Sınıfsız kol: burada "99" diye bir kavram YOK — kümelerin hiçbirinin
+        # sınıfı yok, hepsi ham LiDAR. Gösterim süzgecini KALDIRIYORUZ, yoksa
+        # sınıflı akış düştüğü anda Dosya-3 haritası bomboş kalırdı (kaptanın
+        # istediği "99'u gösterme", "haritayı boşalt" değil).
+        self._pipe.set_gosterim_engelleri(None)
         self._bos_akis_denetle(len(obstacles))
 
     def _classified_taze(self) -> bool:
@@ -961,6 +975,18 @@ class PlanningNode(Node):
         self._bos_akis_denetle(len(msg.detections))
         self._obstacles_world = [(o.cx, o.cy, o.r) for o in obstacles]
         self._pipe.set_obstacles(obstacles)
+        # 🔴 Dosya-3 HARİTASI: eşleşmemiş küme (CLASS_UNKNOWN=99) ÇİZİLMEZ —
+        # kaptan kararı 15.08.2026 (*"canlı haritada da 99 verileri
+        # olmayacak"*). Ölçüm: gerçek göl koşumunda tespitlerin %98,6'sı 99,
+        # harita gri bir bulut oluyordu. ⚠ KONTROL YOLU DEĞİŞMEZ — 99'lar
+        # yukarıdaki `set_obstacles` torbasında KALIR (güvenlik: füzyon
+        # sözleşmesi "bilinmeyeni atma"; 99'suz kaçınma fiilen kör olurdu).
+        if self._harita_yalniz_siniflandirilmis:
+            self._pipe.set_gosterim_engelleri([
+                CircleObstacle(wx, wy, r)
+                for (wx, wy, r, cls) in tespitler
+                if cls is not None and cls != CLASS_UNKNOWN
+            ])
         self._algi_no += 1                # B5 onayı: yeni algı karesi geldi
         self._publish_edge_buoys(edges)
 

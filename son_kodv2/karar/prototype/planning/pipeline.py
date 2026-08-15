@@ -266,6 +266,9 @@ class PlanningPipeline:
 
         self._state = np.zeros(6)                    # [x, y, ψ, u, v, r]
         self._obstacles: List[CircleObstacle] = []
+        #: Dosya-3 haritasına çizilecek engeller (bkz. `set_gosterim_engelleri`).
+        #: None → harita kontrol listesinden çizilir (eski davranış).
+        self._gosterim_engelleri: Optional[List[CircleObstacle]] = None
         self._waypoints: List[Tuple[float, float]] = []
         self._ref_path: Optional[List[Tuple[float, float]]] = None
         self._mission_state = "BOOT"
@@ -388,6 +391,28 @@ class PlanningPipeline:
             # verilir (soft ceza, 10 Hz). Ertelenen yalnız GLOBAL rotanın
             # yenilenmesidir; kaçınma katmanı tam hızda çalışmaya devam eder.
             self._rebuild_mppi()
+
+    def set_gosterim_engelleri(
+        self, obstacles: Optional[List[CircleObstacle]]
+    ) -> None:
+        """Dosya-3 haritasına ÇİZİLECEK engeller — kontrol yolunu ETKİLEMEZ.
+
+        🔴 **Kaptan kararı 15.08.2026:** *"canlı haritada da 99 verileri
+        olmayacak."* Ölçüm (session_20260814_153256): sınıflı akıştaki
+        tespitlerin **%98,6'sı** `CLASS_UNKNOWN=99` — teslim edilen harita
+        fiilen eşleşmemiş LiDAR kümelerinden oluşan gri bir bulut oluyordu.
+
+        🔑 **Neden AYRI liste, neden `set_obstacles` süzülmüyor:** eşleşmemiş
+        küme GÜVENLİK nesnesidir (füzyon sözleşmesi: *"bilinmeyeni atma"*) ve
+        MPPI'nin engel torbasında KALMALIDIR — 99'lar torbadan çıkarılırsa
+        kaçınma fiilen kör kalır (tespitlerin %98,6'sı). Bu yüzden kontrol
+        listesi (`_obstacles`) aynen korunur, harita ayrı listeden çizilir.
+
+        `None` verilirse (ya da hiç çağrılmazsa) harita eskisi gibi kontrol
+        listesinden çizilir — geriye tam uyumlu, sınıfsız LiDAR kolunda ve
+        prototip/görselleştirme kullanımında davranış birebir aynı.
+        """
+        self._gosterim_engelleri = obstacles
 
     def _replan_frenli(self) -> bool:
         """F-P.9: bu turda RRT* koşmak ERKEN mi (kör kalma payı dolmadı mı)?
@@ -967,9 +992,15 @@ class PlanningPipeline:
         # emniyet halkasında (r < d ≤ r+margin) lineer 100→0; dışı serbest (0).
         # Birden çok engelde hücre başına maksimum alınır.
         occ = np.zeros((h, w), dtype=np.float64)             # 0 = serbest su
-        if self._obstacles:
+        # Harita ÇİZİM listesinden kurulur; verilmemişse kontrol listesinden
+        # (eski davranış). Ayrımın gerekçesi: `set_gosterim_engelleri`.
+        cizilecek = (
+            self._obstacles if self._gosterim_engelleri is None
+            else self._gosterim_engelleri
+        )
+        if cizilecek:
             margin = self._base_mppi_cfg.obstacle_margin
-            for o in self._obstacles:
+            for o in cizilecek:
                 d = np.hypot(gx - o.cx, gy - o.cy)
                 if margin > 0.0:
                     contrib = np.where(

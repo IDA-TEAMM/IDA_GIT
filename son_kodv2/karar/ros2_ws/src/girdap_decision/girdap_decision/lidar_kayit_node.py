@@ -49,6 +49,7 @@ from sensor_msgs.msg import PointCloud2
 from vision_msgs.msg import Detection3DArray
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.sigterm_kapanis import sigterm_kapanisi_kur
 from girdap_decision.saat_kaynagi import bayatlik_saati
 from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mapping.bev_renderer import (
@@ -372,6 +373,10 @@ class LidarKayitNode(Node):
 
 def main(args: Optional[list] = None) -> None:
     rclpy.init(args=args)
+    # 🔴 SIGTERM kapısı: `systemctl stop/restart` bu sinyali gönderir ve
+    # işlenmezse süreç ANINDA ölür → `finally` çalışmaz → mp4'ün moov atomu
+    # yazılmaz → TESLİM DOSYASI OYNATILAMAZ (15.08 arızası, bkz. modül).
+    sigterm_kapanisi_kur()
     node = LidarKayitNode()
     try:
         rclpy.spin(node)

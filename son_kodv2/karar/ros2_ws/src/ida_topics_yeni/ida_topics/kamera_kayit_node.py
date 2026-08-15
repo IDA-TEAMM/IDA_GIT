@@ -254,8 +254,34 @@ class KameraKayitNode(Node):
         super().destroy_node()
 
 
+def _sigterm_kapanisi_kur():
+    """SIGTERM → KeyboardInterrupt, yani AŞAĞIDAKİ `finally` çalışsın.
+
+    🔴 15.08.2026 arızası: `systemctl stop/restart` **SIGTERM** gönderir ve
+    Python bunu işlemezse süreci ANINDA sonlandırır → `finally` çalışmaz →
+    `writer.release()` çağrılmaz → mp4'ün `moov` atomu yazılmaz → dosya
+    **oynatılamaz** (`ffprobe: moov atom not found`). 14.08'in üç teslim
+    dosyası da (kamera, LiDAR, yerel harita) tam bu yüzden bozuktu.
+    rclpy yalnız SIGINT için işleyici kurar.
+
+    ⚠ Bu, `girdap_decision/sigterm_kapanis.py`'nin İKİZİDİR — `ida_topics`
+    ayrı bir ROS paketi olduğu ve ona bağımlılık eklemek istemediğimiz için
+    yerinde tutuluyor. Biri değişirse öteki de değişmeli.
+    """
+    import signal
+
+    def _isleyici(signum, frame):
+        raise KeyboardInterrupt
+
+    try:
+        signal.signal(signal.SIGTERM, _isleyici)
+    except (ValueError, OSError):
+        pass
+
+
 def main(args=None):
     rclpy.init(args=args)
+    _sigterm_kapanisi_kur()
     node = KameraKayitNode()
     try:
         rclpy.spin(node)
