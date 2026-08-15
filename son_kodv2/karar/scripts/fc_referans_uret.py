@@ -45,6 +45,12 @@ sys.path.insert(0, str(KOK))
 from prototype.control.param_denetimi import OLUMCUL          # noqa: E402
 
 ZORUNLU_DOSYA = Path.home() / "Masaüstü" / "GIRDAP_ZORUNLU_PARAMETRELER.param"
+#: Oturumlar boyunca birikerek doğrulanmış KANONİK referans — `fc_param_
+#: denetle.py`'nin sürekli güncellediği dosya. 39 satırlık ZORUNLU_DOSYA'dan
+#: çok daha geniş: WP_SPEED, CRUISE_*, SERVO1/3 aralığı, ATC_STR_ANG_P,
+#: RC10_OPTION (kaptanın MotorEStop ataması), BRD_SAFETY_DEFLT, BATT_* tam
+#: kalibrasyon bloğu gibi haftalarca sahada doğrulanmış ayarları taşıyor.
+KANONIK_DOSYA = KOK / "docs" / "fc_REFERANS.param"
 
 #: Kalibrasyon/ölçüm türevi — FC'deki değer KORUNUR, asla varsayılana dönmez.
 KALIBRASYON_ONEKLERI = (
@@ -186,7 +192,9 @@ def main() -> int:
               "uygulanamaz, iş yarım kalır. Durduruldu."); return 1
 
     zorunlu = _oku_param_dosyasi(ZORUNLU_DOSYA) if ZORUNLU_DOSYA.exists() else {}
+    kanonik = _oku_param_dosyasi(KANONIK_DOSYA) if KANONIK_DOSYA.exists() else {}
     cikti, rapor = {}, {"olumcul": [], "bizim": [], "kalibrasyon": [],
+                        "kanonik": [],
                         "varsayilana_donen": [], "zaten_varsayilan": []}
 
     for ad, (deger, vars_) in sorted(tablo.items()):
@@ -202,6 +210,19 @@ def main() -> int:
         elif any(ad.startswith(p) for p in KALIBRASYON_ONEKLERI):
             cikti[ad] = deger
             rapor["kalibrasyon"].append((ad, deger))
+        elif ad in kanonik and vars_ is not None and abs(kanonik[ad] - vars_) > 1e-6:
+            # 🔴 15.08 gecesi bulundu — bu dal EKSİKTİ. Kanonik dosyada
+            # varsayılandan FARKLI bir değer kayıtlıysa bu SAHADA doğrulanmış
+            # bilinçli bir ayardır (WP_SPEED, CRUISE_*, SERVO aralığı, RC10
+            # MotorEStop, BRD_SAFETY_DEFLT…) — "amaçsız sapma" değil. Kural 4
+            # bunu hiç görmeden varsayılana döndürüyordu; 8-9 gerçek ayarı
+            # sessizce sildi ve saha testinde arm'ı bile engelledi
+            # (BRD_SAFETY_DEFLT). Tolerans kanonik'in KENDİSİ de varsayılandan
+            # anlamlı ölçüde ayrışmışsa devreye girer — kanonik'in varsayılanla
+            # aynı olduğu durumlarda (asıl "hiç dokunulmamış") kural 4 zaten
+            # doğru sonucu veriyordu, o yol bozulmadı.
+            cikti[ad] = kanonik[ad]
+            rapor["kanonik"].append((ad, deger, kanonik[ad]))
         elif vars_ is not None and abs(deger - vars_) > 1e-9:
             cikti[ad] = vars_
             rapor["varsayilana_donen"].append((ad, deger, vars_))
@@ -216,10 +237,14 @@ def main() -> int:
          f"- okunan parametre: **{len(tablo)}**",
          f"- ölümcül (kodumuzdan): **{len(rapor['olumcul'])}**",
          f"- bizim diğer ayarlarımız: **{len(rapor['bizim'])}**",
+         f"- kanonik dosyadan (saha-doğrulanmış, varsayılan DEĞİL): **{len(rapor['kanonik'])}**",
          f"- kalibrasyon türevi (KORUNDU): **{len(rapor['kalibrasyon'])}**",
          f"- 🔴 varsayılana DÖNDÜRÜLEN: **{len(rapor['varsayilana_donen'])}**",
          f"- zaten varsayılanda: {len(rapor['zaten_varsayilan'])}", "",
-         "## 🔴 Varsayılana döndürülenler — YÜKLEMEDEN ÖNCE OKU", "",
+         "## Kanonik dosyadan geri konanlar — saha-doğrulanmış, DOKUNULMADI", "",
+         "| parametre | FC'de | → kanonik |", "|---|---|---|"]
+    r += [f"| `{ad}` | {d:g} | {v:g} |" for ad, d, v in rapor["kanonik"]]
+    r += ["", "## 🔴 Varsayılana döndürülenler — YÜKLEMEDEN ÖNCE OKU", "",
          "Bunlar bir sebeple değiştirilmiş olabilir; listede tanıdığın bir",
          "parametre varsa yüklemeden önce sor.", "",
          "| parametre | FC'de | → varsayılan |", "|---|---|---|"]
