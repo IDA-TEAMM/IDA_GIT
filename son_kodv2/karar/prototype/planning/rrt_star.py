@@ -218,8 +218,17 @@ class RRTStar:
         goal: Tuple[float, float],
     ) -> Optional[List[Tuple[float, float]]]:
         """Plan çalıştır. Çözüm yoksa None döndürür."""
-        if not self._point_free(*start) or not self._point_free(*goal):
-            raise ValueError("start veya goal engel/sınır içinde")
+        # 🔑 HANGİSİ olduğu SÖYLENİR (16.08.2026). Eski tek mesaj *"start veya
+        # goal"* diyordu; ayak izi temizlemesi (§1.17d) start tarafını yapısal
+        # olarak kapattıktan sonra bantta hâlâ 369 ret kaldı ve **hangi ucun
+        # suçlu olduğu logdan okunamadı**. Bu hafta üçüncü kez aynı desen:
+        # arıza vardı, kod biliyordu, söylemiyordu.
+        bas_dolu = not self._point_free(*start)
+        hedef_dolu = not self._point_free(*goal)
+        if bas_dolu or hedef_dolu:
+            hangi = ("start" if bas_dolu and not hedef_dolu else
+                     "goal" if hedef_dolu and not bas_dolu else "start+goal")
+            raise ValueError(f"{hangi} engel/sınır içinde")
 
         self.nodes = [_Node(start[0], start[1])]
         self._best_goal = None
