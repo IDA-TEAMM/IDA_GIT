@@ -112,7 +112,15 @@ KAMERA_USB_KIMLIK = "03e7"       # Luxonis OAK — §0.95b/1
 BEKLENEN_PARAMETRELER: dict[str, float | None] = {
     "CRUISE_THROTTLE": 95.0,
     "CRUISE_SPEED": 1.05,
-    "WP_SPEED": 0.95,
+    # 🔴 0.95 → 1.20 (15.08.2026, §1.08b). Kaptan: *"MP GUIDED modunda
+    # motorlar çok yavaş."* Arıza değildi, TAVANDI: tekne tam gazda ölçülen
+    # 1,26 m/s yapıyor (§0.98), WP_SPEED 0,95 ise kabiliyetin yalnız %75'i.
+    # 1,20 = %95. Değer telemetriden yazıldı ve `force_pull` ile uçuş
+    # kontrolcüsünden geri okunarak doğrulandı.
+    # ⚠ Bu satır güncellenmeseydi nöbetçi kendi doğru değişikliğimize sonsuza
+    # dek ALARM basardı — yalan söyleyen alarm, gerçek parametre kaymasını da
+    # görünmez yapar. Beklenen değer değiştiğinde BURASI da değişir.
+    "WP_SPEED": 1.20,
     "ATC_SPEED_P": None,
     "ATC_SPEED_I": None,
     "MOT_THR_MIN": 10.0,
