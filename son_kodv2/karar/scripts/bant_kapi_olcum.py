@@ -63,6 +63,7 @@ KONULAR = [
     "/mavros/local_position/velocity_body",
     "/mavros/setpoint_velocity/cmd_vel_unstamped",
     "/perception/gate_count",
+    "/perception/classified_obstacles",
 ]
 
 
@@ -277,6 +278,118 @@ def main() -> None:  # noqa: PLR0915 — tek rapor akışı, bölmek okumayı zo
             gr = _epizotlar(T2[alt], 2.0) if len(alt) else []
             print(f"  temas bandı (<{TEMAS:.2f} m) epizodu: {len(gr)}"
                   f" · en yakın {Y.min():.2f} m  (hedef 0, §1.14 FAZ 6 ölçütü)")
+
+    _gercek_kapi_genisligi(v)
+
+
+def _gercek_kapi_genisligi(v: dict) -> None:
+    """⑦ GERÇEK KAPI GENİŞLİĞİ — tek karede birlikte görülen kenar duba çiftleri.
+
+    🔑 **Neden ④ yetmiyor.** ④ kilitlenen kapının genişliğini ölçer; o çift
+    KENAR HAFIZASINDAN gelir ve hafıza ikiz/hayalet kayıtlarla şişebilir
+    (§1.13: 3 573 kayıt, gerçekte 8-16 duba). Yani ④'ün ortancası kodun ne
+    SANDIĞInı ölçer, sahada ne OLDUĞUNU değil.
+
+    Bu bölüm ham `/perception/classified_obstacles` karelerini kullanır.
+    Aynı karede görülen iki tespit **iki ayrı fiziksel cisimdir** — hafıza
+    duplikasyonu tanım gereği kareler ARASINDA oluşur, kare İÇİNDE değil.
+    Dolayısıyla kare içi çift mesafeleri, elimizdeki en temiz gerçek-genişlik
+    ölçüsüdür.
+
+    Çiftleme ölçütü kodun kendi geometrisi: `|Δileri| < |Δyanal|`
+    (`select_gate`'in dikeylik testi; tespitler base_link'te, x=ileri).
+    Yeni bir eşik getirmez — kapı, kursa DİK duran çifttir.
+    """
+    kareler = v.get("/perception/classified_obstacles") or []
+    print("\n⑦ GERÇEK KAPI GENİŞLİĞİ (ham algı karesi; hafıza duplikasyonundan bağımsız)")
+    if not kareler:
+        print("  /perception/classified_obstacles bantta YOK — ölçülemedi")
+        return
+
+    kapi_araligi: list[float] = []      # dikeylik testini geçen çiftler
+    tum_ciftler: list[float] = []       # bütün kenar-kenar çiftleri (bağlam)
+    kenar_sayisi: list[int] = []
+    # ⑦b — GERÇEK KAPI NE KADAR HIZLI DEĞİŞİYOR (kaptan: "aralıklar sudan
+    # dolayı sürekli değişiyordu, açısı da"). Ardışık karelerde EN YAKIN kapı
+    # çifti eşleştirilir; genişlik/açı/orta nokta değişimi saniyeye bölünür.
+    # Bu, kapı izleyicisinin hız sınırını TAHMİNLE değil ÖLÇÜMLE verir:
+    # fiziksel sürüklenme yavaştır, hızlı olan her şey yanlış eşleşmedir.
+    onceki = None                       # (t, orta, genislik, aci)
+    d_genislik: list[float] = []
+    d_aci: list[float] = []
+    d_orta: list[float] = []
+    for t_kare, msg in kareler:
+        noktalar = []
+        for det in msg.detections:
+            cls = None
+            if det.results:
+                try:
+                    cls = int(det.results[0].hypothesis.class_id)
+                except (TypeError, ValueError):
+                    cls = None
+            if cls == 0:                                   # turuncu KENAR dubası
+                c = det.bbox.center.position
+                noktalar.append((c.x, c.y))
+        kenar_sayisi.append(len(noktalar))
+        en_yakin = None                                    # (menzil, orta, gen, açı)
+        for i in range(len(noktalar)):
+            for j in range(i + 1, len(noktalar)):
+                dx = noktalar[i][0] - noktalar[j][0]
+                dy = noktalar[i][1] - noktalar[j][1]
+                d = math.hypot(dx, dy)
+                tum_ciftler.append(d)
+                if abs(dx) < abs(dy) and d >= MIN_W:       # kursa dik + gövde sığar
+                    kapi_araligi.append(d)
+                    orta = (0.5 * (noktalar[i][0] + noktalar[j][0]),
+                            0.5 * (noktalar[i][1] + noktalar[j][1]))
+                    menzil = math.hypot(orta[0], orta[1])  # base_link: araç orijinde
+                    aci = math.atan2(dy, dx) % math.pi     # kiriş doğrultusu (±yön yok)
+                    if en_yakin is None or menzil < en_yakin[0]:
+                        en_yakin = (menzil, orta, d, aci)
+
+        # ⑦b: aynı kapıyı ardışık karelerde izle (yalnız 1 sn'den kısa
+        # aralıklar ve orta noktası 1 m'den az kaymış eşleşmeler — daha
+        # uzağı zaten "aynı kapı" sayılamaz, oraya bakmak arızayı ölçmek olur)
+        if en_yakin is not None:
+            if onceki is not None:
+                dt = t_kare - onceki[0]
+                kayma = math.hypot(en_yakin[1][0] - onceki[1][0],
+                                   en_yakin[1][1] - onceki[1][1])
+                if 0.0 < dt <= 1.0 and kayma <= 1.0:
+                    da = abs(en_yakin[3] - onceki[3])
+                    da = min(da, math.pi - da)             # ±π sarması
+                    d_genislik.append(abs(en_yakin[2] - onceki[2]) / dt)
+                    d_aci.append(math.degrees(da) / dt)
+                    d_orta.append(kayma / dt)
+            onceki = (t_kare, en_yakin[1], en_yakin[2], en_yakin[3])
+
+    N = np.array(kenar_sayisi)
+    print(f"  {len(kareler)} kare · kare başına kenar dubası: ortanca {np.median(N):.1f}"
+          f" · tepe {N.max() if len(N) else 0} · ≥2 duba görülen kare {int((N >= 2).sum())}")
+    if not kapi_araligi:
+        print("  kursa dik çift HİÇ oluşmadı — kapı genişliği ölçülemedi")
+        return
+    G = np.array(kapi_araligi)
+    T = np.array(tum_ciftler)
+    print(f"  bütün kenar-kenar çiftleri: {len(T)} · ortanca {np.median(T):.2f} m")
+    print(f"  🔑 KAPI ÇİFTİ (|Δileri|<|Δyanal|, ≥{MIN_W:.2f} m): {len(G)} örnek")
+    print(f"     ortanca {np.median(G):.2f} m · %5 {np.percentile(G, 5):.2f}"
+          f" · %95 {np.percentile(G, 95):.2f} · en dar {G.min():.2f} · en geniş {G.max():.2f} m")
+    kenarlar = [MIN_W, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 999.0]
+    for a, b in zip(kenarlar[:-1], kenarlar[1:]):
+        p = 100.0 * float(((G >= a) & (G < b)).sum()) / len(G)
+        print(f"     {a:5.2f}–{b:5.1f} m: %{p:4.1f} " + "█" * int(p / 2))
+
+    # ⑦b — kapı GERÇEKTEN mi kayıyor, algı mı zıplatıyor?
+    if d_genislik:
+        W = np.array(d_genislik)
+        A = np.array(d_aci)
+        O = np.array(d_orta)
+        print(f"  🔑 ARDIŞIK KARE DEĞİŞİMİ ({len(W)} eşleşme, <1 sn ara, orta nokta <1 m kaymış)")
+        print(f"     genişlik: ortanca {np.median(W):.2f} · %95 {np.percentile(W, 95):.2f} m/s")
+        print(f"     kiriş açısı: ortanca {np.median(A):.1f} · %95 {np.percentile(A, 95):.1f} °/s")
+        print(f"     orta nokta: ortanca {np.median(O):.2f} · %95 {np.percentile(O, 95):.2f} m/s")
+        print("     ⚠ suyun sürüklemesi cm/s mertebesindedir; bunun üstü ALGI oynamasıdır")
 
 
 if __name__ == "__main__":
