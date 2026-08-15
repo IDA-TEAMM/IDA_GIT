@@ -538,3 +538,108 @@ def test_FA1_ARALIKLI_siniflandirilan_GERCEK_duba_yine_ONAYLANIR() -> None:
         kenar = hafiza.siniflandir([(12.0, 4.0, R, cls)], TURUNCU)
     assert hafiza.onaylanan == 1, "aralıklı sınıflandırılan gerçek duba onaylanmadı"
     assert kenar == [True]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FAZ 1 (15.08.2026, GIRDAP_DURUM §1.13/§1.14) — İKİZ KAYIT PATLAMASI
+#
+# 🔴 SAHA ARIZASI (göl bandı 15.08): hafıza 26 dakikada 3 573 kayda şişti;
+# sahte kayıtların %63,5'i eşleşme bandının hemen dışında ([0,30–0,60) m)
+# doğuyordu — LiDAR'ın kısmi görüşü aynı dubanın merkezini bakış açısına göre
+# bir çapa kadar oynatıyor (§1.10c). İkizler `planning_node._huni_payi`'nin
+# W'sunu düşürüp kaçınma payını direklerin %84,8'inde SIFIRLADI → tekne
+# dubanın üstüne nişan aldı. Aynı arıza MIT Arcturus RB2026 raporunda (§1.15a).
+#
+# İki düzeltme: ① eşleşme bandı `r+r` → `r+r+duba_çapı` (kısmi görüş payı,
+# şartname sabiti) ② `hatirlananlar()` içinde kadanslı kayıt↔kayıt
+# konsolidasyonu (`_birlestir`).
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_FAZ1_kismi_gorus_ikizi_ACILMAZ() -> None:
+    """§1.10b'nin ölçtüğü popülasyon: [0,30–0,60) m'de doğan kayıtlar.
+
+    Aynı duba, bakış açısı değişince merkezi 0,45 m oynamış görünür —
+    eski bant (0,30) yeni kayıt açardı; yeni bant (0,60) aynı kayda taşır.
+    """
+    hafiza = EdgeBuoyMemory()
+    hafiza.siniflandir([(10.0, 6.0, R, TURUNCU)], TURUNCU)
+    hafiza.siniflandir([(10.45, 6.0, R, TURUNCU)], TURUNCU)
+    assert hafiza.boyut == 1, "kısmi görüş oynaması ikiz kayıt açtı (FAZ 1 bandı delik)"
+    assert hafiza.acilan_kayit == 1
+
+
+def test_FAZ1_gercek_iki_direk_BIRLESMEZ() -> None:
+    """Bant güvenliği: geçilebilir en dar kapının direkleri bile (1,085 m)
+    bandın (0,60 m) dışında — gerçek çift asla tek kayda inmez."""
+    hafiza = EdgeBuoyMemory()
+    hafiza.siniflandir(
+        [(10.0, 6.0, R, TURUNCU), (10.0, 4.915, R, TURUNCU)], TURUNCU
+    )
+    assert hafiza.boyut == 2
+    hafiza.hatirlananlar()                      # konsolidasyon da koşsun
+    assert hafiza.boyut == 2, "konsolidasyon gerçek kapı direklerini yuttu"
+
+
+def test_FAZ1_konsolidasyon_ikizleri_ERITIYOR() -> None:
+    """Kayıt↔kayıt: iki kayıt SONRADAN birbirinin bandına sürüklenirse
+    (odometri oynaması) ilk `hatirlananlar()` taramasında tek kayda iner."""
+    hafiza = EdgeBuoyMemory()
+    # 1,2 m arayla iki ayrı kayıt (bandın dışında, ikisi de meşru)
+    hafiza.siniflandir([(10.0, 6.0, R, TURUNCU)], TURUNCU)
+    hafiza.siniflandir([(11.2, 6.0, R, TURUNCU)], TURUNCU)
+    assert hafiza.boyut == 2
+    # ikincisi sürüklenip ilkinin bandına girdi (0,40 m)
+    hafiza._kayitlar[1].x = 10.40
+    hafiza.hatirlananlar()
+    assert hafiza.boyut == 1, "çakışan kayıtlar konsolidasyonda birleşmedi"
+    assert hafiza.birlestirilen == 1
+
+
+def test_FAZ1_konsolidasyon_SINIF_CELISKISINI_yutmaz() -> None:
+    """Güvenlik: bilinen ve FARKLI sınıflı iki kayıt banda girse de
+    BİRLEŞMEZ — sarı engel turuncu direğe yutulursa MPPI ondan kaçınmayı
+    bırakır (Ç1/Ç2 cezası). (Tespit↔kayıt yolundaki çelişki kuralı ayrı:
+    orada H1 gereği sınıf GÜNCELLENİR — bu test yalnız `_birlestir`'i bağlar.)
+    """
+    hafiza = EdgeBuoyMemory()
+    hafiza.siniflandir([(10.0, 6.0, R, TURUNCU)], TURUNCU)
+    hafiza.siniflandir([(10.0, 6.0, R, TURUNCU)], TURUNCU)      # onay → TURUNCU
+    hafiza.siniflandir([(11.0, 6.0, R, SARI)], TURUNCU)          # bandın dışında
+    assert hafiza.boyut == 2
+    hafiza._kayitlar[1].x = 10.40                # sarı kayıt banda sürüklendi
+    hafiza.hatirlananlar()
+    assert hafiza.boyut == 2, "farklı sınıflı komşu kayıt yutuldu (güvenlik ihlali)"
+
+
+def test_FAZ1_konsolidasyon_onaylari_TOPLAR() -> None:
+    """İkizler aynı dubanın kareleridir: `gorulme`/`turuncu_sayaci` birleşimde
+    toplanır — kanıt kaybolmaz, kayıt kenarlığını koruyabilir."""
+    hafiza = EdgeBuoyMemory()
+    hafiza.siniflandir([(10.0, 6.0, R, TURUNCU)], TURUNCU)
+    hafiza.siniflandir([(10.0, 6.0, R, TURUNCU)], TURUNCU)      # onaylı kenar
+    # bandın dışında meşru ikinci kayıt açılır, sonra sürüklenir
+    hafiza.siniflandir([(10.8, 6.0, R, TURUNCU)], TURUNCU)
+    hafiza._kayitlar[1].x = 10.3
+    hafiza.hatirlananlar()
+    assert hafiza.boyut == 1
+    k = hafiza._kayitlar[0]
+    assert k.sinif == TURUNCU, "onaylı kenar sınıfı birleşimde kayboldu"
+    # `gorulme` 1. geçişte artmaz (yalnız 2. geçişte) → iki kayıt 1+1 = 2;
+    # `turuncu_sayaci` her turuncu karede artar → 2+1 = 3. Kanıt TOPLANDI.
+    assert k.gorulme == 2 and k.turuncu_sayaci == 3
+
+
+def test_FAZ1_bant_replay_senaryosu_hafiza_TEMIZLENIR() -> None:
+    """§1.13'ün makro doğrulaması: aynı dubanın ±0,25 m oynayan tespitleri
+    100 karede TEK kayıt kalmalı (eskiden 0,30 m bandı aşan her sıçrama
+    yeni kayıt açıyordu → 26 dakikada 3 573)."""
+    import random
+    rnd = random.Random(7)
+    hafiza = EdgeBuoyMemory()
+    for _ in range(100):
+        x = 10.0 + rnd.uniform(-0.25, 0.25)
+        y = 6.0 + rnd.uniform(-0.25, 0.25)
+        hafiza.siniflandir([(x, y, R, TURUNCU)], TURUNCU)
+        hafiza.hatirlananlar()
+    assert hafiza.boyut == 1, f"±0,25 m oynayan tek duba {hafiza.boyut} kayıt üretti"

@@ -45,18 +45,31 @@ Modülün donmuş tasarım kuralı (bkz. `GateFollowerConfig` docstring'i +
 tekne boyutudur ya da saf geometridir.* Kapı geometrisi önceden bilinemez, o
 yüzden "sahada ölçüp gir" diye bir eşleşme yarıçapı olamaz.
 
-Burada da yok. Ölçüt: **iki katı cisim aynı yeri kaplayamaz.**
+Burada da yok. Ölçüt: **iki katı cisim aynı yeri kaplayamaz + kısmi görüş payı.**
 
-    aynı duba  ⟺  merkez_mesafesi ≤ r_hatırlanan + r_yeni
+    aynı duba  ⟺  merkez_mesafesi ≤ r_hatırlanan + r_yeni + duba_çapı
 
-İki yarıçap da tespitin **kendi mesajından** gelir (`bbox.size.x` = çap,
-`perception_fusion_node` sözleşmesi) → öz-ölçekli, ayarsız, ölçek-bağımsız.
-Belirsizlik hâlinde (birden çok kayıt çakışıyorsa) **en yakını** seçilir; bu bir
-eşik değil, tekil atama kuralıdır.
+İki yarıçap tespitin **kendi mesajından** gelir (`bbox.size.x` = çap,
+`perception_fusion_node` sözleşmesi); üçüncü terim **şartnamenin verdiği tek
+kesin boyut** (duba çapı 0,30 m). Belirsizlik hâlinde (birden çok kayıt
+çakışıyorsa) **en yakını** seçilir; bu bir eşik değil, tekil atama kuralıdır.
 
-⚠ Ölçüt neden yeterli: 10 Hz'te 1,05 m/s ile araç kare başına ~0,10 m yol alır,
-duba yarıçapı 0,15 m → çakışma kaybolmaz. Kapı direkleri 12 m, ardışık kapılar
-4 m aralıklı — yani 0,30 m'lik çakışma bandında **başka aday yok**.
+🔴 **Üçüncü terim neden var (FAZ 1, GIRDAP_DURUM §1.10c/§1.13, 15.08 göl
+ölçümü):** LiDAR dubanın yalnız kendine bakan yüzünü görür; küme merkezi bu
+yüzden gerçek merkezin değil YAKIN YÜZEYİN üstüne oturur ve bakış açısı
+değiştikçe aynı dubanın ölçülen merkezi **bir çapa kadar** oynar (hakemli
+karşılığı: kısmi yaydan daire uydurma yanlılığı — GIRDAP_DURUM §1.15b).
+Yalın `r+r` bandı bunu saymıyordu; göl bandında sahte kayıtların %63,5'i
+bandın hemen dışında ([0,30–0,60) m) doğdu, hafıza 26 dakikada 3 573 kayda
+şişti ve ikizler `_huni_payi`'yi direklerin %84,8'inde sıfırladı (çarpışma
+koruması söküldü). Aynı arıza MIT Arcturus'un RoboBoat 2026 raporunda da var:
+*"identifying the buoy pairs was not working properly in the presence of
+duplicates"* (§1.15a).
+
+⚠ Ölçüt neden hâlâ güvenli: kapı direkleri 12 m, ardışık kapılar 4 m
+aralıklı — 0,60 m'lik bantta **başka gerçek aday yok**. Bedel, F-A.1'in
+"kalan risk" penceresinin 0,30→0,60 m'ye büyümesi (iki bağımsız parlama aynı
+banda düşerse onay dolar); izleme kanalı aynı: `onaylanan` sayacı.
 
 ---
 
@@ -112,6 +125,19 @@ from typing import List, Optional, Sequence, Tuple
 # ki bu modül algı katmanına bağımlı olmasın; nöbetçi test ikisini bağlıyor.
 CLASS_UNKNOWN = 99
 
+# Şartnamenin verdiği tek kesin boyut: duba çapı 30 cm (yükseklik 50 cm).
+# Eşleşme bandındaki kısmi-görüş payı ve kayıt↔kayıt konsolidasyonu bu
+# sabitten türer (FAZ 1, GIRDAP_DURUM §1.10c/§1.13) — ayar parametresi değil.
+DUBA_CAPI_M = 0.30
+
+# Kayıt↔kayıt konsolidasyon kadansı: her N `hatirlananlar()` çağrısında bir
+# (≈2 s @10 Hz). Neden her karede değil: tarama O(n²) ve tespit↔kayıt bandı
+# genişletildiği için ikizler zaten nadiren doğar; konsolidasyon yalnız
+# birbirinin bandına SONRADAN sürüklenen kayıtları toplar. Neden ilk çağrıda
+# hemen: şişmiş bir hafızayla açılan oturum (bant replay, §1.13) ilk karede
+# temizlensin.
+_BIRLESTIRME_KADANSI = 20
+
 # (x, y, yarıçap, sınıf) — dünya (ENU) çerçevesinde, metre. Sınıf None olabilir
 # (sayısal olmayan class_id → sınıfsız sayılır).
 Tespit = Tuple[float, float, float, Optional[int]]
@@ -145,8 +171,14 @@ class HatirlananKenar:
     turuncu_sayaci: int = 0
 
     def cakisiyor(self, x: float, y: float, r: float) -> bool:
-        """İki daire çakışıyor mu = aynı fiziksel cisim mi (ayarsız ölçüt)."""
-        return math.hypot(self.x - x, self.y - y) <= (self.r + r)
+        """Aynı fiziksel cisim mi — daire çakışması + kısmi görüş payı.
+
+        FAZ 1 (§1.13): yalın `r+r` bandı, LiDAR'ın kısmi görüşünden gelen
+        merkez oynamasını (bir çapa kadar, §1.10c ölçümü) saymıyordu ve göl
+        koşumunda ikiz kayıt patlamasına yol açtı. `DUBA_CAPI_M` şartname
+        sabitidir, ayar değil (modül docstring'i: "eşleşme ölçüsü").
+        """
+        return math.hypot(self.x - x, self.y - y) <= (self.r + r + DUBA_CAPI_M)
 
     def uzaklik(self, x: float, y: float) -> float:
         return math.hypot(self.x - x, self.y - y)
@@ -181,6 +213,11 @@ class EdgeBuoyMemory:
         self._son_menzil_disi = 0
         #: KAR-11 (12.08): unutma ile silinen toplam kayit — teshis.
         self._unutulan = 0
+        #: FAZ 1 (15.08): kayıt↔kayıt konsolidasyonuyla ERİTİLEN toplam kayıt
+        #: (teşhis) ve kadans sayacı. Sayaç kadans değerinden başlar ki ilk
+        #: `hatirlananlar()` çağrısı hemen bir tarama yapsın.
+        self._birlestirilen = 0
+        self._birlestirme_sayaci = _BIRLESTIRME_KADANSI
 
     # ------------------------------------------------------------- teşhis
 
@@ -239,6 +276,15 @@ class EdgeBuoyMemory:
         """Son `hatirlananlar()` çağrısında menzil dışı kaldığı için engel
         torbasına KONMAYAN kayıt sayısı."""
         return self._son_menzil_disi
+
+    @property
+    def birlestirilen(self) -> int:
+        """FAZ 1 teşhisi: konsolidasyonla eritilen toplam kayıt sayısı.
+
+        Sahada sürekli artıyorsa ikizler hâlâ doğuyor demektir (eşleşme bandı
+        yetmiyor → odometri sıçramasına bak, KAR-06); sıfır kalıyorsa hafıza
+        zaten temiz."""
+        return self._birlestirilen
 
     def kayitlar(self) -> List[Tuple[float, float, float]]:
         """Hatırlanan kenarlar (x, y, r) — RViz/teşhis için kopya."""
@@ -420,6 +466,16 @@ class EdgeBuoyMemory:
         # seçilir, yani "hâlâ işimize yarayabilecek" hiçbir kayıt silinmez;
         # yalnız aracın çok gerisinde kalmış, bir daha kullanılmayacak
         # kopyalar düşer.
+        # FAZ 1 (§1.13c): kayıt↔kayıt konsolidasyonu — kadanslı, tarama zaten
+        # bu çağrının işi olduğu için burada. Tespit↔kayıt bandı genişletilse
+        # de iki kayıt SONRADAN birbirinin bandına sürüklenebilir (odometri
+        # oynaması, kısmi görüş); literatürde de kopya işaretçi yönetimi ayrı
+        # bir katmandır (§1.15c). Aksiyom aynı: çakışan uyumlu kayıtlar tek
+        # cisimdir.
+        self._birlestirme_sayaci += 1
+        if self._birlestirme_sayaci >= _BIRLESTIRME_KADANSI:
+            self._birlestirme_sayaci = 0
+            self._birlestir()
         if arac_xy is not None and unutma_menzili is not None:
             ax0, ay0 = arac_xy
             kalan = [
@@ -458,6 +514,55 @@ class EdgeBuoyMemory:
             if d < en_yakin:
                 en_iyi, en_yakin = j, d
         return en_iyi
+
+    def _birlestir(self) -> int:
+        """FAZ 1 (§1.13) — çakışan uyumlu kayıtları tek kayda erit.
+
+        Ölçüt `cakisiyor` ile AYNI (r_a + r_b + duba_çapı): tespit↔kayıt için
+        doğru olan aksiyom kayıt↔kayıt için de doğrudur — iki katı cisim aynı
+        yeri kaplayamaz. Göl bandında ölçüldü (§1.13h): bu birleştirme
+        yayımlanan kayıtları 230→104'e, paysız direk oranını %78→%45'e indirir
+        (kalanı `_huni_payi` düzeltmesi kapatır, FAZ 2).
+
+        Kurallar:
+          · Bilinen ve FARKLI iki sınıf → **birleşmez** (çelişki güvenliği:
+            turuncu direğin dibindeki sarı engel yutulmaz, ikisi de kalır).
+          · Merkez `gorulme` ağırlıklı ortalama (çok görülen kayıt daha
+            güvenilir), yarıçap büyük olan (güvenli taraf), `gorulme` ve
+            `turuncu_sayaci` toplanır (ikizler aynı dubanın kareleridir).
+          · Tek geçiş, açgözlü: zincirler kadanslı tekrar taramalarla çöker.
+        """
+        eritilen = 0
+        yeni: List[HatirlananKenar] = []
+        for k in self._kayitlar:
+            hedef = None
+            for m in yeni:
+                if not m.cakisiyor(k.x, k.y, k.r):
+                    continue
+                bilinen_m = m.sinif is not None and m.sinif != CLASS_UNKNOWN
+                bilinen_k = k.sinif is not None and k.sinif != CLASS_UNKNOWN
+                if bilinen_m and bilinen_k and m.sinif != k.sinif:
+                    continue                      # sınıf çelişkisi: ikisi de kalır
+                hedef = m
+                break
+            if hedef is None:
+                yeni.append(k)
+                continue
+            w = hedef.gorulme + k.gorulme
+            hedef.x = (hedef.x * hedef.gorulme + k.x * k.gorulme) / w
+            hedef.y = (hedef.y * hedef.gorulme + k.y * k.gorulme) / w
+            hedef.r = max(hedef.r, k.r)
+            hedef.gorulme = w
+            hedef.turuncu_sayaci += k.turuncu_sayaci
+            hedef.taze = hedef.taze or k.taze
+            if k.sinif is not None and k.sinif != CLASS_UNKNOWN and (
+                hedef.sinif is None or hedef.sinif == CLASS_UNKNOWN
+            ):
+                hedef.sinif = k.sinif             # bilinen sınıf kazanır
+            eritilen += 1
+        self._kayitlar = yeni
+        self._birlestirilen += eritilen
+        return eritilen
 
     def _tasi(self, j: int, x: float, y: float, r: float,
               sinif: Optional[int] = None) -> None:
