@@ -120,6 +120,8 @@ import math
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
+import numpy as np
+
 # Füzyon sözleşmesi: eşleşmeyen LiDAR kümesi bu sınıfla geçer (güvenlik).
 # prototype.perception.fusion.CLASS_UNKNOWN ile aynı olmalı — import etmiyoruz
 # ki bu modül algı katmanına bağımlı olmasın; nöbetçi test ikisini bağlıyor.
@@ -327,6 +329,36 @@ class EdgeBuoyMemory:
         for k in self._kayitlar:              # H1: tazelik her karede sıfırlanır
             k.taze = False
 
+        # ⚡ FAZ 5 (15.08, §1.17a): eşleşme taraması SAF PYTHON'dan numpy'ye.
+        # Kanıt: canlı koşumda kadans↔kayıt sayısı korelasyonu r=+0,94 — bu
+        # tarama tek yürütücü iş parçacığını boğup kontrolü 1,9 Hz'e
+        # düşürüyordu. Diziler çağrı başına BİR kez kurulur; taşıma/açma aynı
+        # dizide yerinde güncellenir. Anlambilim `_eslesen_kayit` ile BİREBİR
+        # (çakışma bandı + en yakın; eşitlikte İLK indeks — np.argmin de ilkini
+        # döndürür). ⚠ GPU (cupy) BİLEREK KULLANILMADI: ~700 kayıtlık dizide
+        # çekirdek başlatma + veri taşıma, hesabın kendisinden pahalı; MPPI'nin
+        # aksine burada iş GPU'ya küçük (ölçümü §1.18'de).
+        kap = len(self._kayitlar) + len(tespitler)
+        _KX = np.empty(kap)
+        _KY = np.empty(kap)
+        _KR = np.empty(kap)
+        _dolu = len(self._kayitlar)
+        if _dolu:
+            _KX[:_dolu] = [k.x for k in self._kayitlar]
+            _KY[:_dolu] = [k.y for k in self._kayitlar]
+            _KR[:_dolu] = [k.r for k in self._kayitlar]
+        _bos = np.zeros(kap, dtype=bool)       # kullanilan'ın dizi hâli
+
+        def _en_yakin_vek(x: float, y: float, r: float) -> Optional[int]:
+            if _dolu == 0:
+                return None
+            d = np.hypot(_KX[:_dolu] - x, _KY[:_dolu] - y)
+            aday = (d <= _KR[:_dolu] + r + DUBA_CAPI_M) & ~_bos[:_dolu]
+            if not aday.any():
+                return None
+            idx = np.flatnonzero(aday)
+            return int(idx[np.argmin(d[idx])])
+
         # --- 1. geçiş: renk ŞU AN görünüyor ---------------------------------
         # 🔴 F-A.1: "şu an turuncu" TEK BAŞINA yetmez. Kayıt açılır/taşınır ama
         # kenar bayrağı ancak ONAY dolunca True olur; o ana kadar cisim engel
@@ -334,15 +366,18 @@ class EdgeBuoyMemory:
         for i, (x, y, r, cls) in enumerate(tespitler):
             if cls != edge_class_id:
                 continue
-            j = self._eslesen_kayit(x, y, r, haric=kullanilan)
+            j = _en_yakin_vek(x, y, r)
             if j is None:
                 self._kayitlar.append(
                     HatirlananKenar(x, y, r, sinif=None, taze=True)
                 )
                 j = len(self._kayitlar) - 1
                 self._acilan_kayit += 1
+                _KX[j], _KY[j], _KR[j] = x, y, r
+                _dolu = j + 1
             else:
                 self._tasi(j, x, y, r, None)
+                _KX[j], _KY[j], _KR[j] = x, y, r
             kayit = self._kayitlar[j]
             kayit.turuncu_sayaci += 1
             # 🔑 EŞİK DEĞİL, TEKRARIN ASGARİSİ. Ölçüldü (13.08, canlı kamera,
@@ -359,6 +394,7 @@ class EdgeBuoyMemory:
             else:
                 self._onay_bekleyen_kare += 1     # henüz engel olarak kalıyor
             kullanilan.add(j)
+            _bos[j] = True
             islenen.add(i)
 
         # --- 2. geçiş: renk görünmüyor --------------------------------------
@@ -370,7 +406,7 @@ class EdgeBuoyMemory:
                 and cls != edge_class_id
                 and cls != CLASS_UNKNOWN
             )
-            j = self._eslesen_kayit(x, y, r, haric=kullanilan)
+            j = _en_yakin_vek(x, y, r)
             if j is None:
                 # 🆕 H1: eşleşen kayıt yok → YENİ kayıt aç. Hafıza artık yalnız
                 # turuncu direkleri değil GÖRÜLEN HER CİSMİ tutuyor (sarı engel,
@@ -380,7 +416,11 @@ class EdgeBuoyMemory:
                     HatirlananKenar(x, y, r, sinif=cls, taze=True)
                 )
                 self._acilan_kayit += 1
-                kullanilan.add(len(self._kayitlar) - 1)
+                yeni_j = len(self._kayitlar) - 1
+                kullanilan.add(yeni_j)
+                _KX[yeni_j], _KY[yeni_j], _KR[yeni_j] = x, y, r
+                _bos[yeni_j] = True
+                _dolu = yeni_j + 1
                 continue
             if bilinen_farkli:
                 # Kamera "orada sarı/hedef var" diyor — hafızadan taze bilgi.
@@ -389,9 +429,12 @@ class EdgeBuoyMemory:
                 self._tasi(j, x, y, r, cls)
                 self._celiskiyle_silinen += 1
                 kullanilan.add(j)
+                _KX[j], _KY[j], _KR[j] = x, y, r
+                _bos[j] = True
                 continue
             kenar[i] = self._kayitlar[j].sinif == edge_class_id
             self._tasi(j, x, y, r, cls)
+            _KX[j], _KY[j], _KR[j] = x, y, r
             # 🔴 F-A.1 — SÖNÜM YOK, BİLİNÇLİ. İki aday kural denendi:
             #  · "peş peşe" (turuncusuz karede sayacı sıfırla) ve
             #  · "±1 erime"
@@ -411,6 +454,7 @@ class EdgeBuoyMemory:
             if kenar[i]:
                 self._hatirlanarak_kurtarilan += 1
             kullanilan.add(j)
+            _bos[j] = True
 
         return kenar
 
@@ -476,28 +520,34 @@ class EdgeBuoyMemory:
         if self._birlestirme_sayaci >= _BIRLESTIRME_KADANSI:
             self._birlestirme_sayaci = 0
             self._birlestir()
+        # ⚡ FAZ 5: mesafe süzgeçleri numpy'de (§1.17a; davranış birebir).
+        if not self._kayitlar:
+            self._son_menzil_disi = 0
+            return []
+        X = np.fromiter((k.x for k in self._kayitlar), float, len(self._kayitlar))
+        Y = np.fromiter((k.y for k in self._kayitlar), float, len(self._kayitlar))
         if arac_xy is not None and unutma_menzili is not None:
             ax0, ay0 = arac_xy
-            kalan = [
-                k for k in self._kayitlar
-                if math.hypot(k.x - ax0, k.y - ay0) <= unutma_menzili
-            ]
-            self._unutulan += len(self._kayitlar) - len(kalan)
-            self._kayitlar = kalan
-        gorulmeyenler = [k for k in self._kayitlar if not k.taze]
+            kal = np.hypot(X - ax0, Y - ay0) <= unutma_menzili
+            if not kal.all():
+                self._unutulan += int((~kal).sum())
+                self._kayitlar = [
+                    k for k, tut in zip(self._kayitlar, kal) if tut
+                ]
+                X, Y = X[kal], Y[kal]
+        gorulmeyen = np.fromiter(
+            (not k.taze for k in self._kayitlar), bool, len(self._kayitlar)
+        )
         if arac_xy is None or menzil is None:
             self._son_menzil_disi = 0
-            secilen = gorulmeyenler
+            sec = gorulmeyen
         else:
             ax, ay = arac_xy
-            secilen = [
-                k for k in gorulmeyenler
-                if math.hypot(k.x - ax, k.y - ay) <= menzil
-            ]
-            self._son_menzil_disi = len(gorulmeyenler) - len(secilen)
+            sec = gorulmeyen & (np.hypot(X - ax, Y - ay) <= menzil)
+            self._son_menzil_disi = int(gorulmeyen.sum() - sec.sum())
         return [
             ((k.x, k.y, k.r, k.sinif), k.sinif is not None and k.sinif == self._edge_id)
-            for k in secilen
+            for k, s in zip(self._kayitlar, sec) if s
         ]
 
     # ------------------------------------------------------------- yardımcı
@@ -532,22 +582,35 @@ class EdgeBuoyMemory:
             `turuncu_sayaci` toplanır (ikizler aynı dubanın kareleridir).
           · Tek geçiş, açgözlü: zincirler kadanslı tekrar taramalarla çöker.
         """
+        # ⚡ FAZ 5: hedef arama numpy'de (§1.17a). Davranış birebir: hedef,
+        # `yeni` SIRASINDA çakışan İLK sınıf-uyumlu kayıttır (np.argmax ilk
+        # True'yu döndürür). Sınıfsız/UNKNOWN kod: -1.
+        n = len(self._kayitlar)
+        if n < 2:
+            return 0
         eritilen = 0
         yeni: List[HatirlananKenar] = []
+        _YX = np.empty(n)
+        _YY = np.empty(n)
+        _YR = np.empty(n)
+        _YS = np.empty(n, dtype=int)
+        m = 0
         for k in self._kayitlar:
-            hedef = None
-            for m in yeni:
-                if not m.cakisiyor(k.x, k.y, k.r):
-                    continue
-                bilinen_m = m.sinif is not None and m.sinif != CLASS_UNKNOWN
-                bilinen_k = k.sinif is not None and k.sinif != CLASS_UNKNOWN
-                if bilinen_m and bilinen_k and m.sinif != k.sinif:
-                    continue                      # sınıf çelişkisi: ikisi de kalır
-                hedef = m
-                break
-            if hedef is None:
+            ks = -1 if (k.sinif is None or k.sinif == CLASS_UNKNOWN) else int(k.sinif)
+            hedef_i: Optional[int] = None
+            if m:
+                d = np.hypot(_YX[:m] - k.x, _YY[:m] - k.y)
+                uygun = d <= _YR[:m] + k.r + DUBA_CAPI_M
+                if ks != -1:
+                    uygun &= ~((_YS[:m] != -1) & (_YS[:m] != ks))   # çelişki: birleşmez
+                if uygun.any():
+                    hedef_i = int(np.argmax(uygun))
+            if hedef_i is None:
                 yeni.append(k)
+                _YX[m], _YY[m], _YR[m], _YS[m] = k.x, k.y, k.r, ks
+                m += 1
                 continue
+            hedef = yeni[hedef_i]
             w = hedef.gorulme + k.gorulme
             hedef.x = (hedef.x * hedef.gorulme + k.x * k.gorulme) / w
             hedef.y = (hedef.y * hedef.gorulme + k.y * k.gorulme) / w
@@ -555,10 +618,11 @@ class EdgeBuoyMemory:
             hedef.gorulme = w
             hedef.turuncu_sayaci += k.turuncu_sayaci
             hedef.taze = hedef.taze or k.taze
-            if k.sinif is not None and k.sinif != CLASS_UNKNOWN and (
-                hedef.sinif is None or hedef.sinif == CLASS_UNKNOWN
-            ):
+            if ks != -1 and (hedef.sinif is None or hedef.sinif == CLASS_UNKNOWN):
                 hedef.sinif = k.sinif             # bilinen sınıf kazanır
+            _YX[hedef_i], _YY[hedef_i], _YR[hedef_i] = hedef.x, hedef.y, hedef.r
+            if _YS[hedef_i] == -1 and ks != -1:
+                _YS[hedef_i] = ks
             eritilen += 1
         self._kayitlar = yeni
         self._birlestirilen += eritilen
