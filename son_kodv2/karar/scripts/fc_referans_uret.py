@@ -73,53 +73,97 @@ def _oku_param_dosyasi(yol: Path) -> dict:
 def pck_coz(ham: bytes) -> dict:
     """`param.pck?withdefaults=1` çöz → {ad: (deger, varsayilan|None)}.
 
-    Biçim ArduPilot'un `AP_Param::pack()`'inden gelir; MAVProxy'nin
-    `mavproxy_param.py`'si aynı yapıyı okur. Sürüm farklarına karşı
-    çözümleyici HATA VERİRSE sessizce yarım sonuç dönmez — patlar, çünkü
-    yarım bir referans, olmayandan tehlikelidir.
+    🔴 **15.08 DÜZELTMESİ — burada elle yazılmış bir çözücü vardı ve
+    ÜÇ yerden yanlıştı**, gerçek donanıma karşı ilk çalıştırıldığında
+    (`ofs=15`'te "bilinmeyen tip nibble 13" ile) ortaya çıktı:
+      1. Kayıtlar arasındaki **dolgu (pad) baytları hiç atlanmıyordu**.
+      2. "Varsayılan değer de var mı" biti `ptype & 0x40` sanılmıştı,
+         gerçeği `(ptype >> 4) & 0x1` (yani `ptype & 0x10`).
+      3. `plen` baytının **ad-uzunluğu ve ortak-önek-uzunluğu nibble'ları
+         TERS** okunuyordu (üst nibble ad uzunluğu, alt nibble ortak önek —
+         ben ikisini birbirine karıştırmıştım).
+    Üçü birlikte: yalnız İLK kayıtta bile yanlış bayt sayısı tüketilip
+    akış hemen desenkron oluyordu. Bu üç hata bir REFERANS DOSYASINDA
+    yanlış ada yanlış değer yazdırabilirdi — ikinci bir çözücüyle
+    "çapraz kontrol" yapmak yeterli değil, TEK doğru kaynağa geçildi.
+
+    Doğru biçim ArduPilot'un `AP_Param::pack()`'inden gelir; kendi elle
+    yazdığım decoder yerine bunu üreten firmware'in TEK gerçek muadili olan
+    MAVProxy'nin kendi `param_ftp.ftp_param_decode()`'u kullanılıyor —
+    ArduPilot ekibiyle aynı takım bu kütüphaneyi bakımlı tutuyor.
     """
-    from MAVProxy.modules.lib import mp_util          # noqa: F401  (varlık kontrolü)
-    from MAVProxy.modules import mavproxy_param as mp
-    return mp.ParamState.unpack_param_pck(ham) if hasattr(
-        mp.ParamState, "unpack_param_pck") else _pck_coz_yerel(ham)
+    from MAVProxy.modules.lib import param_ftp
+    veri = param_ftp.ftp_param_decode(ham)
+    if veri is None:
+        raise ValueError(
+            "param_ftp.ftp_param_decode None döndü — bozuk magic ya da "
+            "kayıt sayısı uyuşmuyor (kütüphane kendi hatasını stderr'e "
+            "bastı). Yarım sonuç ÜRETİLMEDİ."
+        )
+    def _str(ad):
+        return ad.decode("ascii") if isinstance(ad, bytes) else ad
 
-
-def _pck_coz_yerel(ham: bytes) -> dict:
-    """MAVProxy sürümü yardımcı sunmuyorsa elle çöz."""
-    magic, num, total = struct.unpack("<HHH", ham[:6])
-    if magic not in (0x671B, 0x671C):
-        raise ValueError(f"beklenmeyen param.pck sihirli sayisi: 0x{magic:04X}")
-    varsayilanli = magic == 0x671C
-    ofs, sonuc, ad_onceki = 6, {}, ""
-    tipler = {1: ("b", 1), 2: ("h", 2), 3: ("i", 4), 4: ("f", 4)}
-    while ofs < len(ham) and len(sonuc) < num:
-        ptype = ham[ofs]; plen = ham[ofs + 1]; ofs += 2
-        tip = ptype & 0x0F
-        ortak = plen >> 4
-        adlen = (plen & 0x0F) + 1
-        ad = ad_onceki[:ortak] + ham[ofs:ofs + adlen].decode("ascii", "replace")
-        ofs += adlen
-        f, n = tipler[tip]
-        deger = struct.unpack("<" + f, ham[ofs:ofs + n])[0]; ofs += n
-        vars_ = None
-        if varsayilanli and (ptype & 0x40):
-            vars_ = struct.unpack("<" + f, ham[ofs:ofs + n])[0]; ofs += n
+    varsayilanlar = {_str(ad): deger for ad, deger, _tip in (veri.defaults or [])}
+    sonuc = {}
+    for ad, deger, _tip in veri.params:
+        ad = _str(ad)
+        vars_ = varsayilanlar.get(ad)
         sonuc[ad] = (float(deger), None if vars_ is None else float(vars_))
-        ad_onceki = ad
     return sonuc
 
 
-def indir(baglanti: str) -> bytes:
+def indir(baglanti: str, deneme: int = 4) -> bytes:
+    """`param.pck?withdefaults=1`'i MAVFTP ile indir.
+
+    🔴 **15.08 — bayt-sayısı denetimi YANLIŞ ALARMDI, kaldırıldı.**
+    İlk yazımda MAVFTP'nin `remote_file_size`'ına (OpenFileRO yanıtından
+    gelen bir "beklenen boyut" alanı) güvenip onunla eşleşmeyen indirmeyi
+    "eksik" sayıp yeniden deniyordum. 4 üst üste denemede DE aynı 10327
+    bayt geldi (10908 "bekleniyordu") — bu rastgele bir kayıp olsaydı
+    tekrar aynı sayıya düşmezdi, DETERMİNİSTİKTİ. Doğrudan test edince
+    (`param_ftp.ftp_param_decode` o 10327 baytı **909 parametrenin 909'unu
+    da temiz çözdü**) `remote_file_size`'ın kendisinin GÜVENİLMEZ olduğu
+    ortaya çıktı — ArduPilot'un stat() tahmini ile gerçek üretilen akış
+    uzunluğu bu FC/firmware kombinasyonunda örtüşmüyor.
+
+    ⇒ Doğru tamlık ölçütü bayt sayısı DEĞİL, **gerçek başarılı çözümleme**:
+    `pck_coz` içindeki `ftp_param_decode` zaten kendi `count != total_params`
+    denetimini yapıyor ve eksikse `None` dönüyor — o denetim yeterli, onu
+    tekrarlamak (yanlış bir alanla) sahte kırmızı üretiyordu.
+    """
     from pymavlink import mavutil, mavftp
     print(f"bağlanılıyor: {baglanti} …")
     m = mavutil.mavlink_connection(baglanti)
     m.wait_heartbeat(timeout=20)
     print(f"✅ FC bağlı (sys {m.target_system}) · param.pck indiriliyor…")
-    ftp = mavftp.MAVFTP(m, m.target_system, m.target_component)
-    hedef = Path("/tmp/param_withdefaults.pck")
-    ftp.cmd_get(["@PARAM/param.pck?withdefaults=1", str(hedef)])
-    ftp.process_ftp_reply("OpenFileRO", timeout=30)
-    return hedef.read_bytes()
+
+    son_boyut = None
+    for i in range(1, deneme + 1):
+        ftp = mavftp.MAVFTP(m, m.target_system, m.target_component)
+        hedef = Path("/tmp/param_withdefaults.pck")
+        hedef.unlink(missing_ok=True)
+        ftp.cmd_get(["@PARAM/param.pck?withdefaults=1", str(hedef)])
+        ftp.process_ftp_reply("OpenFileRO", timeout=30)
+        if not hedef.exists():
+            print(f"  [{i}/{deneme}] indirme boş döndü, yeniden deneniyor…")
+            continue
+        ham = hedef.read_bytes()
+        son_boyut = len(ham)
+        try:
+            if len(ham) < 6:
+                raise ValueError("başlık bile gelmedi")
+            pck_coz(ham)                     # yalnız tamlık testi; sonuç atılır
+        except ValueError as exc:
+            print(f"  [{i}/{deneme}] çözülemedi ({son_boyut} bayt: {exc}), "
+                  f"yeniden deneniyor…")
+            continue
+        if i > 1:
+            print(f"  ✅ {i}. denemede tamamlandı ({son_boyut} bayt)")
+        return ham
+    raise RuntimeError(
+        f"param.pck {deneme} denemede de ÇÖZÜLEMEDİ (son: {son_boyut} bayt) "
+        "— gerçek bir bağlantı sorunu olabilir. Yarım sonuç ÜRETİLMEDİ."
+    )
 
 
 def main() -> int:
