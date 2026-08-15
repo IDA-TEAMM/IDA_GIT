@@ -1007,7 +1007,8 @@ class PlanningNode(Node):
 
             m = clamp( (W − hull_width − 2r) / 2 , 0 , gate_post_margin_m )
 
-        `W` = bu direğin **en yakın diğer kenar dubasına** ölçülen mesafe.
+        `W` = bu direğin, **geçilebilir boşluk oluşturan** (≥ `min_passable_width`,
+        FAZ 2) en yakın diğer kenar dubasına ölçülen mesafesi.
         Formülün girdileri ya ölçülmüş tekne boyutu (`hull_width_m`) ya şartname
         sabiti (duba çapı 30 cm) ya da **o an ölçülen** geometri; tek serbest
         sayı TAVAN'dır ve o da kapı SEÇİMİNE değil kaçınma şiddetine ait
@@ -1035,13 +1036,32 @@ class PlanningNode(Node):
         if len(kenarlar) < 2:
             return self._gate_post_margin
         dx, dy = kenarlar[i]
+        # 🔴 FAZ 2 (15.08, GIRDAP_DURUM §1.13d): gövdenin SIĞAMAYACAĞI kadar
+        # yakın bir komşu W hesabına GİRMEZ. Gerekçe kodun kendi tanımı
+        # (`select_gate`: "gövde sığmıyorsa bu bir kapı değildir"): böyle bir
+        # komşu ya aynı dubanın ikiz kaydıdır ya duvar parçasıdır — iki hâlde
+        # de oradan GEÇİLMEYECEKtir, yani "geçmem gereken en dar boşluk" o
+        # değildir. Eski hâl payı sıfırlıyordu: göl bandında ikiz kayıtlar
+        # yüzünden direklerin %84,8'i PAYSIZ kaldı ve tekne direğe nişan aldı
+        # (17 dar-kapı epizodu, 6'sında nişana girildi). Bu süzgeçle çarpışma
+        # koruması hafıza kirliliğinden bağımsızlaşır. Kullanılan sınır yeni
+        # bir eşik değil, kapı kabulünün kendi sınırı (`min_passable_width` =
+        # gövde + 2r); gerçekten dar ama GEÇİLEBİLİR boşlukta pay eskisi gibi
+        # kendiliğinden küçülür.
+        min_gecilebilir = self._gate._cfg.min_passable_width
         # İndeksle dışla, koordinatla DEĞİL: iki tespit aynı noktaya düşerse
         # koordinat karşılaştırması ikisini birden eler ve pay tavana çıkardı.
-        en_yakin = min(
-            math.hypot(dx - kx, dy - ky)
-            for j, (kx, ky) in enumerate(kenarlar) if j != i
-        )
-        serbest = en_yakin - self._gate._cfg.hull_width_m - 2.0 * BUOY_RADIUS_M
+        adaylar = [
+            d
+            for j, (kx, ky) in enumerate(kenarlar)
+            if j != i
+            and (d := math.hypot(dx - kx, dy - ky)) >= min_gecilebilir
+        ]
+        if not adaylar:
+            # Geçilebilir boşluk oluşturan komşu yok → direk normal engel gibi
+            # tam payını korur (len<2 koluyla aynı mantık).
+            return self._gate_post_margin
+        serbest = min(adaylar) - self._gate._cfg.hull_width_m - 2.0 * BUOY_RADIUS_M
         return max(0.0, min(self._gate_post_margin, serbest / 2.0))
 
     def _log_edge_memory(self) -> None:

@@ -1718,3 +1718,78 @@ def test_ff20_operator_PIVOT_gorur(ros_context) -> None:  # noqa: ANN001
         assert metinler and "|PIVOT" in metinler[-1].data
     finally:
         node.destroy_node()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FAZ 2 (15.08.2026, GIRDAP_DURUM §1.13d/§1.14) — HUNİ PAYI SIFIRA DÜŞEMEZ
+#
+# 🔴 SAHA ARIZASI (göl bandı 15.08): ikiz kenar kayıtları `_huni_payi`'nin
+# W'sunu (en yakın komşu) 1,085 m'nin altına düşürüp payı direklerin
+# %84,8'inde SIFIRLADI → gerçek kapı direği MPPI torbasına çıplak 0,15 m'lik
+# daire olarak girdi, 0,785 m'lik gövde için hiç boşluk kalmadı → tekne
+# direğin üstüne nişan aldı (17 dar-kapı epizodu, 6'sında nişana girdi).
+#
+# Düzeltme: gövdenin sığamayacağı (< min_passable_width) komşu W hesabına
+# girmez — kodun kendi tanımı gereği o bir kapı partneri OLAMAZ (`select_gate`:
+# "gövde sığmıyorsa bu bir kapı değildir"). Çarpışma koruması böylece hafıza
+# kirliliğinden bağımsızlaşır.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_FAZ2_ikiz_komsu_huni_payini_SIFIRLAYAMAZ(ros_context) -> None:  # noqa: ANN001
+    """Direğin 0,4 m yanındaki ikiz kayıt payı söküyordu; artık W'ya girmez.
+
+    ⚠ `_huni_payi` DOĞRUDAN çağrılır (algı zinciri değil): FAZ 1'in
+    konsolidasyonu ikizi zincir içinde zaten eritebilir ve bu test o zaman
+    FAZ 2 süzgecini değil FAZ 1 temizliğini ölçerdi. İki savunma katmanı
+    ayrı ayrı bağlanır; burada yalnız FAZ 2.
+
+    Sahne: 12 m'lik gerçek kapı + sol direğin 0,4 m yanında ikiz. Eski kod
+    sol direğe pay=0 verirdi (W=0,4 < 1,085); yeni kod ikizi süzer → sol
+    direğin W'su kapı partneri (12 m) kalır → pay tavanda.
+    """
+    node = pn.PlanningNode()
+    try:
+        kenarlar = [(10.0, 6.0), (10.0, 6.4), (10.0, -6.0)]
+        pay = node._huni_payi(0, kenarlar)
+        assert pay > 0.0, (
+            "ikiz komşu huni payını sıfırladı — çarpışma koruması söküldü (§1.13d)"
+        )
+        assert math.isclose(pay, node._gate_post_margin, rel_tol=1e-9), (
+            "ikiz kayıt W'yu düşürdü — süzgeç çalışmıyor"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_FAZ2_gercek_dar_gecitte_pay_YINE_kuculur(ros_context) -> None:  # noqa: ANN001
+    """Süzgeç yalnız GEÇİLEMEZ komşuyu eler; gerçekten dar ama geçilebilir
+    boşlukta (1,4 m) pay eskisi gibi kendiliğinden küçülmeli — davranış
+    korunuyor, kural gevşemiyor."""
+    node = pn.PlanningNode()
+    try:
+        kenarlar = [(10.0, 0.7), (10.0, -0.7)]          # açıklık 1,4 m ≥ 1,085
+        beklenen = (1.4 - node._gate._cfg.hull_width_m - 0.30) / 2.0
+        for i in range(2):
+            pay = node._huni_payi(i, kenarlar)
+            assert 0.0 < pay < node._gate_post_margin
+            assert math.isclose(pay, beklenen, abs_tol=1e-6), (
+                "dar-ama-geçilebilir geçitte pay küçülme davranışı bozuldu"
+            )
+    finally:
+        node.destroy_node()
+
+
+def test_FAZ2_hicbir_gecilebilir_komsu_yoksa_TAVAN(ros_context) -> None:  # noqa: ANN001
+    """Bütün komşular geçilemez kadar yakınsa (ikiz bulutu) direk NORMAL engel
+    gibi tam payını korur — `len < 2` koluyla aynı güvenli varsayılan."""
+    node = pn.PlanningNode()
+    try:
+        kenarlar = [(10.0, 6.0), (10.0, 6.5)]           # yalnız ikizler (0,5 m)
+        for i in range(2):
+            pay = node._huni_payi(i, kenarlar)
+            assert math.isclose(pay, node._gate_post_margin, rel_tol=1e-9), (
+                "ikiz bulutunda pay tavana çıkmadı — koruma yine söküldü"
+            )
+    finally:
+        node.destroy_node()
