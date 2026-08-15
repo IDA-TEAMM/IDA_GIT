@@ -49,6 +49,14 @@ from prototype.planning.rrt_star import (
 # Aracın hareket ettiği parkur durumları (bunların dışında motor stop)
 _ACTIVE_STATES = ("PARKUR1", "PARKUR2", "PARKUR3")
 
+# --- ölçülmüş gövde boyutları (GateFollowerConfig ile AYNI olmak zorunda;
+#     `test_ayak_izi_temizleme.py` ikisini bağlar) ---------------------------
+GOVDE_BOYU_M = 1.04          # ölçüldü 09.08
+GOVDE_ENI_M = 0.785          # ölçüldü 09.08
+#: Gövdeyi çevreleyen dairenin yarıçapı — köşegenin yarısı. Ayak izi
+#: temizlemesinin ölçüsü budur; uydurulmuş bir pay değil, teknenin kendisi.
+GOVDE_CEVREL_YARICAP_M = 0.5 * math.hypot(GOVDE_BOYU_M, GOVDE_ENI_M)   # 0,651 m
+
 if TYPE_CHECKING:                      # yalnız tip denetimi için
     from prototype.planning.plan_isci import PlanIscisi
 
@@ -392,6 +400,78 @@ class PlanningPipeline:
             # yenilenmesidir; kaçınma katmanı tam hızda çalışmaya devam eder.
             self._rebuild_mppi()
 
+    def _planlama_engelleri(self) -> List[CircleObstacle]:
+        """AYAK İZİ TEMİZLEME — "tekne oradaysa orada engel yoktur".
+
+        🔴 **Ölçülen arıza (GIRDAP_DURUM §1.17d).** 17:06 göl koşumunda
+        `RRT* ValueError('start veya goal engel/sınır içinde')` **1 347 kez**
+        basıldı: hayalet duba bulutu teknenin KENDİ KONUMUNU engelin içinde
+        gösteriyordu. Hata yakalanıyor ve *"eski referans korunuyor"* deniyor —
+        yani düğüm ölmüyor ama **küresel yol 28 dakika boyunca hiç
+        tazelenmedi**. Kaptanın istediği *"sürekli yeniden çizsin"* davranışı
+        bu yüzden fiilen imkânsızdı.
+
+        🌐 **Dış karşılık — bu standart bir kurtarma, bize özgü bir yama
+        değil.** Nav2'nin engel katmanında `footprint_clearing_enabled`
+        parametresi vardır ve **öntanımlı `true`**'dur; işi *"aracın ayak izi
+        altındaki dolu hücreleri temizlemek"*. Kaynakta engeller işaretlendikten
+        SONRA, maliyetler birleştirilmeden ÖNCE
+        `setConvexPolygonCost(transformed_footprint_, FREE_SPACE)` çağrılır.
+        Nav2'nin kurtarma belgesi gerekçeyi bizim koşumumuzu tarif eder gibi
+        yazar: *"algı sistemindeki arızalar ortam gösterimini sahte engellerle
+        doldurur; maliyet haritasını temizleme kurtarması bunun için
+        tetiklenir."*
+
+        🔑 **Bizdeki karşılığı — daireyi SİLMEK değil KIRPMAK.** Nav2 yalnız
+        ayak izinin altındaki hücreleri boşaltır, engelin geri kalanı durur.
+        Daire gösteriminde bunun tam eşi: yarıçapı, daire gövde diskine artık
+        değmeyecek kadar küçültmek — `yeni_r = mesafe − gövde çevrel yarıçapı`.
+        · Merkez teknenin üstündeyse `yeni_r ≤ 0` → engel düşer (30 cm'lik bir
+          dubanın içinde yüzüyor olamayız; o gözlem yanlıştır).
+        · Tekne büyük bir kıyı kümesinin kenarındaysa daire yalnız birazcık
+          küçülür ve **gerçek engel haritada kalır** — bütün daireyi atmak
+          gerçek bir engeli silebilirdi.
+
+        🛟 **Doğruluk kanıtı (neden bu başlangıcı HER ZAMAN serbest yapar):**
+        kırpma sonrası her engel için `mesafe ≥ r + GOVDE_CEVREL_YARICAP_M`
+        olur. RRT* bir noktayı `mesafe < r + safety_margin` ise dolu sayar.
+        `GOVDE_CEVREL_YARICAP_M = 0,651 m > safety_margin = 0,5 m` olduğu
+        sürece başlangıç noktası tanım gereği serbesttir — yani yukarıdaki
+        1 347 ret **yapısal olarak** imkânsız hâle gelir. Bu eşitsizlik
+        uydurulmuş bir pay değil, teknenin ölçülmüş köşegeni; `safety_margin`
+        onun üstüne çıkarılırsa nöbetçi test kırmızıya döner
+        (`test_ayak_izi_temizleme.py`).
+
+        ⚠ Bu, çarpışma korumasını GEVŞETMEZ: kırpılan yalnız teknenin ŞU AN
+        işgal ettiği hacimdir. Oraya gitmemek diye bir seçenek zaten yok —
+        araç orada. Yolun geri kalanında engel tüm yarıçapıyla geçerlidir.
+
+        🔴 **YALNIZ KÜRESEL PLANLAYICIYA UYGULANIR — MPPI ham listeyi görmeye
+        devam eder.** Nav2 maliyet haritasını temizlediği için orada kontrolcü
+        de temizlenmiş hâli okur; biz bilerek ayrılıyoruz. Gerekçe: ölçülen
+        arıza planlayıcının SERT REDDİ (`raise`), MPPI'de böyle bir ret yok —
+        buna karşılık gövdeye değen gerçek bir engel MPPI'nin ikinci dereceden
+        bariyerinde tekneyi DIŞARI İTEN kuvvettir. Onu silmek, aracın
+        kurtulmasını sağlayan tek itmeyi kaldırırdı. Ölçümde MPPI'nin hayalet
+        yüzünden donduğuna dair kanıt da yok (§1.17f: donma hafıza taramasından
+        ve tensör boyutundan geliyordu). Bu ayrım ölçülmüş bir gerekçeye
+        dayanıyor; MPPI için de temizleme istenirse önce ölçülmeli.
+        """
+        if not self._obstacles:
+            return self._obstacles
+        vx, vy = float(self._state[0]), float(self._state[1])
+        temiz: List[CircleObstacle] = []
+        for o in self._obstacles:
+            mesafe = math.hypot(o.cx - vx, o.cy - vy)
+            if mesafe >= o.r + GOVDE_CEVREL_YARICAP_M:
+                temiz.append(o)                       # gövdeye değmiyor
+                continue
+            yeni_r = mesafe - GOVDE_CEVREL_YARICAP_M
+            if yeni_r > 0.0:
+                temiz.append(replace(o, r=yeni_r))    # kırp (Nav2: kısmi temizleme)
+            # else: tamamen gövdenin altında → düşer (Nav2: FREE_SPACE)
+        return temiz
+
     def set_gosterim_engelleri(
         self, obstacles: Optional[List[CircleObstacle]]
     ) -> None:
@@ -631,6 +711,9 @@ class PlanningPipeline:
         # kalmak zararlıdır (A1: `_ref_path` None → MPPI kurulmaz → araç
         # kıpırdamaz). İşçi meşgulse bu tur ATLANIR (senkrona DÜŞÜLMEZ; düşmek
         # tam da kaçındığımız bloklamayı geri getirirdi).
+        # Ayak izi temizlemesi HER İKİ kolda da uygulanır (senkron ve işçi):
+        # başlangıcın serbest olma garantisi kola bağlı olamaz.
+        engeller = self._planlama_engelleri()
         if self._ref_path is not None:
             isci = self._plan_iscisi()
             if isci is not None:
@@ -638,7 +721,7 @@ class PlanningPipeline:
                     return False
                 simdi = self._saat()
                 if isci.gonder(
-                    bounds, self._obstacles, self._rrt_cfg, start, goal, simdi
+                    bounds, engeller, self._rrt_cfg, start, goal, simdi
                 ):
                     self._replan_sayisi += 1
                     self._asenkron_plan += 1
@@ -650,7 +733,7 @@ class PlanningPipeline:
                     return False        # yol henüz yok; MEVCUT referans korunur
                 # gönderilemedi (işçi düştü) → aşağıdaki senkron kol yedek
 
-        rrt = RRTStar(bounds, self._obstacles, self._rrt_cfg)
+        rrt = RRTStar(bounds, engeller, self._rrt_cfg)
         self._replan_sayisi += 1
         # F-P.9: koşum SÜRESİ ölçülür — bir sonraki koşumun freni bundan
         # türetilir. Ölçüm başarısız plan için de geçerlidir: bloklama
