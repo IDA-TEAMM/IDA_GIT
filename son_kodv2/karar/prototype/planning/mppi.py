@@ -276,10 +276,35 @@ class MPPIConfig:
     # MONOTON ilerlediği için tüm referansa bakmak gereksiz: bir önceki
     # adımın en yakın indeksi (_ref_anchor_idx) etrafındaki dilim yeter.
     # Pencere NOKTA cinsindendir; metre karşılığı set_reference(spacing) ile
-    # ölçeklenir (0.5 m aralıkta 100 nokta = 50 m ileri, 25 nokta = 12.5 m
-    # geri). Horizon'da kat edilen yol ≤ ~10 m (2.5 s, maks ~7.5 m/s) —
-    # ileri pay 5× güvenli. Kenar durumunda otomatik tam taramaya düşer.
-    ref_window_size: int = 100       # ileri pencere derinliği (nokta)
+    # ölçeklenir (0.5 m aralıkta 25 nokta = 12.5 m ileri, 6 nokta = 3 m geri).
+    # Kenar durumunda otomatik tam taramaya düşer.
+    #
+    # 🔴 100 → 25 (2026-08-16). Eski 100'ün gerekçesi *"horizon'da kat edilen
+    # yol ≤ ~10 m (2.5 s, maks ~7.5 m/s), ileri pay 5× güvenli"* idi — ama
+    # 7.5 m/s HAYALİ tekneydi (max_thrust 30 N sanılıyordu).
+    #
+    # ⚠ Pencere SEYİR hızına değil **TEPE hıza** göre boyutlanır: pencere en
+    # kötü hâli örtmeli. Tepe hız modelden TÜRETİLİR, tahmin değil —
+    # `CatamaranParams`: 2 × max_thrust = 2×1.455 = 2.91 N, Xu = −2.48
+    # ⇒ terminal hız 2.91/2.48 = **1.173 m/s** (60 s tam gaz entegrasyonuyla
+    # doğrulandı: 1.173). Kodun başka yerlerinde geçen 1.05 m/s SEYİR
+    # hızıdır; onunla boyutlandırmak, orijinal hatayı (yanlış hızla
+    # boyutlandırma) tekrarlamak olurdu.
+    #   horizon'da kat edilen yol = 1.173 × (T·dt = 2.5 s) = **2.93 m**
+    #   0.5 m aralıkta ≈ **6 nokta** ⇒ 25 nokta = 12.5 m = **4.3× pay**,
+    #   yani yazarın kendi "5×'e yakın pay" niyeti korunuyor.
+    # `terminal_lookahead_m` 15 → 3 düzeltmesiyle (08.08) AYNI SINIF hata:
+    # ikisi de aynı hayali tekneden geliyordu; o düzeltildi, bu unutuldu.
+    #
+    # ÖLÇÜM (16.08, i7-13620H, P2 sahnesi 2 kapı + 4 engel, 50 adım):
+    #   pencere 100 → 127.3 ms   |  50 → 82.8 ms  |  **25 → 56.2 ms (2.11×)**
+    #           12 →  39.4 ms    |   6 → 35.8 ms  |    3 → 280.6 ms ✗
+    #   maks |Δu₀| = **0.000000 N** (bit-birebir; takas DEĞİL, israf kesildi)
+    #   fallback sayacı: 25'te **0**; 3'te her adımda (tam taramaya düşüyor,
+    #   temelden 2.4× YAVAŞ) — taban orası, altına inilmez.
+    # Gerekçe: profilde `_nearest_ref` adımın **%67**'siydi, `_rollout` %18.
+    # Darboğaz rollout sayısı (K) değil, referans aramasıydı.
+    ref_window_size: int = 25        # ileri pencere derinliği (nokta)
     ref_window_enabled: bool = True  # False → eski tam tarama (regresyon testi)
 
     # F-M.3: terminal maliyet hedefi.

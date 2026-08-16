@@ -167,7 +167,13 @@ planning:
   # 1,05 m/s × 2,5 s = 2,62 m. Eski 15, itkisi 30 N sanılan tekneye aitti.
   # P1 kapalı-döngü: la=15 → 0/2 tohum bitiremedi, la=3 → 3/3 bitti.
   mppi_terminal_lookahead_m: 3.0   # m, terminal hedef yay uzaklığı
-  mppi_ref_window_size: 100        # nokta, kayan referans penceresi
+  # 16.08: 100 → 25. Eski 100, 7.5 m/s'lik HAYALİ tekneye göreydi. Pencere
+  # SEYİR (1.05) değil TEPE hıza göre boyutlanır: 2×1.455 N / 2.48 =
+  # 1.173 m/s ⇒ horizon 2.93 m ≈ 6 nokta, 25 = 4.3× pay. Ölçüm: adım
+  # 127.3 → 56.2 ms (2.11×), maks |Δu₀| = 0.000000 N (çıktı bit-birebir).
+  # ⚠ Geri payı = pencere/4 = 3.1 m; tekne bundan fazla geri kayarsa o adım
+  # tam taramaya düşer (337 ms, ölçüldü). Nadir ve kendini düzeltiyor.
+  mppi_ref_window_size: 25         # nokta, kayan referans penceresi
   mppi_ref_window_enabled: true    # false → tam tarama (16× yavaş, A/B için)
   # --- Kapı takibi (2026-08-03) — md 5.5.2.2, puan kapıdan geçmekten gelir.
   # 🔑 AYARLANABİLİR EŞİK YOK. Kapı geometrisi önceden bilinemez (şartname:

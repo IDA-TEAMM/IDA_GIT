@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import functools
 import math
+import time
 from typing import Callable, Optional
 
 import numpy as np
@@ -81,6 +82,7 @@ _AKTIF_DURUMLAR = ("PARKUR1", "PARKUR2", "PARKUR3")
 from vision_msgs.msg import Detection3DArray
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from prototype.control.dongu_olcer import DonguOlcer
 from prototype.control.mavros_bridge import MavrosBridge, MavrosBridgeConfig
 from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mission.edge_memory import EdgeBuoyMemory
@@ -521,6 +523,12 @@ class PlanningNode(Node):
         # --- Kontrol döngüsü ---
         rate = float(self.get_parameter("control_rate_hz").value)
         self._timer = self.create_timer(1.0 / rate, self._on_control_step)
+
+        # --- F-K.1 (2026-08-16): DÖNGÜ SÜRESİ ÖLÇÜMÜ ---
+        # Sayma mantığı bilerek ROS'suz çekirdekte (prototype/control/
+        # dongu_olcer.py) — rclpy olmadan test edilebilsin diye. Gerekçe ve
+        # ölçüm tablosu orada.
+        self._olcer = DonguOlcer(hedef_hz=rate)
 
         # --- Yerel harita yayım döngüsü (Dosya-3, ~10 Hz) ---
         map_rate = float(self.get_parameter("map_rate_hz").value)
@@ -1260,6 +1268,7 @@ class PlanningNode(Node):
         sürer (md 3.3.1.1 istemsiz hareket). Bu yüzden gövde try ile sarılır ve
         HATADA motorlar aktif DURDURULUR (`_safe_stop`), yalnızca atlanmaz.
         """
+        _t_giris = time.perf_counter()
         try:
             gate = self._bridge.control_gate(self._now())
             self._log_backend()      # MPPI kurulur kurulmaz bir kez yazar
@@ -1321,6 +1330,34 @@ class PlanningNode(Node):
             )
             self._ariza.bildir(KONTROL_HATA)
             self._safe_stop()
+        finally:
+            # `finally`: hata yolunda da sayılır. Çöken bir adım tam da en
+            # pahalı adımdır; onu tabloda görmemek teşhisi bozardı.
+            self._dongu_olc(_t_giris, time.perf_counter())
+
+    # ----- F-K.1 döngü süresi ölçümü -----
+
+    def _dongu_olc(self, t_giris: float, t_cikis: float) -> None:
+        """Ölçeri besle; pencere dolduysa özeti logla.
+
+        Tanı kodu görevi ASLA öldürmemeli — gövde try ile sarılı, çünkü bu
+        `_on_control_step`'in `finally`'sinden çağrılıyor: buradan sızan bir
+        istisna kontrol adımının kendi hata yolunu da ezerdi.
+        """
+        try:
+            rapor = self._olcer.kaydet(t_giris, t_cikis)
+            if rapor is None:
+                return
+            if rapor.saglikli:
+                self.get_logger().info(rapor.ozet())
+            else:
+                # Tarif edilen arıza ("gate görüyor ama gidemiyor") tam olarak
+                # bu — operatör koşu BİTMEDEN bilmeli.
+                self.get_logger().warning("🔴 " + rapor.ozet())
+            if rapor.bosluk_alarmi:
+                self.get_logger().error("🔴🔴 " + rapor.bosluk_mesaji())
+        except Exception:            # noqa: BLE001 — tanı asla görevi öldürmez
+            pass
 
     # ----- yayım yardımcıları -----
 

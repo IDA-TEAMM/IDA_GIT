@@ -90,8 +90,10 @@ planning_node:
                              # ⚠ Eski notlar: 10 m'de fren etkisi / 40 m'de engel
                              # açıklığı bozulması ölçümleri de o hayali tekneye
                              # aitti — gerçek tekneyle yeniden ölçülmedi.
-    mppi_ref_window_size: 100   # nokta, kayan referans penceresi ileri derinliği
-                             # (0.5 m aralıkta 50 m ileri + 12.5 m geri).
+    mppi_ref_window_size: 25    # nokta, kayan referans penceresi ileri derinliği
+                             # (0.5 m aralıkta 12.5 m ileri + 3 m geri).
+                             # 16.08: 100 → 25; eski değer 7.5 m/s hayali
+                             # tekneye aitti (bkz. MPPIConfig.ref_window_size).
     mppi_ref_window_enabled: true  # false → eski tam tarama (regresyon/A-B).
                              # Ölçüm: 736 → 58 ms/iter, d2 tensörü 16× küçük.
     # --- Kapı takibi (gate following, 2026-08-03) ---

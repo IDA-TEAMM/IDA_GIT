@@ -193,7 +193,7 @@ _MPPI_DEFAULTS: dict[str, tuple[object, type]] = {
     "mppi_obstacle_margin": (1.0, float),
     "mppi_terminal_mode": ("lookahead", str),
     "mppi_terminal_lookahead_m": (3.0, float),   # 08.08 ölçümü (bkz. MPPIConfig)
-    "mppi_ref_window_size": (100, int),
+    "mppi_ref_window_size": (25, int),           # 16.08 ölçümü (bkz. MPPIConfig)
     "mppi_ref_window_enabled": (True, bool),
 }
 # --show-args çıktısında operatörün göreceği açıklamalar (sınırlar dahil).
