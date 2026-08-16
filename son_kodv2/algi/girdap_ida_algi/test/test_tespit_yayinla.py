@@ -299,3 +299,38 @@ def test_mono_hedef_adayina_eklenir():
     """Süzülen tespit ATILMIYOR — /perception/targets'a gidecek listede."""
     _yayinla([_mono()], kare=_kare_renkli(_YESIL))
     assert len(_yayinla.son_ns._hedef_adaylari) == 1
+
+
+def test_mono_hedefin_MENZILI_064_ile_yeniden_kurulur():
+    """Mono yedek Ø0,30 varsayar; hedef kabul edildiyse menzil Ø0,64 ile
+    yeniden kurulmalı — yoksa (a) yayınlanan çap hep 0,30 çıkar ve tüketicinin
+    `cap_makul_mu` bandı (0,40-1,00) hedefi ELER, (b) menzil 2,13 kat KISA olur.
+    """
+    z_mono = 5.0
+    d = _duba(0, 0.0, z_mono, 0.5, 0.5, w=_tutarli_w(0.30, z_mono))
+    d.kaynak = "mono"
+    _yayinla([d], kare=_kare_renkli(_YESIL))
+    aday = _yayinla.son_ns._hedef_adaylari[0]
+    beklenen = gm.mesafe_genislikten(d.w, gm.HEDEF_CAP_M, gm.odak_px(1.0))
+    assert abs(aday.z - beklenen) < 1e-6, "menzil hedef capiyla kurulmadi"
+    assert aday.z > z_mono * 2.0, "menzil hala 0,30 varsayimindan geliyor"
+
+
+def test_mono_hedefin_capi_kabul_bandina_dusuyor():
+    """Tüketici çapı `w·z/f` ile hesaplıyor; 0,40-1,00 bandına düşmeli."""
+    z_mono = 8.0
+    d = _duba(0, 0.0, z_mono, 0.5, 0.5, w=_tutarli_w(0.30, z_mono))
+    d.kaynak = "mono"
+    _yayinla([d], kare=_kare_renkli(_SIYAH))
+    aday = _yayinla.son_ns._hedef_adaylari[0]
+    cap = aday.w * aday.z / gm.odak_px(1.0)
+    assert 0.40 <= cap <= 1.00, f"cap {cap:.2f} bandin disinda -> hedef_sec eler"
+
+
+def test_stereo_hedefin_menziline_DOKUNULMAZ():
+    """Stereo varsa ölçüm gerçektir; hipotezle ezilmemeli."""
+    z_stereo = 9.0
+    d = _duba(0, 0.0, z_stereo, 0.5, 0.5, w=_tutarli_w(0.64, z_stereo))
+    _yayinla([d])                      # kaynak stereo (varsayilan)
+    aday = _yayinla.son_ns._hedef_adaylari[0]
+    assert aday.z == z_stereo

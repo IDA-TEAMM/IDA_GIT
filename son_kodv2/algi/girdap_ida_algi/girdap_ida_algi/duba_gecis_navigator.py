@@ -1121,6 +1121,20 @@ class DubaNavigator(Node):
                 #   kırmızı ise 0,65'te bile %0,53 (turuncu kenar dubamızla
                 #   karışıyor: RAL 3026 ↔ RAL 2003) ⇒ KIRMIZI STEREO İSTER.
                 self._tani["mono_hedef"] += 1
+                # 🔴 MENZİLİ HEDEF HİPOTEZİYLE YENİDEN KUR (16.08, ikinci tur).
+                # `menzil_coz` mono yedeğini **Ø0,30 varsayarak** kurar; o sayıyı
+                # olduğu gibi bırakırsak iki şey birden bozulur:
+                #   1) yayınlanan çap `w·z/f` = **her zaman 0,30** (dairesel) ⇒
+                #      tüketicinin `cap_makul_mu` bandı (0,40-1,00) bunu ELER,
+                #      yani süzmüş ama kurtarmamış oluruz — hedef yine seçilemez.
+                #   2) menzil **2,13 kat KISA**: gerçek 10,5 m'deki hedefe
+                #      "4,9 m" der ⇒ nişan noktası yarı yolda kurulur.
+                # Ayrımı RENK yaptı (ölçüm: yeşil/siyah %0,000 yanlış pozitif);
+                # o hâlde menzil de aynı hipotezle, Ø0,64 ile hesaplanmalı.
+                # ⚠️ Bu, çapı bilgi taşımayan bir sabite çevirir — tüketicinin
+                # boyut kapısı bu adaylar için ETKİSİZDİR, ayrımı renk yapmıştır.
+                d.z = gm.mesafe_genislikten(d.w, gm.HEDEF_CAP_M, self._f_norm)
+                d.x = gm.yanal_konum(d.z, d.cx, self._f_norm)
                 self._hedef_adaylari.append(d)
                 self.get_logger().warn(
                     f"Tespit SÜZÜLDÜ — stereo yok, mono {d.z:.1f} m; rengi "
