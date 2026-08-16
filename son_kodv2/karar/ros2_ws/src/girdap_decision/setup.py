@@ -56,7 +56,6 @@ setup(
             "lidar_kayit_node = girdap_decision.lidar_kayit_node:main",
             "mission_manager_node = girdap_decision.mission_manager_node:main",
             "perception_lidar_node = girdap_decision.perception_lidar_node:main",
-            "perception_camera_node = girdap_decision.perception_camera_node:main",
             "perception_fusion_node = girdap_decision.perception_fusion_node:main",
             "mock_sensors = girdap_decision.mock_sensors:main",
             "yarisma_simulasyonu = girdap_decision.yarisma_simulasyonu:main",
