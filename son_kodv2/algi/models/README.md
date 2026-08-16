@@ -1,5 +1,45 @@
 # Modeller
 
+> ## 🔴 2026-08-16 — MODEL YENİLENDİ (`6df2d644…`)
+> Önceki blob (`31fb0348…`, 11.08 ep87) **değiştirildi**. Gerekçe ÖLÇÜLDÜ —
+> `veri_NIHAI/valid`, 241 kare / 838 nesne, kendi metriğimizle:
+>
+> | | eski (teknedeki) | **yeni** |
+> |---|---|---|
+> | kenar recall | %33,5 | **%81,0** |
+> | engel recall | %35,7 | **%76,6** |
+> | uzak recall | %31,6 | **%78,7** |
+> | yanlış pozitif | 521 | **184** |
+>
+> Yani sahadaki model dubaların **üçte ikisini kaçırıyordu**.
+>
+> **TEKNOFEST videosunda (OOD, modelin hiç görmediği dünya)** gözle
+> doğrulandı: eski model **insan eline** 0,82 güvenle "duba" diyor ve suda
+> olmayan bir sahnede 2 uydurma üretiyor; yeni model aynı karede **0 tespit**.
+> Gerçek dubalarda ikisi eşit (0,83↔0,83 · 0,88↔0,88) — fark tamamen
+> **uydurmalarda**.
+>
+> Kaynak: `girdap_NIHAI_0816_1543/weights/best.pt` (epoch **135**,
+> mAP50 0,810 · mAP50-95 0,4428). Eğitim epoch 165'te laptop uykusu CUDA
+> bağlamını kırdığı için durdu; sabır 50'de 30 kullanılmıştı ve son 30 epoch
+> düşüş eğilimindeydi ⇒ **kayıp yok**.
+>
+> Export: `luxonis/tools` → ONNX → `blobconverter` FP16, **shaves=4**,
+> **`--reverse_input_channels`** (pazarlıksız).
+> `config.json` yapısı önceki sürümle **birebir aynı** (giriş 512×512,
+> ön işleme mean 0 / scale 255, çıkış `output{1,2,3}_yolov6r2` 7 kanal).
+>
+> ### 🔴 KONTROL 3 HÂLÂ YAPILMADI — cihazda yapılacak
+> Kanal sırası ters giderse recall **%96,8 → %43** ve **hiçbir hata basılmaz**.
+> Cihazda: passthrough'dan kare al → aynı kareyi PC'de `.pt` ile koştur →
+> **tespit sayısı yarı yarıya düşüyorsa kanal sırası TERS**.
+> (PC'de ONNX üzerinden doğrulamaya çalışıldı, çıktı düzeni yolov6r2 başlığı
+> olduğu için **sonuçsuz kaldı** — cihaz testinin yerini tutmaz.)
+>
+> ⚠ Dağıtımda birlikte gitmeli: `NN_GIRIS=512` + `FPS=8` (512@9 güneşte
+> ~90 °C, uyarı eşiği 85).
+
+
 > ## ✅ 2026-08-10 — YARIŞMA MODELİ BURADA, REPODA
 > `yolo11n_duba_rvc2.blob` + `config.json` **git'e dâhil edildi** (`.gitignore`'da
 > istisna). Gerekçe: yarışma alanında **internet YOK** (md 4.1) ve `blobconverter`
