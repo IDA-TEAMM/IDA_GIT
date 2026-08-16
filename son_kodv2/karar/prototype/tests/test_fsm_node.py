@@ -24,7 +24,7 @@ from pathlib import Path
 rclpy = pytest.importorskip("rclpy", reason="rclpy yok (.venv) — ROS ortamında koş")
 
 from rclpy.parameter import Parameter                    # noqa: E402
-from std_msgs.msg import Bool, Int32                     # noqa: E402
+from std_msgs.msg import Bool, Int32, String             # noqa: E402
 from nav_msgs.msg import Odometry                        # noqa: E402
 
 girdap = pytest.importorskip(
@@ -73,6 +73,20 @@ def _drive_to_parkur1(node) -> None:                     # noqa: ANN001
     node._on_start_srv(Trigger.Request(), Trigger.Response())
     node._on_tick()                                      # BEKLEMEDE→PARKUR1
     assert node._fsm.state is MissionState.PARKUR1
+
+
+def _p3_kapisini_ac(node, renk: str = "kirmizi") -> None:   # noqa: ANN001
+    """P3 EMNİYET KAPISINI aç (16.08 sözleşmesi).
+
+    `MissionFSM` PARKUR2→PARKUR3'e **iki** şartla geçer: yetkili tetik
+    (`p2_waypoints_done`) **VE** hedef rengi yüklü (`p3_bekleniyor`). Renk
+    yoksa geçiş bilerek olmaz — hakem rengi vermemişken saldırmak TS3'te
+    100→50→5 puan demek. Bu yardımcı, kapının **açık** olduğu senaryoları
+    kuran testler içindir; kapalı hâlin kendi testi
+    `test_P3_KAPISI_renk_yokken_PARKUR3E_GECIRMEZ`.
+    """
+    node._on_hedef_rengi(String(data=renk))
+    assert node._obs.p3_bekleniyor is True, "P3 kapısı açılmadı"
 
 
 def _odom_at(x: float, y: float) -> Odometry:
@@ -1235,6 +1249,7 @@ def test_PARKUR2_SON_waypointi_kamikazeyi_ACAR(ros_context, tmp_path) -> None:  
     node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
     try:
         _drive_to_parkur1(node)
+        _p3_kapisini_ac(node)   # 16.08: P3 emniyet kapisi
         node._on_waypoint_reached(Int32(data=0))          # parkur-1 SON wp
         node._on_tick()
         node._on_waypoint_reached(Int32(data=1))          # parkur-2 ARA wp
@@ -1276,6 +1291,7 @@ def test_YENIDEN_BASLAMA_gorev_ilerlemesini_SIFIRLIYOR(ros_context, tmp_path) ->
     node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
     try:
         _drive_to_parkur1(node)
+        _p3_kapisini_ac(node)   # 16.08: P3 emniyet kapisi
         node._on_waypoint_reached(Int32(data=0))
         node._on_tick()
         node._on_waypoint_reached(Int32(data=2))          # parkur-2 SON wp
@@ -1305,12 +1321,58 @@ def test_YENIDEN_BASLAMA_gorev_ilerlemesini_SIFIRLIYOR(ros_context, tmp_path) ->
 
 
 def _parkur3e_surukle(node) -> None:                        # noqa: ANN001
-    """labels=[1,2,2,3] görevinde PARKUR3'e kadar götür."""
+    """labels=[1,2,2,3] görevinde PARKUR3'e kadar götür (P3 kapısı AÇIK)."""
     _drive_to_parkur1(node)
+    _p3_kapisini_ac(node)
     node._on_waypoint_reached(Int32(data=0))
     node._on_tick()
     node._on_waypoint_reached(Int32(data=2))
     node._on_tick()
+
+
+def test_P3_KAPISI_renk_yokken_PARKUR3E_GECIRMEZ(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 P3 EMNİYET KAPISI (16.08) — hedef rengi yoksa kamikaze AÇILMAZ.
+
+    16.08'de `Observation.p3_bekleniyor` eklendi ve PARKUR2→PARKUR3 geçişine
+    ikinci şart oldu; ama **node seviyesinde hiç testi yoktu** — bu dosyada
+    `p3_bekleniyor` kelimesi bir kez bile geçmiyordu. Kapının varlığını
+    kanıtlayan tek şey, onu bilmeyen 5 eski testin kırmızıya dönmesiydi;
+    o testler düzeltilince kapı **tamamen kör** kalacaktı.
+
+    Şartname dayanağı: hakem rengi vermemişken hedefe saldırmak TS3'te
+    1 yanlış temas 100→**50**, 2 yanlış → **5**. Renk gelmezse tekne son
+    waypoint'te temiz durur ve P1+P2 puanı korunur — bu bilinçli davranış.
+
+    ⛔ GERİ ALINIRSA: `mission_fsm.py`'deki `and obs.p3_bekleniyor` şartı
+    silinirse bu test kırmızıya döner. Silinmesi, İHA rengi bulamasa bile
+    aracın rastgele bir hedefe sürmesi demektir.
+    """
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
+    try:
+        _drive_to_parkur1(node)
+        assert node._obs.p3_bekleniyor is False, "kapı varsayılan AÇIK gelmiş"
+
+        # Yetkili tetiğin TAMAMI verilir — eksik olan tek şey renk.
+        node._on_waypoint_reached(Int32(data=0))          # parkur-1 SON wp
+        node._on_tick()
+        node._on_waypoint_reached(Int32(data=2))          # parkur-2 SON wp
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR2, (
+            "renk yokken PARKUR3'e (kamikaze) geçildi — emniyet kapısı ölü"
+        )
+
+        # Renk gelince AYNI tetikle geçmeli: kapı kilitlemiyor, bekletiyor.
+        _p3_kapisini_ac(node)
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR3, (
+            "renk yüklendikten sonra da geçmedi — kapı bekletmiyor, KİLİTLİYOR"
+        )
+
+        # Boş dize = renk geri alındı ⇒ kapı yeniden kapanmalı.
+        node._on_hedef_rengi(String(data="   "))
+        assert node._obs.p3_bekleniyor is False, "boş renk kapıyı kapatmadı"
+    finally:
+        node.destroy_node()
 
 
 def test_GECIT_SAYACI_HIC_GELMEZSE_bagiriyor(ros_context, tmp_path) -> None:  # noqa: ANN001
@@ -1334,6 +1396,7 @@ def test_GECIT_EKSIKSE_sartname_riski_bagiriliyor(ros_context, tmp_path) -> None
     node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
     try:
         _drive_to_parkur1(node)
+        _p3_kapisini_ac(node)   # 16.08: P3 emniyet kapisi
         node._on_gate_count(Int32(data=1))              # yalnız 1 geçit
         node._on_waypoint_reached(Int32(data=0))
         node._on_tick()
@@ -1350,6 +1413,7 @@ def test_GECIT_YETERLIYSE_olumlu_teyit_NORMAL_seviyede(ros_context, tmp_path) ->
     node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
     try:
         _drive_to_parkur1(node)
+        _p3_kapisini_ac(node)   # 16.08: P3 emniyet kapisi
         node._on_gate_count(Int32(data=3))
         node._on_waypoint_reached(Int32(data=0))
         node._on_tick()

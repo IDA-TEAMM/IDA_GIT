@@ -1345,12 +1345,20 @@ class PlanningNode(Node):
         Aynı yaklaşım engel yolunda da kullanılıyor — tutarlı, ama temas
         anında bu payın ölçülmesi gerekiyor (**suda**).
         """
+        # 🔴 2026-08-16: burada `self._mission_state` okunuyordu ama o alan HİÇ
+        # atanmıyordu ⇒ her çağrıda AttributeError. `@_guard` hatayı yuttuğu
+        # için node ölmüyor, ama `_refine_target` (KAPI TAKİBİ) ve `_on_target`
+        # / `_on_waypoints` tamamen atlanıyordu ⇒ MPPI'ye referans HİÇ
+        # kurulmuyor. P3 kodu, P1/P2 yolunu sessizce öldürüyordu.
+        # Tek kaynak boru hattının kendisi (testler de `_pipe.set_mission_state`
+        # ile sürüyor) — kopya alan tutulmuyor.
+        parkur = self._pipe.mission_state
         taze = nisan_hedefi(
-            self._mission_state, self._istenen_renk, self._hedefler,
+            parkur, self._istenen_renk, self._hedefler,
             self._last_xy, self._now() - self._hedef_t,
         )
         # PARKUR3 dışındaysak kilit BIRAKILIR (yeniden başlama / parkur geçişi).
-        if self._mission_state != "PARKUR3" or not self._istenen_renk:
+        if parkur != "PARKUR3" or not self._istenen_renk:
             self._hedef_kilidi.sifirla()
             return None
         secilen = self._hedef_kilidi.guncelle(taze)
@@ -1522,6 +1530,34 @@ class PlanningNode(Node):
                 f"PARKUR-3 hedef rengi = {msg.data.strip() or 'ATANMAMIS'} "
                 f"(kod {yeni})"
             )
+
+    def _on_targets(self, msg: Detection3DArray) -> None:
+        """`/perception/targets` → dünya çerçevesinde hedef adayları.
+
+        🔴 Çerçeve: algı topic'leri **GÖVDE (base_link)**, boru hattı **DÜNYA**
+        çalışır ⇒ `_body_to_world` ŞART (2026-08-03'te engel yolunda tam bu
+        dönüşüm eksikti ve engeller yanlış yere düşüyordu).
+
+        ⚠️ 2026-08-16: bu metot `acc6247` birleştirmesinde SESSİZCE DÜŞTÜ —
+        satır 520'deki abonelik kaldı, gövdesi gitti. Sonuç: `PlanningNode`
+        kurucusunda `AttributeError` ⇒ planning_node HİÇ açılmıyor ⇒ MPPI yok,
+        thrust yok. `girdap-karar` servisi boot'ta 3 kez deneyip vazgeçiyordu.
+        Geri alınırsa aynı çökme döner (`test_planning_node.py` 71 test kırmızı).
+        """
+        hedefler = []
+        for det in msg.detections:
+            if not det.results:
+                continue
+            try:
+                kod = int(det.results[0].hypothesis.class_id)
+            except (ValueError, TypeError):
+                continue                       # sayısal olmayan sınıf → atla
+            wx, wy = self._body_to_world(det.bbox.center.position.x,
+                                         det.bbox.center.position.y)
+            hedefler.append(Hedef(wx, wy, kod, float(det.bbox.size.x),
+                                  float(det.results[0].hypothesis.score)))
+        self._hedefler = hedefler
+        self._hedef_t = self._now()
 
     @_pipe_kilidiyle
     def _on_mission_state(self, msg: String) -> None:
