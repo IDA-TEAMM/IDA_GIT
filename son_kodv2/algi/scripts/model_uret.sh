@@ -81,7 +81,23 @@ yol = blobconverter.from_onnx(
     data_type="FP16",
     shaves=shave,                       # 🔴 varsayılan 8 — sahada YÜKLENMEZ
     version="2022.1",                   # RVC2 / depthai 2.30 uyumlu
-    optimizer_params=["--scale_values=[255,255,255]", "--mean_values=[0,0,0]"],
+    optimizer_params=["--scale_values=[255,255,255]", "--mean_values=[0,0,0]",
+                      # 🔴 PAZARLIKSIZ — 17.08.2026'da EKSİK olduğu bulundu.
+                      # Model RGB bekler (ultralytics `img[::-1]`), ColorCamera
+                      # BGR gönderir (`setColorOrder(BGR)`), blob'un içinde
+                      # çeviren YOKTUR. Bu bayrak olmadan derlenen blob sahada
+                      # ÖLÇÜLDÜ: recall %96,8 → %43,0 ve **hiçbir hata basılmaz**
+                      # — node açılır, FPS normaldir, tespitler gelir, yalnız
+                      # dubaların çoğu görünmez olur.
+                      # Bayrak `models/README.md:66` ve `scripts/egitim/OKU.md`'de
+                      # "ZORUNLU" diye yazılıydı ama bu betiğe HİÇ girmemişti
+                      # (`git log -S` boş döndü) ⇒ bu betikle üretilen HER blob
+                      # kanal takassız çıkıyordu. `model_dogrula.py` de kanal
+                      # sırasını denetlemiyor (shave/giriş/sınıf adına bakıyor)
+                      # ⇒ zincirde yakalayan hiçbir kapı yoktu.
+                      # ⚠️ Kamera tarafındaki (B) çözümü `setColorOrder(RGB)` ile
+                      # BİRLİKTE UYGULANMAZ — çift çevirme takası geri alır.
+                      "--reverse_input_channels"],
 )
 shutil.copy(yol, hedef)
 print("blob:", hedef)
