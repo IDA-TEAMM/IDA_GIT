@@ -199,17 +199,24 @@ sapma ölçülüp yazıldı.
 
 **Kapatma ölçütü:** YKİ'den `DO_SET_RELAY` ile motor gücü kesildi ve geri verildi.
 
-### C2 · DALY BMS → UART
+### ~~C2 · DALY BMS → UART~~ ✅ **VAZGEÇİLDİ 16.08.2026** (ekip kararı)
 
-Donanımcılar TELEM3'e takacak = **`SERIAL5`**. TX/RX çapraz, GND ortak, VCC yok.
+~~Donanımcılar TELEM3'e takacak = `SERIAL5`. TX/RX çapraz, GND ortak, VCC yok.~~
 
-- Bağlandıktan sonra `SERIAL5_PROTOCOL` + `BATT_MONITOR` **isimli açılır
-  menüden** seçilecek (ham sayı yazma).
-- Şu an `BATT_MONITOR=3` (yalnız voltaj) — PM06 yalnız regülatörden dönen akımı
-  okuyabildiği için akım kanalı ölü olduğu **kontrollü yük deneyiyle kanıtlandı**.
+Bataryadan artık PM06'ya doğrudan değil, bir **regülatör üzerinden 24V'a
+çıkarılarak** gidiyor — PM06 gerçek batarya değerini hiç göremiyor, Mission
+Planner'da veri tamamen kayboldu (bu maddenin "akım kanalı ölü" bulgusu aynı
+kökün erken belirtisiymiş). Üç seçenek tartışıldı (PM06'yı regülatörden önceye
+almak — ESC hattına 2. bağlantı gerektirdiği için donanımcılarca **reddedildi**;
+ayrı ince sinyal teli + bölücü; UART/DALY BMS — bu madde). Ekip zaten **DALY
+BMS'i sürekli ayrıca izliyor** ve batarya süresi (~4 saat) parkur süresinin
+(~20 dk) 12 katı — bu UART işine girmenin riski (kart tarafı ek kablolama, 3
+gün kala zaman) faydasından ağır bulundu.
 
-**Kapatma ölçütü:** Mission Planner'da gerçek akım okunuyor; param dökümü
-güncellendi.
+**Karar:** `BATT_MONITOR=0` kalıcı, Pixhawk tarafında batarya izleme YOK.
+Güvenlik ağı: dış BMS + YKİ'den manuel acil-durdurma (görev başladıktan sonra
+da izinli, md 4.1 istisnası). Detay: `fc_REFERANS_DUZELTME_16agustos.param`
+commit `364a8e5a`.
 
 ### ~~C3 · LiDAR düzeltmeleri REPOYA~~ ✅ **KAPANDI 12.08.2026** (`2c9084b`)
 
@@ -233,6 +240,30 @@ servisin yine `active` göründüğünü ve `NRestarts=0` kaldığını ölçtü
 🔴 **Kalan (bizde değil):** LiDAR ağı `enP8p1s0` şu an **DOWN** (kaptan
 §0.43 — kablo/güç). Düzeltmeler doğru ama LiDAR fiziksel bağlanana kadar
 `topic hz` ile doğrulanamaz.
+
+---
+
+## E · YARIŞMA GÜNÜ ÖNCESİ MUTLAKA KAPATILACAK
+
+> 16-17.08 gecesi eklendi — şimdiye kadar yalnızca ilgili commit mesajında
+> yazıyordu, hiçbir kontrol listesinde yoktu. Unutulursa fark edilmeden
+> yarışma koşusuna girer.
+
+### E1 · `girdap-ff-ayar.service` — 🔴 kritik
+
+`630bb730` ile eklenen otomatik direksiyon (ATC_STR_RAT_FF) ayar servisi.
+Sahada SSH yok (md 4.1) diye **autostart + enabled** kuruldu — bu da demek
+oluyor ki yarışma günü **kendiliğinden devre dışı kalmaz**, elle kapatılmalı:
+
+```bash
+sudo systemctl disable --now girdap-ff-ayar
+```
+
+Tekneyi hareket ettirmiyor, komut yayınlamıyor (pasif ölçüm) ama GUIDED'da
+FC parametrelerini (ATC_STR_RAT_FF/_P/_I) canlı yazıyor — yarışma koşusu
+sırasında araya girmesin.
+
+**Kapatma ölçütü:** `systemctl is-enabled girdap-ff-ayar` → `disabled`.
 
 ---
 
