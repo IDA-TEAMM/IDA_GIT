@@ -44,3 +44,34 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6015", ATTRS{seria
 # 2) Pixhawk 6C'nin kendi USB-C'si (ttyACM*, Holybro idVendor 3162) —
 #    ModemManager problamasın (F-M.8; USB-C onarılırsa da geçerli kalır)
 SUBSYSTEM=="tty", ATTRS{idVendor}=="3162", ENV{ID_MM_DEVICE_IGNORE}="1"
+
+# 3) 🔴 DOGRUDAN USB-C ile baglaninca da /dev/pixhawk OLUSSUN (17.08.2026)
+#
+#    NE: Pixhawk 6C'nin kendi USB-C'sindeki MAVLink portu da /dev/pixhawk
+#        symlink'ini alir.
+#
+#    NEDEN: Kural 1 yalniz TELEM2 FTDI kablosuna symlink veriyordu; kural 2
+#        USB-C icin vardi ama SADECE ModemManager'i susturuyor, SYMLINK
+#        VERMIYORDU. Takim baglanma yontemini dogrudan USB'ye cevirince
+#        /dev/pixhawk hic olusmadi ve hardware.yaml'daki
+#        `serial:///dev/pixhawk:921600` acilamadi. Olculen belirti (17.08 00:00):
+#            mavros_router: link[1000] reconnect failed:
+#            DeviceError:serial:open: No such file or directory
+#        — sonsuz dongu, MAVROS HIC baglanmiyor, karar yigini poz bekleyerek
+#        duruyor ("poz HIC gelmedi -> MPPI DURDURULDU"). Kagit uzerinde her sey
+#        dogru gorunur: servisler active, topic'ler listelenir.
+#
+#    NEDEN if00: cihaz IKI port aciyor (ls -l /dev/serial/by-id):
+#            ...Pixhawk6C_3400...-if00 -> ttyACM0   <- MAVLink (BU)
+#            ...Pixhawk6C_3400...-if02 -> ttyACM1   <- ikincil, MAVLink DEGIL
+#        Arayuz numarasi verilmezse symlink IKISINE de yazilir ve hangisinin
+#        kazandigi belirsizdir; yanlisina baglanan MAVROS sessizce veri almaz.
+#
+#    ⚠ IKISI BIRDEN TAKILIYSA (FTDI + USB-C): symlink'i son gelen alir.
+#        Yarisma kurulumunda TEK yontem kullanin.
+#
+#    GERI ALINIRSA NE KIRILIR: dogrudan USB-C ile baglanti calismaz; yalnizca
+#        TELEM2 FTDI kablosuyla baglanilabilir.
+#
+#    DENETIM: ls -l /dev/pixhawk    # -> ttyACM0 (USB-C) ya da ttyUSB0 (FTDI)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="3162", ENV{ID_USB_INTERFACE_NUM}=="00", SYMLINK+="pixhawk"
