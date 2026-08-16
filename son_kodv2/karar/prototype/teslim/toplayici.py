@@ -152,6 +152,9 @@ class Bulgu:
 
     tanim: KalemTanimi
     dosyalar: List[Path] = field(default_factory=list)
+    #: Tek-dosya kaleminde EN YENİ seçilince dışarıda kalanlar (yalnız rapor
+    #: için; USB'ye kopyalanmazlar). Boş liste = eleme yapılmadı.
+    elenen: List[Path] = field(default_factory=list)
 
     @property
     def bulundu(self) -> bool:
@@ -305,6 +308,21 @@ def kalemleri_bul(
             b.dosyalar = sorted(
                 p for p in arama_koku.glob(t.desen) if p.is_file()
             )
+            # 🔴 16.08.2026 — DÜZ YERLEŞİMLİ TEK-DOSYA KALEMİ (Dosya-2) SIZIYORDU.
+            # `_en_yeni_oturum` yalnız `oturum_*`/`session_*` ALT DİZİNİ arar.
+            # `local_map` öyle yazıyor (çalışıyor), ama `telemetry` dosyaları
+            # dizine DÜZ yazılıyor (`telemetri_<UTC>.csv`) ⇒ alt dizin yok ⇒
+            # `_en_yeni_oturum` kök'ü döndürüyor ⇒ "yalnız en yeni oturum"
+            # kuralı Dosya-2'ye HİÇ uygulanmıyordu. Bu cihazda ölçüldü:
+            # **127 CSV** toplandı ve `dosyalar[0]` (ada göre EN ESKİ) şartname
+            # adını (`Dosya2_Arac_Telemetri_Verisi.csv`) aldı ⇒ hakem resmî ad
+            # altında AYLAR ÖNCEKİ geliştirme koşusunu görürdü. Rapor "elle
+            # seç" diyordu ama 20 dakikalık teslim penceresinde (md 4.2, geç
+            # dosya 5 ceza) o el hareketi tam da atlanacak adımdır.
+            # Aynı sınıf: `dosya1_birlestir` isim sırası → PROVA oturumu teslimi.
+            if not hepsi and not t.klasor and len(b.dosyalar) > 1:
+                b.elenen = b.dosyalar[:-1]
+                b.dosyalar = b.dosyalar[-1:]     # ada göre EN YENİ
         out.append(b)
     # 🔑 mp4 varsa PNG yedeğini teslime KOYMA: dönüşüm başarılıysa (ya da
     # codec zaten çalışıyorsa) o klasör yalnız kayıpsız kaynaktır ve USB
@@ -411,6 +429,24 @@ def kopyala(
                     "beklenen 1 — hepsi kopyalandı, hakeme HANGİSİ verilecek "
                     "elle seçilmeli"
                 )
+            if b.elenen:
+                # Sessiz seçim YAPMIYORUZ: hangi dosyanın şartname adını aldığı
+                # ve kaçının elendiği rapora YAZILIR. Operatör yanlış koşunun
+                # teslim edildiğini ancak burada fark edebilir.
+                rapor.uyarilar.append(
+                    f"{t.ad}: {len(b.elenen) + 1} aday vardı, EN YENİSİ seçildi "
+                    f"→ {b.dosyalar[0].name} (elenen {len(b.elenen)} dosya USB'ye "
+                    "KOPYALANMADI, Jetson'da duruyor). Yanlışsa: --hepsi ile "
+                    "tekrar topla ve doğru dosyayı elle adlandır."
+                )
+                if "SAAT-GUVENILMEZ" in b.dosyalar[0].name:
+                    # Seçim ADA göre; ad zaman damgası taşıyor. Saat güvenilmezse
+                    # "en yeni ad" ≠ "en son koşu" olabilir (§ saat kaynağı).
+                    rapor.uyarilar.append(
+                        f"🔴 {t.ad}: seçilen dosya SAAT-GUVENILMEZ damgalı — "
+                        "sıralama ada (zaman damgasına) dayandığı için seçim de "
+                        "şüpheli. Teslimden önce dosyanın içeriğini GÖZLE doğrula."
+                    )
         for src, dst in ciftler:
             n = 1
             while dst.exists():                # ÜZERİNE YAZMA

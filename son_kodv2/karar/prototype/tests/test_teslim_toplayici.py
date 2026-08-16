@@ -276,3 +276,122 @@ def test_YABANCI_dosyalar_teslime_GIRMEZ(tmp_path):
     assert ".pgm" not in kopyalanan, "yabancı .pgm teslime girdi"
     assert ".yaml" not in kopyalanan, "yabancı .yaml teslime girdi"
     assert rapor.basarili
+
+
+# --------------------------------------------------------------------------- #
+# 16.08.2026 — DÜZ YERLEŞİMLİ TEK-DOSYA KALEMİ: "en yeni oturum" sızıntısı
+# --------------------------------------------------------------------------- #
+
+
+def _cok_telemetri(kok: Path, adlar: list[str]) -> None:
+    """`telemetry/` altına DÜZ (oturum alt dizini olmadan) birden çok CSV."""
+    d = kok / "telemetry"
+    d.mkdir(parents=True, exist_ok=True)
+    for ad in adlar:
+        (d / ad).write_text(f"zaman,lat\n# {ad}\n")
+
+
+def test_DOSYA2_hakem_EN_YENIYI_gorur_en_eskisini_DEGIL(tmp_path):
+    """🔴 CANLI HATA (16.08, bu Jetson'da ölçüldü): hakem EN ESKİ dosyayı görüyordu.
+
+    `_en_yeni_oturum` yalnız `oturum_*`/`session_*` ALT DİZİNİ arar. `local_map`
+    öyle yazıyor (çalışıyordu), ama `telemetry` dosyaları dizine **DÜZ** yazılır
+    (`telemetri_<UTC>.csv`) ⇒ alt dizin yok ⇒ kök dönüyor ⇒ "yalnız en yeni
+    oturum" kuralı Dosya-2'ye HİÇ uygulanmıyordu.
+
+    Cihazdaki gerçek durum: **127 CSV** toplandı ve `dosyalar[0]` (ada göre EN
+    ESKİ) şartname adını (`Dosya2_Arac_Telemetri_Verisi.csv`) aldı ⇒ hakem resmî
+    ad altında AYLAR ÖNCEKİ geliştirme koşusunu görürdü. Rapor "elle seç" diyordu
+    ama 20 dakikalık teslim penceresinde (md 4.2, geç dosya **5 ceza**) atlanacak
+    ilk adım tam olarak odur.
+
+    ⛔ GERİ ALINIRSA: teslim yine ada göre ilk (en eski) dosyayı hakeme verir.
+    """
+    logs = _kur(tmp_path / "logs", telemetri=False)
+    _cok_telemetri(logs, [
+        "telemetri_20260601T090000Z.csv",     # aylar önceki geliştirme koşusu
+        "telemetri_20260807T100000Z.csv",
+        "telemetri_20260820T120000Z.csv",     # YARIŞMA koşusu — hakem BUNU görmeli
+    ])
+    usb = tmp_path / "usb"
+    usb.mkdir()
+
+    rapor, _ = topla_ve_yaz(logs, usb)
+
+    hakemin_gordugu = (usb / "Dosya2_Arac_Telemetri_Verisi.csv").read_text()
+    assert "20260820T120000Z" in hakemin_gordugu, (
+        "şartname adını EN ESKİ dosya aldı — hakem yanlış koşuyu görür"
+    )
+    assert rapor.basarili
+
+
+def test_DOSYA2_elenenler_USBye_KOPYALANMAZ_ama_RAPORA_yazilir(tmp_path):
+    """Sessiz seçim yok: ne seçildiği ve kaçının elendiği raporda GÖRÜNMELİ.
+
+    Elenenleri de kopyalamak eski davranıştı; 127 dosyalık USB kökü hakemi
+    yanıltır ve teslim süresini yer. Ama seçimin kendisi de sessiz olmamalı —
+    operatör yanlış koşunun gittiğini yalnız rapordan anlayabilir.
+    """
+    logs = _kur(tmp_path / "logs", telemetri=False)
+    _cok_telemetri(logs, [
+        "telemetri_20260601T090000Z.csv",
+        "telemetri_20260820T120000Z.csv",
+    ])
+    usb = tmp_path / "usb"
+    usb.mkdir()
+
+    rapor, _ = topla_ve_yaz(logs, usb)
+
+    csvler = sorted(p.name for p in usb.glob("Dosya2*"))
+    assert csvler == ["Dosya2_Arac_Telemetri_Verisi.csv"], (
+        f"elenen dosya da USB'ye gitmiş: {csvler}"
+    )
+    metin = " ".join(rapor.uyarilar)
+    assert "EN YENİSİ seçildi" in metin, "seçim sessiz yapıldı — rapor susuyor"
+    assert "20260820T120000Z" in metin, "hangi dosyanın seçildiği yazılmamış"
+
+
+def test_DOSYA2_SAAT_GUVENILMEZ_secimi_ayrica_bagirir(tmp_path):
+    """Sıralama ADA (zaman damgasına) dayanıyor — saat şüpheliyse seçim de şüpheli.
+
+    `telemetry_node` saat güvenilmezken dosyayı `_SAAT-GUVENILMEZ` ekiyle
+    yazıyor. O dosya seçilirse "en yeni ad" ile "en son koşu" aynı olmayabilir;
+    bu, sessizce doğru sanılacak bir seçim olurdu.
+    """
+    logs = _kur(tmp_path / "logs", telemetri=False)
+    _cok_telemetri(logs, [
+        "telemetri_20260820T120000Z.csv",
+        "telemetri_20260820T130000Z_SAAT-GUVENILMEZ.csv",
+    ])
+    usb = tmp_path / "usb"
+    usb.mkdir()
+
+    rapor, _ = topla_ve_yaz(logs, usb)
+
+    metin = " ".join(rapor.uyarilar)
+    assert "SAAT-GUVENILMEZ damgalı" in metin, (
+        "şüpheli zaman damgasıyla seçim yapıldı ama rapor uyarmadı"
+    )
+
+
+def test_DOSYA3_oturum_dizinli_yerlesim_BOZULMADI(tmp_path):
+    """Regresyon: `local_map` oturum ALT DİZİNİ kullanıyor, o yol aynen çalışmalı.
+
+    Düzeltme yalnız DÜZ yerleşimi hedefliyor; oturum dizinli kalemde davranış
+    bit-birebir eski kalmalı (en yeni oturum seçilir, içindeki tek mp4 gider).
+    """
+    logs = _kur(tmp_path / "logs", harita=False)
+    for otr in ("oturum_20260807_100000", "oturum_20260820_120000"):
+        d = logs / "local_map" / otr
+        d.mkdir(parents=True)
+        (d / f"Dosya3_{otr}.mp4").write_bytes(b"H" * 1024)
+    usb = tmp_path / "usb"
+    usb.mkdir()
+
+    topla_ve_yaz(logs, usb)
+
+    icerik = (usb / "Dosya3_Lokal_Harita_Cost_Map_Engel_Haritasi.mp4")
+    assert icerik.exists()
+    assert not list(usb.glob("Dosya3_Lokal_Harita_*_1.mp4")), (
+        "eski oturum da kopyalanmış — en yeni oturum seçimi bozulmuş"
+    )
