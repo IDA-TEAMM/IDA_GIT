@@ -7,14 +7,20 @@ NE: Koşum sırasında `ATC_STR_RAT_FF`'i aday değerler arasında sırayla dene
     ArduPilot'un `rover-quicktune.lua` appletinin yaptığı işi Jetson'dan yapar.
 
 NEDEN (16.08.2026 bant ölçümü):
-    Göl bantlarından teknenin dönme kazancı çıkarıldı — DÖRT bağımsız yolla:
+    Göl bantlarından teknenin dönme kazancı çıkarıldı — ÜÇ bağımsız yolla
+    (16.08'in İKİ ayrı bandı, GUIDED-only):
         medyan(direksiyon/dönüş)      0,644 · 0,671
         regresyon eğimi               0,566 · 0,533
         sistem kimliklendirme 1/K     0,591     (K=1,693 rad/s, τ=1,42 s)
-        ArduPilot formülü R×π/4       0,785     (TURN_RADIUS=1,0 —
-                                                canlı FC'den okundu 17.08;
-                                                .param dosyası 0,9 diyordu)
-    Dördü de **0,53-0,71** bandında. Yüklü değer **0,20** — üçte biri.
+    + bağımsız dördüncü doğrulama (paralel oturum, R = v/ω): tekne
+      0,62 m/s'de 9,2°/s dönüyor ⇒ gerçek yarıçap 3,86 m; istenen 16,6°/s
+      ⇒ 2,14 m. Yüklü TURN_RADIUS 1,0 m ⇒ tekne ayarlandığının ~3,9 katı
+      genişlikte dönüyor.
+    ❌ GERİ ALINDI — `ArduPilot formülü TURN_RADIUS×π/4 = 0,785`: formül
+      aracın FİZİKSEL dönüş yarıçapını bekliyor, oraya AYAR parametresini
+      koymuşum. Gerçek yarıçap 3,86 m ölçüldüğüne göre girdisi tartışmalı;
+      delil sayılmıyor. (Uyarıyı paralel oturum verdi.)
+    Kalan yollar **0,53-0,67** bandında. Yüklü değer **0,20** — üçte biri.
     Sonucu: istenen dönüş hızının yalnız %55-63'ü gerçekleşiyor, tekne
     kapıya yeterince keskin dönemiyor, etrafında geniş yaylar çiziyor.
     18:36 oturumunda ölçüldü: **840 sn kesintisiz aynı yöne dönüş**, net
@@ -23,7 +29,7 @@ NEDEN (16.08.2026 bant ölçümü):
     QuickTune yerine bu: `SCR_ENABLE`+reboot+SD kart+RC anahtarı gerekmiyor
     (SCR_ENABLE şu an 0 ve açmak EKF'i riske atabilir — bkz. §1.20g'de yeni
     açılan EKF kilidi). Ayrıca hedef bandı ZATEN ÖLÇÜLDÜ, yani kör arama
-    değil odaklı süpürme yapıyoruz: 4 aday, ~6 dakika.
+    değil odaklı süpürme yapıyoruz: 4 aday × 2 tur ≈ 11 dakika.
 
 NEDEN SİMÜLASYONLA DEĞİL: bandın kendisinden çıkarılan model doğrulamayı
     GEÇEMEDİ — serbest koşum R² 1 sn'de +0,69 ama 5 sn'de −0,21. Yani
@@ -43,6 +49,14 @@ NEDEN SİMÜLASYONLA DEĞİL: bandın kendisinden çıkarılan model doğrulamay
          acil durdurma (RC10 HIGH) · FC bağlantısı kopması · veri kesilmesi
     6. FF için sert sınır: [0,10 … 1,00]. Dışına asla yazılmaz.
     7. `--kuru` ile hiçbir şey yazmadan yalnız ölçüm yapar (önce bununla dene).
+    8. 🔴 GÜRÜLTÜ KAPISI: adaylar TUR TUR serpiştirilerek (A-B-A-B) ölçülür;
+       en iyi ile ikincinin farkı, adayların KENDİ İÇİNDEKİ en büyük
+       yayılımdan küçükse **SONUÇ İLAN EDİLMEZ** ve özgün değerlere dönülür.
+       NEDEN: ölçütün gürültü tabanı ölçüldü — FF SABİT 0,20 iken, aynı
+       oturumda 8 ardışık 75 sn penceresinde regresyon eğimi 0,471-0,863
+       arası gezindi (yayılım 0,392). Tek pencereyle "en iyi" ilan etmek
+       yazı-tura olurdu. Araç artık "kullanılabilir fark bulamadım"
+       diyebiliyor — uydurmaktan iyidir.
 
 GERİ ALINIRSA NE KIRILIR: hiçbir şey — araç yalnız parametre yazıyor, kod
     yolunda değil. Ama o zaman FF elle ve suda kademeli aranmak zorunda kalır
@@ -58,7 +72,10 @@ Kullanım:
    HİÇBİR VERİ AKMAZ ve hiçbir servis bulunamaz. Servisler bu değişkenle
    koşuyor (`girdap-yarisma-localhost.conf`); farklı değerdeki bir süreç ayrı
    keşif dünyasında kalır. Belirti "MAVROS bağlı değil" gibi görünür — DEĞİLDİR.
-    python3 scripts/otomatik_ff_ayar.py                       # gerçek
+    python3 scripts/otomatik_ff_ayar.py                       # gerçek (2 tur, ~11 dk)
+    python3 scripts/otomatik_ff_ayar.py --tur 3               # daha güvenli, ~16 dk
+    python3 scripts/otomatik_ff_ayar.py --tur 1               # ~5 dk, GÜRÜLTÜ
+                                                              # KAPISI UYGULANAMAZ
     python3 scripts/otomatik_ff_ayar.py --geri-yukle DOSYA    # acil geri alma
 
 Çıktı sözleşmesi (nöbetçiyle aynı desen — her satır TEK olay):
@@ -126,12 +143,13 @@ def yuzdelik(v, p):
 
 class FFAyar(Node):
     def __init__(self, kuru: bool, adaylar, olcum_sn: float,
-                 bekle: bool = False):
+                 bekle: bool = False, tur: int = 2):
         super().__init__("otomatik_ff_ayar")
         self.kuru = kuru
         self.adaylar = adaylar
         self.olcum_sn = olcum_sn
         self.bekle = bekle
+        self.tur = max(1, int(tur))
 
         self._istenen = None
         self._gerceklesen = None
@@ -491,24 +509,70 @@ class FFAyar(Node):
                 self._bas("ADIM", f"mod {self._mod} — GUIDED'a geçilmesi bekleniyor "
                                   "(ölçüm yalnız GUIDED'da işler)")
 
+        # ═══════════════════════════════════════════════════════════════
+        # SERPİŞTİRMELİ ÇOKLU TUR (A-B-A-B) — 17.08 düzeltmesi
+        #
+        # 🔴 NEDEN (paralel oturum ölçtü, kabul edildi): ölçütün GÜRÜLTÜ
+        # TABANI, adaylar arası beklenen farktan büyük olabilir. FF SABİT
+        # 0,20 iken, aynı oturumda, ardışık 75 sn'lik 8 pencerede regresyon
+        # eğimi: medyan 0,782 · min 0,471 · maks 0,863 ⇒ YAYILIM 0,392.
+        # Yani hiçbir şey değişmezken bile ölçüt 0,47-0,86 arası geziniyor.
+        #
+        # Tek pencereyle "en iyi" ilan etmek YAZI-TURA olurdu. Üstelik eski
+        # sürüm tabanı (0,20) koşunun BAŞINDA bir kez ölçüp sonraki adaylarla
+        # FARKLI koşullarda (rüzgâr, manevra, duba yoğunluğu) kıyaslıyordu.
+        #
+        # ÇÖZÜM: adaylar TUR TUR, sırayla dolaşılır (A,B,C,D · A,B,C,D …).
+        # Böylece yavaş değişen koşullar bütün adaylara EŞİT dağılır.
+        # Her adayın kendi yayılımı ölçülür ve KARAR KURALI şudur:
+        #     en iyi ile ikincinin farkı < gürültü tabanı  ⇒  İLAN ETME
+        # ═══════════════════════════════════════════════════════════════
+        olcumler = {ff: [] for ff in self.adaylar}
+        toplam = self.tur * len(self.adaylar)
+        adim = 0
+        for tur in range(1, self.tur + 1):
+            for ff in self.adaylar:
+                adim += 1
+                p = round(P_ORANI * ff, 3)
+                self._bas("ADIM", f"{adim}/{toplam} (tur {tur}/{self.tur}) — "
+                                  f"FF={ff:.2f} P=I={p:.3f} "
+                                  f"({self.olcum_sn:.0f} sn)")
+                self._yaz(PARAM_FF, ff)
+                self._yaz(PARAM_P, p)
+                self._yaz(PARAM_I, p)
+                self._bekle(OTURMA_SN)
+                r, hata = self._olc(ff)
+                if r is None:
+                    self._bas("ÖLÇÜM", f"FF={ff:.2f} tur{tur} ⚠️ {hata}")
+                    continue
+                olcumler[ff].append(r)
+                self._bas("ÖLÇÜM",
+                          f"FF={ff:.2f} tur{tur} | n={r['n']:4d} | "
+                          f"takip {r['regresyon']:.2f} | "
+                          f"salınım {r['salinim']:.2f} Hz | puan {r['puan']:.3f}")
+
+        # ── aday başına özet + YAYILIM
         sonuclar = []
-        for i, ff in enumerate(self.adaylar, 1):
-            p = round(P_ORANI * ff, 3)
-            self._bas("ADIM", f"{i}/{len(self.adaylar)} — FF={ff:.2f} "
-                              f"P=I={p:.3f} deneniyor ({self.olcum_sn:.0f} sn)")
-            self._yaz(PARAM_FF, ff)
-            self._yaz(PARAM_P, p)
-            self._yaz(PARAM_I, p)
-            self._bekle(OTURMA_SN)
-            r, hata = self._olc(ff)
-            if r is None:
-                self._bas("ÖLÇÜM", f"FF={ff:.2f} ⚠️ {hata}")
+        self._bas("SONUÇ", "─" * 62)
+        self._bas("SONUÇ", "aday      tur  puan(medyan)   YAYILIM   takip(medyan)")
+        for ff in self.adaylar:
+            rs = olcumler[ff]
+            if not rs:
+                self._bas("SONUÇ", f"FF={ff:.2f}    0   — ölçülemedi")
                 continue
-            sonuclar.append(r)
-            self._bas("ÖLÇÜM",
-                      f"FF={ff:.2f} | n={r['n']:4d} | gerçekleşen/istenen "
-                      f"medyan {r['medyan']:.2f} regresyon {r['regresyon']:.2f} "
-                      f"| salınım {r['salinim']:.2f} Hz | puan {r['puan']:.3f}")
+            puanlar = sorted(r["puan"] for r in rs)
+            reg = sorted(r["regresyon"] for r in rs)
+            yayilim = puanlar[-1] - puanlar[0] if len(puanlar) > 1 else float("nan")
+            ozet = {"ff": ff, "tur": len(rs),
+                    "puan": yuzdelik(puanlar, 50),
+                    "yayilim": yayilim,
+                    "regresyon": yuzdelik(reg, 50),
+                    "salinim": yuzdelik(sorted(r["salinim"] for r in rs), 50),
+                    "n": sum(r["n"] for r in rs)}
+            sonuclar.append(ozet)
+            yz = "—" if len(rs) < 2 else f"{yayilim:.3f}"
+            self._bas("SONUÇ", f"FF={ff:.2f}   {len(rs):2d}   {ozet['puan']:>9.3f}   "
+                               f"{yz:>7}   {ozet['regresyon']:>9.2f}")
 
         if not sonuclar:
             self._bas("İPTAL", "hiçbir aday ölçülemedi — görev yeterli dönüş "
@@ -517,13 +581,44 @@ class FFAyar(Node):
             self.geri_yukle()
             return
 
-        en_iyi = min(sonuclar, key=lambda r: r["puan"])
-        self._bas("SONUÇ", "─" * 58)
-        for r in sonuclar:
-            im = "  ← EN İYİ" if r is en_iyi else ""
-            self._bas("SONUÇ", f"FF={r['ff']:.2f} puan {r['puan']:.3f} "
-                               f"(takip {r['regresyon']:.2f} · "
-                               f"salınım {r['salinim']:.2f} Hz){im}")
+        sirali = sorted(sonuclar, key=lambda r: r["puan"])
+        en_iyi = sirali[0]
+
+        # ═══ GÜRÜLTÜ KAPISI — asıl karar burada ═══════════════════════
+        # Gürültü tabanı = adayların KENDİ İÇİNDEKİ yayılımlarının en
+        # büyüğü. Aynı FF'te aynı koşulda bile ölçüt bu kadar oynuyorsa,
+        # adaylar arası bundan küçük bir fark BİLGİ TAŞIMAZ.
+        #
+        # Neden maksimum (ortalama değil): tek bir adayda büyük yayılım
+        # görülmesi, ölçüm koşullarının o kadar oynayabildiğini gösterir —
+        # ve o oynama sıralamayı da çevirebilir. Kötümser taraf güvenli.
+        yayilimlar = [r["yayilim"] for r in sonuclar
+                      if r["tur"] >= 2 and math.isfinite(r["yayilim"])]
+        if yayilimlar:
+            gurultu = max(yayilimlar)
+            fark = (sirali[1]["puan"] - en_iyi["puan"]) if len(sirali) > 1 \
+                else float("inf")
+            self._bas("SONUÇ", "─" * 62)
+            self._bas("SONUÇ", f"gürültü tabanı (en büyük aday-içi yayılım): "
+                               f"{gurultu:.3f}")
+            self._bas("SONUÇ", f"en iyi ↔ ikinci farkı              : {fark:.3f}")
+            if fark < gurultu:
+                self._bas("SONUÇ", "🔴 FARK GÜRÜLTÜDEN KÜÇÜK — SONUÇ İLAN "
+                                   "EDİLMİYOR.")
+                self._bas("SONUÇ", f"   FF={en_iyi['ff']:.2f} 'en iyi' göründü "
+                                   f"ama bu sıralama tekrarlanabilir DEĞİL.")
+                self._bas("SONUÇ", "   Özgün değerlere dönülüyor. Daha uzun "
+                                   "pencere (--sure) ya da daha çok tur "
+                                   "(--tur) ile tekrar dene; ya da elle "
+                                   "kademeli ayarla (0,20→0,40→0,60).")
+                self.geri_yukle()
+                return
+            self._bas("SONUÇ", "✅ fark gürültü tabanının ÜSTÜNDE — sonuç "
+                               "kullanılabilir")
+        else:
+            self._bas("SONUÇ", "⚠️ TEK TUR ölçüldü (--tur 1) — yayılım "
+                               "bilinmiyor, gürültü kapısı UYGULANAMADI. "
+                               "Sonuca temkinli bak.")
 
         if en_iyi["salinim"] > 0.30:
             self._bas("SONUÇ", "🔴 EN İYİ ADAYDA BİLE SALINIM VAR — "
@@ -550,6 +645,10 @@ def main():
                     help="kaydedilmiş özgün değerleri geri yaz (acil durum)")
     ap.add_argument("--adaylar", default=",".join(str(x) for x in ADAYLAR),
                     help=f"virgüllü FF adayları (varsayılan: {ADAYLAR})")
+    ap.add_argument("--tur", type=int, default=2,
+                    help="her adaydan kaç tur ölçülsün (A-B-A-B serpiştirme). "
+                         "2'nin altında GÜRÜLTÜ KAPISI uygulanamaz — "
+                         "varsayılan 2")
     ap.add_argument("--bekle", action="store_true",
                     help="SERVİS KİPİ: ARMED+GUIDED olana kadar bekle; ayar "
                          "yarıda kalırsa geri yükleyip yeniden beklemeye dön")
@@ -559,7 +658,7 @@ def main():
 
     rclpy.init()
     dugum = FFAyar(a.kuru, [float(x) for x in a.adaylar.split(",")],
-                   a.sure, bekle=a.bekle)
+                   a.sure, bekle=a.bekle, tur=a.tur)
 
     def _sinyal(_s, _f):
         raise KeyboardInterrupt("SIGTERM")
