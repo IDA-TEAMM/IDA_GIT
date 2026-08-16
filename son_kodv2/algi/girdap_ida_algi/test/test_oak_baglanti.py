@@ -25,8 +25,14 @@ SAHTE_YOL = "/dev/bus/usb/001/007"
 def cihaz_takili_varsay(monkeypatch):
     """Süit GERÇEK USB'ye BAKMASIN — F-A.4 sonrası zorunlu oldu.
 
-    `dayanikli_ac` artık cihaz USB'de yoksa **süresiz bekliyor** (F-A.4, üretimde
-    doğru davranış). Bu, testi sessizce donanıma bağımlı yapar: kamera takılı
+    ⚠️ 2026-08-16 DÜZELTMESİ: bu metin *"`dayanikli_ac` süresiz bekliyor"*
+    diyordu — YANLIŞTI. Bekleyen `cihazi_bekle`; `dayanikli_ac` eskisi gibi
+    4 deneme sonunda `raise` eder. Üstelik `cihazi_bekle` 16.08'e kadar
+    hiçbir yerden ÇAĞRILMIYORDU (bkz. `test_FA4_BAGLI_MI_*`). Docstring,
+    gerçekleşmemiş bir niyeti olmuş gibi anlatıyordu.
+
+    Kanca yine de gerekli: cihaz yokluğunu sınayan testler `usb_dugum_yolu`u
+    kendileri ezmezse süit gerçek USB'ye bakar. Kamera takılı
     Jetson'da süit yeşil, kamera olmayan laptopta **sonsuza dek asılır**
     (ölçüldü: 15.08, 8 sn'lik zaman aşımıyla kanıtlandı). Bu kanca ile testler
     "cihaz takılı" varsayar; cihazın YOKLUĞUNU sınayan testler bunu kendi
@@ -129,7 +135,13 @@ def test_log_fonksiyonu_cagrilir(monkeypatch):
 # bir DURUM, "cihaz VAR ama açılmıyor" gerçek ARIZA.
 
 def test_FA4_cihaz_yokken_COKMEZ_gelince_acar(monkeypatch):
-    """Cihaz yokken fırlatmaz: gelene kadar bekler, gelince açar."""
+    """Cihaz yokken fırlatmaz: gelene kadar bekler, gelince açar.
+
+    ⚠️ 16.08'de bu test VAKUMDU: `acici` hiç fırlatmadığı için `dayanikli_ac`
+    ilk denemede dönüyordu ve `sahte_yol` HİÇ yoklanmıyordu — yani
+    `cihazi_bekle` bağlanmamışken de yeşildi (ölçüldü). Artık yoklamanın
+    GERÇEKTEN yapıldığı da doğrulanıyor; bağlantı koparsa test kırmızıya döner.
+    """
     yoklama = {"n": 0}
 
     def sahte_yol():
@@ -139,6 +151,11 @@ def test_FA4_cihaz_yokken_COKMEZ_gelince_acar(monkeypatch):
     monkeypatch.setattr(ob, "usb_dugum_yolu", sahte_yol)
     monkeypatch.setattr(ob.time, "sleep", lambda s: None)
     assert ob.dayanikli_ac(lambda: "CIHAZ", deneme=4) == "CIHAZ"
+    # 🔴 VAKUM KIRICI: bekleme gerçekten koştu mu?
+    assert yoklama["n"] >= 4, (
+        "usb_dugum_yolu yoklanmadı — dayanikli_ac cihazı BEKLEMİYOR, "
+        "F-A.4 yine bağlanmamış."
+    )
 
 
 def test_FA4_bekleme_DENEME_HAKKI_YEMEZ(monkeypatch):
@@ -166,6 +183,11 @@ def test_FA4_bekleme_DENEME_HAKKI_YEMEZ(monkeypatch):
     with pytest.raises(RuntimeError, match="X_LINK"):
         ob.dayanikli_ac(acici, deneme=3)
     assert denemeler["n"] == 3      # 10 yoklama beklendi, hak yine 3
+    # 🔴 VAKUM KIRICI: bekleme hiç koşmasaydı bu da geçerdi (16.08 ölçümü).
+    assert yoklama["n"] > 10, (
+        "usb_dugum_yolu 10 kez None dönmesine rağmen beklenmedi — "
+        "dayanikli_ac cihazı BEKLEMİYOR."
+    )
 
 
 def test_FA4_cihaz_VARKEN_arizada_ESKI_davranis_KORUNUR(monkeypatch):
@@ -272,3 +294,94 @@ def test_usb_dugum_yolu_cihaz_yoksa_None(monkeypatch, gercek_usb_dugum_yolu):
 def test_usb_reset_cihaz_yoksa_False(monkeypatch):
     monkeypatch.setattr(ob, "usb_dugum_yolu", lambda: None)
     assert ob.usb_reset() is False
+
+# ─────────────────── F-A.4 BAĞLANTI DENETİMİ (AST, donanımsız) ─────────────
+# 🔴 NEDEN BU TESTLER VAR (2026-08-16 arızası):
+# F-A.4 `cihazi_bekle()`yi yazdı, 2 testle sözleşmesini kilitledi, commit
+# mesajına *"çökme döngüsü kaldırıldı"* yazdı — ama fonksiyonu HİÇBİR YERDEN
+# ÇAĞIRMADI. `grep -rn cihazi_bekle` → yalnız tanım + kendi testleri.
+# Sonuç: düzeltme "var" göründü, davranış HİÇ DEĞİŞMEDİ. 16.08 22:44-22:45
+# journal'ında eski çökme döngüsü aynen dönüyor (üç tur, `respawn_delay=3.0`).
+#
+# Mevcut testlerin hiçbiri bunu yakalayamazdı: hepsi `cihazi_bekle`yi DOĞRUDAN
+# çağırıp davranışını ölçüyordu. Bir fonksiyonun doğru çalışması, onun
+# çağrıldığı anlamına gelmez. Aynı desen §4/5'teki `hedef_bul_p3`te de var.
+#
+# Denetim AST ile: ROS/depthai kurulu olmayan makinede de koşar
+# (`duba_gecis_navigator` import edilemez — `import depthai` ister).
+import ast
+
+_PKT = Path(__file__).resolve().parents[1] / "girdap_ida_algi"
+_NAV = _PKT / "duba_gecis_navigator.py"
+_OB = _PKT / "oak_baglanti.py"
+
+
+def _govde(dosya, ad):
+    for d in ast.walk(ast.parse(dosya.read_text(encoding="utf-8"))):
+        if isinstance(d, ast.FunctionDef) and d.name == ad:
+            return d
+    raise AssertionError(f"{ad} bulunamadı — yeniden mi adlandırıldı?")
+
+
+def _cagri_satirlari(dugum, ad):
+    """`dugum` altında `ad` ile biten çağrıların satır numaraları."""
+    n = []
+    for c in ast.walk(dugum):
+        if isinstance(c, ast.Call):
+            f = c.func
+            isim = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+            if isim == ad:
+                n.append(c.lineno)
+    return n
+
+
+def test_FA4_BAGLI_MI_cihazi_bekle_gercekten_cagriliyor():
+    """🔴 Regresyon kilidi: `cihazi_bekle` çağrısı `pipeline_kur`dan silinirse KIRMIZI."""
+    satirlar = _cagri_satirlari(_govde(_OB, "dayanikli_ac"), "cihazi_bekle")
+    assert satirlar, (
+        "pipeline_kur() `cihazi_bekle()` ÇAĞIRMIYOR — F-A.4 yine yarım. "
+        "Cihaz USB'de yokken düğüm çöker ve ~3 sn'de bir respawn döngüsüne girer."
+    )
+
+
+def test_FA4_BAGLI_MI_beklemek_acmadan_ONCE_gelir():
+    """Sıra ters olursa bekleme işe yaramaz: önce açmayı dener, yine çöker."""
+    govde = _govde(_OB, "dayanikli_ac")
+    bekle = _cagri_satirlari(govde, "cihazi_bekle")
+    dene = _cagri_satirlari(govde, "acici")
+    assert bekle and dene, "iki çağrı da dayanikli_ac içinde olmalı"
+    assert min(bekle) < min(dene), (
+        f"cihazi_bekle (satır {min(bekle)}) açılış denemesinden "
+        f"(satır {min(dene)}) SONRA geliyor — cihaz yokken yine `raise` edilir."
+    )
+
+
+def test_FA4_BAGLI_MI_bekleyis_SESSIZ_degil():
+    """`kaydet=` geçilmezse bekleyiş görünmez olur: "sessizlik başarı değildir"."""
+    govde = _govde(_OB, "dayanikli_ac")
+    for c in ast.walk(govde):
+        if not isinstance(c, ast.Call):
+            continue
+        f = c.func
+        # düz çağrı (`cihazi_bekle(...)`) da nitelikli çağrı (`ob.cihazi_bekle(...)`)
+        # da geçerli — modül içinden çağrılınca ilki oluyor.
+        isim = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+        if isim == "cihazi_bekle":
+            assert any(k.arg == "kaydet" for k in c.keywords), (
+                "cihazi_bekle(kaydet=...) verilmemiş — düğüm sessizce bekler, "
+                "kimse neyi beklediğini göremez."
+            )
+            return
+    raise AssertionError("cihazi_bekle çağrısı bulunamadı")
+
+
+def test_FA4_BAGLI_MI_node_loggeri_besliyor():
+    """Çağıran taraf: `pipeline_kur(kaydet=...)` gerçekten doldurulmuş mu."""
+    agac = ast.parse(_NAV.read_text(encoding="utf-8"))
+    cagrilar = [c for c in ast.walk(agac)
+                if isinstance(c, ast.Call)
+                and getattr(c.func, "id", None) == "pipeline_kur"]
+    assert cagrilar, "pipeline_kur hiç çağrılmıyor?"
+    assert all(any(k.arg == "kaydet" for k in c.keywords) for c in cagrilar), (
+        "pipeline_kur() `kaydet=` olmadan çağrılıyor — bekleyiş journal'a düşmez."
+    )

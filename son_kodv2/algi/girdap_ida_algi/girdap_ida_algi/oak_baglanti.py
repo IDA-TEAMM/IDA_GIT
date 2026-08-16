@@ -136,9 +136,21 @@ def dayanikli_ac(acici, deneme=4, kaydet=None, bekleme=1.0):
     # Kaptan: *"kamera nodu otomatik başlamıyor galiba çıkarıp atınca…
     # otomatik her şey başlamalı."* Bu düzeltmeden sonra düğüm ölmez: cihaz
     # takıldığı anda kendi yakalar.
+    # 🔴 F-A.4 BAĞLANTISI (2026-08-16) — 15.08'de EKSİK KALAN SATIR BUYDU.
+    # `cihazi_bekle()` yazıldı, iki testle sözleşmesi kilitlendi, commit
+    # mesajına "çökme döngüsü kaldırıldı" yazıldı — ama HİÇBİR YERDEN
+    # ÇAĞRILMADI. Davranış hiç değişmedi: 16.08 22:44-22:45 journal'ında eski
+    # döngü aynen dönüyor (üç tur, `respawn_delay=3.0`).
+    # Yukarıdaki iki F-A.4 testi bunu yakalayamadı çünkü VAKUMDU: `acici`
+    # hiç fırlatmıyordu, `usb_dugum_yolu` hiç yoklanmıyordu (ölçüldü 16.08:
+    # AST'de `usb_dugum_yolu` çağrısı yok, testler yine yeşil).
     son_hata = None
     i = 0
     while i < deneme:
+        # Denemeden ÖNCE bekle: cihaz USB'de yokken geçen süre deneme hakkı
+        # YEMEZ (test_FA4_bekleme_DENEME_HAKKI_YEMEZ). Cihaz zaten takılıysa
+        # anında döner, tek saniye kaybettirmez.
+        cihazi_bekle(kaydet=kaydet)
         try:
             return acici()
         except Exception as e:                       # RuntimeError + X_LINK türevleri

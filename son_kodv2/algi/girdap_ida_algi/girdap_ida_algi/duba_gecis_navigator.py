@@ -508,7 +508,7 @@ def _blob_denetle(blob_yolu: str, siniflar, logger=None):
     return sorunlar
 
 
-def pipeline_kur():
+def pipeline_kur(kaydet=None):
     """OAK-D Lite üzerinde çalışan pipeline: RGB + Stereo + YOLO (VPU'da).
 
     depthai v2 (2.30.0.0) API'si — 2026-08-05'te v3'ten taşındı (v3 firmware'i
@@ -516,6 +516,12 @@ def pipeline_kur():
     Desen, bu cihazda 20 dk kesintisiz koşan ölçüm aracıyla
     (scripts/oak_derinlik_termal_testi.py) birebir aynı; tek bilinçli fark
     RGB sensör modu (aşağıda).
+
+    Args:
+        kaydet: opsiyonel log fonksiyonu (tek konumsal argüman alır).
+                `cihazi_bekle`ye geçirilir — cihaz USB'de yokken bekleyiş
+                SESSİZ kalmasın diye. None ise bekleyiş görünmez olur; node
+                bunu her zaman `self.get_logger().warn` ile besler.
     """
     siniflar = _model_siniflarini_oku(MODEL_BLOB)
     _blob_denetle(MODEL_BLOB, siniflar)      # logger yok: node __init__'te tekrar basılır
@@ -615,7 +621,14 @@ def pipeline_kur():
     # Kilit gelirse dayanikli_ac() sudo'suz USB reset atıp yeniden dener —
     # teknede kameraya fiziksel erişim olmayacağı için bu ZORUNLU.
     # v2'de cihaz pipeline İLE açılır (v3'teki pipeline.start() yok).
-    dev = ob.dayanikli_ac(lambda: dai.Device(pipeline, dai.UsbSpeed.HIGH))
+    #
+    # 🔑 F-A.4: `dayanikli_ac` artık her denemeden ÖNCE `cihazi_bekle()`
+    # çağırıyor (16.08'de bağlandı — 15.08'de yazılmış ama çağrılmamıştı).
+    # Kamera USB'de yoksa düğüm ÖLMEZ, bekler; `kaydet=` verdiğimiz için
+    # bekleyiş 30 sn'de bir journal'a düşer. "Cihaz VAR ama açılmıyor" hâli
+    # gerçek arızadır ve eski davranışını (USB reset + 4 deneme + raise) korur.
+    dev = ob.dayanikli_ac(lambda: dai.Device(pipeline, dai.UsbSpeed.HIGH),
+                          kaydet=kaydet)
 
     det_q = dev.getOutputQueue("tespit", maxSize=4, blocking=False)
     rgb_q = dev.getOutputQueue("rgb", maxSize=2, blocking=False) if KAYIT_AKTIF else None
@@ -684,7 +697,11 @@ class DubaNavigator(Node):
         else:
             raise ValueError(f"Geçersiz MOD: {MOD}")
 
-        self.dev, self.det_q, self.rgb_q, siniflar = pipeline_kur()
+        # kaydet=: cihaz USB'de yokken bekleyiş journal'a düşsün (F-A.4).
+        # Sessiz bekleyiş, çökme döngüsünden bile kötüdür: "sessizlik başarı
+        # değildir" — kimse düğümün neyi beklediğini göremezdi.
+        self.dev, self.det_q, self.rgb_q, siniflar = pipeline_kur(
+            kaydet=self.get_logger().warn)
         self._siniflar = siniflar or []
         # Dosya-1 kayıt durumu (şartname 4.2)
         self._kayit_bozuk = not KAYIT_AKTIF
