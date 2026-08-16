@@ -86,3 +86,47 @@ def test_segment_yoksa_hata(tmp_path, monkeypatch):
     (tmp_path / "session_20260820_160000").mkdir()
     monkeypatch.setattr(sys, "argv", ["x", "--kayit-dizin", str(tmp_path)])
     assert db.main() == 1
+
+
+# ── OTURUM SEÇİMİ: isim sırası YALAN SÖYLEYEBİLİR (2026-08-13) ────────────
+# 🔴 Oturum dizini adı (`session_%Y%m%d_%H%M%S`) algı node'u AÇILIRKEN üretilir.
+# Jetson'ın RTC pili yok ve BAYAT saatle açıldığı iki kez ölçüldü; saati
+# `girdap-saat-gec.service` ancak GPS fix'ten sonra kuruyor. Sonuç: GERÇEK
+# koşunun dizini geçmiş bir tarihle isimlenip, prova dizini isim sıralamasında
+# "daha yeni" görünüyor. Eski `sorted(...)[-1]` provayı seçiyordu ⇒ teslim
+# edilen Dosya-1 yanlış koşu ⇒ md 4.2 / md 5.5.4.3.5 = 5 CEZA PUANI.
+def _oturum(kok, ad, mtime=None):
+    d = kok / ad
+    d.mkdir()
+    (d / "seg_0001.mp4").write_bytes(b"x")
+    if mtime is not None:
+        os.utime(d, (mtime, mtime))
+    return d
+
+
+def test_bayat_saatli_oturum_ADI_yerine_DISKTEKI_son_secilir(tmp_path):
+    import time as _t
+    _oturum(tmp_path, "session_20260820_120000", mtime=_t.time() - 86400)  # prova
+    gercek = _oturum(tmp_path, "session_20260813_010000")                  # koşu
+    secilen = db.en_son_oturum([str(p) for p in tmp_path.glob("session_*")])
+    assert os.path.basename(secilen) == gercek.name, (
+        "isim sırasına güvenilirse PROVA seçilir — teslim yanlış koşu olur")
+
+
+def test_celiskide_SESSIZ_kalinmaz(tmp_path, capsys):
+    import time as _t
+    _oturum(tmp_path, "session_20260820_120000", mtime=_t.time() - 86400)
+    _oturum(tmp_path, "session_20260813_010000")
+    db.en_son_oturum([str(p) for p in tmp_path.glob("session_*")])
+    cikti = capsys.readouterr().out
+    assert "ÇELİŞİYOR" in cikti, "tanı kodu susmamalı — kıyıda fark edilmeli"
+
+
+def test_celiski_yoksa_gurultu_YAPMAZ(tmp_path, capsys):
+    import time as _t
+    _oturum(tmp_path, "session_20260820_120000", mtime=_t.time() - 86400)
+    yeni = _oturum(tmp_path, "session_20260820_150000")
+    secilen = db.en_son_oturum([str(p) for p in tmp_path.glob("session_*")])
+    assert os.path.basename(secilen) == yeni.name
+    assert "ÇELİŞİYOR" not in capsys.readouterr().out, (
+        "her zaman yanan uyarı uyarı değildir (09.08 dersi)")

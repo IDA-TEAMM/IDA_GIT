@@ -240,6 +240,20 @@ BUOYS3D_TOPIC = "/perception/buoys_3d"   # PoseArray — BONUS: stereo 3D konum,
 ODOM_TOPIC = "/girdap/fusion/odom"       # karar stack'inin pürüzsüz poz çıkışı
                                          # (o stack TF yayınlamaz — geçiş doğrulaması
                                          # bu modda TF yerine buradan beslenir)
+# 🔴 ODOM BAYATLIK SINIRI (2026-08-13, ölçüldü) — poz "var ama donuk" olabilir.
+# Karar tarafı `fusion_node` girdi akışı kesilince odom yayınını BİLEREK KESİYOR
+# (F8.2, `fusion_node.py:560-568`; varsayılan `pose_timeout_s = 1.0` s ve
+# `hardware.yaml:83` bunu açıkça uyarıyor: "1-2 Hz'de odom yayını KESİLİR").
+# Yayın kesilince bizim `son_odom` SON DEĞERDE DONAR ve eski kod onu geçerli
+# poz sayardı. Ölçülen sonuç (scratchpad/dogrula2.py, aynı fiziksel geçiş):
+#     odom HİÇ gelmemiş -> geçit SAYILDI (1)
+#     odom BAYAT/DONUK  -> geçit SAYILMADI (0)
+# Yani donuk poz, poz olmamasından DAHA KÖTÜ: uzun pencereli çizgi kuruluyor,
+# `gecitten_gecti` donuk pozla hep False dönüyor, geçiş "doğrulanamadı" diye
+# elenip (G/KD)×10 ve ×40 puanı sessizce gidiyor.
+# 1,5 s = karar tarafının kendi eşiği (1,0) + bir tık pay; altında kalan kısa
+# kesintiler zaten normal jitter'dır ve davranışı DEĞİŞTİRMEZ.
+ODOM_BAYAT_SN = 1.5
 KAMERA_FRAME = "oak_rgb"
 
 # Sınıf eşlemesi — girdap-decision class_id STRING sözleşmesi:
@@ -655,6 +669,7 @@ class DubaNavigator(Node):
                 String, MISSION_STATE_TOPIC, self.gorev_durumu_geldi, 10)
             self.son_gorev_durumu = None
             self.son_odom = None           # (x, y, yaw) — geçiş doğrulaması için
+            self.son_odom_t = -math.inf    # monotonic — bayatlık ölçümü (ODOM_BAYAT_SN)
         elif MOD == "mppi_hedef":
             self.goal_pub = self.create_publisher(PoseStamped, GOAL_TOPIC, 10)
             self.tf_buffer = tf2_ros.Buffer()
@@ -756,6 +771,14 @@ class DubaNavigator(Node):
                       "mono_hedef": 0,
                       # Ne stereo ne mono menzil üretilemedi → tespit atıldı.
                       "menzil_yok": 0}
+        # 🔴 2026-08-13: sessiz-ret alarmının ÖNCEKİ görüntüsü. Sayaçlar
+        # KÜMÜLATİF (bilerek — toplamı sahada görmek istiyoruz) ama alarm
+        # doğrudan onların sıfırdan büyük olmasına bakıyordu ⇒ ölçüldü:
+        # tek bir geçmiş red, sonraki HER turda alarmı yakıyordu (5/5).
+        # Bu, kendi yazılı dersimizin ihlali: "her zaman yanan alarm alarm
+        # değildir" (09.08, mono_menzil). Alarm artık TOPLAMA değil, son
+        # log'dan bu yana olan ARTIŞA bakıyor.
+        self._tani_onceki = dict(self._tani)
         # Geçilen geçitlerin orta noktaları (dünya/odom çerçevesi). Şartname G
         # tanımı "FARKLI karşılıklı kenar dubaları arasından geçiş sayısı" →
         # aynı geçitten tekrar geçilirse SAYILMAZ (bkz. gm.yeni_gecit_mi).
@@ -886,8 +909,6 @@ class DubaNavigator(Node):
         ayırt edebilsin.
         """
         # 🔴 ANA ŞALTER — varsayılan KAPALI (bkz. P3_HEDEF_YAYINI).
-        # En başta, hız kapısından da ÖNCE: kapalıyken bbox kırpma ve renk
-        # analizi hiç koşmasın, P1/P2 ölçümü temiz kalsın.
         if not P3_HEDEF_YAYINI:
             return
         if simdi - self._son_hedef_t < 1.0 / HEDEF_HZ:
@@ -1045,12 +1066,18 @@ class DubaNavigator(Node):
 
     # ---------- PLAN A çıkışı: girdap-decision perception sözleşmesi ----------
     def odom_geldi(self, msg):
-        """/girdap/fusion/odom → (x, y, yaw). Karar stack'inin poz kaynağı."""
+        """/girdap/fusion/odom → (x, y, yaw). Karar stack'inin poz kaynağı.
+
+        ⏱️ Varış anı MONOTONIC saatte saklanır (duvar saati DEĞİL — saat kuralı,
+        dosya başı): `girdap-saat-gec.service` koşu öncesi saati adımlayabilir ve
+        duvar saatiyle ölçülen "bayatlık" o an sıçrardı.
+        """
         p = msg.pose.pose.position
         q = msg.pose.pose.orientation
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
                          1.0 - 2.0 * (q.y * q.y + q.z * q.z))
         self.son_odom = (p.x, p.y, yaw)
+        self.son_odom_t = time.monotonic()
 
     def gorev_durumu_geldi(self, msg):
         """FSM durumu — yeniden başlama (md 5.5.3.1) yakalanır.
@@ -1345,14 +1372,35 @@ class DubaNavigator(Node):
                         p[0], p[1], mx, my, nx, ny, -ny, nx,
                         self.gecit_yari_gen, PASS_EK_YOL)
                 if not gecti:
-                    if simdi >= self.pass_bitis_t:
+                    if simdi < self.pass_bitis_t:
+                        self.durum_log()
+                        return
+                    if p is None:
+                        # 🔴 2026-08-13: "DOĞRULANAMADI" ile "GEÇMEDİ" aynı şey
+                        # değil. Burada doğrulayacak ÖLÇÜT yok — odom kesildi ya
+                        # da bayatladı (karar tarafı `pose_timeout_s=1.0` ile
+                        # yayını bilerek keser, `fusion_node.py:560-568`).
+                        # Eski kod bu hâlde geçidi ELİYORDU; ölçüldü ki odom HİÇ
+                        # gelmemişken AYNI geçiş sayılıyordu ⇒ tutarsız ve
+                        # doğrudan (G/KD)×10 + ×40 kaybettiren dal.
+                        # Burada odomsuz yolun zaten yaptığı şeye düşüyoruz:
+                        # zaman tahminine güven. `gecit_cizgi` BİLEREK
+                        # sıfırlanmıyor — orta noktası aşağıda `yeni_gecit_mi`
+                        # ile tekrar-sayma korumasını besliyor.
+                        self.get_logger().warn(
+                            "Geçiş penceresi doldu ve odom BAYAT/KESİK — poz "
+                            "doğrulaması yapılamadı, zaman tahminiyle SAYILDI. "
+                            f"(bayatlık eşiği {ODOM_BAYAT_SN} s) "
+                            "Sürekli görülüyorsa /girdap/fusion/odom akışına bak.")
+                        # aşağı düş → geçit sayımı
+                    else:
                         self.get_logger().warn(
                             "Geçiş zaman aşımı — odometri geçişi DOĞRULAMADI, sayılmadı. "
                             "(MPPI takılmış olabilir: obstacle_margin / engel haritasına bak)")
                         self.gecit_cizgi = None
                         self.duruma_gec("ARAMA")
-                    self.durum_log()
-                    return
+                        self.durum_log()
+                        return
             elif simdi < self.pass_bitis_t:
                 # Plan B (veya TF'siz son çare): zaman tahmini
                 if MOD == "dogrudan_surus":
@@ -1483,8 +1531,19 @@ class DubaNavigator(Node):
     def arac_poz_yaw(self, timeout_s=0.0):
         """Aracın sabit çerçevedeki (x, y, yaw) pozu; kaynak MOD'a göre:
         algi_yayin → /girdap/fusion/odom aboneliği (karar stack'i TF yayınlamaz),
-        mppi_hedef → TF (odom->base_link). Poz yoksa None."""
+        mppi_hedef → TF (odom->base_link). Poz yoksa None.
+
+        🔴 BAYAT POZ = POZ YOK (2026-08-13): `son_odom` yalnız mesaj GELDİĞİNDE
+        güncelleniyor; karar tarafı yayını kesince (F8.2, `pose_timeout_s=1.0`)
+        değer DONAR. Donuk pozu geçerli saymak, poz hiç olmamasından daha kötü
+        sonuç veriyordu — ölçüm ve gerekçe `ODOM_BAYAT_SN` tanımında.
+        None dönmek kodun ZATEN bildiği "poz yok" yoluna düşürür (zaman tahmini).
+        """
         if MOD == "algi_yayin":
+            if self.son_odom is None:
+                return None
+            if (time.monotonic() - self.son_odom_t) > ODOM_BAYAT_SN:
+                return None
             return self.son_odom
         try:
             tf = self.tf_buffer.lookup_transform(
@@ -1605,7 +1664,16 @@ class DubaNavigator(Node):
         # görünürlük kanalı). 06.08'deki "sessiz ret" hatasının aynısı.
         RED_KALEMLERI = ("dar", "dizili", "arada_duba", "menzil_celiski",
                          "menzil_yok", "buyuk_cisim")
-        if k >= 2 and self.durum == "ARAMA" and any(self._tani[a] for a in RED_KALEMLERI):
+        # 🔴 2026-08-13: tetikleyici TOPLAM değil, son log'dan bu yana ARTIŞ.
+        # Sayaçlar kümülatif olduğu için `any(self._tani[a])` bir kez dolunca
+        # bir daha sönmüyordu (ölçüldü: 1 geçmiş red → sonraki 5/5 turda alarm).
+        # Sürekli yanan uyarıyı sahada kimse okumaz ve GERÇEK arızayı gizler;
+        # SSH yok, journal tek görünürlük kanalımız. Toplamlar mesajda YİNE
+        # basılıyor (tanı için lazım), yalnız ALARM anlık olaya bağlandı.
+        artan = {a: self._tani[a] - self._tani_onceki.get(a, 0)
+                 for a in RED_KALEMLERI}
+        self._tani_onceki = dict(self._tani)
+        if k >= 2 and self.durum == "ARAMA" and any(v > 0 for v in artan.values()):
             # ⚠️ TEK KONUMSAL ARGÜMAN — pazarlıksız. rclpy imzası
             # `log(message, severity, **kwargs)`; printf tarzı ek konumsal
             # argüman TypeError atar, istisna timer callback'inden `rclpy.spin()`e
