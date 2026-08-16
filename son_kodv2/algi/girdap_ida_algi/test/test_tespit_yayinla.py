@@ -33,6 +33,20 @@ def _duba(cls, x, z, cx, cy, w=None, h=0.07, conf=0.9):
     return dgn.Duba(cls=cls, x=x, z=z, conf=conf, cx=cx, cy=cy, w=w, h=h)
 
 
+@pytest.fixture
+def p3_acik(monkeypatch):
+    """P3 ANA ŞALTERİNİ aç — mono hedef yolu (OpenCV/HSV) yalnız o zaman koşar.
+
+    🔴 16.08 akşamı: şalter (`P3_HEDEF_YAYINI`) artık `_mono_hedef_mi`'yi de
+    kapatıyor. Eyüp: *"P3'ü şimdilik kapatalım, OpenCV'ye geçmesin."* Yani
+    P1/P2 ölçüm koşusunda kare başına `cv2.cvtColor`/HSV analizi HİÇ koşmaz.
+    Aşağıdaki testler o yolun **açıkken doğru çalıştığını** sınar; kapalıyken
+    hiç koşmadığını `test_p3_kapali.py` + `test_mono_hedef_yolu_SALTERE_BAGLI`
+    sınar. İkisi birlikte şalterin iki yönünü de donduruyor.
+    """
+    monkeypatch.setattr(dgn, "P3_HEDEF_YAYINI", True)
+
+
 def _yayinla(dubalar, kenar_cls=0, engel_cls=1, lb_pay=0.0, kare=None):
     """`tespit_yayinla`'yı sahte yayıncılarla koştur, yayınlanan mesajları döndür.
 
@@ -271,7 +285,7 @@ def _mono(z=14.0):
 
 
 @pytest.mark.parametrize("hsv,ad", [(_YESIL, "yesil"), (_SIYAH, "siyah")])
-def test_mono_hedef_rengi_SUZULUR(hsv, ad):
+def test_mono_hedef_rengi_SUZULUR(hsv, ad, p3_acik):
     """Stereo yokken yeşil/siyah = P3 hedefi ⇒ /perception/buoys'a GİRMEZ.
 
     Girerse EdgeBuoyMemory'de KALICI kenar kaydı açar (unutma yok) ⇒ hayalet
@@ -289,19 +303,43 @@ def test_mono_KIRMIZI_bu_yoldan_gecmez(hsv, ad):
     assert len(arr.detections) == 1, f"{ad} süzüldü — gerçek duba kaybolur"
 
 
-def test_mono_hedef_SAYACA_islenir():
+def test_mono_hedef_yolu_SALTERE_BAGLI():
+    """🔴 P3 KAPALIYKEN mono/OpenCV yolu HİÇ koşmaz (16.08 akşamı, Eyüp).
+
+    Şalterin ikinci yönü. Yukarıdaki testler `p3_acik` fixture'ıyla yolun
+    AÇIKKEN doğru çalıştığını sınıyor; bu test KAPALIYKEN hiç çalışmadığını
+    sınıyor — fixture'sız, yani üretimdeki varsayılanla.
+
+    Neden önemli: `_mono_hedef_mi` bbox kırpıp `cv2.cvtColor` + HSV kapsama
+    hesabı yapıyor. Eskiden şalter yalnız `/perception/targets` YAYININI
+    kapatıyordu, bu analiz her mono tespitte yine koşuyordu ⇒ "P3 kapalı"
+    denen durumda P3 kodu sıcak yolda kalıyordu (CPU + log gürültüsü).
+
+    ⚖️ Kapalıyken tespit `/perception/buoys`'a NORMAL duba olarak girer —
+    bilinçli takas: P1/P2 ölçüm koşusunda suda P3 hedef dubası YOK.
+    """
+    arr, _ = _yayinla([_mono()], kare=_kare_renkli(_YESIL))
+    assert len(arr.detections) == 1, (
+        "P3 kapalıyken mono tespit yine süzüldü — şalter mono yolunu "
+        "kapatmıyor, OpenCV analizi sıcak yolda"
+    )
+    assert _yayinla.son_ns._tani["mono_hedef"] == 0, "sayaç işledi = yol koştu"
+    assert _yayinla.son_ns._hedef_adaylari == [], "kapalıyken aday üretildi"
+
+
+def test_mono_hedef_SAYACA_islenir(p3_acik):
     """Sahada SSH yok; sessiz süzme görünmez arıza olur (06.08 dersi)."""
     _yayinla([_mono()], kare=_kare_renkli(_YESIL))
     assert _yayinla.son_ns._tani["mono_hedef"] == 1
 
 
-def test_mono_hedef_adayina_eklenir():
+def test_mono_hedef_adayina_eklenir(p3_acik):
     """Süzülen tespit ATILMIYOR — /perception/targets'a gidecek listede."""
     _yayinla([_mono()], kare=_kare_renkli(_YESIL))
     assert len(_yayinla.son_ns._hedef_adaylari) == 1
 
 
-def test_mono_hedefin_MENZILI_064_ile_yeniden_kurulur():
+def test_mono_hedefin_MENZILI_064_ile_yeniden_kurulur(p3_acik):
     """Mono yedek Ø0,30 varsayar; hedef kabul edildiyse menzil Ø0,64 ile
     yeniden kurulmalı — yoksa (a) yayınlanan çap hep 0,30 çıkar ve tüketicinin
     `cap_makul_mu` bandı (0,40-1,00) hedefi ELER, (b) menzil 2,13 kat KISA olur.
@@ -316,7 +354,7 @@ def test_mono_hedefin_MENZILI_064_ile_yeniden_kurulur():
     assert aday.z > z_mono * 2.0, "menzil hala 0,30 varsayimindan geliyor"
 
 
-def test_mono_hedefin_capi_kabul_bandina_dusuyor():
+def test_mono_hedefin_capi_kabul_bandina_dusuyor(p3_acik):
     """Tüketici çapı `w·z/f` ile hesaplıyor; 0,40-1,00 bandına düşmeli."""
     z_mono = 8.0
     d = _duba(0, 0.0, z_mono, 0.5, 0.5, w=_tutarli_w(0.30, z_mono))

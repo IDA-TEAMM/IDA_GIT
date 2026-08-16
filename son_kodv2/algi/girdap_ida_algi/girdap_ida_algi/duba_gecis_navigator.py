@@ -992,7 +992,28 @@ class DubaNavigator(Node):
 
         Kare yoksa/bayatsa False — kör kabul yok (yanlış angajman TS3'te
         100 → 50 puan, iki yanlış → 5).
+
+        🔴 ANA ŞALTERE BAĞLI (16.08.2026 akşamı, Eyüp: *"P3'ü şimdilik
+        kapatalım, OpenCV'ye geçmesin"*). `P3_HEDEF_YAYINI` kapalıyken bu yol
+        HİÇ koşmaz: bbox kırpma + `cv2.cvtColor`/HSV kapsama analizi kare
+        başına yapılmaz ⇒ P1/P2 ölçümü P3 kodundan **CPU olarak da** ayrışır.
+        Eskiden şalter yalnız `/perception/targets` YAYININI kapatıyordu;
+        OpenCV analizi her mono tespitte yine koşuyordu — yani "P3 kapalı"
+        denen durumda bile P3 kodu sıcak yoldaydı.
+
+        ⚖️ BİLİNÇLİ TAKAS — kapalıyken ne KAYBEDİYORUZ: stereo tavanının
+        (10 m) ötesindeki gerçek P3 hedef dubası `/perception/buoys`'a normal
+        duba olarak girer ⇒ `EdgeBuoyMemory` kalıcı kenar kaydı ⇒ hayalet kapı.
+        Bu risk **yalnız suda gerçek P3 hedef dubası varken** doğar; P1/P2
+        ölçüm koşusunda parkurda hedef duba YOK. Yarışma günü P3 açılırken
+        (`Environment=GIRDAP_P3_HEDEF=1`) bu yol da kendiliğinden geri gelir —
+        ikisi TEK şaltere bağlı, ayrı ayrı unutulacak bir adım kalmadı.
+        ⚠️ Stereo yolundaki `buyuk_cisim_mi` süzgeci bundan ETKİLENMEZ: o saf
+        geometri (OpenCV yok), parkurdan bağımsız ve her zaman açık kalır —
+        P2'yi koruyan asıl süzgeç odur.
         """
+        if not P3_HEDEF_YAYINI:
+            return False
         kare = self._son_kare
         if kare is None or self._f_norm is None:
             return False
