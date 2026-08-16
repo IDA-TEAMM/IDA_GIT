@@ -77,7 +77,8 @@ import time
 # `time.monotonic()` değildir. Duvar saati ileri sıçrarsa geçiş penceresi
 # (`pass_bitis_t`) ANINDA dolar (G puanı), geri sıçrarsa `durum_log` susar
 # (sahadaki tek görünürlük kanalı) ve Dosya-1 kaydı durur (md 4.2 = 5 ceza p.).
-# Toplayıcı (scripts/oak_veriseti_topla.py) bu ayrımı zaten yapıyordu.
+# (Bu ayrımı veri seti toplayıcısı da yapıyordu; toplayıcı 16.08'de repodan
+#  kaldırıldı — ayrım burada kendi başına geçerli, tarihsel not olarak duruyor.)
 # Regresyon testi: test/test_saat_kaynagi.py
 from dataclasses import dataclass
 

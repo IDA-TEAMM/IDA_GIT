@@ -59,14 +59,21 @@ etkileşimsiz kabukta ilk satırda `return` eder ("systemd .bashrc okumaz",
 karar tarafının 2026-07-13 bulgusu).
 ⚠️ **Değer iki tarafta AYNI olmalı.** Onlar değiştirirse burası da değişir.
 
-## 6. Tek OAK — veri seti servisini kapat
+## 6. Tek OAK — veri seti servisi KALINTISINI temizle
+Toplayıcı 2026-08-16'da repodan kaldırıldı (bkz. `KAYNAK.md`), ama **eski
+kurulumlarda unit hâlâ diskte olabilir**. Boot'ta toplayıcı kamerayı önce
+kaparsa algı node'u **hiç açılamaz** ⇒ P1+P2 = 0, belirtisiz (md 4.1).
+
 ```bash
+systemctl list-unit-files | grep veriseti      # 🔴 BOŞ dönmeli
+# doluysa:
 sudo systemctl disable --now girdap-veriseti
-systemctl is-enabled girdap-veriseti    # => disabled
+sudo rm /etc/systemd/system/girdap-veriseti.service
+sudo systemctl daemon-reload
+systemctl list-unit-files | grep veriseti      # tekrar bak — artık boş
 ```
-🔴 **Yarışma günü pazarlıksız** (md 4.1). Boot'ta toplayıcı kamerayı önce kaparsa
-algı node'u **hiç açılamaz**. `disable` boot davranışını, `stop` çalışan süreci
-değiştirir — karıştırma.
+🔴 **Yarışma günü pazarlıksız.** `disable` boot davranışını, `stop` çalışan
+süreci değiştirir — karıştırma; `rm` ise ikisini de kalıcı olarak bitirir.
 
 ## 7. Journal'ı kalıcı yap (sahada tek teşhis kanalımız)
 ```bash

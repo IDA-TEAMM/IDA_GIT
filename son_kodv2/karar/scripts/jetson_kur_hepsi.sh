@@ -89,12 +89,14 @@ else
   systemctl daemon-reload
   systemctl enable girdap-algi >/dev/null 2>&1
   ok "kuruldu ve enable edildi (kaynak: $ALGI_S)"
-  # Tek OAK var; veri seti toplayıcısı açıkken algı kamerayı alamaz. Unit'ler
-  # `Conflicts=` ile korunuyor ama ikisi de enabled kalırsa boot'ta YARIŞ olur
-  # ve hangisinin kazandığı belirsizdir (girdap-algi.service başlığı, md 4.1).
-  if systemctl is-enabled girdap-veriseti >/dev/null 2>&1; then
-    uy "girdap-veriseti DE enabled — boot'ta ikisi çakışır (tek OAK)."
-    uy "Yarışma/test günü:  sudo bash <algi>/scripts/veriseti_modu.sh kapat"
+  # Tek OAK var; veri seti toplayıcısı açıkken algı kamerayı alamaz. Toplayıcı
+  # 2026-08-16'da repodan kaldırıldı, dolayısıyla `Conflicts=` koruması da yok
+  # (olmayan bir unit'i işaret eden satır sahte güven verirdi). Kalıntı unit
+  # eski kurulumlarda diskte kalmış olabilir; enabled ise boot'ta kamerayı
+  # kapar ve algı HİÇ açılmaz (md 4.1).
+  if [ -f /etc/systemd/system/girdap-veriseti.service ]; then
+    uy "KALINTI: girdap-veriseti.service hâlâ kurulu — tek OAK, boot'ta algıyı kilitleyebilir."
+    uy "Temizlik: sudo systemctl disable --now girdap-veriseti; sudo rm /etc/systemd/system/girdap-veriseti.service; sudo systemctl daemon-reload"
   fi
 fi
 

@@ -18,8 +18,8 @@ birinci kaynak = kurulu paketin kendisi, ezber değil).
 
 Kullanım
 --------
-    python3 scripts/depthai_api_denetimi.py scripts/oak_veriseti_topla.py
     python3 scripts/depthai_api_denetimi.py girdap_ida_algi/girdap_ida_algi/duba_gecis_navigator.py
+    python3 scripts/depthai_api_denetimi.py scripts/kontrol3_kanal_sirasi.py
 
 Çıkış kodu: 0 = temiz, 1 = eksik çağrı var (CI'da kullanılabilir).
 

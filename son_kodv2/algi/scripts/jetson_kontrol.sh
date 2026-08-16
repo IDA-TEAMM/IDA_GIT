@@ -86,9 +86,11 @@ if [ -f "$UNIT" ]; then
     grep -q "^WorkingDirectory=" "$UNIT" \
         && yesil "  unit'te WorkingDirectory var" \
         || kirmizi "  unit'te WorkingDirectory YOK → boot'ta depthai '/.cache' yazamaz, node açılmaz. Yeniden kur: jetson_kur.sh --servis"
-    if [ "$(systemctl is-enabled girdap-veriseti 2>/dev/null)" = "enabled" ] \
-       && [ "$(systemctl is-enabled girdap-algi 2>/dev/null)" = "enabled" ]; then
-        kirmizi "  İKİSİ DE enabled — tek OAK var, boot'ta yarışırlar. Yarışma günü: sudo systemctl disable --now girdap-veriseti (md 4.1)"
+    # 🗑️ Toplayıcı 16.08'de repodan kaldırıldı; unit artık KURULU OLMAMALI.
+    #    Kalıntı unit enabled ise boot'ta tek OAK'ı kapar → algı HİÇ açılmaz.
+    if [ -f /etc/systemd/system/girdap-veriseti.service ]; then
+        kirmizi "  KALINTI: girdap-veriseti.service hâlâ kurulu ($(systemctl is-enabled girdap-veriseti 2>/dev/null || echo '?'))"
+        kirmizi "    → sudo rm /etc/systemd/system/girdap-veriseti.service && sudo systemctl daemon-reload"
     fi
 else
     sari "girdap-algi.service kurulu değil — açılışta algı başlamaz (kur: jetson_kur.sh --servis)"

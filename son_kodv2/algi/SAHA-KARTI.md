@@ -1,6 +1,10 @@
 # 🚤 SAHA KARTI — göl günü, tek sayfa
 
-> Ayrıntılı gerekçeler: `VERISETI-2-PLANI.md` · Jetson kurulumu: `VERISETI-JETSON-KARTI.md`
+> 🗑️ **2026-08-16: VERİ SETİ TOPLAYICISI REPODAN KALDIRILDI** (bkz. `KAYNAK.md`).
+> Bu karttaki **çekim/toplama komutları artık koşmaz**; kartın geri kalanı
+> (saat penceresi, çekim listesi, etiketleme yordamı) **hâlâ geçerli bilgidir**
+> ve yeni bir oturum gerekirse toplayıcı git geçmişinden geri alınır.
+> Ayrıntılı gerekçeler ve Jetson kartı da aynı temizlikte silindi.
 > **Yarışma: 20-23 Ağustos, Gölcük Tersanesi.** Biz Bolu'dayız.
 
 ---
@@ -38,11 +42,13 @@ siluet olarak yeterince benziyor.
 ```bash
 date                                   # 🔴 GÖZLE BAK — saat yanlışsa veri bölmesi bozulur
 lsusb | grep 03e7                      # kamera görünüyor mu
-sudo systemctl start girdap-veriseti
-journalctl -fu girdap-veriseti         # "[+] N kare" AKMALI
-ls ~/girdap_veriseti/images | wc -l    # sayı ARTMALI
 ```
-Kapatırken: `sudo systemctl stop girdap-veriseti` → **fişi doğrudan çekme.**
+🗑️ Toplayıcıyı başlatan üç komut (`systemctl start girdap-veriseti`,
+`journalctl -fu girdap-veriseti`, `ls ~/girdap_veriseti/images | wc -l`)
+**kaldırıldı** — servis 16.08'de repodan silindi. Yeni oturum gerekirse önce
+toplayıcı git geçmişinden geri alınır, sonra bu blok da onunla döner.
+
+Kapatırken her hâlükârda: **fişi doğrudan çekme**, `sudo poweroff`.
 
 ---
 
@@ -139,10 +145,9 @@ labelImg ~/girdap_ON_ETIKET/images ~/girdap_ON_ETIKET/classes.txt ~/girdap_ON_ET
 
 ## ✅ DÖNÜŞTE
 
-```bash
-sudo systemctl stop girdap-veriseti
-ls ~/girdap_veriseti/images | wc -l     # toplam kare
-tail -3 ~/girdap_veriseti/manifest.csv  # son satır yazılmış olmalı
-```
+🗑️ Buradaki kapanış komutları da toplayıcıyla birlikte kaldırıldı (16.08).
+Toplayıcı geri getirilirse dönmesi gerekenler: servisi durdurma, `images`
+sayımı ve `manifest.csv`'nin son satırının yazıldığının doğrulanması.
+
 🔴 Oturumlardan **biri tamamen VALID'e** ayrılacak — eğitimde o oturumdan tek kare
 olmayacak. Yoksa doğrulama yine kör kalır (%99 recall veriyor ama alan dışında çöküyor).

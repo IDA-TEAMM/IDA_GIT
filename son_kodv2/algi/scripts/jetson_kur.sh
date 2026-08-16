@@ -187,25 +187,12 @@ else
     fi
 fi
 
-# --- opsiyonel: VERİ TOPLAMA aşaması (sıfırlanmış Jetson, deniz/göl oturumu) ---
-# 🔴 Tek OAK var: algı ile toplayıcı AYNI ANDA açılamaz. Bu bayrak bilerek
-#    algıyı DEVRE DIŞI bırakır — "ikisi de enabled" hâli boot'ta yarış demektir
-#    ve hangisinin kazandığı belirsizdir (unit'lerdeki Conflicts= yalnız İKİSİ
-#    de kuruluysa işler). Yarışma günü geri alınır: --servis
-if [ "${1:-}" = "--veriseti-servis" ]; then
-    echo "== VERİ TOPLAMA servisi kuruluyor =="
-    sudo cp "$WS/src/girdap-ida-algi/scripts/girdap-veriseti.service" /etc/systemd/system/
-    sudo sed -i "s|__USER__|$USER|g; s|__WS__|$WS|g" /etc/systemd/system/girdap-veriseti.service
-    sudo systemctl daemon-reload
-    # Algıyı AÇIKÇA kapat (kuruluysa). `|| true`: hiç kurulu değilse hata verme.
-    sudo systemctl disable --now girdap-algi.service 2>/dev/null || true
-    sudo systemctl enable girdap-veriseti.service
-    echo "   Etkin. Başlat: sudo systemctl start girdap-veriseti"
-    echo "   Log izle:     journalctl -fu girdap-veriseti"
-    echo "   🔴 DENİZE GİRMEDEN reboot testi ŞART:"
-    echo "      sudo reboot  →  systemctl is-active girdap-veriseti  →  ls ~/girdap_veriseti/images | wc -l"
-    echo "   🔴 Yarışma günü geri al: bash $0 --servis"
-fi
+# 🗑️ 2026-08-16: `--veriseti-servis` kolu KALDIRILDI — veri seti toplayıcısı
+#    repodan silindi (Eyüp kararı). Bu kol, algıyı DEVRE DIŞI bırakıp yerine
+#    toplayıcıyı enable ediyordu; yarışmaya günler kala yanlışlıkla koşulması
+#    algının açılmamasına, yani P1+P2'nin sıfırlanmasına yol açardı.
+#    Veri toplama yeniden gerekirse: `girdap-ida-algi` deposundaki ilgili
+#    daldan geri getirilir (bu betiğin bu bölümü de onunla birlikte döner).
 
 # --- opsiyonel: açılışta otomatik başlatma (YARIŞMA/ALGI) ---
 if [ "${1:-}" = "--servis" ]; then
@@ -213,11 +200,14 @@ if [ "${1:-}" = "--servis" ]; then
     sudo cp "$WS/src/girdap-ida-algi/scripts/girdap-algi.service" /etc/systemd/system/
     sudo sed -i "s|__USER__|$USER|g; s|__WS__|$WS|g" /etc/systemd/system/girdap-algi.service
     sudo systemctl daemon-reload
-    # 🔴 md 4.1 + tek OAK: toplayıcı yarışma günü ENABLED KALMAMALI.
+    # 🔴 KALINTI TEMİZLİĞİ: toplayıcı repodan kaldırıldı ama ESKİ kurulumlarda
+    #    unit hâlâ /etc/systemd/system altında olabilir. Enabled kalırsa boot'ta
+    #    tek OAK'ı kapar ve algı HİÇ açılmaz (md 4.1). `|| true`: unit yoksa
+    #    hata verme — normal durum artık bu.
     sudo systemctl disable --now girdap-veriseti.service 2>/dev/null || true
     sudo systemctl enable girdap-algi.service
     echo "   Etkin. Şimdi başlat: sudo systemctl start girdap-algi"
-    echo "   (girdap-veriseti devre dışı bırakıldı — tek OAK, ikisi birden açılamaz)"
+    echo "   (varsa eski girdap-veriseti kalıntısı devre dışı bırakıldı — tek OAK)"
     echo "   Log izle:            journalctl -fu girdap-algi"
 fi
 
