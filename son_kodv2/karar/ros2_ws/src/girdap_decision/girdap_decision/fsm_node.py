@@ -632,8 +632,25 @@ class FSMNode(Node):
         """
         if not self._parkur_etiketleri:
             return                          # askıda bekleyen etiket yok
-        if self._parkur_senkron_sonucu is not None:
-            return                          # karar bir kez verilir
+        # 🔴 17.08.2026 — ESKİDEN BURADA `if self._parkur_senkron_sonucu is not
+        # None: return` VARDI ("karar bir kez verilir") ve YAZILI ÇÖZÜMÜ
+        # ÇALIŞMAZ HÂLE GETİRİYORDU:
+        #   1. Hakem noktaları verir, sayı tutmaz → "PARKUR SENKRON YOK 7!=5wp",
+        #      etiketler askıya alınır, TEK PARKUR güvenli modu.
+        #   2. Operatör aşağıdaki hata mesajının dediğini yapar: görevi düzeltip
+        #      YKİ'den YENİDEN YÜKLER.
+        #   3. Bu geri çağırma yeniden koşar ama karar `False`'a KİLİTLİ olduğu
+        #      için **erken döner** ⇒ düzeltme hiç uygulanmaz.
+        #   4. `_parkur_senkron_sonucu`'nu sıfırlayan BAŞKA yol da yok —
+        #      `_yeniden_basla` servisi bile dokunmuyor (yalnız kurucuda None).
+        # ⇒ Operatör talimatı uygular, hiçbir şey değişmez, tek-parkur modunda
+        #   kalınır: **P2 (maks 100) ve P3 (maks 145) hiç tetiklenmez.**
+        #
+        # Kilit KALDIRILDI. Güvenlik kaybı YOK: hemen aşağıdaki durum kapısı
+        # zaten yalnız BOOT/ARM/BEKLEMEDE'de benimsemeye izin veriyor — yani
+        # "koşu ortasında parkur mantığı değişmesin" güvencesi ONDAN geliyordu,
+        # bu kilitten değil. Kalkış öncesi düzeltilmiş görevin benimsenmesi
+        # tam olarak istenen davranış.
         if self._fsm.state not in (
             MissionState.BOOT, MissionState.ARM, MissionState.BEKLEMEDE
         ):
@@ -650,7 +667,10 @@ class FSMNode(Node):
                 "hizali DEGIL → parkur etiketleri KULLANILMIYOR, TEK PARKUR "
                 "guvenli modunda kalindi. KAMIKAZE (PARKUR3) YAPILMAYACAK. "
                 "COZUM: YKI'ye yuklenen gorevi mission_file ile ayni "
-                "waypoint sayisina getir."
+                "waypoint sayisina getirip YENIDEN YUKLE — kalkistan once "
+                "yuklenirse etiketler kendiliginden benimsenir (17.08: karar "
+                "artik kilitli degil). Gorev BASLADIKTAN sonra yuklersen "
+                "benimsenmez; o durumda once girdap-karar'i yeniden baslat."
             )
             return
 

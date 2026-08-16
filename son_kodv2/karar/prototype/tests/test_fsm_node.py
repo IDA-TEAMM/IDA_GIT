@@ -1488,3 +1488,75 @@ class _SahteStatusTextYayinci:
 
     def publish(self, msg) -> None:                          # noqa: ANN001
         self._kutu.append(msg.text)
+
+
+def test_PAR09_operator_gorevi_DUZELTIP_yeniden_yukleyince_BENIMSENIR(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 CANLI AÇIK (17.08) — yazılı çözümün kendisi çalışmıyordu.
+
+    Senaryo, yarışma sabahının birebir kendisi:
+      1. Hakem noktaları verir, YKİ'den FC'ye yüklenir, sayı TUTMAZ →
+         `PARKUR SENKRON YOK 5!=3wp`, etiketler askıya alınır, tek parkur modu.
+      2. Operatör hata mesajının dediğini yapar: görevi düzeltip **yeniden
+         yükler** (doğru sayıda waypoint).
+      3. ESKİ KOD: `_parkur_senkron_sonucu is not None → return` ("karar bir kez
+         verilir") yüzünden bu geri çağırma **erken dönüyordu** ⇒ düzeltme HİÇ
+         uygulanmıyordu. Kararı sıfırlayan başka yol da yoktu — `_yeniden_basla`
+         servisi bile dokunmuyor (alan yalnız kurucuda `None`).
+      4. Sonuç: operatör talimatı uygular, hiçbir şey değişmez, tek parkur
+         modunda kalınır ⇒ **P2 (maks 100) ve P3 (maks 145) hiç tetiklenmez.**
+
+    Kilit kaldırıldı; güvenlik `_fsm.state` kapısında duruyor (bir alttaki test).
+
+    ⛔ GERİ ALINIRSA: bu test kırmızıya döner ve yarışma sabahı düzeltme
+    yapılamaz hâle gelir.
+    """
+    node = _fc_node(tmp_path)
+    try:
+        node._on_waypoints(_path(5))                 # dosyada 3 etiket → UYUŞMAZ
+        assert node._parkur_senkron_sonucu is False
+        assert node._senkron_ilani == "PARKUR SENKRON YOK 5!=3wp"
+
+        node._on_waypoints(_path(3))                 # operatör DÜZELTTİ, yeniden yükledi
+        assert node._parkur_senkron_sonucu is True, (
+            "düzeltilmiş görev benimsenmedi — operatörün yapabileceği bir şey "
+            "kalmıyor, P2+P3 sessizce gider"
+        )
+        assert node._parkur.last_index_of_parkur == {1: 0, 2: 1, 3: 2}
+        assert node._senkron_ilani == "PARKUR SENKRON OK 3wp", (
+            "operatör ekranındaki ilan güncellenmedi"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_PAR09_kilit_kalkti_ama_KOSU_ORTASI_korumasi_DURUYOR(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Kilidi kaldırmak koşu-ortası korumasını ZAYIFLATMAMALI.
+
+    "Koşu ortasında parkur mantığı değişmesin" güvencesi `_parkur_senkron_sonucu`
+    kilidinden DEĞİL, `_fsm.state` kapısından geliyordu. Bu test o ayrımı
+    donduruyor: önce uyuşmazlık yaşanır (karar False olur), sonra görev başlar,
+    sonra DOĞRU sayıda görev gelir — yine de benimsenmemeli.
+    """
+    node = _fc_node(tmp_path)
+    try:
+        node._on_waypoints(_path(5))                 # uyuşmaz → karar False
+        assert node._parkur_senkron_sonucu is False
+
+        mav = MavState()
+        mav.connected = True
+        mav.armed = True
+        node._on_mav_state(mav)
+        node._on_tick()
+        node._on_tick()
+        node._on_start_srv(Trigger.Request(), Trigger.Response())
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR1
+
+        node._on_waypoints(_path(3))                 # DOĞRU sayı ama görev başladı
+        assert node._parkur_senkron_sonucu is False, (
+            "koşu ortasında parkur mantığı değişti — o ana kadarki ilerleme "
+            "geçersiz olurdu"
+        )
+        assert node._parkur.last_index_of_parkur == {}
+    finally:
+        node.destroy_node()
