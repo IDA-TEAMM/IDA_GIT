@@ -368,10 +368,21 @@ class FFAyar(Node):
         Bu yüzden geri yükleme, bağlam ölmüşse SIFIRDAN kurulur.
         """
         import rclpy.context
+        from rclpy.executors import SingleThreadedExecutor
         ctx = rclpy.context.Context()
         rclpy.init(context=ctx)
+        yurutucu = None
         try:
             dugum = Node("otomatik_ff_ayar_geri", context=ctx)
+            # 🔴 KENDİ YÜRÜTÜCÜSÜ ŞART (17.08'de gerçek FC ile ölçüldü):
+            # `rclpy.spin_until_future_complete(dugum, gel)` VARSAYILAN
+            # bağlamı kullanıyor — o da SIGINT'te zaten ölmüş olan bağlam.
+            # Sonuç: taze bağlam doğru kuruluyor, servis bulunuyor, ama
+            # istek HİÇ dönmüyor ve üç yazma da sessizce başarısız oluyordu
+            # (günlükte 🔴, FC yarım ayarda kalırdı). Yürütücü açıkça taze
+            # bağlama bağlanınca düzeldi.
+            yurutucu = SingleThreadedExecutor(context=ctx)
+            yurutucu.add_node(dugum)
             ist = dugum.create_client(
                 SetParameters, f"{PARAM_DUGUM}/set_parameters")
             if not ist.wait_for_service(timeout_sec=15.0):
@@ -380,13 +391,20 @@ class FFAyar(Node):
                 p = Parameter(name=ad, value=ParameterValue(
                     type=ParameterType.PARAMETER_DOUBLE, double_value=float(d)))
                 gel = ist.call_async(SetParameters.Request(parameters=[p]))
-                rclpy.spin_until_future_complete(dugum, gel, timeout_sec=10.0)
+                yurutucu.spin_until_future_complete(gel, timeout_sec=10.0)
                 s = gel.result()
                 ok = bool(s and s.results and s.results[0].successful)
                 self._bas("GERİ", f"{'✅' if ok else '🔴'} (taze bağlam) "
                                   f"{ad} = {d:.3f}")
+                if not ok:
+                    raise RuntimeError(f"{ad} taze bağlamda da yazılamadı")
             dugum.destroy_node()
         finally:
+            try:
+                if yurutucu is not None:
+                    yurutucu.shutdown()
+            except Exception:
+                pass
             try:
                 rclpy.shutdown(context=ctx)
             except Exception:
