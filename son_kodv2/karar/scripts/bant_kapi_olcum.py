@@ -64,6 +64,8 @@ KONULAR = [
     "/mavros/setpoint_velocity/cmd_vel_unstamped",
     "/perception/gate_count",
     "/perception/classified_obstacles",
+    "/perception/buoys",
+    "/girdap/mission/current_target",   # ⑮: fallback ↔ kapı ayrımı için ham GN
 ]
 
 
@@ -298,6 +300,283 @@ def main() -> None:  # noqa: PLR0915 — tek rapor akışı, bölmek okumayı zo
     _gercek_kapi_genisligi(v)
     _gercek_duba_yerlesimi(v)
     _yon_ile_rota_karsilastir(v)
+    _nisan_kararliligi(v)
+
+
+def _nisan_kararliligi(v: dict) -> None:
+    """⑮ FAZ 7 KARAR ÖLÇÜMÜ — nişan hâlâ zıplıyor mu? (§1.16d'nin kapısı)
+
+    🔑 **Neden bu ölçüm, FAZ 7'yi yazmadan ÖNCE gelir.** §1.16d'nin kendi
+    şartı: *"FAZ 1+2 SONRASI ölçülerek yapılır — ikizler temizlenince
+    sıçramanın ne kadarı kaldığı görülmeli; kalan azsa 3 iptal olabilir."*
+    Yani FAZ 7 bir varsayım değil, bu tablonun çıktısına bağlı bir karardır.
+    §1.19e'nin dersi de aynı yöne bakıyor: "hedefi dondurma"nın naif hâli
+    ölçülmeden yazıldı ve kapı geçişini 7 → 1'e düşürdü.
+
+    NE YAPAR: bandın ham `/perception/classified_obstacles` karelerini ve
+    `/girdap/fusion/pose`'unu **ŞU ANKİ** `EdgeBuoyMemory` + `GateFollower`
+    zincirinden geçirir; `planning_node`'un sürüş hedefini üretirken izlediği
+    yolun aynısıdır (dünyaya taşı → sınıflandır → hatırlananları ekle →
+    `update`). Kontrole giden nokta `surus_hedefi`'dir (F-K.1: nişan kapının
+    ÖTESİNE kurulur), sıçrama onun üzerinden ölçülür.
+
+    ⚠ **AÇIK DÖNGÜ.** Poz banttan gelir; tekne bu hesabın komutuyla dönmez.
+    Ölçülebilen: nişanın kendi kararlılığı ve kilit sürekliliği. Ölçülemeyen:
+    pivot oranı, dur-kalk, kapı geçme sayısı — onlar kapalı döngü gerektirir.
+
+    KARŞILAŞTIRMA TABANI (§1.16a, aynı bant, ESKİ kod, GUIDED pencereleri):
+      · >1 m sıçrama  8,8/dk   · %95 dilim 2,67 m   · en büyük 11,2 m
+      · >1 sn kilit kopukluğu  268 / 17,9 dk = 15,0/dk
+    """
+    print("\n⑮ NİŞAN KARARLILIĞI — FAZ 7 KARAR ÖLÇÜMÜ (§1.16d kapısı)")
+    kareler = v.get("/perception/classified_obstacles") or []
+    pozlar = v.get("/girdap/fusion/pose") or []
+    hedefler = v.get("/girdap/mission/current_target") or []
+    if not kareler or not pozlar:
+        print("  sınıflı algı ya da poz yok — ölçülemedi")
+        return
+    if not hedefler:
+        print("  /girdap/mission/current_target bantta YOK — ham görev noktası")
+        print("  bilinmeden kapı↔fallback ayrımı yapılamaz, ölçüm ATLANDI.")
+        return
+
+    try:
+        from prototype.mission.edge_memory import EdgeBuoyMemory
+        from prototype.mission.gate_follower import GateFollower
+    except ImportError as e:                       # PYTHONPATH eksik
+        print(f"  çekirdek içe aktarılamadı ({e}) — PYTHONPATH'e karar kökü ekleyin")
+        return
+
+    pt = np.array([t for t, _ in pozlar])
+    px = np.array([m.pose.position.x for _, m in pozlar])
+    py = np.array([m.pose.position.y for _, m in pozlar])
+    ppsi = np.array([
+        math.atan2(2.0 * (m.pose.orientation.w * m.pose.orientation.z
+                          + m.pose.orientation.x * m.pose.orientation.y),
+                   1.0 - 2.0 * (m.pose.orientation.y ** 2 + m.pose.orientation.z ** 2))
+        for _, m in pozlar
+    ])
+    ht = np.array([t for t, _ in hedefler])
+    hx = np.array([m.pose.position.x for _, m in hedefler])
+    hy = np.array([m.pose.position.y for _, m in hedefler])
+
+    hafiza = EdgeBuoyMemory()
+    takip = GateFollower()
+    harita_r = 25.0                                # planning_node varsayılanı
+    onceki: tuple | None = None                    # (t, nişan, kapı kimliği)
+    kaynak: Counter = Counter()                    # >1 m sıçramanın sebebi
+    kaynak_normal: Counter = Counter()             # aynı kapıda normal ne yapıyor
+    normal_aci: list[float] = []
+    nisan_poz: list[tuple[float, float]] = []
+    bilesen: list[tuple[float, float]] = []
+    kayma_d: list[float] = []
+    genislik_d: list[float] = []
+    sicrama: list[tuple[float, float]] = []        # (t, |Δnişan|)
+    fallback_zamani: list[tuple[float, bool]] = []
+    kilitli_genislik: list[float] = []
+
+    for kare_no, (t, msg) in enumerate(kareler):
+        i = int(np.searchsorted(pt, t, side="right") - 1)
+        j = int(np.searchsorted(ht, t, side="right") - 1)
+        if i < 0 or j < 0:
+            continue
+        c, s = math.cos(ppsi[i]), math.sin(ppsi[i])
+        arac = (float(px[i]), float(py[i]))
+        ham = (float(hx[j]), float(hy[j]))
+
+        tespitler = []
+        for det in msg.detections:
+            cls = None
+            if det.results:
+                try:
+                    cls = int(det.results[0].hypothesis.class_id)
+                except (TypeError, ValueError):
+                    cls = None
+            b = det.bbox.center.position
+            wx = arac[0] + c * b.x - s * b.y       # gövde → dünya (planning_node ile aynı)
+            wy = arac[1] + s * b.x + c * b.y
+            tespitler.append((wx, wy, abs(det.bbox.size.x) / 2.0, cls))
+
+        kenar_mi = hafiza.siniflandir(tespitler, 0)
+        for tespit, kenar in hafiza.hatirlananlar(
+            arac, harita_r, unutma_menzili=harita_r * 2.0
+        ):
+            tespitler.append(tespit)
+            kenar_mi.append(kenar)
+        kenarlar = [(x, y) for (x, y, _r, _c), k in zip(tespitler, kenar_mi) if k]
+        engeller = [(x, y, r) for (x, y, r, _c), k in zip(tespitler, kenar_mi) if not k]
+
+        try:
+            sonuc = takip.update(arac, ham, kenarlar, engeller, gozlem_no=kare_no)
+        except Exception as e:                     # çekirdek çökerse ölçüm sussun
+            print(f"  ⚠ GateFollower çöktü (kare {kare_no}): {e}")
+            return
+        nisan = tuple(sonuc.surus_hedefi)
+        fallback_zamani.append((t, bool(sonuc.used_fallback)))
+        if sonuc.gate is not None:
+            kilitli_genislik.append(float(sonuc.gate.width))
+        # Sıçramanın KAYNAĞINI ayır: aynı kapı mı kaydı, yoksa kapı mı değişti?
+        # Bu ayrım FAZ 7'nin hangi maddesinin doğru düzeltme olduğunu belirler
+        # (madde 2 = kapı DEĞİŞTİRME onayı · madde 3 = nişan hız süzgeci).
+        nrm = None if sonuc.gate is None else sonuc.gate.normal
+        kimlik = None if sonuc.gate is None else (
+            round(sonuc.gate.midpoint[0], 2), round(sonuc.gate.midpoint[1], 2),
+            round(sonuc.gate.width, 2),
+        )
+        if onceki is not None:
+            d = math.dist(nisan, onceki[1])
+            sicrama.append((t, d))
+            # 🔬 Havuç `d + uzatma` ile ARACA bağlı (`surus_noktasi`):
+            # poz sıçrarsa nişan da sıçrar. İki sıçramayı yan yana koy.
+            poz_d = math.dist(arac, onceki[4])
+            if d > 1.0:
+                nisan_poz.append((d, poz_d))
+                # Sıçramayı kapının kendi eksenlerine ayır: KİRİŞ boyunca
+                # (yanal = `aim_shift` oynaması) mi, NORMAL boyunca (havuç
+                # uzaması) mı? İkisinin düzeltmesi bambaska.
+                if nrm is not None and onceki[3] is not None:
+                    vx = nisan[0] - onceki[1][0]
+                    vy = nisan[1] - onceki[1][1]
+                    n_bil = abs(vx*nrm[0] + vy*nrm[1])          # normal bileşeni
+                    k_bil = abs(-vx*nrm[1] + vy*nrm[0])         # kiriş (yanal)
+                    bilesen.append((n_bil, k_bil))
+                if kimlik is not None and onceki[5] is not None:
+                    kayma_d.append(abs(sonuc.gate.aim_shift - onceki[5]))
+            if d > 1.0:
+                if onceki[2] is None or kimlik is None:
+                    kaynak["fallback geçişi"] += 1
+                elif (math.dist(kimlik[:2], onceki[2][:2]) > 1.0
+                      or abs(kimlik[2] - onceki[2][2]) > 0.5):
+                    # Kimlik = orta nokta VE genişlik. Yalnız orta noktaya
+                    # bakmak yanıltıyordu: gerçek 2,3 m'lik kapı ile orta
+                    # noktası yakın 12 m'lik sahte bir çift "aynı kapı"
+                    # sayılıyordu (16.08'de ölçümle yakalandı).
+                    kaynak["KAPI DEĞİŞTİ"] += 1
+                    genislik_d.append(abs(kimlik[2] - onceki[2][2]))
+                else:
+                    kaynak["aynı kapı kaydı"] += 1
+                    # Aynı kapıdaysa nişanı ne oynatıyor? Normalin işareti her
+                    # tick'te araç→orta nokta yönünden türüyor (`select_gate`);
+                    # araç kapıya yaklaşınca ya da düzlemi geçince bu yön
+                    # kararsızlaşır → havuç kapının ÖTEKİ tarafına atlar.
+                    if nrm is not None and onceki[3] is not None:
+                        aci = math.degrees(math.acos(max(-1.0, min(1.0,
+                            nrm[0]*onceki[3][0] + nrm[1]*onceki[3][1]))))
+                        normal_aci.append(aci)
+                        if aci > 90.0:
+                            kaynak_normal["NORMAL TERSİNDİ (>90°)"] += 1
+                        elif aci > 10.0:
+                            kaynak_normal["normal döndü (10-90°)"] += 1
+                        else:
+                            kaynak_normal["normal sabit (<10°)"] += 1
+        onceki = (t, nisan, kimlik, nrm, arac,
+                  None if sonuc.gate is None else float(sonuc.gate.aim_shift))
+
+    if not sicrama:
+        print("  eşleşen kare/poz yok — ölçülemedi")
+        return
+
+    S = np.array([d for _, d in sicrama])
+    sure_dk = (kareler[-1][0] - kareler[0][0]) / 60.0
+    if sure_dk <= 0:
+        print("  bant süresi sıfır — ölçülemedi")
+        return
+
+    print(f"  kare {len(sicrama)+1} · süre {sure_dk:.1f} dk"
+          f" · kilit oranı %{100*(1-np.mean([f for _, f in fallback_zamani])):.1f}")
+    print(f"  nişan sıçraması: ortanca {np.median(S):.2f} m"
+          f" · %95 {np.percentile(S, 95):.2f} m · en büyük {S.max():.2f} m")
+    print(f"    >1 m: {(S > 1.0).sum()} olay = {(S > 1.0).sum()/sure_dk:5.1f}/dk"
+          f"   (ESKİ kod: 8,8/dk — §1.16a)")
+    print(f"    >2 m: {(S > 2.0).sum()} olay = {(S > 2.0).sum()/sure_dk:5.1f}/dk"
+          f"   (§1.16d ölçütü: <1/dk)")
+    if kaynak:
+        print("  🔎 >1 m sıçramanın KAYNAĞI (hangi FAZ 7 maddesi doğru düzeltme):")
+        for ad, n in kaynak.most_common():
+            madde = {"KAPI DEĞİŞTİ": "→ madde 2 (değiştirme onayı)",
+                     "aynı kapı kaydı": "→ madde 3 (nişan hız süzgeci)",
+                     "fallback geçişi": "→ madde 1 (kilit taşıma/coast)"}[ad]
+            print(f"     {ad:18s} {n:5d}  (%{100*n/sum(kaynak.values()):4.1f})  {madde}")
+    if kaynak_normal:
+        print("  🔬 AYNI KAPIDA nişanı ne oynatıyor — kapı normalinin davranışı:")
+        for ad, n in kaynak_normal.most_common():
+            print(f"     {ad:26s} {n:5d}  (%{100*n/sum(kaynak_normal.values()):4.1f})")
+        A = np.array(normal_aci)
+        print(f"     ardışık normal açısı: ortanca {np.median(A):.1f}°"
+              f" · %95 {np.percentile(A,95):.1f}° · en büyük {A.max():.1f}°")
+
+    # Kilit kopukluğu: fallback'e DÜŞÜŞ olayları + 1 sn'den uzun süren boşluklar.
+    if nisan_poz:
+        NP = np.array(nisan_poz)
+        print("  🔬 SIÇRAMA ↔ POZ SIÇRAMASI (havuç `d+uzatma` ile araca bağlı):")
+        print(f"     >1 m nişan sıçramasının anında poz da sıçramış mı:")
+        print(f"       poz kayması ortanca {np.median(NP[:,1]):.2f} m"
+              f" · %95 {np.percentile(NP[:,1],95):.2f} m · en büyük {NP[:,1].max():.2f} m")
+        birlikte = float((NP[:,1] > 1.0).mean())
+        print(f"       poz da >1 m sıçramış olan: %{100*birlikte:.1f}"
+              f"   {'→ KÖK NEDEN POZ' if birlikte > 0.5 else '→ poz değil, kapı geometrisi'}")
+        if len(NP) > 2:
+            r = float(np.corrcoef(NP[:,0], NP[:,1])[0,1])
+            print(f"       korelasyon r = {r:+.2f}")
+
+    if genislik_d:
+        G2 = np.array(genislik_d)
+        print(f"  🔬 KAPI DEĞİŞİMİNDE genişlik sıçraması: ortanca {np.median(G2):.2f} m"
+              f" · %95 {np.percentile(G2,95):.2f} m · en büyük {G2.max():.2f} m")
+    if bilesen:
+        B = np.array(bilesen)
+        print("  🔬 SIÇRAMANIN YÖNÜ (kapının kendi eksenlerinde):")
+        print(f"     NORMAL boyunca (havuç uzaması): ortanca {np.median(B[:,0]):.2f} m"
+              f" · %95 {np.percentile(B[:,0],95):.2f} m")
+        print(f"     KİRİŞ boyunca (yanal/aim_shift): ortanca {np.median(B[:,1]):.2f} m"
+              f" · %95 {np.percentile(B[:,1],95):.2f} m")
+        yanal = float((B[:,1] > B[:,0]).mean())
+        print(f"     yanal baskın olan: %{100*yanal:.1f}"
+              f"   {'→ KÖK NEDEN aim_shift (yanal nişan kayması)' if yanal > 0.5 else '→ havuç/normal ekseni'}")
+    if kayma_d:
+        K2 = np.array(kayma_d)
+        print(f"     aim_shift değişimi: ortanca {np.median(K2):.2f} m"
+              f" · %95 {np.percentile(K2,95):.2f} m · en büyük {K2.max():.2f} m")
+
+    kopus = 0
+    uzun = 0
+    bas: float | None = None
+    for k, (t, fb) in enumerate(fallback_zamani):
+        onceki_fb = fallback_zamani[k - 1][1] if k else fb
+        if fb and not onceki_fb:
+            kopus += 1
+            bas = t
+        elif not fb and onceki_fb and bas is not None:
+            if t - bas > 1.0:
+                uzun += 1
+            bas = None
+    print(f"  kapı kilidi kopuşu: {kopus} ({kopus/sure_dk:.1f}/dk)"
+          f" · >1 sn süren: {uzun}   (ESKİ kod: 15,0/dk — §1.16a)")
+    if kilitli_genislik:
+        K = np.array(kilitli_genislik)
+        dar = float((K < MIN_W).mean())
+        print(f"  kilitlenen kapı genişliği dağılımı: "
+              + " · ".join(f"%{q}={np.percentile(K,q):.1f}m" for q in (50, 75, 90, 95, 99))
+              + f" · en geniş {K.max():.1f} m")
+        for lo, hi in ((0, 3), (3, 6), (6, 14), (14, 99)):
+            n = int(((K >= lo) & (K < hi)).sum())
+            print(f"     {lo:2d}-{hi:2d} m: {n:5d}  (%{100*n/len(K):4.1f})"
+                  + ("   ← gerçek göl kapısı 2,05-2,25 m" if hi == 3 else "")
+                  + ("   ← yarışma kapısı 12 m" if hi == 14 else "")
+                  + ("   ← KAPI DEĞİL" if lo == 14 else ""))
+        print(f"  kilitlenen kapı genişliği: ortanca {np.median(K):.2f} m"
+              f" · gövdenin sığmadığı (<{MIN_W:.2f} m) oran %{100*dar:.1f}"
+              f"   (ESKİ kod: %13,1 — §1.13e)")
+
+    # 🔑 HÜKÜM — FAZ 7'nin 3. maddesi (nişan referans süzgeci) gerekli mi?
+    kalan = (S > 1.0).sum() / sure_dk
+    print("  🔑 HÜKÜM:", end=" ")
+    if kalan < 1.0:
+        print(f"sıçrama {kalan:.1f}/dk — FAZ 7/3 GEREKSİZ (§1.16d'nin iptal şartı)")
+    elif kalan < 4.4:                              # eski kolun yarısı
+        print(f"sıçrama {kalan:.1f}/dk — yarıdan fazla düştü; FAZ 7/3 İSTEĞE BAĞLI")
+    else:
+        print(f"sıçrama {kalan:.1f}/dk — FAZ 1+2 yetmedi, FAZ 7/3 GEREKLİ")
 
 
 def _yon_ile_rota_karsilastir(v: dict) -> None:
@@ -461,6 +740,87 @@ def _gercek_duba_yerlesimi(v: dict, beklenen: int = 4) -> None:
                 print(f"     duba {i+1}–{j+1}: {d:6.2f}")
     _hayaletin_kaynagi(kareler, pt, px, py, ppsi, [m for _, m in secilen])
     _gorulme_olasiligi(kareler, pt, px, py, ppsi, [m for _, m in secilen])
+    _kamera_kalibrasyonu(v, pt, px, py, ppsi, [m for _, m in secilen])
+
+
+def _kamera_kalibrasyonu(v, pt, px, py, ppsi, gercek) -> None:
+    """⑭ KAMERA KERTERİZİNİ BANTTAN KALİBRE ET.
+
+    🔴 Füzyon, kamera kutusunun yatay merkezini görüş açısına ORANTILI bir
+    kerterize çeviriyor: `(0,5 − cx)·hfov + yaw`. `hfov = 1,2 rad` modül
+    docstring'inin kendi deyimiyle *"OAK-D Lite yatay FOV yaklaşık değeri"*,
+    `yaw = 0`. Gerçek iç/dış parametre kalibrasyonu HİÇ yapılmadı.
+
+    Ama elimizde yer gerçeği var: dört dubanın konumu ve teknenin pozu. Yani
+    doğru dönüşümü BANT söyleyebilir. Yalnız BİR gerçek dubanın görüş
+    alanında olduğu kareler alınır (eşleştirme belirsizliği olmasın),
+    kutunun `0,5 − cx` değeri ile dubanın GERÇEK kerterizi eşleştirilir ve
+    doğru uydurulur:
+
+        gerçek_kerteriz ≈ eğim · (0,5 − cx) + kesişim
+                            └ etkin hfov      └ kamera yaw'ı
+
+    Eğim/kesişim mevcut ayarlardan belirgin farklıysa, sınıf etiketlerinin
+    yanlış kümelere yapışmasının sebebi budur ve düzeltme tek satırdır.
+    """
+    kutular = v.get("/perception/buoys") or []
+    print("\n⑭ KAMERA KERTERİZİ — banttan kalibrasyon")
+    if not kutular or not gercek:
+        print("  /perception/buoys yok — ölçülemedi")
+        return
+    G = np.array(gercek)
+    HFOV = 1.2                       # mevcut varsayılan (fusion.FusionConfig)
+    ornek: list[tuple[float, float]] = []
+    genislik_ipucu = 0.0
+    for t, msg in kutular:
+        i = int(np.searchsorted(pt, t, side="right") - 1)
+        if i < 0:
+            continue
+        # Gövde çerçevesinde gerçek dubaların kerterizi
+        c, s = math.cos(ppsi[i]), math.sin(ppsi[i])
+        ker = []
+        for gx, gy in G:
+            dx, dy = gx - px[i], gy - py[i]
+            bx, by = dx * c + dy * s, -dx * s + dy * c
+            a = math.atan2(by, bx)
+            if abs(a) <= HFOV / 2.0 and math.hypot(bx, by) <= 15.0:
+                ker.append(a)
+        if len(ker) != 1:            # belirsiz kare → atla
+            continue
+        turuncu = []
+        for det in msg.detections:
+            sid = None
+            if det.results:
+                sid = str(det.results[0].hypothesis.class_id)
+            if sid != "0":
+                continue
+            cx = det.bbox.center.position.x if hasattr(det.bbox.center, "position") \
+                else det.bbox.center.x
+            genislik_ipucu = max(genislik_ipucu, cx)
+            turuncu.append(cx)
+        if len(turuncu) != 1:
+            continue
+        ornek.append((turuncu[0], ker[0]))
+
+    if len(ornek) < 30:
+        print(f"  yeterli tek-duba/tek-kutu karesi yok ({len(ornek)})")
+        return
+    genislik = 640.0 if genislik_ipucu > 1.5 else 1.0
+    X = np.array([0.5 - o[0] / genislik for o in ornek])
+    Y = np.array([o[1] for o in ornek])
+    egim, kesisim = np.polyfit(X, Y, 1)
+    tahmin = egim * X + kesisim
+    artik = Y - tahmin
+    mevcut_artik = Y - (HFOV * X + 0.0)
+    print(f"  {len(ornek)} tek-duba/tek-kutu karesi (piksel genişliği {genislik:.0f})")
+    print(f"  uydurulan: etkin hfov {egim:.3f} rad ({math.degrees(egim):.1f}°) · "
+          f"yaw {kesisim:+.3f} rad ({math.degrees(kesisim):+.1f}°)")
+    print(f"  mevcut ayar: hfov 1,200 rad (68,8°) · yaw +0,000 rad")
+    print(f"  kerteriz artığı — uydurulan: ortanca {math.degrees(np.median(np.abs(artik))):.1f}°"
+          f" · mevcut: ortanca {math.degrees(np.median(np.abs(mevcut_artik))):.1f}°")
+    print(f"  eşleşme toleransı 0,15 rad (8,6°) içinde kalan —"
+          f" uydurulan %{100*(np.abs(artik) <= 0.15).mean():.1f}"
+          f" · mevcut %{100*(np.abs(mevcut_artik) <= 0.15).mean():.1f}")
 
 
 def _gorulme_olasiligi(kareler, pt, px, py, ppsi, gercek) -> None:
@@ -538,6 +898,14 @@ def _hayaletin_kaynagi(kareler, pt, px, py, ppsi, gercek) -> None:
     G = np.array(gercek)
     menzil_kova = [(0, 3), (3, 5), (5, 8), (8, 12), (12, 25)]
     kayit: dict[tuple[int, int], list[tuple[float, float]]] = defaultdict(list)
+    # ⑫ — YARIÇAP AYIRIYOR MU? Şartname dubanın çapını KESİN veriyor: 30 cm.
+    # Tespitin kendi yarıçapı (`bbox.size.x/2`) bundan uzaksa o cisim duba
+    # olamaz. Filtre yazmadan önce ayırt ediciliğini ölçüyoruz.
+    yaricap_kova = [(0.00, 0.10), (0.10, 0.20), (0.20, 0.35),
+                    (0.35, 0.60), (0.60, 1.00), (1.00, 99.0)]
+    y_toplam: dict[int, int] = defaultdict(int)
+    y_dogru: dict[int, int] = defaultdict(int)
+    govde_hata: list[tuple[float, float]] = []
     for t, msg in kareler:
         i = int(np.searchsorted(pt, t, side="right") - 1)
         if i < 0:
@@ -569,6 +937,19 @@ def _hayaletin_kaynagi(kareler, pt, px, py, ppsi, gercek) -> None:
                 if a <= menzil < bb:
                     kayit[(k, 0)].append((konum_hatasi, ker_hata))
                     break
+            # ⑬ — hata vektörü GÖVDE çerçevesinde: sabit bir montaj/kol
+            # kayması burada TEK BİR NOKTAYA toplanır; rastgele sahte tespit
+            # ise dağılır. Dünya çerçevesinde ikisi de "ortalama sıfır" verir,
+            # çünkü tekne döndükçe sabit kayma da döner.
+            hx, hy = G[j, 0] - wx, G[j, 1] - wy          # dünya hata vektörü
+            govde_hata.append((hx * c + hy * s, -hx * s + hy * c))
+            yari = abs(det.bbox.size.x) / 2.0
+            for k, (a, bb) in enumerate(yaricap_kova):
+                if a <= yari < bb:
+                    y_toplam[k] += 1
+                    if konum_hatasi <= 1.0:
+                        y_dogru[k] += 1
+                    break
 
     print("\n⑨ HAYALETİN KAYNAĞI (her tespit → en yakın GERÇEK dubaya sapma)")
     print("     menzil     örnek   konum hatası (m)      kerteriz hatası (°)"
@@ -591,6 +972,40 @@ def _hayaletin_kaynagi(kareler, pt, px, py, ppsi, gercek) -> None:
               f"ortanca {np.median(T):+.1f}° · standart sapma {T.std():.1f}°")
         print("     ① yön hatası imzası: ortalama sıfırdan UZAK + konum hatası menzille büyür")
         print("     ② sahte tespit imzası: ortalama sıfıra yakın + sapma geniş + menzilden bağımsız")
+
+    if govde_hata:
+        B = np.array(govde_hata)
+        print("\n⑬ HATA VEKTÖRÜ GÖVDE ÇERÇEVESİNDE (ileri, sol) — sabit kayma var mı?")
+        print(f"  {len(B)} örnek · ortalama ({B[:,0].mean():+.2f}, {B[:,1].mean():+.2f}) m"
+              f" · ortanca ({np.median(B[:,0]):+.2f}, {np.median(B[:,1]):+.2f}) m")
+        print(f"  standart sapma ({B[:,0].std():.2f}, {B[:,1].std():.2f}) m")
+        yakin = float((np.hypot(B[:,0]-np.median(B[:,0]), B[:,1]-np.median(B[:,1])) <= 0.5).mean())
+        print(f"  ortancanın 0,5 m'sinde toplanan: %{100*yakin:.1f}")
+        print("     sabit montaj/kol kayması imzası: ortanca sıfırdan uzak + etrafında yığılma")
+        print("     rastgele sahte tespit imzası:   ortanca ~sıfır + yığılma yok")
+
+    if y_toplam:
+        print("\n⑫ TESPİT YARIÇAPI AYIRT EDİYOR MU? (şartname: duba yarıçapı 0,15 m)")
+        tt = sum(y_toplam.values())
+        td = sum(y_dogru.values())
+        for k, (a, b) in enumerate(yaricap_kova):
+            if not y_toplam[k]:
+                continue
+            p = 100.0 * y_dogru[k] / y_toplam[k]
+            print(f"   {a:4.2f}–{b:5.2f} m: {y_toplam[k]:6d} tespit · gerçek dubada "
+                  f"%{p:5.1f} " + "█" * int(p / 3))
+        print(f"  taban (süzgeçsiz): %{100*td/tt:.1f}")
+        for esik in (0.10, 0.15, 0.25, 0.40):
+            sec_t = sum(n for k, n in y_toplam.items()
+                        if yaricap_kova[k][1] <= 0.15 + esik + 1e-9
+                        and yaricap_kova[k][0] >= max(0.0, 0.15 - esik) - 1e-9)
+            sec_d = sum(n for k, n in y_dogru.items()
+                        if yaricap_kova[k][1] <= 0.15 + esik + 1e-9
+                        and yaricap_kova[k][0] >= max(0.0, 0.15 - esik) - 1e-9)
+            if sec_t:
+                print(f"     |r − 0,15| ≤ {esik:.2f} m süzgeci → {sec_t:6d} tespit kalır"
+                      f" · gerçek dubada %{100*sec_d/sec_t:.1f}"
+                      f" · gerçek dubaların %{100*sec_d/max(1,td):.1f}'i korunur")
 
 
 def _gercek_kapi_genisligi(v: dict) -> None:

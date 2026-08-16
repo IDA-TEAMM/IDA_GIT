@@ -25,7 +25,14 @@ DOGRU = {ad: b.deger for ad, b in OLUMCUL.items()}
 
 
 def test_13_agustos_gercek_sapmasi_YAKALANIYOR() -> None:
-    """O günün gerçek Pix durumu → tam 7 ölümcül bulgu.
+    """O günün gerçek Pix durumu → tam 6 ölümcül bulgu.
+
+    ⚠ 16.08: bulgu kümesinden `BATT_MONITOR` DÜŞTÜ — sayı 7'den 6'ya indi.
+    Sebep fixture değil BEKLENTİ: kaptan kararıyla batarya izleme kapatıldı
+    (PM06 canlıda 0,007 V / 0,01 A okuyor, `BATT_MONITOR=3` iken
+    `PreArm: Battery 1 unhealthy` arm'ı engelliyordu). 13.08'in gerçek
+    değeri zaten 0'dı; artık beklenen de 0 → sapma yok. Batarya izleme
+    yeniden açılırsa beklenti 3'e döner ve bu küme tekrar 7 olur.
 
     ⚠ 13.08 akşamı liste 9'dan 13'e çıkarıldı: `GPS1_POS_X/Y/Z` ve
     `MOT_THR_MIN` eksikti. Eksik olmalarının bedeli somut — bu dördü ölümcül
@@ -39,7 +46,7 @@ def test_13_agustos_gercek_sapmasi_YAKALANIYOR() -> None:
     adlar = {x.ad for x in b}
     assert adlar == {
         "INS_POS1_X", "INS_POS1_Y", "INS_POS1_Z", "GPS1_POS_Y",
-        "MOT_THR_MIN", "FS_ACTION", "BATT_MONITOR",
+        "MOT_THR_MIN", "FS_ACTION",
     }, f"beklenmeyen bulgu kumesi: {adlar}"
 
 

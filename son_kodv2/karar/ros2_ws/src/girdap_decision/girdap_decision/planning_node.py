@@ -729,6 +729,15 @@ class PlanningNode(Node):
                 "noktasına gidilir; md 5.5.2.2 puanı kapıdan geçmekten gelir"
             )
 
+    # 🔴 FAZ 5 boşluğu (16.08): bu geri çağrı `self._pipe.yeniden_basla()` ve
+    # `self._edge_buoys` yazıyor ama `_pipe_kilidiyle` SARILI DEĞİLDİ.
+    # `ResetAbonesi` aboneliği düğümün VARSAYILAN grubunda (callback_group
+    # verilmiyor), algı abonelikleri ise `_grup_algi`'da → iki ayrı
+    # MutuallyExclusiveCallbackGroup, `MultiThreadedExecutor(num_threads=2)`
+    # altında GERÇEKTEN aynı anda koşabilirler. Yani sıfırlama, algı taraması
+    # boru hattını okurken araya girebiliyordu. Dar pencere ama pahalı an:
+    # yeniden başlama hakkı yarışmada BİR kez (md 5.5.3.1).
+    @_pipe_kilidiyle
     def _yeniden_basla(self) -> None:
         """md 5.5.3.1 yeniden baslama — planlama tarafinin sifirlanmasi.
 
