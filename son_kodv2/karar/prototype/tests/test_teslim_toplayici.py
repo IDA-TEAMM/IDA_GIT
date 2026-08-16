@@ -15,17 +15,40 @@ from prototype.teslim.toplayici import (
 )
 
 
+def _kutu(tip: bytes, govde: bytes = b"") -> bytes:
+    """Tek bir üst düzey mp4 kutusu: [4 bayt boyut][4 bayt tip][gövde]."""
+    return (8 + len(govde)).to_bytes(4, "big") + tip + govde
+
+
+def _mp4_saglam(yol: Path, dolgu: int = 64) -> None:
+    """YAPISAL OLARAK GEÇERLİ mp4: `moov` atomu VAR.
+
+    🔴 17.08: bu kurgu eskiden `b"K" * 2048` gibi **sahte bayt** yazıyordu.
+    Teslim modülüne mp4 oynatılabilirlik denetimi eklenince 7 test birden
+    kırıldı — çünkü kurgunun ürettiği hiçbir dosya gerçek mp4 değildi ve
+    testler yine de "teslime hazır" iddia ediyordu. Kurgu artık en azından
+    kutu zinciri geçerli dosyalar üretiyor.
+    """
+    yol.write_bytes(_kutu(b"ftyp", b"isom") + _kutu(b"mdat", b"x" * dolgu)
+                    + _kutu(b"moov", b"y" * 32))
+
+
+def _mp4_bozuk(yol: Path) -> None:
+    """Gerçek arıza: kayıt yarıda kesilmiş, `moov` hiç yazılmamış."""
+    yol.write_bytes(_kutu(b"ftyp", b"isom") + _kutu(b"mdat", b"x" * 256))
+
+
 def _kur(kok: Path, *, kamera=True, lidar=True, telemetri=True, harita=True,
          oturum="oturum_20260807_143000") -> Path:
     """Sahte ~/girdap_logs ağacı."""
     if kamera:
         d = kok / "kamera" / oturum
         d.mkdir(parents=True)
-        (d / "seg_0000.mp4").write_bytes(b"K" * 2048)
+        _mp4_saglam(d / "seg_0000.mp4", 2048)
     if lidar:
         d = kok / "lidar" / oturum
         d.mkdir(parents=True)
-        (d / "lidar_kumeleme.mp4").write_bytes(b"L" * 4096)
+        _mp4_saglam(d / "lidar_kumeleme.mp4", 4096)
     if telemetri:
         d = kok / "telemetry"
         d.mkdir(parents=True)
@@ -33,7 +56,7 @@ def _kur(kok: Path, *, kamera=True, lidar=True, telemetri=True, harita=True,
     if harita:
         d = kok / "local_map" / oturum
         d.mkdir(parents=True)
-        (d / "Dosya3_lokal_harita.mp4").write_bytes(b"H" * 1024)
+        _mp4_saglam(d / "Dosya3_lokal_harita.mp4", 1024)
         (d / "png_yedek").mkdir()
         (d / "png_yedek" / "frame_00000.png").write_bytes(b"P" * 128)
     return kok
@@ -395,3 +418,73 @@ def test_DOSYA3_oturum_dizinli_yerlesim_BOZULMADI(tmp_path):
     assert not list(usb.glob("Dosya3_Lokal_Harita_*_1.mp4")), (
         "eski oturum da kopyalanmış — en yeni oturum seçimi bozulmuş"
     )
+
+
+# --------------------------------------------------------------------------- #
+# 17.08.2026 — mp4 OYNATILABİLİRLİK: `moov` atomu yoksa dosya teslim değildir
+# --------------------------------------------------------------------------- #
+
+
+def test_mp4_dogrulayici_saglam_ve_bozugu_AYIRIYOR(tmp_path):
+    """🔬 Aracın kendi doğrulaması — ayırt edemiyorsa sonucu raporlanamaz."""
+    from prototype.teslim.toplayici import mp4_oynatilabilir_mi
+    iyi, kotu = tmp_path / "iyi.mp4", tmp_path / "kotu.mp4"
+    _mp4_saglam(iyi)
+    _mp4_bozuk(kotu)
+    assert mp4_oynatilabilir_mi(iyi) is True, "sağlam mp4 bozuk sayıldı"
+    assert mp4_oynatilabilir_mi(kotu) is False, "moov'suz dosya sağlam sayıldı"
+    assert mp4_oynatilabilir_mi(tmp_path / "yok.mp4") is False, "olmayan dosya"
+    bos = tmp_path / "bos.mp4"
+    bos.write_bytes(b"")
+    assert mp4_oynatilabilir_mi(bos) is False, "boş dosya sağlam sayıldı"
+
+
+def test_TEK_dosyalik_kalem_ACILMIYORSA_rapor_HAZIR_DEMEZ(tmp_path):
+    """🔴 CANLI HATA (17.08): rapor açılmayan kalemleri görmeden ✅ diyordu.
+
+    Kuru teslim provasında ölçüldü: Dosya-3'ün TEK mp4'ü ve Dosya-1b'nin
+    (lidar) TEK mp4'ü **açılmıyordu** (moov atomu yok), buna rağmen rapor
+    *"TÜM ZORUNLU KALEMLER TESLİME HAZIR"* yazıyordu. Operatör USB'yi öyle
+    teslim ederdi. md 4.2/5.5.4.3.5: teslim edilmeyen her dosya **5 ceza**.
+
+    ⛔ GERİ ALINIRSA: rapor yine yanlış yeşil verir.
+    """
+    logs = _kur(tmp_path / "logs", harita=False)
+    otr = logs / "local_map" / "oturum_20260817_010000"
+    otr.mkdir(parents=True)
+    _mp4_bozuk(otr / "Dosya3_lokal_harita.mp4")     # TEK dosya ve BOZUK
+    usb = tmp_path / "usb"
+    usb.mkdir()
+
+    rapor, _ = topla_ve_yaz(logs, usb)
+
+    assert not rapor.basarili, (
+        "tek mp4'ü açılmayan zorunlu kalem varken rapor HAZIR dedi"
+    )
+    metin = " ".join(rapor.bozuk)
+    assert "HEPSİ açılmıyor" in metin, f"bozuk listesine girmedi: {rapor.bozuk}"
+
+
+def test_COK_segmentli_kalemde_TEK_bozuk_HAZIR_olmayi_BOZMAZ(tmp_path):
+    """Aşırı tepki vermesin: 36 segmentin 1'i bozuksa kayıt hâlâ teslim edilebilir.
+
+    Ölçülen gerçek desen bu — bozulan hep SON segment (37 oturumun 28'inde),
+    öncekiler sağlam. O durumda rapor uyarmalı ama "teslim edilemez" DEMEMELİ.
+    """
+    logs = _kur(tmp_path / "logs", kamera=False)
+    otr = logs / "kamera" / "oturum_20260817_010000"
+    otr.mkdir(parents=True)
+    for i in range(3):
+        _mp4_saglam(otr / f"seg_{i:04d}.mp4")
+    _mp4_bozuk(otr / "seg_0003.mp4")                # yalnız SONUNCU bozuk
+    usb = tmp_path / "usb"
+    usb.mkdir()
+
+    rapor, _ = topla_ve_yaz(logs, usb)
+
+    assert rapor.basarili, (
+        "tek bozuk segment yüzünden teslim 'başarısız' sayıldı — aşırı tepki"
+    )
+    metin = " ".join(rapor.uyarilar)
+    assert "seg_0003.mp4" in metin, "bozuk segment raporda ADIYLA anılmadı"
+    assert "1/4 mp4 AÇILMIYOR" in metin, f"sayı yanlış: {metin[:200]}"
