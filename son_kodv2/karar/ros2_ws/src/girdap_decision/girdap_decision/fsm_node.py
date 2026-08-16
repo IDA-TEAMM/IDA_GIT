@@ -74,7 +74,7 @@ from mavros_msgs.msg import StatusText
 from nav_msgs.msg import Odometry, Path
 from sensor_msgs.msg import Imu
 
-from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.qos_profiles import latched_qos, sensor_data_qos
 from girdap_decision.yeniden_baslama import (
     RESET_SERVICE,
     ResetYayinci,
@@ -251,6 +251,17 @@ class FSMNode(Node):
         # Video senaryosu (tek parkur, kamikaze yok) buradan temiz durur.
         self._sub_complete = self.create_subscription(
             Bool, "/girdap/mission/complete", self._on_mission_complete, 10
+        )
+        # 🔴 16.08 EKLENDİ — `p3_bekleniyor` hiçbir yerde True YAPILMIYORDU.
+        # Geçiş kuralı `mission_complete + p3_bekleniyor → PARKUR3`; ikinci
+        # şart hiç sağlanmadığı için FSM **PARKUR3'e asla geçmiyordu** ⇒
+        # Parkur-3 = 0 (145 puan, toplamın %48'i) ve bu SESSİZ olurdu.
+        # Kaynak: `kamikaze_param_node`'un yayınladığı hedef rengi.
+        # Latched QoS: renk kalkıştan ÖNCE yükleniyor (md s.22), bizden önce
+        # yayınlanmış olabilir — latch olmasa o mesajı kaçırırdık.
+        self._sub_hedef_rengi = self.create_subscription(
+            String, "/girdap/mission/hedef_rengi", self._on_hedef_rengi,
+            latched_qos(),
         )
         # Sprint 4 parkur katmanı: waypoint-varış + çarpma placeholder.
         # PAR-09: gerçek görev geldiğinde parkur senkronunu doğrula.
@@ -517,6 +528,25 @@ class FSMNode(Node):
         """
         if msg.data:
             self._obs.mission_complete = True
+
+    def _on_hedef_rengi(self, msg: String) -> None:
+        """Hedef rengi yüklendi/temizlendi → `p3_bekleniyor` kapısı.
+
+        Boş dize = renk atanmamış ⇒ P3 **hiç açılmaz** ve bu DOĞRU davranış:
+        İHA rengi bulamamışsa tekne son waypoint'te temiz durur, P1+P2 puanı
+        korunur (yanlış hedefe saldırmak 100→50, iki yanlış 100→5 — md s.25).
+
+        Latch'siz olsaydı: renk kalkıştan önce bir kez yayınlanıyor; fsm_node
+        yeniden başlarsa o mesajı bir daha görmezdi ve P3 sessizce ölürdü.
+        """
+        yeni = bool(msg.data.strip())
+        if yeni != self._obs.p3_bekleniyor:
+            self._obs.p3_bekleniyor = yeni
+            # WARN bilinçli: operatör koşu öncesi bunu GÖRMELİ.
+            self.get_logger().warn(
+                f"PARKUR-3 kapisi {'ACIK' if yeni else 'KAPALI'} — "
+                f"hedef rengi = {msg.data.strip() or 'ATANMAMIS'}"
+            )
 
     def _on_waypoints(self, msg: Path) -> None:
         """PAR-09: FC görevi geldi — parkur etiketleri onunla hizalı mı?

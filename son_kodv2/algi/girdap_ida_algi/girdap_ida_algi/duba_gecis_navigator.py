@@ -354,6 +354,28 @@ KAYIT_HZ = 2.0            # şart ≥1 Hz; 2 Hz pay bırakır (VPU'ya ek yük yo
 HEDEF_HZ = 2.0
 TARGETS_TOPIC = "/perception/targets"
 
+#: 🔴 PARKUR-3 HEDEF YAYINI ANA ŞALTERİ — VARSAYILAN **KAPALI** (16.08.2026).
+#: Eyüp kararı: *"Parkur 3'ü şimdilik aktif etme, testte bozar; Parkur 1 ve
+#: Parkur 2'yi ölçüyoruz."*
+#:
+#: Kapalıyken: `/perception/targets` HİÇ yayınlanmaz, bbox kırpma + renk
+#: analizi HİÇ koşmaz ⇒ P1/P2 ölçümü P3 kodundan **tamamen etkilenmez**
+#: (ne CPU, ne log gürültüsü, ne de topic trafiği).
+#:
+#: ⚠ BU ŞALTER *BÜYÜK CİSİM SÜZGECİNİ* KAPATMAZ — o bilerek parkurdan
+#: bağımsız ve her zaman açık: P3 hedefi Ø64 cm, 25 m'den 7,7 px eder ve
+#: tekne daha **P2'nin İÇİNDEYKEN** görür. Kenar/engel diye yayınlanırsa
+#: füzyon `EdgeBuoyMemory`'ye KALICI kenar yazar → hayalet kapı → **P2'de
+#: rota bozulur**. Yani süzgeç P3 için değil, P2'yi KORUMAK için var.
+#:
+#: Açmak için (yarışma günü, kalkıştan önce) — servis dosyasına ekle:
+#:     Environment=GIRDAP_P3_HEDEF=1
+#: (ROS parametresi değil: bu node'da `declare_parameter` altyapısı yok;
+#: ortam değişkeni tek satırlık ve systemd'den yönetilebilir.)
+P3_HEDEF_YAYINI = os.environ.get("GIRDAP_P3_HEDEF", "0").strip() in (
+    "1", "true", "True", "evet"
+)
+
 #: 🔴 STEREO YOKKEN hedef ayrımı — 16.08.2026, ÖLÇÜMLE belirlendi.
 #: Menzil yoksa boyut kapısı kurulamaz (mono z zaten Ø0,30 varsayımından
 #: türetilir ⇒ kıyas dairesel). Geriye tek ayırt edici kalıyor: RENK.
@@ -863,6 +885,11 @@ class DubaNavigator(Node):
         Boş liste de yayınlanır: tüketici *"hedef yok"* ile *"node ölmüş"*ü
         ayırt edebilsin.
         """
+        # 🔴 ANA ŞALTER — varsayılan KAPALI (bkz. P3_HEDEF_YAYINI).
+        # En başta, hız kapısından da ÖNCE: kapalıyken bbox kırpma ve renk
+        # analizi hiç koşmasın, P1/P2 ölçümü temiz kalsın.
+        if not P3_HEDEF_YAYINI:
+            return
         if simdi - self._son_hedef_t < 1.0 / HEDEF_HZ:
             return
         self._son_hedef_t = simdi
