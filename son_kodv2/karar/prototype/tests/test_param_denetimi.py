@@ -19,13 +19,25 @@ GERCEK_13_08 = {
     "FRAME_CLASS": 2.0, "SERVO1_FUNCTION": 74.0, "SERVO3_FUNCTION": 73.0,
     "BATT_VOLT_MULT": 5.091626, "SERIAL2_BAUD": 921.0, "ARMING_REQUIRE": 1.0,
     "SR2_EXT_STAT": 10.0, "SR2_EXTRA1": 10.0, "SR2_POSITION": 10.0,
+    # ⚠ 13.08'de OKUNMADI (o gün ölümcül listede yoktu). Buradaki 0.0
+    # **16.08 göl testinde ölçüldü** ve ArduPilot varsayılanıdır — kimse
+    # dokunmadığı için 13.08'de de 0 olduğu kesine yakın. Geriye doldurulmuş
+    # bir değerdir, o günün dökümünden gelmez.
+    "GPS1_DELAY_MS": 0.0,
 }
 
 DOGRU = {ad: b.deger for ad, b in OLUMCUL.items()}
 
 
 def test_13_agustos_gercek_sapmasi_YAKALANIYOR() -> None:
-    """O günün gerçek Pix durumu → tam 6 ölümcül bulgu.
+    """O günün gerçek Pix durumu → tam 7 ölümcül bulgu.
+
+    ⚠ 16.08 (§1.20g): küme 6'dan 7'ye çıktı — `GPS1_DELAY_MS` eklendi.
+    0 = "gecikmeyi u-blox sürücüsüne sor"; sürücü cevap veremeyince EKF3 HİÇ
+    başlamıyor, `LOCAL_POSITION_NED` ölüyor ve GUIDED istekleri reddediliyor.
+    Göl testinde 2,5 saat kaybettirdi; GPS sağlıklı göründüğü (31 uydu, 3B
+    fix) için hiçbir bekçi göstermedi. §1.20g'nin dersi, MOT_THR_MIN'inkiyle
+    aynı: listede olmayan değer hem yakalanmaz hem referansa bozuk donar.
 
     ⚠ 16.08: bulgu kümesinden `BATT_MONITOR` DÜŞTÜ — sayı 7'den 6'ya indi.
     Sebep fixture değil BEKLENTİ: kaptan kararıyla batarya izleme kapatıldı
@@ -46,7 +58,7 @@ def test_13_agustos_gercek_sapmasi_YAKALANIYOR() -> None:
     adlar = {x.ad for x in b}
     assert adlar == {
         "INS_POS1_X", "INS_POS1_Y", "INS_POS1_Z", "GPS1_POS_Y",
-        "MOT_THR_MIN", "FS_ACTION",
+        "MOT_THR_MIN", "FS_ACTION", "GPS1_DELAY_MS",
     }, f"beklenmeyen bulgu kumesi: {adlar}"
 
 

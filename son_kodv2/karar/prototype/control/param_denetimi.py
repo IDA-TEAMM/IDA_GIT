@@ -63,6 +63,14 @@ OLUMCUL: Dict[str, Beklenti] = {
     "GPS1_POS_X": Beklenti(-0.035, "GPS anteni konumu ÖLÇÜLDÜ; sıfır/ters ise EKF kol mesafesini yanlış kullanır"),
     "GPS1_POS_Y": Beklenti(-0.16, "GPS anteni ÖLÇÜLDÜ −0.16 (iskele). 13.08'de FC'de +0.16 bulundu — İŞARET TERS, 32 cm'lik yanlış kol"),
     "GPS1_POS_Z": Beklenti(-0.365, "GPS anteni konumu ÖLÇÜLDÜ"),
+    # 16.08 göl testi (§1.20g): 0 = "gecikmeyi sürücüye sor" demek; u-blox
+    # sürücüsü modülün hardware generation'ını çözemeyince get_lag() false
+    # döner ve EKF3 HİÇ BAŞLAMAZ — FC 10 sn'de bir `EKF3 waiting for GPS
+    # config data` basar, LOCAL_POSITION_NED akışı komple ölür, GUIDED
+    # istekleri `Flight mode change failed` ile reddedilir. Sahada 2,5 saat
+    # kaybettirdi ve HİÇBİR bekçi göstermedi: GPS'in kendisi sağlıklı
+    # görünüyordu (31 uydu, 3B fix, 10 Hz). 200 yazılınca EKF anında açıldı.
+    "GPS1_DELAY_MS": Beklenti(200.0, "0 = otomatik; u-blox surucusu lag veremezse EKF3 HIC baslamaz, GUIDED reddedilir (§1.20g). Sabit deger surucu sorgusunu baypas eder"),
     # --- Eyleyici: 0 iken ölü bant aşılamaz, düşük komutlar motoru döndürmez
     # ⚠ TEKRARLAYAN REGRESYON: 10.08'de de 0'a düşmüş, geri yazılmıştı
     # (`fc_param_uzlasma_2026-08-10.md`); 13.08'de YİNE 0 bulundu. İkinci kez
