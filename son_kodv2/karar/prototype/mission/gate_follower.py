@@ -71,6 +71,9 @@ _AIM_MAX_ADIM = 64
 # arızayı kapatır. (Kilitlendikten sonraki oklüzyon koruması aynen sürer.)
 ONAY_TICK = 2
 
+#: F-K.5 bayat kilit bırakma katsayısı (float('inf') → kapalı; A/B için).
+_BAYAT_KILIT_KATSAYI = 2.0
+
 
 @dataclass(frozen=True)
 class GateFollowerConfig:
@@ -815,6 +818,11 @@ class GateFollower:
         self._committed: Optional[Gate] = None
         # B5 — kilitlenme ÖNCESİ onay penceresi: aday kapı + üst üste görülme
         # sayısı. `ONAY_TICK`'e ulaşmadan kilitlenilmez (bkz. sabit).
+        # F-K.5: bayat kilit bırakma durumu — kilitlendiği andaki mesafe (d0),
+        # o gün bu yana katedilen yol ve son araç konumu.
+        self._kilit_d0: Optional[float] = None
+        self._kilit_yolu: float = 0.0
+        self._son_arac: Optional[Point] = None
         self._aday: Optional[Gate] = None
         self._aday_sayaci: int = 0
         # Onayı en son ilerleten algı karesinin kimliği (bkz. update/gozlem_no).
@@ -853,6 +861,9 @@ class GateFollower:
         self._aday = None
         self._aday_sayaci = 0
         self._son_onay_gozlemi = None
+        self._kilit_d0 = None
+        self._kilit_yolu = 0.0
+        self._son_arac = None
 
     def reset_passed_gates(self) -> None:
         """Geçiş sayacını sıfırla — YALNIZ yeniden başlamada.
@@ -952,6 +963,10 @@ class GateFollower:
         gözlem sayılır (çekirdeği doğrudan çağıran testler/simülasyon için).
         """
         self.last_diagnostics = GateDiagnostics()
+        # F-K.5: kilitten bu yana KATEDİLEN YOL — bayat kilit bırakma ölçütü.
+        if self._son_arac is not None and self._committed is not None:
+            self._kilit_yolu += _dist(self._son_arac, vehicle)
+        self._son_arac = vehicle
         fresh = select_gate(
             vehicle, coarse_target, edge_buoys, self._cfg,
             self.last_diagnostics, obstacles,
@@ -1009,6 +1024,28 @@ class GateFollower:
                     fresh.midpoint, self._committed.midpoint
                 ) <= self._committed.width / 2.0:
                     self._committed = fresh
+                    self._kilit_yolu = 0.0     # taze görüldü → yol sayacı sıfır
+                # 🔴 F-K.5 (16.08, §1.22) — BAYAT KİLİT BIRAKILIR.
+                # Oklüzyon koruması kilidi taze algı olmadan da tutuyordu ve
+                # bırakma YALNIZ düzlem geçilince oluyordu; sahada bunun sonucu
+                # 12:02'de kurulan 10,8 m'lik hayalet kapının **30 dakika**
+                # kilitli kalması ve o süre boyunca hiçbir gerçek kapının
+                # seçilememesi oldu (geçilen kapı: 0).
+                # Ölçüt AYARLANABİLİR BİR SÜRE DEĞİL, geometrik: kilitlendiği
+                # anda kapı `d0` uzaktaydı; manevrayla birlikte en fazla ~2·d0
+                # yol yeter. Bu yolu katettiğimiz hâlde kapı ne geçildi ne de
+                # tazelendiyse, o kapı orada değildir.
+                if (
+                    self._kilit_d0 is not None
+                    and self._kilit_yolu > _BAYAT_KILIT_KATSAYI * self._kilit_d0 + self._committed.width
+                ):
+                    self._committed = None     # geçilmiş SAYILMAZ, yalnız bırakılır
+                    self._kilit_d0 = None
+                    self._kilit_yolu = 0.0
+                    return GateResult(
+                        target=coarse_target, gate=None, used_fallback=True,
+                        surus_hedefi=coarse_target,
+                    )
                 return GateResult(
                     target=self._committed.drive_target,
                     gate=self._committed,
@@ -1058,6 +1095,8 @@ class GateFollower:
             )
 
         self._committed = fresh
+        self._kilit_d0 = _dist(vehicle, fresh.midpoint)   # F-K.5 referans mesafe
+        self._kilit_yolu = 0.0
         self._aday = None
         self._aday_sayaci = 0
         return GateResult(

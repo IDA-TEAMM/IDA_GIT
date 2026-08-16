@@ -1024,3 +1024,62 @@ def test_FK3_kurs_ekseni_GECILEN_KAPIDAN_ogrenilir() -> None:
     takip.update((0.0, 8.0), (0.0, 20.0), dubalar, [], gozlem_no=99)  # düzlem geçildi
     assert takip._kurs_ekseni is not None, "kurs ekseni öğrenilmedi"
     assert takip._kurs_ekseni[1] > 0.9, "eksen kurs yönünde değil"
+
+
+def test_FK5_BAYAT_KILIT_BIRAKILIR_ve_GECILMIS_SAYILMAZ() -> None:
+    """F-K.5 (16.08 göl testi, §1.22): görülmeyen kilit sonsuza kadar tutulmaz.
+
+    🔴 **Ölçülen arıza.** Oklüzyon koruması kilidi taze algı olmadan da
+    tutuyordu ve bırakma YALNIZ düzlem geçilince oluyordu. Sahada 12:02'de
+    10,8 m'lik bir hayalet kapıya kilitlenildi; kapı bir daha hiç görülmedi,
+    hiç geçilmedi ve kilit koşumun sonuna kadar üstünde kaldı — o süre boyunca
+    GERÇEK hiçbir kapı seçilemedi (günlükte geçilen kapı: 0).
+
+    📏 **Düzeltmenin ölçüsü ayarlanabilir bir SÜRE değil, geometri:** kapı
+    kilitlendiği anda `d0` uzaktaydı; manevrayla birlikte ~2·d0 yol yeter.
+    Bu yol katedildiği hâlde kapı ne tazelendi ne geçildiyse orada değildir.
+
+    ✅ **Aynı bantta A/B (14 363 algı karesi, 16.08 kaydı):**
+        eski hâl → GEÇİLEN 2, kilit genişliği medyan 3,4 m
+        F-K.5    → GEÇİLEN 7, kilit genişliği medyan 2,3 m
+    ⚠ Bırakma "geçildi" SAYILMAZ: `gecilen_kapilar` büyümemeli, yoksa
+    hayalet kapı md 5.5.2.4 kanıtını şişirirdi.
+    """
+    takip = GateFollower()
+    dubalar = [(-1.5, 10.0), (1.5, 10.0)]
+    for i in range(ONAY_TICK + 1):
+        takip.update((0.0, 0.0), (0.0, 20.0), dubalar, [], gozlem_no=i)
+    assert takip.committed_gate is not None, "kapı kilitlenmedi (ön koşul)"
+    onceki_gecis = len(takip.gecilen_kapilar)
+
+    # Kapı bir daha GÖRÜLMÜYOR (algı sustu) ve araç kapıya gitmiyor: yana
+    # doğru 2·d0'dan fazla yol alıyor. d0 = 10 m ⇒ 25 m yeter.
+    komsu = None
+    for adim in range(1, 26):
+        sonuc = takip.update((float(adim), 0.0), (0.0, 20.0), [], [], gozlem_no=100 + adim)
+        if sonuc.gate is None:
+            komsu = adim
+            break
+    assert komsu is not None, "bayat kilit hiç bırakılmadı (F-K.5 çalışmıyor)"
+    assert takip.committed_gate is None
+    assert len(takip.gecilen_kapilar) == onceki_gecis, (
+        "bayat kilit GEÇİLMİŞ sayıldı — md 5.5.2.4 kanıtı şişer"
+    )
+
+
+def test_FK5_kapiya_GIDERKEN_kilit_birakilmaz() -> None:
+    """F-K.5 yanlış alarm vermemeli: kapıya doğru ilerlerken kilit korunur.
+
+    Bayatlık sayacı taze görüşte SIFIRLANIR; kapı görünmese bile araç ona
+    doğru gittiği sürece 2·d0 yolu dolmaz. Yoksa düzeltme, oklüzyon korumasını
+    (H1/§0.21: direkler kapı ağzında kadrajdan çıkar) geri kırardı.
+    """
+    takip = GateFollower()
+    dubalar = [(-1.5, 10.0), (1.5, 10.0)]
+    for i in range(ONAY_TICK + 1):
+        takip.update((0.0, 0.0), (0.0, 20.0), dubalar, [], gozlem_no=i)
+    assert takip.committed_gate is not None
+    # Kapıya doğru 9 m ilerle, kapı görünmüyor (oklüzyon) — kilit DURMALI.
+    for adim in range(1, 10):
+        sonuc = takip.update((0.0, float(adim)), (0.0, 20.0), [], [], gozlem_no=200 + adim)
+        assert sonuc.gate is not None, f"{adim} m'de kilit haksız yere bırakıldı"
