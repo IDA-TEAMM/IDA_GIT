@@ -740,3 +740,271 @@ def test_KAR02_sebep_disarm_cagrisindan_ONCE_yayinlanir(ros_context) -> None:  #
         assert sira[0] == "sebep", f"sira yanlis: {sira}"
     finally:
         n.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# §0.61 — SİSTEM SAATİ ADIMLANMASI SAHTE FAILSAFE ÜRETMEZ
+# --------------------------------------------------------------------------- #
+
+
+def _sabit_ros_saati(saniye: float):  # noqa: ANN202
+    """`get_clock()` yerine geçen, istenen anı gösteren sahte ROS saati."""
+
+    class _Saat:
+        def now(self):  # noqa: ANN201
+            class _T:
+                nanoseconds = int(saniye * 1e9)
+            return _T()
+
+    return lambda: _Saat()
+
+
+def test_061_sistem_saati_sicramasi_KILL_URETMEZ(ros_context) -> None:  # noqa: ANN001
+    """Canlı arıza birebir (13.08.2026 05:52:11, Jetson).
+
+    `systemd-timesyncd` sistem saatini **+1497,6 s** adımladı; aynı saniyede
+    `FAILSAFE — heartbeat kaybı (1497.6s) → KILL` basıldı ve mandallandı. Oysa
+    hat kopmamıştı: `/mavros/state` `connected: true`, uçuş kontrolcüsünde tek
+    bir failsafe mesajı yok. Aynı imza 11.08 16:05:17'de de var (1195,6 s).
+
+    Senaryo: FCU bağlı görüldü → SİSTEM SAATİ sıçradı (mesaj akışı hiç
+    kesilmedi) → izleme tick'i. KILL OLMAMALI.
+
+    ⚠ Bu test eski kodda (bayatlık `get_clock()`'tan okunurken) KIRMIZI verir;
+    yeşil kalması `_now`ın duvar saatine bağlı OLMADIĞInın kanıtıdır.
+    """
+    n = girdap.MavrosBridgeNode()
+    try:
+        n._on_state(_state_conn(connected=True))
+        # Saat adımı: ROS/duvar saati 1497,6 s ileri fırladı. Hat sağlam,
+        # yeni state mesajı gelmedi ama gerçek zamanda da süre GEÇMEDİ.
+        n.get_clock = _sabit_ros_saati(1_000_000.0)   # type: ignore[method-assign]
+        n._on_monitor()
+        assert n._killed is False, (
+            "saat adımı sahte heartbeat-KILL üretti (§0.61) — bayatlık ölçümü "
+            "duvar saatine geri dönmüş"
+        )
+    finally:
+        n.destroy_node()
+
+
+def test_061_sicrama_sonrasi_GERCEK_heartbeat_kaybi_hala_KILL(ros_context) -> None:  # noqa: ANN001
+    """Ters yön: düzeltme gerçek failsafe'i körleştirmemeli.
+
+    Saat adımından SONRA hat gerçekten koparsa (tek yönlü saatte 6 s geçti)
+    KILL eskisi gibi gelmeli — yoksa §0.61 düzeltmesi güvenliği kapatmış olur.
+    """
+    n = girdap.MavrosBridgeNode()
+    try:
+        t = {"now": 0.0}
+        n._now = lambda: t["now"]                     # tek yönlü sahte saat
+        n._on_state(_state_conn(connected=True))
+        n.get_clock = _sabit_ros_saati(1_000_000.0)   # type: ignore[method-assign]
+        t["now"] = 6.0                                # GERÇEKTEN 6 s geçti
+        n._on_monitor()
+        assert n._killed is True, "gerçek heartbeat kaybı KILL üretmeli"
+    finally:
+        n.destroy_node()
+
+
+def test_061_bayatlik_saati_duvar_saatinden_BAGIMSIZ(ros_context) -> None:  # noqa: ANN001
+    """Kablolama nöbetçisi: `_now` düğümün ROS saatine bakmamalı (donanımda)."""
+    import time as _time
+
+    n = girdap.MavrosBridgeNode()
+    try:
+        assert n._saat is _time.monotonic, (
+            "donanımda bayatlık saati tek yönlü olmalı (saat_kaynagi.bayatlik_saati)"
+        )
+        # Her okumada 1000 s ATLAYAN sahte ROS saati: `_now` buna bağlıysa iki
+        # okuma arasında dev bir fark görünür.
+        sayac = {"t": 0.0}
+
+        def _sicrayan_saat():  # noqa: ANN202
+            sayac["t"] += 1000.0
+
+            class _Saat:
+                def now(self):  # noqa: ANN201
+                    class _T:
+                        nanoseconds = int(sayac["t"] * 1e9)
+                    return _T()
+
+            return _Saat()
+
+        n.get_clock = _sicrayan_saat                  # type: ignore[method-assign]
+        once = n._now()
+        assert abs(n._now() - once) < 1.0, "_now ROS saatine bağlı kalmış"
+    finally:
+        n.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# F-S.15 — KILL MANDALI SEBEBİ GEÇİNCE TOPARLANIR (kaynağa göre)
+# --------------------------------------------------------------------------- #
+#
+# 🔴 NEYİ KORUYOR: `_killed` mandalının HİÇBİR temizleme yolu yoktu ve
+# `_on_monitor` mandal varken koşulsuz erken dönüyordu. İki sonucu vardı:
+#
+#   1. Tek bir KILL, oturumun geri kalanında heartbeat / beklenmedik-disarm /
+#      RC-kill izlemesinin ÜÇÜNÜ DE kapatıyordu.
+#   2. Köprü `/girdap/mission/reset` fan-out'unun DIŞINDAYDI (md 5.5.3.1) →
+#      operatör yeniden başlatınca görev durumu KILL'den çıkıyor, tekne
+#      sürmeye devam ediyor, ama köprünün bekçisi KAPALI kalıyordu. Yani
+#      yeniden başlama sonrası araç FAILSAFE'SİZ sürüyordu.
+#
+# 13.08 canlı olayında (§0.61) mandal saat sıçraması yüzünden YANLIŞ kurulmuştu;
+# kaptanın ifadesiyle *"yanlış bir ortamda başlatınca sorun oluyor"* — şartlar
+# düzelince sistemin toparlanması gerekiyor.
+#
+# ⚠ SINIR: temizleme aracı ARM ETMEZ, thrust vermez; yalnız bekçiyi geri açar.
+# Görev durumu KILL'den kendiliğinden ÇIKMAZ (o operatörün yeniden başlama
+# hakkı, md 5.5.3.1 — puan sıfırlanır, otomatikleştirilemez).
+
+
+def _kill_ettir(n, sebep: str = "heartbeat_kaybi:6.2s") -> None:  # noqa: ANN001
+    """Köprüyü verilen sebeple KILL'e sok (servis çağrıları sahte)."""
+    n._pub_kill_reason.publish = lambda m: None
+    n._cli_arm.service_is_ready = lambda: False        # type: ignore[method-assign]
+    n._cli_kill.service_is_ready = lambda: False       # type: ignore[method-assign]
+    n._trigger_kill(sebep)
+
+
+def test_FS15_heartbeat_geri_gelince_mandal_TEMIZLENIR(ros_context) -> None:  # noqa: ANN001
+    """Otomatik kaynak: hat geri geldi ve histerezis doldu → mandal düşer."""
+    n = girdap.MavrosBridgeNode()
+    try:
+        t = {"now": 0.0}
+        n._now = lambda: t["now"]
+        n._on_state(_state_conn(connected=True))
+        _kill_ettir(n)
+        assert n._killed is True
+
+        # Hat geri geldi ama histerezis (3 s) daha dolmadı.
+        t["now"] = 10.0
+        n._on_state(_state_conn(connected=True))
+        n._on_monitor()
+        assert n._killed is True, "histerezis dolmadan temizlenmemeli"
+
+        # 3 s boyunca sağlıklı kaldı → temizlenir.
+        t["now"] = 12.0
+        n._on_state(_state_conn(connected=True))
+        n._on_monitor()
+        t["now"] = 13.5
+        n._on_state(_state_conn(connected=True))
+        n._on_monitor()
+        assert n._killed is False, "sebep geçtiği hâlde mandal asılı kaldı"
+        assert n._kill_kaynagi is None
+    finally:
+        n.destroy_node()
+
+
+def test_FS15_temizleme_sonrasi_GERCEK_kayip_YINE_KILL_eder(ros_context) -> None:  # noqa: ANN001
+    """🔑 Asıl kazanç: bekçi gerçekten geri açılmalı.
+
+    Eski kodda tek bir KILL'den sonra izleme oturum boyunca kapalıydı — yani
+    ikinci ve GERÇEK bir hat kaybı hiç fark edilmezdi.
+    """
+    n = girdap.MavrosBridgeNode()
+    try:
+        t = {"now": 0.0}
+        n._now = lambda: t["now"]
+        n._on_state(_state_conn(connected=True))
+        _kill_ettir(n)
+        for an in (10.0, 12.0, 13.5):
+            t["now"] = an
+            n._on_state(_state_conn(connected=True))
+            n._on_monitor()
+        assert n._killed is False
+
+        # Şimdi GERÇEKTEN hat gitti: 6 s yeni state yok.
+        t["now"] = 20.0
+        n._on_monitor()
+        assert n._killed is True, "bekçi geri açılmamış — ikinci kayıp kaçtı"
+    finally:
+        n.destroy_node()
+
+
+def test_FS15_baglanti_yokken_temizlenmez(ros_context) -> None:  # noqa: ANN001
+    """`connected=false` DE taze bir mesajdır — heartbeat taze, hat YOK."""
+    n = girdap.MavrosBridgeNode()
+    try:
+        t = {"now": 0.0}
+        n._now = lambda: t["now"]
+        n._on_state(_state_conn(connected=True))
+        _kill_ettir(n)
+        for an in (10.0, 12.0, 13.5, 15.0):
+            t["now"] = an
+            n._on_state(_state_conn(connected=False))
+            n._on_monitor()
+        assert n._killed is True, "hat yokken mandal temizlendi"
+    finally:
+        n.destroy_node()
+
+
+def test_FS15_OPERATOR_kaynakli_kill_kendiliginden_temizlenmez(ros_context) -> None:  # noqa: ANN001
+    """Yer istasyonu/FSM kill'i operatör NİYETİDİR — otomatik düşmez."""
+    n = girdap.MavrosBridgeNode()
+    try:
+        t = {"now": 0.0}
+        n._now = lambda: t["now"]
+        n._on_state(_state_conn(connected=True))
+        _kill_ettir(n, "fsm_kill:operator_veya_yki")
+        for an in (10.0, 12.0, 13.5, 20.0, 60.0):
+            t["now"] = an
+            n._on_state(_state_conn(connected=True))
+            n._on_monitor()
+        assert n._killed is True, "operatör KILL'i kendiliğinden düştü"
+    finally:
+        n.destroy_node()
+
+
+def test_FS15_RC_kill_kendiliginden_temizlenmez(ros_context) -> None:  # noqa: ANN001
+    """Donanım her zaman kazanır — RC anahtarı yalnız operatör sıfırlamasıyla."""
+    n = girdap.MavrosBridgeNode()
+    try:
+        t = {"now": 0.0}
+        n._now = lambda: t["now"]
+        n._on_state(_state_conn(connected=True))
+        _kill_ettir(n, "rc_kill:kanal8_pwm1000")
+        for an in (10.0, 12.0, 13.5, 60.0):
+            t["now"] = an
+            n._on_state(_state_conn(connected=True))
+            n._on_monitor()
+        assert n._killed is True, "RC KILL'i kendiliğinden düştü"
+    finally:
+        n.destroy_node()
+
+
+def test_FS15_operator_sifirlamasi_HER_kaynagi_temizler(ros_context) -> None:  # noqa: ANN001
+    """`/girdap/mission/reset` fan-out'u: köprü artık listeye DAHİL."""
+    n = girdap.MavrosBridgeNode()
+    try:
+        n._on_state(_state_conn(connected=True))
+        _kill_ettir(n, "rc_kill:kanal8_pwm1000")
+        n._yeniden_basla()                      # fan-out'un çağırdığı iş
+        assert n._killed is False, "operatör sıfırlaması köprüyü toparlamadı"
+    finally:
+        n.destroy_node()
+
+
+def test_FS15_bayrak_kapaliyken_ESKI_mandalli_davranis(ros_context) -> None:  # noqa: ANN001
+    """A/B: `kill_otomatik_temizleme=false` → eski davranış birebir."""
+    from rclpy.parameter import Parameter
+
+    n = girdap.MavrosBridgeNode(
+        parameter_overrides=[
+            Parameter("kill_otomatik_temizleme", Parameter.Type.BOOL, False)
+        ]
+    )
+    try:
+        t = {"now": 0.0}
+        n._now = lambda: t["now"]
+        n._on_state(_state_conn(connected=True))
+        _kill_ettir(n)
+        for an in (10.0, 12.0, 13.5, 60.0):
+            t["now"] = an
+            n._on_state(_state_conn(connected=True))
+            n._on_monitor()
+        assert n._killed is True, "bayrak kapalıyken mandal düştü"
+    finally:
+        n.destroy_node()

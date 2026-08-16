@@ -47,6 +47,7 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu, NavSatFix
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.saat_kaynagi import bayatlik_saati
 
 # GTSAM'a bağımlı DEĞİL (düz fonksiyon) — heading düzeltmesi için isam2
 # modunda da, bypass'ın kendi kullanımı için de gerekli; ikisi de güvenle
@@ -74,6 +75,9 @@ class FusionNode(Node):
     def __init__(self, **node_kwargs) -> None:
         # node_kwargs → parameter_overrides passthrough (test enjeksiyonu).
         super().__init__("fusion_node", **node_kwargs)
+        # §0.61: girdi bayatlığı (F8.2), velocity_body bayatlığı (F-P.7) ve GPS
+        # hız kapısı tek yönlü saatte. Odom/pose DAMGALARI duvar saatinde kalır.
+        self._saat = bayatlik_saati(self)
 
         # --- Parametreler (config/params.yaml ile override edilebilir) ---
         self.declare_parameter("use_isam2", True)       # false → video bypass
@@ -205,6 +209,36 @@ class FusionNode(Node):
         self._gps_kapi_pencere_s = float(self.get_parameter("gps_kapi_pencere_s").value)
         self._gps_kapi_min_dt_s = float(self.get_parameter("gps_kapi_min_dt_s").value)
         self._son_gps = None
+
+        # 🔴 F-F.1 (14.08.2026, §0.98a) — POZUN MAKULLÜK KAPISI.
+        # Ölçülen olay: 14.08 su koşumunda iSAM2 çözümü diverge etti ve bu
+        # düğüm `x=1,6e149` gibi bir pozu **10 Hz düzenlilikte** yayınlamaya
+        # devam etti. Uçuş kontrolcüsünün kendi pozu aynı anda sağlıklıydı
+        # (−8, 9 m). Aşağı akıştaki hiçbir bekçi görmedi çünkü üçü de
+        # TAZELİK ölçüyor: KAR-05 "hiç girdi geldi mi", F8.2 "girdi bayat mı",
+        # F-P.7 "hız bayat mı". Poz taze ve düzenliydi — yalnızca anlamsızdı.
+        # Sonuç: MPPI kendini (182, −931)'de sanıp bir süre GERİ komut verdi,
+        # sonra itki sıfırlandı ve GUIDED penceresi boyunca öyle kaldı.
+        #
+        # Kapı KAR-05'in kuralını sürdürür: **yalan söyleme, sus.** Değer
+        # makul değilse yayınlanmaz; tüketiciler zaten yokluğu doğru işliyor
+        # (POZ-YOK/POZ-BAYAT). Ayrıca `planning_node` aynı denetimi girişte
+        # tekrar yapar (savunma derinliği) ve orada `POZ-SACMA` sebebi
+        # üretilir — operatör telsizden arızanın ADINI görür.
+        #
+        # 5000 m nasıl seçildi: ENU orijini koşum başında araca çakılıyor
+        # (`_orijini_kaydet`) ve yarışma alanı birkaç yüz metre. 5 km hiçbir
+        # meşru koşumda aşılmaz ama equirectangular yaklaşımın bozulmadığı
+        # bölgede kalır. Ayarlanabilir bir eşik DEĞİL, "imkânsız"ın sınırı —
+        # KAR-06'daki `gps_max_hiz_mps=10` ile aynı mantık.
+        # 0 -> kapı kapalı (geriye tam uyum).
+        self.declare_parameter("poz_makul_menzil_m", 5000.0)
+        self._poz_makul_menzil = float(
+            self.get_parameter("poz_makul_menzil_m").value
+        )
+        self._poz_sacma_sayaci = 0
+        self._poz_sacma_uyari_t: float | None = None
+
         self._diag_timer = self.create_timer(5.0, self._log_diag)
 
         mode = "iSAM2" if self._use_isam2 else "MAVROS EKF geçişi (video)"
@@ -282,7 +316,7 @@ class FusionNode(Node):
 
     def _mark_input(self) -> None:
         """F8.2: poz kaynağını süren bir girdi geldi — bayatlık saatini sıfırla."""
-        self._last_input_t = self.get_clock().now().nanoseconds * 1e-9
+        self._last_input_t = self._saat()
         if self._stale_warned:
             self._stale_warned = False
             self.get_logger().info("poz kaynağı geri geldi — odom yayını sürüyor")
@@ -311,7 +345,7 @@ class FusionNode(Node):
         self._last_vx = msg.twist.linear.x
         self._last_vy = msg.twist.linear.y
         self._last_wz = msg.twist.angular.z
-        self._last_vel_t = self.get_clock().now().nanoseconds * 1e-9  # F-P.7
+        self._last_vel_t = self._saat()  # F-P.7
         if self._use_isam2:
             self._source.on_velocity(msg.twist.linear.x, msg.twist.linear.y)
         self._n_vel += 1
@@ -321,7 +355,7 @@ class FusionNode(Node):
         gelmediyse False (boot gürültüsü, F-P.1/F8.2 ile aynı ilke)."""
         if self._vel_timeout_s <= 0.0 or self._last_vel_t is None:
             return False
-        now = self.get_clock().now().nanoseconds * 1e-9
+        now = self._saat()
         return (now - self._last_vel_t) > self._vel_timeout_s
 
     def _on_gps(self, msg: NavSatFix) -> None:
@@ -390,7 +424,7 @@ class FusionNode(Node):
         # sonra da uygulanmaz — arac gercekten hareket etmis olabilir. Kapi
         # yalniz ARDISIK ve YAKIN zamanli olcumler arasinda anlamlidir.
         if self._gps_max_hiz > 0.0:
-            simdi = self.get_clock().now().nanoseconds * 1e-9
+            simdi = self._saat()
             onceki = getattr(self, "_son_gps", None)
             if onceki is not None:
                 ox, oy, ot = onceki
@@ -523,6 +557,48 @@ class FusionNode(Node):
             f"{merkez[1]:.7f}) — respawn'da bu deger geri yuklenecek"
         )
 
+    def _poz_makul(self, x: float, y: float, psi: float) -> bool:
+        """F-F.1: poz sonlu ve makul menzilde mi? Değilse yayın YAPILMAZ.
+
+        İki ayrı bozulma yakalanır:
+          1. `nan`/`inf` — filtre çöktüğünde ilk çıkan değer genelde budur;
+             karşılaştırma operatörleri `nan` ile hep `False` döndüğü için
+             menzil testi TEK BAŞINA yetmez, `isfinite` şart.
+          2. sonlu ama saçma büyüklük — 14.08'de ölçülen hâl (10¹⁴⁹).
+
+        ψ de denetlenir: `atan2` üretmesi gerektiği için normalde sonludur,
+        ama diverjansta `nan` olur ve `sin/cos` sessizce `nan` quaternion
+        üretip aşağı akışa taşırdı.
+        """
+        if self._poz_makul_menzil <= 0.0:
+            return True                       # kapı kapalı (geriye uyum)
+        sonlu = math.isfinite(x) and math.isfinite(y) and math.isfinite(psi)
+        if sonlu and math.hypot(x, y) <= self._poz_makul_menzil:
+            if self._poz_sacma_sayaci:
+                self.get_logger().info(
+                    f"poz makul araliga dondu ({self._poz_sacma_sayaci} "
+                    "mesaj atlanmisti) — odom yayini sürüyor"
+                )
+                self._poz_sacma_sayaci = 0
+                self._poz_sacma_uyari_t = None
+            return True
+
+        self._poz_sacma_sayaci += 1
+        # Telsiz/günlük seli olmasın: ilk olayda ve sonra 5 saniyede bir.
+        simdi = self._saat()
+        if (self._poz_sacma_uyari_t is None
+                or simdi - self._poz_sacma_uyari_t >= 5.0):
+            self._poz_sacma_uyari_t = simdi
+            self.get_logger().error(
+                f"🔴 POZ SACMA: x={x:.3e} y={y:.3e} psi={psi:.3e} — "
+                f"sonlu={sonlu}, menzil siniri {self._poz_makul_menzil:.0f} m. "
+                f"odom YAYINLANMIYOR ({self._poz_sacma_sayaci} mesaj atlandi). "
+                "Fuzyon cozumu diverge etmis olabilir (§0.98a): pusula hatasi "
+                "→ celiskili kisit → iSAM2 kacisi. Kacis yolu: "
+                "use_isam2:=false (ucus kontrolcusunun kendi pozu)."
+            )
+        return False
+
     def _on_publish_timer(self) -> None:
         try:
             x, y, psi = self._source.current_pose()
@@ -558,7 +634,7 @@ class FusionNode(Node):
 
         # F8.2: girdi akışı kesildiyse DONMUŞ pozu yayınlamaya devam etme.
         if self._pose_timeout_s > 0.0 and self._last_input_t is not None:
-            age = self.get_clock().now().nanoseconds * 1e-9 - self._last_input_t
+            age = self._saat() - self._last_input_t
             if age > self._pose_timeout_s:
                 if not self._stale_warned:
                     self._stale_warned = True
@@ -567,6 +643,10 @@ class FusionNode(Node):
                         "KESİLDİ (bayat pozla plan yapılmasın)"
                     )
                 return
+
+        # F-F.1: makullük kapısı — bkz. __init__'teki gerekçe (§0.98a).
+        if not self._poz_makul(x, y, psi):
+            return
 
         now = self.get_clock().now().to_msg()
         qz = math.sin(psi / 2.0)
@@ -595,10 +675,7 @@ class FusionNode(Node):
         if self._vel_stale():
             if not self._vel_stale_warned:
                 self._vel_stale_warned = True
-                age = (
-                    self.get_clock().now().nanoseconds * 1e-9
-                    - (self._last_vel_t or 0.0)
-                )
+                age = self._saat() - (self._last_vel_t or 0.0)
                 self.get_logger().warn(
                     f"velocity_body {age:.1f}s'dir sessiz — odom twist'i "
                     "sıfırlandı (F-P.7: bayat hızla MPPI beslenmesin)"

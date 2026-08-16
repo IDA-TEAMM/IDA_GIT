@@ -25,8 +25,9 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from dataclasses import dataclass, replace
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -47,6 +48,17 @@ from prototype.planning.rrt_star import (
 
 # Aracın hareket ettiği parkur durumları (bunların dışında motor stop)
 _ACTIVE_STATES = ("PARKUR1", "PARKUR2", "PARKUR3")
+
+# --- ölçülmüş gövde boyutları (GateFollowerConfig ile AYNI olmak zorunda;
+#     `test_ayak_izi_temizleme.py` ikisini bağlar) ---------------------------
+GOVDE_BOYU_M = 1.04          # ölçüldü 09.08
+GOVDE_ENI_M = 0.785          # ölçüldü 09.08
+#: Gövdeyi çevreleyen dairenin yarıçapı — köşegenin yarısı. Ayak izi
+#: temizlemesinin ölçüsü budur; uydurulmuş bir pay değil, teknenin kendisi.
+GOVDE_CEVREL_YARICAP_M = 0.5 * math.hypot(GOVDE_BOYU_M, GOVDE_ENI_M)   # 0,651 m
+
+if TYPE_CHECKING:                      # yalnız tip denetimi için
+    from prototype.planning.plan_isci import PlanIscisi
 
 
 @dataclass(frozen=True)
@@ -119,6 +131,43 @@ class PlanningPipelineConfig:
     """Boru hattı ayarları — ROS 2 parametre arayüzünden aynı isimle gelir."""
 
     replan_proximity: float = 2.0        # m, RRT* replan tetiği
+    # 🔴 F-P.9 (13.08.2026) — REPLAN FRENLERİ. Sahada ölçüldü (§0.66/§0.69):
+    # `planning_node` tek thread'de koşar (`rclpy.spin`) ve RRT* AYNI thread'de
+    # çalışır. Jetson'da `plan()` 100 engelle ortanca 510 ms / en kötü 1491 ms
+    # sürüyor; kontrol bütçesi 100 ms. Bloklama iki yoldan birden vuruyor:
+    # (a) o sürede `cmd_vel` yayınlanmıyor — ArduPilot GUIDED'da 3 sn komut
+    #     gelmezse aracı DURDURUR, öncesinde ise SON komutu sürdürür (kör sürme);
+    # (b) düğümün kendi abonelikleri işlenmiyor → `_last_odom_t` yaşlanıyor →
+    #     KENDİ bekçisi (F-P.1) "poz bayat" deyip thrust'ı sıfırlıyor.
+    #     Ölçülen kanıt: "poz 2,4 s bayat" yazarken füzyon 50 Hz yayındaydı.
+    # Bu iki fren kökü çözmez (o, planlayıcıyı AYRI SÜRECE almaktır — Python
+    # GIL yüzünden ayrı THREAD yetmez), ama RRT* çağrı sıklığını ~10 Hz'ten
+    # ≤1 Hz'e indirir.
+    # 🔑 FREN SABİT DEĞİL, SON PLANIN SÜRESİNE GÖRE: `aralık = min(katsayı ×
+    # son_plan_süresi, tavan)`. Sabit bir sayı seçilmedi çünkü `plan()` maliyeti
+    # sahneyle 5 kat değişiyor (Jetson ölçümü: 0 duba 173 ms · 20 duba 331 ms ·
+    # 100 engel 510 ms · en kötü 1491 ms). Kural, ağır sahnede kendiliğinden
+    # geri çekilir, ucuz sahnede tepkiselliği bırakır.
+    #: Körlük payı katsayısı. `plan()` koşarken düğüm kördür; kör oran =
+    #: T_plan/(T_plan+aralık) = 1/(1+katsayı). 3.0 → **≤ %25**. 0 → fren kapalı
+    #: (eski davranış birebir).
+    replan_bosluk_katsayisi: float = 3.0
+    #: Frenin tavanı (s) — TAZELİK sınırı. Global rota, tekne `replan_proximity`
+    #: kadar yol almadan tazelenmeli: 2,0 m ÷ **1,05 m/s** (ölçülmüş gerçek
+    #: seyir hızı, CLAUDE.md dinamik log 58) = 1,9 s. Ayrıca ArduPilot'ın 3 s'lik
+    #: GUIDED zaman aşımının altında kalır (aralık + T_plan < 3 s).
+    replan_max_interval_s: float = 1.9
+    # 🔴 F-P.10 (13.08.2026) — RRT* AYRI SÜREÇTE (bkz. `plan_isci.py`).
+    # Ampirik ölçüm (bu Jetson, 10 Hz döngü, CUDA'lı ebeveyn): senkron planda
+    # döngünün en kötü gecikmesi **370,7 ms**, asenkron kolda **1,1 ms** —
+    # yani planlama hiç yokmuş gibi. Ayrı THREAD yetmez (GIL); ayrı SÜREÇ şart.
+    #: ⚠ VARSAYILAN **KAPALI**. Prototip/çevrimdışı kullanım (viz, senaryo
+    #: koşumu, birim testler) planı AYNI turda ister — asenkron kol orada
+    #: belirlenimsizlik üretirdi. Üretimde `planning_node` açar (params.yaml
+    #: `plan_isci_enabled: true`); açık olduğunda İLK plan yine senkrondur.
+    plan_isci_enabled: bool = False
+    #: İşçiden yanıt beklenecek üst süre (s) — aşılırsa işçi öldürülüp yenilenir.
+    plan_isci_zaman_asimi_s: float = 5.0
     # F10.2: RRT* örnekleme alanı statik bounds ∪ (start/goal ± bu pay) —
     # odom origin boot konumu olduğundan araç/hedef negatif çeyreğe düşebilir;
     # statik [0,200]² tek başına orada plan üretemez (start bounds dışı →
@@ -198,7 +247,13 @@ class PlanningPipeline:
         cfg: Optional[PlanningPipelineConfig] = None,
         dynamics: Optional[CatamaranDynamics] = None,
         rrt_cfg: Optional[RRTStarConfig] = None,
+        saat: Optional[Callable[[], float]] = None,
+        isci: Optional["PlanIscisi"] = None,
     ) -> None:
+        # F-P.9: replan freni "ne kadar zaman GEÇTİ" sorar → TEK YÖNLÜ saat
+        # (F-S.14 kuralı: geçen süre monotonic, mutlak an duvar saati). Testler
+        # ve sim, kendi saatini enjekte edebilsin diye çağrılabilir alınıyor.
+        self._saat: Callable[[], float] = saat or time.monotonic
         self._bounds = bounds
         self.cfg = cfg or PlanningPipelineConfig()
         self._dyn = dynamics or CatamaranDynamics()
@@ -219,6 +274,9 @@ class PlanningPipeline:
 
         self._state = np.zeros(6)                    # [x, y, ψ, u, v, r]
         self._obstacles: List[CircleObstacle] = []
+        #: Dosya-3 haritasına çizilecek engeller (bkz. `set_gosterim_engelleri`).
+        #: None → harita kontrol listesinden çizilir (eski davranış).
+        self._gosterim_engelleri: Optional[List[CircleObstacle]] = None
         self._waypoints: List[Tuple[float, float]] = []
         self._ref_path: Optional[List[Tuple[float, float]]] = None
         self._mission_state = "BOOT"
@@ -229,6 +287,23 @@ class PlanningPipeline:
         self._engel_imzasi_son: Optional[Tuple] = None
         self._replan_sayisi = 0          # fiilen koşan RRT* sayısı
         self._replan_atlandi = 0         # gereksiz olduğu için atlanan çağrı
+        # F-P.9 fren durumu: son RRT* koşumunun ANI ve SÜRESİ (ikisi de tek
+        # yönlü saatte). Süre "bir sonraki koşuma ne kadar ara verilecek"i
+        # belirler; ölçüm yoksa (ilk plan) fren UYGULANMAZ.
+        self._son_replan_t: Optional[float] = None
+        self._son_plan_suresi_s: Optional[float] = None
+        self._replan_ertelendi = 0       # fren yüzünden ertelenen çağrı
+        #: son bildirilen arena taşması (m) — tekrar uyarı eşiği için
+        self._arena_tasmasi_m = 0.0
+        #: arena dışı hedefle planlanan tur sayısı (teşhis; 0 = hep içeride)
+        self.arena_tasma_sayisi = 0
+        # F-P.10 asenkron planlama durumu. İşçi TEMBEL kurulur: ilk asenkron
+        # ihtiyaç doğana kadar süreç başlatılmaz (her boru hattı nesnesi bir
+        # süreç doğurmasın — testler yüzlerce nesne kuruyor).
+        self._isci: Optional["PlanIscisi"] = isci
+        self._bekleyen_goal: Optional[Tuple[float, float]] = None
+        self._gonderim_t: Optional[float] = None
+        self._asenkron_plan = 0          # teşhis: işçiye giden istek sayısı
         self._duz_cizgiye_dusuldu = 0    # A1: RRT* reddedip düz çizgiye düşülen tur
         # F-S.10: PID yedek kontrolcü — cfg.control_mode="pid" iken kullanılır.
         self._pid = CascadeHeadingPidController(self.cfg.pid_cfg)
@@ -312,13 +387,244 @@ class PlanningPipeline:
             self._replan_atlandi += 1
             return
         self._engel_imzasi_son = imza
-        if self._ref_path is not None and self._needs_replan(obstacles):
-            self._obstacles = obstacles
+        self._obstacles = obstacles
+        if (
+            self._ref_path is not None
+            and self._needs_replan(obstacles)
+            and not self._replan_frenli()
+        ):
             self._global_replan()
-        else:
-            self._obstacles = obstacles
-            if self._mppi is not None:
-                self._rebuild_mppi()
+        elif self._mppi is not None:
+            # ⚠ FREN GÜVENLİĞİ ZAYIFLATMAZ: engeller her karede MPPI'ye
+            # verilir (soft ceza, 10 Hz). Ertelenen yalnız GLOBAL rotanın
+            # yenilenmesidir; kaçınma katmanı tam hızda çalışmaya devam eder.
+            self._rebuild_mppi()
+
+    def _planlama_engelleri(self) -> List[CircleObstacle]:
+        """AYAK İZİ TEMİZLEME — "tekne oradaysa orada engel yoktur".
+
+        🔴 **Ölçülen arıza (GIRDAP_DURUM §1.17d).** 17:06 göl koşumunda
+        `RRT* ValueError('start veya goal engel/sınır içinde')` **1 347 kez**
+        basıldı: hayalet duba bulutu teknenin KENDİ KONUMUNU engelin içinde
+        gösteriyordu. Hata yakalanıyor ve *"eski referans korunuyor"* deniyor —
+        yani düğüm ölmüyor ama **küresel yol 28 dakika boyunca hiç
+        tazelenmedi**. Kaptanın istediği *"sürekli yeniden çizsin"* davranışı
+        bu yüzden fiilen imkânsızdı.
+
+        🌐 **Dış karşılık — bu standart bir kurtarma, bize özgü bir yama
+        değil.** Nav2'nin engel katmanında `footprint_clearing_enabled`
+        parametresi vardır ve **öntanımlı `true`**'dur; işi *"aracın ayak izi
+        altındaki dolu hücreleri temizlemek"*. Kaynakta engeller işaretlendikten
+        SONRA, maliyetler birleştirilmeden ÖNCE
+        `setConvexPolygonCost(transformed_footprint_, FREE_SPACE)` çağrılır.
+        Nav2'nin kurtarma belgesi gerekçeyi bizim koşumumuzu tarif eder gibi
+        yazar: *"algı sistemindeki arızalar ortam gösterimini sahte engellerle
+        doldurur; maliyet haritasını temizleme kurtarması bunun için
+        tetiklenir."*
+
+        🔑 **Bizdeki karşılığı — daireyi SİLMEK değil KIRPMAK.** Nav2 yalnız
+        ayak izinin altındaki hücreleri boşaltır, engelin geri kalanı durur.
+        Daire gösteriminde bunun tam eşi: yarıçapı, daire gövde diskine artık
+        değmeyecek kadar küçültmek — `yeni_r = mesafe − gövde çevrel yarıçapı`.
+        · Merkez teknenin üstündeyse `yeni_r ≤ 0` → engel düşer (30 cm'lik bir
+          dubanın içinde yüzüyor olamayız; o gözlem yanlıştır).
+        · Tekne büyük bir kıyı kümesinin kenarındaysa daire yalnız birazcık
+          küçülür ve **gerçek engel haritada kalır** — bütün daireyi atmak
+          gerçek bir engeli silebilirdi.
+
+        🛟 **Doğruluk kanıtı (neden bu başlangıcı HER ZAMAN serbest yapar):**
+        kırpma sonrası her engel için `mesafe ≥ r + GOVDE_CEVREL_YARICAP_M`
+        olur. RRT* bir noktayı `mesafe < r + safety_margin` ise dolu sayar.
+        `GOVDE_CEVREL_YARICAP_M = 0,651 m > safety_margin = 0,5 m` olduğu
+        sürece başlangıç noktası tanım gereği serbesttir — yani yukarıdaki
+        1 347 ret **yapısal olarak** imkânsız hâle gelir. Bu eşitsizlik
+        uydurulmuş bir pay değil, teknenin ölçülmüş köşegeni; `safety_margin`
+        onun üstüne çıkarılırsa nöbetçi test kırmızıya döner
+        (`test_ayak_izi_temizleme.py`).
+
+        ⚠ Bu, çarpışma korumasını GEVŞETMEZ: kırpılan yalnız teknenin ŞU AN
+        işgal ettiği hacimdir. Oraya gitmemek diye bir seçenek zaten yok —
+        araç orada. Yolun geri kalanında engel tüm yarıçapıyla geçerlidir.
+
+        🔴 **YALNIZ KÜRESEL PLANLAYICIYA UYGULANIR — MPPI ham listeyi görmeye
+        devam eder.** Nav2 maliyet haritasını temizlediği için orada kontrolcü
+        de temizlenmiş hâli okur; biz bilerek ayrılıyoruz. Gerekçe: ölçülen
+        arıza planlayıcının SERT REDDİ (`raise`), MPPI'de böyle bir ret yok —
+        buna karşılık gövdeye değen gerçek bir engel MPPI'nin ikinci dereceden
+        bariyerinde tekneyi DIŞARI İTEN kuvvettir. Onu silmek, aracın
+        kurtulmasını sağlayan tek itmeyi kaldırırdı. Ölçümde MPPI'nin hayalet
+        yüzünden donduğuna dair kanıt da yok (§1.17f: donma hafıza taramasından
+        ve tensör boyutundan geliyordu). Bu ayrım ölçülmüş bir gerekçeye
+        dayanıyor; MPPI için de temizleme istenirse önce ölçülmeli.
+        """
+        if not self._obstacles:
+            return self._obstacles
+        vx, vy = float(self._state[0]), float(self._state[1])
+        temiz: List[CircleObstacle] = []
+        for o in self._obstacles:
+            mesafe = math.hypot(o.cx - vx, o.cy - vy)
+            if mesafe >= o.r + GOVDE_CEVREL_YARICAP_M:
+                temiz.append(o)                       # gövdeye değmiyor
+                continue
+            yeni_r = mesafe - GOVDE_CEVREL_YARICAP_M
+            if yeni_r > 0.0:
+                temiz.append(replace(o, r=yeni_r))    # kırp (Nav2: kısmi temizleme)
+            # else: tamamen gövdenin altında → düşer (Nav2: FREE_SPACE)
+        return temiz
+
+    def set_gosterim_engelleri(
+        self, obstacles: Optional[List[CircleObstacle]]
+    ) -> None:
+        """Dosya-3 haritasına ÇİZİLECEK engeller — kontrol yolunu ETKİLEMEZ.
+
+        🔴 **Kaptan kararı 15.08.2026:** *"canlı haritada da 99 verileri
+        olmayacak."* Ölçüm (session_20260814_153256): sınıflı akıştaki
+        tespitlerin **%98,6'sı** `CLASS_UNKNOWN=99` — teslim edilen harita
+        fiilen eşleşmemiş LiDAR kümelerinden oluşan gri bir bulut oluyordu.
+
+        🔑 **Neden AYRI liste, neden `set_obstacles` süzülmüyor:** eşleşmemiş
+        küme GÜVENLİK nesnesidir (füzyon sözleşmesi: *"bilinmeyeni atma"*) ve
+        MPPI'nin engel torbasında KALMALIDIR — 99'lar torbadan çıkarılırsa
+        kaçınma fiilen kör kalır (tespitlerin %98,6'sı). Bu yüzden kontrol
+        listesi (`_obstacles`) aynen korunur, harita ayrı listeden çizilir.
+
+        `None` verilirse (ya da hiç çağrılmazsa) harita eskisi gibi kontrol
+        listesinden çizilir — geriye tam uyumlu, sınıfsız LiDAR kolunda ve
+        prototip/görselleştirme kullanımında davranış birebir aynı.
+        """
+        self._gosterim_engelleri = obstacles
+
+    def _replan_frenli(self) -> bool:
+        """F-P.9: bu turda RRT* koşmak ERKEN mi (kör kalma payı dolmadı mı)?
+
+        Fren yalnız ENGEL kaynaklı replan'a uygulanır — `set_waypoints`'in
+        (yeni hedef) ve ilk planın yolu buradan geçmez, onlar hiç ertelenmez.
+        Ölçüm yoksa (henüz plan koşmadıysa) fren YOK: soğuk başlangıçta rotayı
+        geciktirmek, tam da aracın kıpırdamadığı ana denk gelirdi.
+        """
+        if self.cfg.replan_bosluk_katsayisi <= 0.0:      # fren kapalı
+            return False
+        if self._son_replan_t is None or self._son_plan_suresi_s is None:
+            return False
+        aralik = min(
+            self.cfg.replan_bosluk_katsayisi * self._son_plan_suresi_s,
+            self.cfg.replan_max_interval_s,
+        )
+        if (self._saat() - self._son_replan_t) >= aralik:
+            return False
+        self._replan_ertelendi += 1
+        return True
+
+    def _etkin_sinir(self) -> Bounds:
+        """İKİ PLANLAYICININ ORTAK sınır kutusu = statik kutu ∪ (start/goal ± pay).
+
+        🔴 **14.08.2026 — F-S.17. Bu daha önce YALNIZ RRT\\*'a uygulanıyordu**
+        (F10.2), MPPI ham `self._bounds`'u alıyordu. Sonuç: iki planlayıcı
+        dünyanın nerede bittiği konusunda ANLAŞMIYORDU — RRT* kutunun dışına
+        rahatça yol çiziyor, MPPI `w_boundary=1000` duvarıyla o yolu takip
+        etmeyi reddediyordu. Araç sessizce duruyordu; ne hata ne uyarı.
+
+        **İki yerde ölçüldü:**
+          · Sanal ölçüm (§0.86a): GN5=(90,0) kutunun 30 m dışındaydı → tekne
+            `x=59,9`'da durup 900 s tavana kadar bekledi (26 m yakınında duba
+            yok, itki %13). Kutu düzeltilince **900 s → 220 s**.
+          · Gerçek donanım (§0.87c): 13.08 GUIDED koşumunda görev hedefi
+            **(27,3, −23,7)**, `params.yaml`'daki kutu ise `y ∈ [0, 200]` →
+            hedef **23,7 m dışarıda**.
+
+        **Neden bu doğru çözüm (dış kaynak):**
+          · **MPC yinelemeli uygulanabilirlik (recursive feasibility):** sert
+            durum kısıtı referansı dışarıda bırakırsa problem UYGULANAMAZ olur;
+            literatürün standart çaresi kısıtı yumuşatmak ya da hedefi
+            uygulanabilir kümeye taşımaktır. `w_boundary=1000` adı ceza olsa da
+            öteki terimlerin (w_track 5, w_terminal 50) yanında fiilen SERT.
+          · **Nav2 pratiği:** hedef global costmap'in dışındaysa planlama
+            "her zaman başarısız olur" ve bunu **uyarı basarak** yapar. Bizim
+            eşdeğer durumumuz **sessiz** — asıl tehlike buydu.
+          · **Hiyerarşik planlama literatürü:** katmanlar farklı kısıt kümesi
+            kullanınca yerel kontrolcü global yolu reddeder ve sistem kilide
+            girer; çözüm katmanları CASCADE etmek değil, kısıt yönetimini
+            BİRLEŞTİRMEK.
+
+        ⚠ Kutu yalnız BÜYÜR (statik kutuyla `min`/`max`); yani sınırın koruma
+        işlevi kaybolmaz, yalnız "hedefin kendisi duvarın dışında" patolojisi
+        imkânsızlaşır. Gerçek parkur sınırı F-S.16'da algıdan türetilecek.
+
+        🔴 **14.08 EKİ — büyüme artık SESSİZ DEĞİL.** F-S.17 kilidi çözdü ama
+        yerine ikinci bir sessizlik bıraktı: hedef **nereye düşerse düşsün**
+        kutu ona uyacak şekilde genişliyor ve kimse haber vermiyordu. Yani
+        bozuk bir hedef — yanlış ENU orijini, hatalı `home`, yanlış çerçevede
+        yüklenmiş görev, `competition_mission.yaml`'ın 0.0/0.0 yer tutucuları —
+        "araç durdu" yerine **"araç 3000 km ötedeki bir noktaya doğru yola
+        çıktı"** üretir; ikincisi daha kötüdür ve teşhisi daha zordur.
+        Bildirilen arenanın dışına taşan her hedef artık **BAĞIRIR**
+        (ana belge madde 5: hataları bağıran mekanizmalar).
+
+        Eşik **ayarlanabilir bir sayı değil, arenanın kendi ölçeği** (kapı
+        seçimindeki disiplinin aynısı): hedef, bildirilen arenayı kendi
+        genişliğinden DAHA ÇOK aşıyorsa çerçeve neredeyse kesin yanlıştır.
+        Gerekçe `_arena_tasmasini_bildir`'de.
+        """
+        b, pay = self._bounds, self.cfg.bounds_margin_m
+        xs = [b.x_min, b.x_max]
+        ys = [b.y_min, b.y_max]
+        noktalar = [(float(self._state[0]), float(self._state[1]))]
+        if self._waypoints:
+            noktalar.append(self._waypoints[-1])
+        for px, py in noktalar:
+            xs += [px - pay, px + pay]
+            ys += [py - pay, py + pay]
+        etkin = Bounds(min(xs), max(xs), min(ys), max(ys))
+        self._arena_tasmasini_bildir(etkin)
+        return etkin
+
+    def _arena_tasmasini_bildir(self, etkin: Bounds) -> None:
+        """Etkin kutu bildirilen arenayı aşıyorsa BAĞIR (bkz. `_etkin_sinir`).
+
+        Ölçü **payı çıkarılmış** taşmadır: `bounds_margin_m` kadar genişleme
+        tasarımın kendisidir, arıza değil. Geriye kalan sayı "hedef, bildirilen
+        arenanın kaç metre dışında" demektir.
+
+        🔑 **EŞİK NEDEN ARENANIN KENDİ BOYU (ayarlanabilir sayı DEĞİL).**
+        `params.yaml`'daki kutu kendi yorumunda *"yarışma alanı temsili"* —
+        yani ÖLÇÜLMÜŞ bir arena değil, yer tutucu. Onun için "arenayı 1 m aşan
+        her hedef" uyarısı **her gerçek görevde** çalardı: 13.08 donanım
+        koşumundaki (27,3, −23,7) hedefi bile 23,7 m dışarıdaydı ve o hedef
+        DOĞRUYDU. Her koşuda çalan uyarı, operatörün uyarılara bakmayı
+        bırakmasıdır — kapatmak istediğimiz sessizliğin daha kötü hâli.
+
+        Ayırt edici olan **büyüklük mertebesi**: hedef arenayı KENDİ boyundan
+        daha çok aşıyorsa artık "kenarda biraz taşmış görev" değil, **çerçeve
+        hatası**dır — yanlış ENU orijini, hatalı home, yanlış çerçevede
+        yüklenmiş görev ya da `competition_mission.yaml`'ın 0.0/0.0 yer
+        tutucuları (bunlar Gine Körfezi'ni gösterir → binlerce km). Ölçü
+        arenanın kendinden türediği için ölçek-bağımsızdır: 200 m'lik alanda da
+        2 km'lik alanda da aynı mantık çalışır, elle ayar gerekmez.
+        """
+        b, pay = self._bounds, self.cfg.bounds_margin_m
+        tasma = max(
+            b.x_min - etkin.x_min, etkin.x_max - b.x_max,
+            b.y_min - etkin.y_min, etkin.y_max - b.y_max,
+        ) - pay
+        olcek = max(b.x_max - b.x_min, b.y_max - b.y_min)
+        if tasma <= olcek:
+            self._arena_tasmasi_m = 0.0
+            return
+        self.arena_tasma_sayisi += 1
+        if abs(tasma - self._arena_tasmasi_m) > 1.0:
+            self._arena_tasmasi_m = tasma
+            hedef = self._waypoints[-1] if self._waypoints else None
+            _log.warning(
+                "ARENA DIŞI HEDEF: hedef bildirilen arenanın %.0f m dışında — "
+                "arenanın KENDİ boyu (%.0f m) kadarını aşıyor, yani bu bir "
+                "ÇERÇEVE HATASI (hedef=%s, arena x[%.0f,%.0f] y[%.0f,%.0f]). "
+                "Kutu hedefe uyacak şekilde BÜYÜTÜLDÜ (F-S.17), yani araç "
+                "DURMAZ — oraya doğru yola çıkar. Yanlış ENU orijini / hatalı "
+                "home / yanlış çerçevede yüklenmiş görev / 0.0-0.0 yer tutucu "
+                "waypoint olabilir. GÖREVİ DOĞRULA.",
+                tasma, olcek, hedef,
+                b.x_min, b.x_max, b.y_min, b.y_max,
+            )
 
     @staticmethod
     def _engel_imzasi(obstacles: List[CircleObstacle]) -> Tuple:
@@ -397,27 +703,131 @@ class PlanningPipeline:
             return False
         start = (float(self._state[0]), float(self._state[1]))
         goal = self._waypoints[-1]
-        # F10.2: örnekleme alanı = statik bounds ∪ (start/goal ± pay).
-        # start/goal'in daima alan içinde kalmasını garanti eder.
-        b, pay = self._bounds, self.cfg.bounds_margin_m
-        bounds = Bounds(
-            min(b.x_min, start[0] - pay, goal[0] - pay),
-            max(b.x_max, start[0] + pay, goal[0] + pay),
-            min(b.y_min, start[1] - pay, goal[1] - pay),
-            max(b.y_max, start[1] + pay, goal[1] + pay),
-        )
-        rrt = RRTStar(bounds, self._obstacles, self._rrt_cfg)
+        # F10.2 → F-S.17: örnekleme alanı artık MPPI ile ORTAK (`_etkin_sinir`).
+        bounds = self._etkin_sinir()
+        # F-P.10: ARAÇ HAREKETTEYKEN plan AYRI SÜREÇTE koşar. İlk plan
+        # (`_ref_path is None`) bilerek SENKRON kalır: görev başında araç
+        # duruyor ve `cmd_vel` akışı yok — orada bloklamak zararsız, referanssız
+        # kalmak zararlıdır (A1: `_ref_path` None → MPPI kurulmaz → araç
+        # kıpırdamaz). İşçi meşgulse bu tur ATLANIR (senkrona DÜŞÜLMEZ; düşmek
+        # tam da kaçındığımız bloklamayı geri getirirdi).
+        # Ayak izi temizlemesi HER İKİ kolda da uygulanır (senkron ve işçi):
+        # başlangıcın serbest olma garantisi kola bağlı olamaz.
+        engeller = self._planlama_engelleri()
+        if self._ref_path is not None:
+            isci = self._plan_iscisi()
+            if isci is not None:
+                if isci.mesgul:
+                    return False
+                simdi = self._saat()
+                if isci.gonder(
+                    bounds, engeller, self._rrt_cfg, start, goal, simdi
+                ):
+                    self._replan_sayisi += 1
+                    self._asenkron_plan += 1
+                    self._bekleyen_goal = (float(goal[0]), float(goal[1]))
+                    self._gonderim_t = simdi
+                    # Fren, gönderim anından işler: uçuşta istek varken
+                    # yenisini üretmeye çalışmayalım.
+                    self._son_replan_t = simdi
+                    return False        # yol henüz yok; MEVCUT referans korunur
+                # gönderilemedi (işçi düştü) → aşağıdaki senkron kol yedek
+
+        rrt = RRTStar(bounds, engeller, self._rrt_cfg)
         self._replan_sayisi += 1
+        # F-P.9: koşum SÜRESİ ölçülür — bir sonraki koşumun freni bundan
+        # türetilir. Ölçüm başarısız plan için de geçerlidir: bloklama
+        # planın başarısına değil süresine bağlıdır (uzak hedefte RRT* hiç
+        # çözüm bulamadan 1,1 s harcıyor — §0.67a).
+        _t0 = self._saat()
         try:
             path = rrt.plan(start, goal)
         except ValueError as exc:
+            self._plan_suresini_kaydet(_t0)
             return self._rrt_basarisiz(f"plan reddedildi ({exc})", goal)
+        self._plan_suresini_kaydet(_t0)
         if path is None:
             return self._rrt_basarisiz("çözüm bulamadı", goal)
         self._ref_path = path
         self._planlanan_goal = (float(goal[0]), float(goal[1]))   # A3 ölçütü
         self._rebuild_mppi()
         return True
+
+    def plan_isci_saglik(self) -> dict:
+        """F-P.10 asenkron planlama sağlığı — dışarıdan okunabilir teşhis.
+
+        🔴 13.08 kod incelemesi bulgusu. Mekanizma doğruydu ama GÖRÜNÜR
+        değildi: işçi bir kez kurulamazsa `kullanilabilir` kalıcı olarak
+        False olur, o an tek bir `logger.warning` düşer ve sonrası sessizdir.
+        Boru hattı senkron kola döner — yani kontrol döngüsü yeniden 370 ms'ye
+        kadar bloklanır, ki KAR-11/KAR-09 belirtilerini üreten şey tam buydu.
+        Aynı şekilde `zaman_asimi` sayacı artıyordu ama kimse okumuyordu;
+        her zaman aşımı 5 saniye ve işçiyi öldürüp yeniden kuruyor.
+
+        Bu hafta üç ayrı yerde aynı desen çıktı: *arıza vardı, kod onu
+        biliyordu, ama kimseye söylemiyordu.* Sayaçları dışarı açmak
+        mekanizmayı değiştirmiyor, yalnız sessizliği kaldırıyor.
+        """
+        isci = self._isci
+        return {
+            "acik": bool(self.cfg.plan_isci_enabled),
+            "kullanilabilir": bool(isci.kullanilabilir) if isci else None,
+            "gonderilen": getattr(isci, "gonderilen", 0) if isci else 0,
+            "tamamlanan": getattr(isci, "tamamlanan", 0) if isci else 0,
+            "zaman_asimi": getattr(isci, "zaman_asimi", 0) if isci else 0,
+            "asenkron_plan": self._asenkron_plan,
+        }
+
+    def _plan_iscisi(self) -> Optional["PlanIscisi"]:
+        """F-P.10 işçisini (gerekiyorsa) kur; kapalıysa/kurulamıyorsa None.
+
+        Tembel kurulum: süreç ancak ilk asenkron ihtiyaçta doğar. İşçi bir kez
+        `kullanilabilir=False` olursa (spawn yok/izin yok) bir daha denenmez —
+        boru hattı sessizce senkron kolda çalışmayı sürdürür.
+        """
+        if not self.cfg.plan_isci_enabled:
+            return None
+        if self._isci is None:
+            from prototype.planning.plan_isci import PlanIscisi
+            self._isci = PlanIscisi(self.cfg.plan_isci_zaman_asimi_s)
+        return self._isci if self._isci.kullanilabilir else None
+
+    def plan_sonucunu_isle(self) -> bool:
+        """F-P.10: işçiden gelen planı KUR (bloklamaz). True = referans değişti.
+
+        Düğüm bunu kontrol adımında çağırır — maliyeti bir kuyruk yoklamasıdır.
+        Sonuç yoksa hiçbir şey olmaz; MPPI mevcut referansla sürmeye devam eder.
+        """
+        if self._isci is None or not self._isci.mesgul:
+            return False
+        sonuc = self._isci.sonuc_al(self._saat())
+        if sonuc is None:
+            return False
+        yol, hata = sonuc
+        if self._gonderim_t is not None:
+            self._plan_suresini_kaydet(self._gonderim_t)
+        goal = self._bekleyen_goal or (
+            self._waypoints[-1] if self._waypoints else (0.0, 0.0)
+        )
+        self._bekleyen_goal = None
+        self._gonderim_t = None
+        if yol is None:
+            return self._rrt_basarisiz(hata or "çözüm bulamadı", goal)
+        self._ref_path = yol
+        self._planlanan_goal = (float(goal[0]), float(goal[1]))   # A3 ölçütü
+        self._rebuild_mppi()
+        return True
+
+    def kapat(self) -> None:
+        """Boru hattını kapat — işçi süreci varsa düzgünce durdurulur."""
+        if self._isci is not None:
+            self._isci.kapat()
+
+    def _plan_suresini_kaydet(self, t0: float) -> None:
+        """F-P.9: son RRT* koşumunun anını ve süresini yaz (fren girdisi)."""
+        simdi = self._saat()
+        self._son_replan_t = simdi
+        self._son_plan_suresi_s = max(0.0, simdi - t0)
 
     def _rrt_basarisiz(self, sebep: str, goal: Tuple[float, float]) -> bool:
         """RRT* bir plan üretemedi — referans İSTENEN hedefe gidiyorsa koru,
@@ -497,13 +907,20 @@ class PlanningPipeline:
         if self._ref_path is None:
             return
         new_cfg = self._active_mppi_cfg()
+        sinir = self._etkin_sinir()                  # F-S.17: RRT* ile AYNI kutu
         if self._mppi is not None and new_cfg == self._mppi.cfg:
+            # ⚠ SICAK YOL — kontrolcü korunur (warm-start, F11.1). Sınır
+            # `cfg`'nin parçası DEĞİL, ayrı bir kurucu argümanı; bu yüzden
+            # burada ELLE tazelenmeli. Tazelenmezse araç ilerledikçe MPPI eski
+            # kutuyla kalır ve F-S.17 yalnız parkur geçişlerinde düzelir —
+            # yani hatanın en sinsi hâli geri gelir.
+            self._mppi.bounds = sinir
             self._mppi.set_obstacles(self._obstacles)
             self._mppi.set_reference(self._ref_path, spacing=self.cfg.ref_spacing)
             return
         onceki = self._mppi
         self._mppi = MPPIController(
-            self._dyn, self._bounds, self._obstacles, new_cfg
+            self._dyn, sinir, self._obstacles, new_cfg
         )
         self._mppi.set_reference(self._ref_path, spacing=self.cfg.ref_spacing)
         if onceki is not None:
@@ -590,6 +1007,21 @@ class PlanningPipeline:
         return self._replan_sayisi, self._replan_atlandi
 
     @property
+    def replan_ertelendi(self) -> int:
+        """F-P.9 teşhisi: kör kalma payı dolmadığı için ertelenen replan sayısı.
+
+        Sahada `replan_sayisi` ile birlikte okunur: ertelenen/koşan oranı
+        frenin fiilen ne kadar iş kestiğini söyler. Sıfır kalıyorsa fren hiç
+        devreye girmemiş demektir (sahne ucuz ya da katsayı 0).
+        """
+        return self._replan_ertelendi
+
+    @property
+    def son_plan_suresi_s(self) -> Optional[float]:
+        """Son RRT* koşumunun süresi (s) — frenin girdisi; None = hiç koşmadı."""
+        return self._son_plan_suresi_s
+
+    @property
     def mission_state(self) -> str:
         return self._mission_state
 
@@ -643,9 +1075,15 @@ class PlanningPipeline:
         # emniyet halkasında (r < d ≤ r+margin) lineer 100→0; dışı serbest (0).
         # Birden çok engelde hücre başına maksimum alınır.
         occ = np.zeros((h, w), dtype=np.float64)             # 0 = serbest su
-        if self._obstacles:
+        # Harita ÇİZİM listesinden kurulur; verilmemişse kontrol listesinden
+        # (eski davranış). Ayrımın gerekçesi: `set_gosterim_engelleri`.
+        cizilecek = (
+            self._obstacles if self._gosterim_engelleri is None
+            else self._gosterim_engelleri
+        )
+        if cizilecek:
             margin = self._base_mppi_cfg.obstacle_margin
-            for o in self._obstacles:
+            for o in cizilecek:
                 d = np.hypot(gx - o.cx, gy - o.cy)
                 if margin > 0.0:
                     contrib = np.where(

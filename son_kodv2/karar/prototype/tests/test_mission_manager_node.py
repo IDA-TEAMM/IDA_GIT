@@ -176,6 +176,54 @@ def test_fc_source_rebuilds_mission_from_waypoints(ros_context) -> None:  # noqa
         n._started = True
         n._on_fc_waypoints(SimpleNamespace(waypoints=[_wp(16, 41.0, 30.0)]))
         assert n._mgr.waypoint_count == 2             # değişmedi
+
+        # 🔴 F-M.12: ama YENİDEN BAŞLAMADAN SONRA kabul EDİLMELİ — yoksa
+        # düğüm bir görev bitince yeni göreve kalıcı olarak sağır kalır.
+        n._yeniden_basla()
+        n._on_fc_waypoints(SimpleNamespace(waypoints=[
+            _wp(16, 41.0, 30.0),          # home → atlanır
+            _wp(16, 41.001, 30.0),
+            _wp(16, 41.002, 30.0),
+            _wp(16, 41.003, 30.0),
+        ]))
+        assert n._mgr.waypoint_count == 3, (
+            "yeniden başlamadan sonra Mission Planner'dan gelen YENİ görev "
+            "hâlâ yok sayılıyor — `_started` sıfırlanmamış (F-M.12)"
+        )
+    finally:
+        n.destroy_node()
+
+
+def test_YENIDEN_BASLAMA_started_bayragini_da_SIFIRLIYOR(ros_context) -> None:  # noqa: ANN001
+    """🔴 F-M.12 (15.08.2026) — yarım kalan sıfırlama düğümü SAĞIR bırakıyordu.
+
+    Kaptan: *"gate'i geçince duruyor, görev bitmiş oluyor"* — ve §0.98p'de
+    aynı şikâyet: *"waypoint görevi bitince başka waypoint atayamıyoruz"*.
+
+    Ölçülen zincir: `_started` YALNIZ `__init__`'te False, `_on_state`'te True
+    yapılıyordu; geri dönüşü HİÇ YOKTU. Görev bitince `_on_fc_waypoints`
+    `if self._started: return` ile yeni listeyi SESSİZCE atıyor (operatör
+    ekranında iz yok), `/girdap/mission/reset` de yalnız `_mgr.reset()`
+    çağırdığı için kurtarmıyordu → servisi yeniden başlatmadan dönüş yoktu.
+
+    ⚠ Bu, projede İKİNCİ kez görülen aynı sınıf hata: 14.08'de `fsm_node`'un
+    `_yeniden_basla`'sı `_parkur.reset()` yapıp `Observation` bayraklarına
+    dokunmuyordu (`test_YENIDEN_BASLAMA_gorev_ilerlemesini_SIFIRLIYOR`).
+    Bir sıfırlama eklendiğinde **tüm** oturum durumunu kapsadığı denetlenmeli.
+    """
+    n = girdap.MissionManagerNode(
+        parameter_overrides=[
+            Parameter("mission_source", Parameter.Type.STRING, "fc"),
+        ]
+    )
+    try:
+        n._started = True                       # görev koşmuş gibi
+        n._yeniden_basla()
+        assert n._started is False, (
+            "yeniden başlama `_started`'ı sıfırlamadı — düğüm yeni göreve "
+            "KALICI olarak sağır kalır, servis yeniden başlatmak gerekir "
+            "(F-M.12)"
+        )
     finally:
         n.destroy_node()
 

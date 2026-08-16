@@ -52,6 +52,7 @@ from sensor_msgs.msg import Imu, NavSatFix
 from std_msgs.msg import Float32MultiArray, String
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.saat_kaynagi import bayatlik_saati
 
 # Setpoint'lerin anlamlı olduğu FSM durumları (F-V.2): görev aktif değilken
 # (BOOT/BEKLEMEDE/TAMAMLANDI/KILL) cache'teki son istek CSV'ye YAZILMAZ —
@@ -76,6 +77,9 @@ class TelemetryNode(Node):
     def __init__(self, **node_kwargs) -> None:
         # node_kwargs → parameter_overrides passthrough (test enjeksiyonu).
         super().__init__("telemetry_node", **node_kwargs)
+        # §0.61: TAZELİK kapısı tek yönlü saatte. CSV'nin `zaman` sütunu ve
+        # dosya adı DUVAR saatinde kalır (utc_isoformat) — orası mutlak an.
+        self._saat = bayatlik_saati(self)
 
         # --- Parametreler ---
         # Boş → ~/girdap_logs/telemetry (MUTLAK yol). Göreli yol KULLANMA:
@@ -416,7 +420,8 @@ class TelemetryNode(Node):
     # ----- yazma -----
 
     def _now(self) -> float:
-        return self.get_clock().now().nanoseconds * 1e-9
+        """Bayatlık saati — TEK YÖNLÜ (§0.61). Mutlak an olarak kullanılmaz."""
+        return self._saat()
 
     def _fresh(self, value: Optional[float], t: Optional[float]) -> Optional[float]:
         """BULGU 2: kaynak `source_timeout_s`'ten uzun süredir susmuşsa None

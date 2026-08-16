@@ -101,6 +101,8 @@ _BRIDGE_DEFAULTS: dict[str, tuple[object, type]] = {
     "rc_kill_threshold_pwm": (1500, int),
     "rc_manual_channel": (4, int),
     "rc_manual_threshold_pwm": (1700, int),
+    # F-S.13: operatörün mod seçimi kazanır (Mission Planner + kumanda).
+    "operator_mode_override": (True, bool),
 }
 _TELEMETRY_DEFAULTS: dict[str, tuple[object, type]] = {
     "setpoint_source": ("girdap", str),
@@ -261,6 +263,36 @@ _FUSION_DEFAULTS: dict[str, tuple[object, type]] = {
     "sync_queue_size": (100, int),
     "log_period_s": (5.0, float),
 }
+# planning.obstacle_timeout_s — F-P.2 ENGEL BEKÇİSİ saha yüzeyi (15.08.2026).
+#
+# 🔴 NEDEN EKLENDİ: 15.08 göl koşumunda tekne bizim yazılımla BİR KEZ BİLE
+#    sürmedi. Zincirin tamamı çalışıyordu (GUIDED geldi, FSM PARKUR1'e geçti,
+#    setpoint 6 Hz aktı) ama `planning_node` itkiyi her turda sıfırladı:
+#    kilit `ENGEL-YOK`. Sebep LiDAR'ın fiziksel olarak ölü olması —
+#    `/perception/obstacle_map` HİÇ mesaj yayınlamadı (yayıncı ayakta,
+#    üretim yok). Değer koda gömülü olduğu için sahada açılıp kapanamıyordu;
+#    tek çare `params.yaml`'ı düzenlemekti, o da YARIŞMA varsayılanını
+#    sessizce zayıflatırdı.
+#
+# ⚠ VARSAYILAN DEĞİŞMEDİ (2.0). Bu blok yalnız değeri saha yüzeyine çıkarır:
+#     ros2 launch girdap_decision hardware.launch.py planning.obstacle_timeout_s:=0.0
+#   0 = bekçi KAPALI → MPPI boş engel torbasıyla koşar, yani araç engel
+#   göremediğinden HABERSİZ tam güvenle sürer (F-P.2/KAR-03'ün tarif ettiği
+#   tuzak). Yalnız Parkur-1'de (tanımı gereği engelsiz nokta takibi) ve
+#   operatör elinde MANUAL + RC10 varken savunulabilir.
+#   ⛔ Parkur-2'ye geçmeden GERİ AÇILMALI — LiDAR'sız P2 zaten imkânsız.
+#   Düğüm kapalıyken her açılışta "🔴 ENGEL BEKCISI KAPALI" basar
+#   (planning_node.py:555) — sessizce unutulmasın diye.
+_BEKCI_DEFAULTS: dict[str, tuple[object, type]] = {
+    "obstacle_timeout_s": (2.0, float),
+}
+_BEKCI_ARG_DESC = {
+    "obstacle_timeout_s": "F-P.2 engel bekçisi zaman aşımı (s). Engel "
+                          "haritası bu süreden eskiyse (ya da HİÇ gelmediyse) "
+                          "itki sıfırlanır. 0 = BEKÇİ KAPALI — araç engel "
+                          "göremediğinden habersiz sürer; yalnız Parkur-1'de "
+                          "ve operatör gözetimindeyken kullan",
+}
 
 
 def _deep_merge(base: dict, over: dict) -> dict:
@@ -306,6 +338,7 @@ def _load_hardware_config() -> dict:
     cfg["planning_mode"] = cfg["mode_name"]
     cfg["mppi"] = {k: v for k, (v, _) in _MPPI_DEFAULTS.items()}
     cfg["gate"] = {k: v for k, (v, _) in _GATE_DEFAULTS.items()}
+    cfg["bekci"] = {k: v for k, (v, _) in _BEKCI_DEFAULTS.items()}
     cfg["tf"] = {}                      # ölçüm girilene kadar boş = hepsi 0
     try:
         cfg_dir = os.path.join(get_package_share_directory(_PKG), "config")
@@ -363,6 +396,10 @@ def _load_hardware_config() -> dict:
         for key, (_, cast) in _GATE_DEFAULTS.items():
             if key in planning_block:
                 cfg["gate"][key] = cast(planning_block[key])
+        # planning.obstacle_timeout_s — F-P.2 engel bekçisi (aynı zincir).
+        for key, (_, cast) in _BEKCI_DEFAULTS.items():
+            if key in planning_block:
+                cfg["bekci"][key] = cast(planning_block[key])
         # mission: görev dosyası + kaynak seçimi (video ↔ competition, file ↔ fc)
         mission_block = data.get("mission") or {}
         cfg["mission_file"] = str(
@@ -581,6 +618,15 @@ def generate_launch_description() -> LaunchDescription:
             )
             for key in _GATE_DEFAULTS
         ],
+        # planning.obstacle_timeout_s — F-P.2 engel bekçisi (0 = KAPALI).
+        *[
+            DeclareLaunchArgument(
+                f"planning.{key}",
+                default_value=str(hw["bekci"][key]),
+                description=_BEKCI_ARG_DESC[key],
+            )
+            for key in _BEKCI_DEFAULTS
+        ],
         # fusion.* — iSAM2 smoother (keyframe throttle + robust GPS + fix
         # kalitesi sigma'ları). CLI: fusion.keyframe_rate_hz:=10.0
         *[
@@ -716,6 +762,14 @@ def generate_launch_description() -> LaunchDescription:
             default_value=str(hw["bridge"]["rc_manual_threshold_pwm"]),
             description="Bu PWM'in ÜSTÜ → manuel override",
         ),
+        DeclareLaunchArgument(
+            "bridge.operator_mode_override",
+            default_value=_bool_default(hw["bridge"]["operator_mode_override"]),
+            description=(
+                "true: operatör hedef moddan çıkarsa (Mission Planner ya da "
+                "kumanda) yazılım GUIDED'a geri zorlamaz — F-S.13"
+            ),
+        ),
     ]
 
     # --- MAVROS: ArduRover köprüsü ---
@@ -843,6 +897,10 @@ def generate_launch_description() -> LaunchDescription:
             "rc_manual_threshold_pwm": ParameterValue(
                 LaunchConfiguration("bridge.rc_manual_threshold_pwm"), value_type=int
             ),
+            "operator_mode_override": ParameterValue(
+                LaunchConfiguration("bridge.operator_mode_override"),
+                value_type=bool,
+            ),
         },
     ]
     # fusion: algorithm.use_isam2 (video → MAVROS EKF pass-through) +
@@ -887,6 +945,15 @@ def generate_launch_description() -> LaunchDescription:
                     LaunchConfiguration(f"planning.{key}"), value_type=cast
                 )
                 for key, (_, cast) in _GATE_DEFAULTS.items()
+            },
+            # F-P.2 engel bekçisi (planning.obstacle_timeout_s launch-arg'ı).
+            # Node bunu AÇILIŞTA bir kez okur (planning_node.py:418) — canlı
+            # `ros2 param set` işe yaramaz, servis yeniden başlatılmalı.
+            **{
+                key: ParameterValue(
+                    LaunchConfiguration(f"planning.{key}"), value_type=cast
+                )
+                for key, (_, cast) in _BEKCI_DEFAULTS.items()
             },
         },
     ]

@@ -282,6 +282,33 @@ class MPPIConfig:
     ref_window_size: int = 100       # ileri pencere derinliği (nokta)
     ref_window_enabled: bool = True  # False → eski tam tarama (regresyon testi)
 
+    # 🔴 F-F.21 (14.08.2026, GIRDAP_DURUM §1.04) — TAM TARAMADAN SONRA cupy
+    # BELLEK HAVUZUNU SERBEST BIRAK. Jetson'da bu bir performans ayarı değil,
+    # **SİSTEM ÇÖKMESİNİ ÖNLEYEN** kapıdır:
+    #
+    #   • cupy'nin varsayılan havuzu, kullanıcı diziyi serbest bıraksa bile
+    #     blokları ÖNBELLEĞE ALIR ve işletim sistemine GERİ VERMEZ (cupy belgesi:
+    #     "a memory pool preserves any allocations even if they are freed").
+    #   • Orin Nano'da GPU belleği AYRI DEĞİL — **sistem RAM'inin kendisi**.
+    #     Yani havuzda tutulan her bayt, MAVROS'un/kaydedicinin/algının
+    #     kullanamadığı bayttır.
+    #   • Tam tarama tensörü ölçüldü: n_ref=2048'de d2 tek başına float32 389 MiB
+    #     ve geçicilerle tepe ~3-4×. **TEK BİR kenar-fallback havuzun tepe
+    #     değerini kalıcı olarak yükseltmeye yeter.**
+    #
+    # 14.08 ölçümü (13:15 koşumu, 108 dk): RAM 14:00→14:05 arası **+2 GB**
+    # sıçradı, 50 dakika o seviyede kaldı, 14:53'te bir anda serbest kaldı.
+    # Aynı anda `lfb` 2 MB'a düştü ve **tüm yığın ~10 saniye dondu** (MAVROS
+    # IMU dahil → makinenin kendisi dondu, 1 m/s'de ~10 m kör seyir).
+    #
+    # ⚠ Neden `set_limit` DEĞİL: sert sınır aşılınca cupy OOM atar → MPPI ölür →
+    # `_safe_stop`. Yani "yavaş" yerine "görev biter". `free_all_blocks()` ise
+    # yalnız KULLANILMAYAN blokları verir, asla OOM üretmez.
+    # ⚠ Neden her adımda değil: serbest bırakılan blok bir sonraki tahsiste
+    # sürücüden yeniden alınır (yavaş). Fallback ZATEN nadir ve tam da büyük
+    # tahsisin olduğu yer — doğru kanca orası.
+    bellek_havuzu_temizle: bool = True   # False → eski davranış (A/B ölçümü)
+
     # F-M.3: terminal maliyet hedefi.
     #   "global"    = VARSAYILAN, eski davranış — daima ref[-1] (rotanın SONU).
     #   "lookahead" = çapadan `terminal_lookahead_m` ileride, yay uzunluğu
@@ -412,6 +439,7 @@ class MPPIController:
         self._ref_anchor_idx: int = 0
         self._ref_anchor_pending: int = 0
         self._ref_window_fallbacks: int = 0   # kenar durumu sayacı (test + log)
+        self._bellek_temizleme_sayaci: int = 0  # F-F.21 — kaç kez havuz boşaltıldı
 
         # Görselleştirme için son rollout snapshot'ı
         self._last_traj: Optional[np.ndarray] = None    # (K, T+1, 6)
@@ -508,6 +536,39 @@ class MPPIController:
         soğuk başlangıç → zikzak). __init__ ile aynı ön-hesaplama.
         """
         self._load_obstacles(obstacles)
+
+    def _bellek_havuzunu_serbest_birak(self) -> None:
+        """F-F.21: cupy havuzundaki KULLANILMAYAN blokları işletim sistemine ver.
+
+        numpy yolunda hiçbir şey yapmaz (havuz yok). cupy import edilemezse ya
+        da sürücü hata verirse sessizce geçer — bu bir **iyileştirme**dir,
+        kontrol döngüsünü asla düşürmemeli.
+        """
+        if not self.cfg.bellek_havuzu_temizle:
+            return
+        if getattr(self.xp, "__name__", "") != "cupy":
+            return
+        try:
+            self.xp.get_default_memory_pool().free_all_blocks()
+            self.xp.get_default_pinned_memory_pool().free_all_blocks()
+            self._bellek_temizleme_sayaci += 1
+        except Exception:                    # sürücü/sürüm farkı — kritik değil
+            pass
+
+    def bellek_havuzu_bayt(self) -> tuple[int, int]:
+        """(kullanılan, havuzun tuttuğu toplam) bayt — teşhis için.
+
+        numpy yolunda (0, 0). Bu sayı bantta/logda görünmezse F-F.21'in
+        tekrarlayıp tekrarlamadığı **sonradan anlaşılamaz** (14.08'de tam bu
+        yüzden 2 GB'lık sıçramanın sebebi bant üzerinden bulunamadı).
+        """
+        if getattr(self.xp, "__name__", "") != "cupy":
+            return (0, 0)
+        try:
+            mp = self.xp.get_default_memory_pool()
+            return (int(mp.used_bytes()), int(mp.total_bytes()))
+        except Exception:
+            return (0, 0)
 
     @property
     def backend_adi(self) -> str:
@@ -770,6 +831,9 @@ class MPPIController:
                     )
                 lo, hi = 0, n_ref
                 idx_local, d2_min = self._nearest_ref(xs, ys, lo, hi)
+                # F-F.21: tam tarama tensörü (yüzlerce MB) HEMEN geri verilsin;
+                # yoksa cupy havuzu onu Jetson'ın paylaşılan RAM'inde tutar.
+                self._bellek_havuzunu_serbest_birak()
 
             idx_min = idx_local + lo                     # (K, T+1) GLOBAL indeks
             # Sonraki adımın çapası = teknenin ŞU ANKİ (t=0) en yakın indeksi.

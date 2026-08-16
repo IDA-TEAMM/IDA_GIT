@@ -70,6 +70,7 @@ from sensor_msgs.msg import NavSatFix
 from std_msgs.msg import Bool, Int32, String
 
 from girdap_decision.qos_profiles import latched_qos, sensor_data_qos
+from girdap_decision.saat_kaynagi import bayatlik_saati
 from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mission.mission_manager import (
     FcMissionItem,
@@ -92,6 +93,7 @@ class MissionManagerNode(Node):
     def __init__(self, **node_kwargs) -> None:
         # node_kwargs → parameter_overrides passthrough (test enjeksiyonu).
         super().__init__("mission_manager_node", **node_kwargs)
+        self._saat = bayatlik_saati(self)          # §0.61: tek yönlü saat
 
         self.declare_parameter("mission_source", "file")   # "file" | "fc"
         self.declare_parameter("mission_file", "")
@@ -251,8 +253,34 @@ class MissionManagerNode(Node):
 
         IDLE + index 0. `start()` yalniz IDLE'da etkili oldugu icin IDLE'a
         donmek ikinci turun baslatilabilmesi demek. COMPLETE'ten de cikar.
+
+        🔴 F-M.12 (15.08.2026) — `_started` DE SIFIRLANMALI, yoksa yeniden
+        baslama YARIM kalir ve dugum yeni goreve KALICI OLARAK SAGIR olur.
+        Kaptan: *"gate'i gecince duruyor, gorev bitmis oluyor"* ·
+        (§0.98p'de ayni sikayet: *"waypoint gorevi bitince baska waypoint
+        atayamiyoruz"*).
+
+        Olculen zincir — `_started` eskiden YALNIZ `__init__`'te False, 386'da
+        True yapiliyordu, geri donusu HIC YOKTU:
+          1. gorev baslar                       -> `_started = True`
+          2. son waypoint biter                 -> `/girdap/mission/complete`
+             MANDALLANIR -> FSM TAMAMLANDI
+          3. Mission Planner'dan yeni liste     -> `_on_fc_waypoints`:
+             `if self._started: return` -> liste SESSIZCE atilir (yalniz
+             gunluge WARN; operator ekraninda hicbir iz yok)
+          4. `/girdap/mission/reset` cagrilir   -> `_mgr.reset()` ic yoneticiyi
+             IDLE yapar ama `_started` TRUE KALIR -> yeni liste yine yok
+             sayilir, `_on_state` de (`if not self._started`) yeniden
+             baslatamaz
+        Yani servisi yeniden baslatmadan donus yoktu. Tek satirla kapaniyor.
+
+        ⚠ Sirasi onemli: `_started` False olunca `_on_state` bir sonraki aktif
+        parkur mesajinda gorevi yeniden baslatir — ama `_mgr.reset()` zaten
+        IDLE'a aldigi ve F-M.1 kapilari (GPS fix + hedef mesafesi) yerinde
+        oldugu icin bu istenen davranistir.
         """
         self._mgr.reset()
+        self._started = False
 
     def _on_fc_waypoints(self, msg) -> None:                      # noqa: ANN001
         """FC görev listesi geldi → görevi (yeniden) kur. Yalnız başlamadan.
@@ -422,7 +450,8 @@ class MissionManagerNode(Node):
     # ----- yayım -----
 
     def _now(self) -> float:
-        return self.get_clock().now().nanoseconds * 1e-9
+        """Bayatlık saati — TEK YÖNLÜ (§0.61). Mutlak an olarak kullanılmaz."""
+        return self._saat()
 
     def _publish_waypoints_path(self) -> None:
         """F-S.11 (F-S.6 düzeltmesi): YALNIZ o anki aktif waypoint'i

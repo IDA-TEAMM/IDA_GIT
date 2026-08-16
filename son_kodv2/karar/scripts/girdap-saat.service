@@ -43,9 +43,15 @@
 #   timedatectl                 # "System clock synchronized: yes" görmeli
 #   date -u                     # GPS UTC ile tutmalı
 #
-# ⚠️ GPS FIX ŞART: kapalı alanda fix gelmez → servis 90 s bekler, kuramaz,
+# ⚠️ GPS FIX ŞART: kapalı alanda fix gelmez → servis 12 s bekler, kuramaz,
 #    sıfır dışı kodla çıkar. Bu bir arıza DEĞİL; teslimler "güvenilmez"
-#    damgalanır ve veri kaybolmaz. Dışarıda/suda tekrar koştur.
+#    damgalanır ve veri kaybolmaz.
+#
+# 🔗 SOĞUK AÇILIŞIN ÇÖZÜMÜ BU SERVİS DEĞİL: fix bu servis koştuktan ~2 dakika
+#    SONRA geliyor (§0.59a). O hâli `girdap-saat-gec.service` kapatıyor —
+#    yığın ayaktayken `/mavros/time_reference`'tan kurar, hiçbir şeyi
+#    bekletmez. İkisi birlikte kurulmalı; bu dosya yalnız SICAK açılışı
+#    (FC zaten fix'li) yakalamak içindir.
 
 [Unit]
 Description=GIRDAP IDA — sistem saatini Pixhawk GPS saatinden kur (md 4.2)
@@ -66,18 +72,25 @@ Type=oneshot
 RemainAfterExit=yes
 # root SART: clock_settime + adjtimex(ADJ_STATUS) CAP_SYS_TIME ister.
 User=root
-# 🔴 ZAMAN ASIMI = 45 s, BILINCLI UST SINIR.
+# 🔴 ZAMAN ASIMI = 12 s (13.08'de 45'ten dusuruldu, §0.61g).
+# Olculdu (§0.59a): bu servis acilisin 61. saniyesinde kosuyor, ilk GPS fix
+# 171. saniyede geliyor. Yani SOGUK acilista 45 saniye beklemek fix'i YINE
+# yakalamiyor — yalnizca acilisi 45 sn geciktiriyor (`Before=girdap-karar`).
+# SICAK acilista (FC zaten fix'li) gecerli SYSTEM_TIME bir-iki saniyede gelir,
+# 12 s onu rahat yakalar. Soguk halin cozumu artik `girdap-saat-gec.service`:
+# fix geldikten SONRA, MAVROS konusundan, hicbir seyi bekletmeden kurar.
+# Eski gerekce (tarihsel kayit):
 # Before=girdap-karar + Type=oneshot demek: bu servis BITENE KADAR yigin
 # BASLAMAZ. Yani zaman asimi dogrudan ACILIS GECIKMESIDIR.
 # Takas: yanlis DOSYA ADI icin gorevi geciktirmek kotu bir takastir — veri
 # zaten gecerli, yalnizca "guvenilmez" damgalanir; ama gorev baslamazsa hic
 # puan yok. 45 s, sicak GPS fix'i (FC genelde Jetson'dan once ayaga kalkar)
 # icin yeterli, soguk fix'te ise bilerek VAZGECIYORUZ.
-# Toplam en kotu hal: port bekleme (<=15 s, zaman_asimi/3) + 45 s.
-ExecStart=/usr/local/bin/girdap_saat_kur.py --port /dev/pixhawk --baud 921600 --zaman-asimi 45
+# Toplam en kotu hal: port bekleme (<=4 s, zaman_asimi/3) + 12 s.
+ExecStart=/usr/local/bin/girdap_saat_kur.py --port /dev/pixhawk --baud 921600 --zaman-asimi 12
 # Kurulamazsa (GPS fix yok) yigin YINE baslamali -> basarisizlik yutulur.
 SuccessExitStatus=0 1 2 3 4
-TimeoutStartSec=75
+TimeoutStartSec=40
 StandardOutput=journal
 StandardError=journal
 

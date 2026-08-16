@@ -107,10 +107,14 @@ hiçbirinde `armed=true` yok; 11.08'de force ile arm edildiğinde `Kotu AHRS`
 
 ### A4 · LiDAR yaw kalibrasyonu
 
-Önce **mekanik**: LiDAR kapağa değil, kapaktan bağımsız RİJİT bir yatağa
-oturmalı. 11.08'de kapak yamuk takıldığı için 34°'lik sahte bir eğiklik ölçtük;
-kapak her açılışta değişirse kalibrasyon tekrarlanamaz, yani ölçmenin anlamı
-kalmaz.
+⚠️ **14.08 DÜZELTMESİ — buradaki mekanik endişem YANLIŞTI.** "LiDAR kapağa
+bağlı, kapak her açılışta farklı oturuyor, kalibrasyon tekrarlanamaz" diye
+yazmıştım. Kullanıcı düzeltti: **kapak gövdeye geçmeli oturuyor, yamuk
+takılamaz.** 11.08'de ölçtüğümüz 34°'lik eğikliğin sebebi kapağın kendisi
+değil, o gün kapağın bilerek yerinden oynatılmış olmasıydı.
+
+⇒ Yuva tekrarlanabilir. Yaw bir kez ölçülünce **kalıcıdır**, her testte
+yeniden ölçmek gerekmez. Rijit kaide değişikliğine de gerek yok.
 
 - Duba tam pruva hattında, **10 m**.
 - `ros2 topic echo /perception/obstacle_map` → `orientation.z` ≈ 0,15-0,25 olan

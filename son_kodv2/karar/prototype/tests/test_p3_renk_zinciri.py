@@ -116,7 +116,7 @@ def test_renk_YOKSA_P3E_GECILMEZ():
     KORUNUR. Rastgele bir hedefe saldırmak 100→50 puan.
     """
     fsm = _p2ye_getir()
-    fsm.tick(Observation(mission_complete=True, p3_bekleniyor=False))
+    fsm.tick(Observation(p2_waypoints_done=True, p3_bekleniyor=False))
     assert fsm.state is not MissionState.PARKUR3
 
 
@@ -124,15 +124,18 @@ def test_renk_VARSA_P3E_GECILIR():
     """Kopuk halka #3: `p3_bekleniyor` üretimde hiç True yapılmıyordu ⇒
     bu geçiş SAHADA ASLA gerçekleşmezdi."""
     fsm = _p2ye_getir()
-    fsm.tick(Observation(mission_complete=True, p3_bekleniyor=True))
+    fsm.tick(Observation(p2_waypoints_done=True, p3_bekleniyor=True))
     assert fsm.state is MissionState.PARKUR3
 
 
 def test_gorev_bitmeden_renk_TEK_BASINA_yetmez():
     """Renk kalkıştan önce yükleniyor (md s.22). Tek başına P3'ü açarsa
-    tekne Parkur-1'in ortasında kamikaze moduna geçerdi."""
+    tekne Parkur-2 bitmeden kamikaze moduna geçerdi.
+
+    🔑 TETİK 14.08'de `p2_waypoints_done`'a taşındı (Yahya); renk kapısı ona
+    EK bir şart — ikisi BİRLİKTE gerekiyor."""
     fsm = _p2ye_getir()
-    fsm.tick(Observation(mission_complete=False, p3_bekleniyor=True))
+    fsm.tick(Observation(p2_waypoints_done=False, p3_bekleniyor=True))
     assert fsm.state is not MissionState.PARKUR3
 
 

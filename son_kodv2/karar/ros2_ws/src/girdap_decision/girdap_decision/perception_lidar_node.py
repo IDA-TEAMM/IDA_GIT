@@ -36,6 +36,7 @@ from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2
 
 from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.saat_kaynagi import bayatlik_saati
 from prototype.perception.lidar_obstacles import (
     LidarObstacleConfig,
     detect_obstacles,
@@ -50,6 +51,7 @@ class PerceptionLidarNode(Node):
         # parameter_overrides ile test/launch'tan parametre enjekte edilebilir
         # (cfg __init__'te kurulduğu için sonradan set_parameters yetmez).
         super().__init__("perception_lidar_node", **node_kwargs)
+        self._saat = bayatlik_saati(self)          # §0.61: tek yönlü saat
 
         # --- Parametreler (config/hardware.yaml perception.lidar bloğu) ---
         self.declare_parameter("z_min", 0.1)
@@ -282,7 +284,7 @@ class PerceptionLidarNode(Node):
         ölçülmeli** — bu log tam onun için var. İlk su testinde bak:
         `journalctl -u girdap-karar | grep "kümeleme"`.
         """
-        now = self.get_clock().now().nanoseconds * 1e-9
+        now = self._saat()
         if self._last_log_t is None or now - self._last_log_t >= self._log_period_s:
             self._last_log_t = now
             butce_ms = 1000.0 / max(self._beklenen_hz, 1e-6)

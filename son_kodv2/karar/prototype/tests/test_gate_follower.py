@@ -765,3 +765,262 @@ def test_K1_ardisik_parkurda_hedef_GERIYE_gitmez() -> None:
     # ①'in kendi kendini düzelttiğinin kanıtı: eğik yaklaşmada elenen kapı-2,
     # açı düzelince kilitlenip GEÇİLİYOR (yani eleme kalıcı puan kaybı değil).
     assert gf.passed_gate_count >= 2, "kurs boyunca en az 2 kapı geçilmeliydi"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# F-K.1 (13.08.2026) — KAPI VARIŞ NOKTASI DEĞİL, GEÇİLECEK EŞİKTİR
+#
+# 🔴 SANAL GÖLDE ÖLÇÜLDÜ (kapalı döngü, gerçek düğümler, MP'den görev):
+# tekne 25 m sürüp 1. kapıya vardı ve **(0.02, 24.95)'te kilitlendi**;
+# `current_target` (−0.02, 25.04)'te takılı, MPPI thrust (−0.13, +0.05) N =
+# fiilen sıfır. Görev yöneticisi bir sonraki noktaya GEÇMİŞ olmasına rağmen
+# araç durdu.
+#
+# 🔑 ZİNCİR: nişan kapı düzleminin ÜSTÜNDE → MPPI referansı orada BİTER →
+# `mppi._terminal_goal` referans sonuna KIRPAR (kod okundu: `ref[min(n-1,
+# anchor+adim)]`) → terminal gradyanı 2·w·d sıfıra iner → araç kapı ortasında
+# frenler → düzlem geçilmez → `signed_distance > 0` olmaz → kilit çözülmez →
+# hedef bir daha ilerlemez. Kendi kendini kilitleyen döngü.
+#
+# 📏 UZATMA = ÖLÇÜLMÜŞ GÖVDE BOYU (1,04 m), ayarlanabilir eşik DEĞİL. Gerekçe
+# yarışma tanımının kendisi: geçiş süresi *pruva* dubaları geçince başlar,
+# ***kıç* geçince* biter — yani geçmiş sayılmak için tüm tekne düzlemin
+# ötesine çıkmalı. (Aynı ilke pure-pursuit ailesinde de vardır: nişan hep
+# aracın ÖNÜNDEDİR, araçta biten bir terminal nokta değil.)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_FK1_surus_hedefi_kapi_DUZLEMININ_OTESINDE() -> None:
+    g = Gate(left=(-2.0, 25.0), right=(2.0, 25.0), midpoint=(0.0, 25.0),
+             normal=(0.0, 1.0))
+    hedef = g.gecis_hedefi(1.04)
+    assert hedef == pytest.approx((0.0, 26.04), abs=1e-6)
+    # Düzlemin ötesinde: aracı oraya süren MPPI kapıyı GEÇMEK ZORUNDA kalır.
+    assert g.signed_distance(hedef) > 0.0
+
+
+def test_FK1_uzatma_NISANI_bozmaz_kimlik_korunur() -> None:
+    """`midpoint`/`drive_target` KİMLİKTİR (eşleşme + geçiş testi buna bakar);
+    uzatma yalnız KONTROL hedefidir. İkisi karışırsa kapı kendi kendini
+    kaybeder (drift eşiği orta noktaya göre ölçülüyor)."""
+    g = Gate(left=(-2.0, 25.0), right=(2.0, 25.0), midpoint=(0.0, 25.0),
+             normal=(0.0, 1.0))
+    _ = g.gecis_hedefi(1.04)
+    assert g.midpoint == (0.0, 25.0)
+    assert g.drive_target == (0.0, 25.0)
+
+
+def test_FK1_normal_YOKSA_uzatma_YAPILMAZ() -> None:
+    """Eski kurs-ekseni kolu: yön bilinmiyorsa körlemesine uzatmak, hedefi
+    yanlış tarafa (geriye) taşıyabilirdi."""
+    g = Gate(left=(-2.0, 25.0), right=(2.0, 25.0), midpoint=(0.0, 25.0))
+    assert g.gecis_hedefi(1.04) == g.drive_target
+
+
+def test_FK1_KAPI_YOKKEN_surus_hedefi_ham_GN_ile_AYNI() -> None:
+    """Geriye tam uyumluluk: kapısız davranış birebir korunmalı."""
+    takip = GateFollower()
+    sonuc = takip.update((0.0, 0.0), (20.0, 3.0), [], [])
+    assert sonuc.used_fallback is True
+    assert sonuc.surus_hedefi == sonuc.target == (20.0, 3.0)
+
+
+def test_FK1_kilitli_kapida_surus_hedefi_OTEDE_target_NISANDA() -> None:
+    """Uçtan uca: `update()` iki noktayı da doğru döndürmeli."""
+    takip = GateFollower()
+    dubalar = [(10.0, +2.0), (10.0, -2.0)]
+    sonuc = None
+    for i in range(ONAY_TICK + 1):
+        sonuc = takip.update((0.0, 0.0), (20.0, 0.0), dubalar, [], gozlem_no=i)
+    assert sonuc is not None and sonuc.gate is not None
+    assert sonuc.target == pytest.approx((10.0, 0.0), abs=1e-6)
+    # 🔄 F-K.2 ile iki fazlı: araç 10 m uzakta ve hizalanma payı (yarı genişlik
+    # 2 m) dışında → bu fazda hedef HİZALANMA noktasıdır, çıkış değil. İkisi de
+    # aracın İLERİSİNDEDİR; asıl güvence budur (F-K.1'in kapı ortasında
+    # bitmeme kuralı `test_FK2_hizalanma_noktasi_GECILINCE_CIKISA_gecilir`de).
+    d_arac = sonuc.gate.signed_distance((0.0, 0.0))
+    d_hedef = sonuc.gate.signed_distance(sonuc.surus_hedefi)
+    assert d_hedef is not None and d_arac is not None and d_hedef > d_arac
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# F-K.2 (13.08.2026) — İKİ FAZLI SÜRÜŞ: HİZALAN → GEÇ, ASLA GERİYE GİTME
+#
+# 🔴 SANAL GÖLDE ÖLÇÜLDÜ (gerçek geometri: 8 kapı, 12 m açıklık, 4 m aralık,
+# zigzag ±5 m): tekne 5/8 kapı geçti, sonra parkurun SAĞINA kaçtı ve geri geri
+# salınıma girdi — iz (1.5,12.1)→(8.5,28.5)→(9.7,23.7)→(8.1,12.4), ψ 252-282°.
+# Sebep: kapının YANINA düşen araç için iki duba görüş hattı BOYUNCA dizilir;
+# `select_gate`'in dikeylik testi onları haklı olarak reddeder ⇒ kapı bir daha
+# seçilemez. Şartname P2 puanı ORANSAL `(G2/KD2)×40` → 3 kaçan kapı = 15 puan.
+#
+# 🔑 Çözüm literatürün kalıbı: mesafelen → DİK yaklaş → geç.
+#
+# 🔴🔴 KAPTANIN UYARISI: *"korkum şu, Parkur-3'te modelin geriye gitmesi."*
+# Kapı takibi `gate_following_enabled` TEK parametresine bağlı (parkura bağlı
+# DEĞİL) → PARKUR3'te de etkin. Naif bir yaklaşma noktası, araç onu geçmişken
+# GERİ komut üretirdi. Aşağıdaki testler bunun imkânsız olduğunu donduruyor.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _kapi_12m() -> Gate:
+    return Gate(left=(-6.0, 14.0), right=(6.0, 14.0), midpoint=(0.0, 14.0),
+                normal=(0.0, 1.0))
+
+
+def test_FK2_HIZALANMA_FAZI_SURUS_YOLUNDA_DEGIL() -> None:
+    """🔴 ÖLÇÜLDÜ VE GERİ ALINDI: hizalanma payı (yarı genişlik 6 m) kapı
+    aralığından (4 m) BÜYÜK olunca bir sonraki kapının yaklaşma noktası bir
+    öncekinin gerisine düşüyor. Sanal gölde: yalnız çıkış 5 kapı · hizalanma+
+    çıkış **1 kapı** (tekne dondu) · yalnız havuç **parkur TAMAMLANDI**.
+    `yaklasma_hedefi` yöntemi duruyor ama sürüş yolunda DEĞİL."""
+    g = _kapi_12m()
+    # Uzaktayken bile hedef kapının ÖTESİ (havuç), gerisi değil.
+    hedef = g.surus_noktasi((0.0, 0.0), 6.0, 1.04)
+    assert hedef == pytest.approx((0.0, 15.04), abs=1e-6)
+
+
+def test_FK2_yaklasma_hedefi_YONTEMI_DURUYOR() -> None:
+    """Seyrek kapılı parkurda gerekebilir; yeniden açılacaksa önce hizalanma
+    payı ile KAPI ARALIĞI kıyaslanmalı (pay < aralık şartı)."""
+    g = _kapi_12m()
+    assert g.yaklasma_hedefi(6.0) == pytest.approx((0.0, 8.0), abs=1e-6)
+
+
+def test_FK2_ASLA_GERIYE_nisan_ALINMAZ_rastgele_tarama() -> None:
+    """🔴 KAPTANIN KORKUSU — özellik testi (200 konum × 8 yön).
+
+    Her araç konumu ve her kapı yönelimi için: hedefin kapı normali üzerindeki
+    izdüşümü, aracınkinden BÜYÜK olmalı. Yani normal yönünde geri komut
+    üretilemez — Parkur-3 dahil.
+    """
+    import random
+
+    rastgele = random.Random(11)
+    for _ in range(200):
+        aci = rastgele.uniform(-math.pi, math.pi)
+        nx, ny = math.cos(aci), math.sin(aci)
+        mx, my = rastgele.uniform(-40, 40), rastgele.uniform(-40, 40)
+        yari = rastgele.uniform(1.0, 10.0)
+        tx, ty = -ny, nx                       # kiriş yönü
+        g = Gate(
+            left=(mx + tx * yari, my + ty * yari),
+            right=(mx - tx * yari, my - ty * yari),
+            midpoint=(mx, my), normal=(nx, ny),
+        )
+        arac = (rastgele.uniform(-40, 40), rastgele.uniform(-40, 40))
+        hedef = g.surus_noktasi(arac, yari, 1.04)
+        d_arac = g.signed_distance(arac)
+        d_hedef = g.signed_distance(hedef)
+        assert d_hedef is not None and d_arac is not None
+        assert d_hedef > d_arac + 1e-9, (
+            f"GERİYE nişan: araç d={d_arac:.2f} → hedef d={d_hedef:.2f}"
+        )
+
+
+def test_FK2_normal_YOKSA_iki_faz_da_devre_disi() -> None:
+    g = Gate(left=(-6.0, 14.0), right=(6.0, 14.0), midpoint=(0.0, 14.0))
+    assert g.surus_noktasi((0.0, 0.0), 6.0, 1.04) == g.drive_target
+
+
+def test_FK2_hizalanma_payi_KAPININ_KENDI_yari_genisligi() -> None:
+    """Öz-ölçekli: dış eşik yok (donmuş kural §0.0d). Dar kapı → kısa pay."""
+    dar = Gate(left=(-1.0, 10.0), right=(1.0, 10.0), midpoint=(0.0, 10.0),
+               normal=(0.0, 1.0))
+    genis = _kapi_12m()
+    assert dar.yaklasma_hedefi(dar.width / 2.0)[1] == pytest.approx(9.0)
+    assert genis.yaklasma_hedefi(genis.width / 2.0)[1] == pytest.approx(8.0)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# F-K.3 (13.08.2026) — SAHTE KAPI AYIKLAMA: SIRALAMA "KURS BOYUNCA AYRIM"
+#
+# 🔴 Kaptan: *"TEKNOFEST'te bir gate'de 2 gate'in dubalarını sağda
+# görebiliyorsun, o yüzden bayağı sıkıntı."* Gerçek geometride (§0.17b: 12 m
+# açıklık, 4 m aralık, zigzag ±5) yeniden üretildi: **50 aday çiftin 43'ü
+# SAHTE**; sanal gölde tekne 8,06 m genişlikte sahte bir kapıya kilitlenip
+# dondu (gerçek kapılar 12 m).
+#
+# 📏 ÖLÇÜM — 35 araç konumu, en iyi sıradaki aday gerçek mi:
+#     mevcut (menzile göre)       → %26
+#     dikeylik oranına göre       → %20
+#     **kurs BOYUNCA ayrıma göre  → %100**
+# Gerçek kapının iki direği kurs ekseninde AYNI istasyondadır (ayrım ≈ 0);
+# çapraz çiftler kapı aralığının katları kadar ayrıktır (4 m, 8 m…).
+#
+# ⚠ EKSEN ARAÇ→GN'DEN ALINAMAZ: GN kaçık (§0.17c: 2,0-6,4 m) → tekne yana
+# kaçınca eksen 37°'ye kadar döner ve ölçüt %20'ye çöker. Eksen GEÇİLEN SON
+# KAPININ NORMALİNDEN gelir — kapılar kursa dik olduğu için eksen kendini
+# besler; yeni parametre/topic YOK (§0.0d korunur).
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _gercek_parkur():
+    """§0.17b geometrisi: 8 kapı, 12 m açıklık, 4 m aralık, zigzag ±5."""
+    desen = [0.0, 5.0, 0.0, -5.0]
+    kapilar = [(desen[i % 4], 6.0 + i * 4.0, 6.0) for i in range(8)]
+    dubalar = []
+    for gx, gy, yari in kapilar:
+        dubalar += [(gx - yari, gy), (gx + yari, gy)]
+    return kapilar, dubalar
+
+
+def test_FK3_kurs_ekseni_YOKKEN_sahte_kapi_secilebiliyor_KAYIT() -> None:
+    """Arızanın kendisi — düzeltmenin neyi çözdüğünü donduran kayıt testi."""
+    _, dubalar = _gercek_parkur()
+    g = select_gate((0.92, 4.02), (5.0, 12.0), dubalar, cfg=GateFollowerConfig())
+    assert g is not None
+    assert abs(g.width - 12.0) > 1.0, "eksen yokken sahte seçilmiyorsa test bayat"
+
+
+def test_FK3_kurs_ekseni_VARKEN_GERCEK_kapi_secilir() -> None:
+    _, dubalar = _gercek_parkur()
+    g = select_gate(
+        (0.92, 4.02), (5.0, 12.0), dubalar, cfg=GateFollowerConfig(),
+        kurs=(0.0, 1.0),
+    )
+    assert g is not None
+    assert g.width == pytest.approx(12.0, abs=0.01), (
+        f"kurs ekseni verildiği hâlde sahte kapı seçildi (genişlik {g.width:.2f})"
+    )
+
+
+def test_FK3_COK_KONUMLU_tarama_HEPSINDE_gercek() -> None:
+    """35 araç konumu — ölçümün kendisi teste donduruldu."""
+    _, dubalar = _gercek_parkur()
+    cfg = GateFollowerConfig()
+    denenen = gercek = 0
+    for ax in (-6.0, -3.0, 0.0, 3.0, 6.0):
+        for ay in (0.0, 4.0, 8.0, 12.0, 16.0, 20.0, 24.0):
+            g = select_gate((ax, ay), (0.0, ay + 8.0), dubalar, cfg=cfg,
+                            kurs=(0.0, 1.0))
+            if g is None:
+                continue
+            denenen += 1
+            if abs(g.width - 12.0) < 0.01:
+                gercek += 1
+    assert denenen >= 30, f"tarama yetersiz ({denenen} konum)"
+    # ÖLÇÜLEN: 34/35 (%97). Öncesi 9/35 (%26) — bkz. üstteki blok.
+    # ⚠ KALAN TEK KONUM YAPISAL, düzeltmenin eksiği DEĞİL: araç (6, 24)'te
+    # geniş kapının direğiyle AYNI HİZADA; o direk burun hattının gerisine
+    # düşüyor (`min_forward`) ⇒ GERÇEK kapı aday bile olamıyor, en iyi mevcut
+    # aday zorunlu olarak sahte kalıyor. Bu, "yanda kalan kapı" sorununun
+    # kendisidir (§0.75b) ve ayrı bir iştir.
+    assert gercek >= denenen - 1, f"{denenen - gercek}/{denenen} konumda SAHTE kapı"
+    assert gercek / denenen > 0.9, "sahte kapı ayıklama ölçülen seviyenin altında"
+
+
+def test_FK3_kurs_ekseni_GECILEN_KAPIDAN_ogrenilir() -> None:
+    """Eksen kendini besler: ilk kapı geçilince eksen hazır olur.
+
+    ⚠ Eksen HENÜZ `select_gate`'e BAĞLI DEĞİL (P1 kapalı-döngü gerilemesi,
+    bkz. `gate_follower.update` içindeki not). Bu test öğrenme mekanizmasını
+    dondurur; bağlanınca hazır olsun diye."""
+    takip = GateFollower()
+    assert takip._kurs_ekseni is None
+    dubalar = [(-6.0, 6.0), (6.0, 6.0)]
+    for i in range(ONAY_TICK + 1):
+        takip.update((0.0, 0.0), (0.0, 20.0), dubalar, [], gozlem_no=i)
+    assert takip.committed_gate is not None
+    takip.update((0.0, 8.0), (0.0, 20.0), dubalar, [], gozlem_no=99)  # düzlem geçildi
+    assert takip._kurs_ekseni is not None, "kurs ekseni öğrenilmedi"
+    assert takip._kurs_ekseni[1] > 0.9, "eksen kurs yönünde değil"

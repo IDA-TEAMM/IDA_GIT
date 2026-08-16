@@ -97,6 +97,19 @@ KONTROL_HATA = ArizaTanimi(
 KONTROLCU_YOK = ArizaTanimi(
     "KONTROLCU", "kontrolcu hazir degil", SEVIYE_ERROR
 )
+# 🔴 F-F.1 (14.08.2026, §0.98) — POZ-YOK/POZ-BAYAT'IN ÜSTÜNDE, ÇÜNKÜ DAHA SİNSİ.
+# Ölçülen olay: `/girdap/fusion/pose` iSAM2 diverjansıyla **10¹⁴⁹** mertebesine
+# çıktı; poz TAZE ve DÜZENLİ (10 Hz) akıyordu, yalnızca ANLAMSIZDI. Üç mevcut
+# kapı da (KAR-05 "hiç girdi yok" · F8.2 "bayat" · F-P.7 "hız bayat") tazelik
+# ölçtüğü için hiçbiri görmedi: `inhibit_reason` bütün koşum boyunca **`YOK`**
+# dedi, yani sistem "sürmemem için sebep yok" derken hiç sürmüyordu.
+# Operatörün elinde arızayı gösteren TEK BİR işaret yoktu.
+# Sıra POZ-YOK'un ÜSTÜNDE: makullük kapısı yayını kestiğinde POZ-YOK da
+# tetiklenir; ikisi aynı anda aktifken operatöre gösterilmesi gereken,
+# "poz gelmiyor" değil "poz patladı" — sebebi söyleyen kod odur.
+POZ_SACMA = ArizaTanimi(
+    "POZ-SACMA", "poz sayisal patladi, MPPI durdu", SEVIYE_ERROR
+)
 POZ_YOK = ArizaTanimi("POZ-YOK", "poz yok, MPPI durdu", SEVIYE_ERROR)
 POZ_BAYAT = ArizaTanimi("POZ-BAYAT", "poz bayat, MPPI durdu", SEVIYE_ERROR)
 ENGEL_YOK = ArizaTanimi(
@@ -120,11 +133,24 @@ SINIF_YOK = ArizaTanimi(
 )
 KAPI_YOK = ArizaTanimi("KAPI-YOK", "kapi secilemedi", SEVIYE_WARNING)
 GPU_YOK = ArizaTanimi("GPU-YOK", "MPPI CPU'da, adim suresi riskli", SEVIYE_WARNING)
+# §0.61h — kaptanın isteği: *"bu veriyi fix oldu ya da olmadı diye pixhawkta
+# göreyim."* Sistem saati GPS'ten kurulamadıysa bu kod ekranda DURUR; saat
+# kurulunca (açılışta seri yoldan ya da sonradan `girdap-saat-gec` ile)
+# KENDİLİĞİNDEN düşer — yani kodun YOKLUĞU "fix alındı, saat kuruldu"
+# demektir. Ölçüt çekirdeğin `adjtimex` STA_UNSYNC bayrağı (teslim
+# damgalarının dayandığı ölçütün AYNISI, `saat_guveni.py`) — "tarih makul mü"
+# değil "bir referansa göre düzeltildi mi".
+# ⚠ Seviye WARNING ve liste SONUNDA: saat yokluğu görevi durdurmaz, veri
+# geçerlidir; yalnız mutlak saat iddia edilmez. Gerçek arızaları GÖLGELEMEZ.
+SAAT_YOK = ArizaTanimi(
+    "SAAT-YOK", "saat GPS'ten kurulmadi (fix?)", SEVIYE_WARNING
+)
 
 #: Öncelik sırasıyla bütün tanımlar (üstteki en kritik).
 ARIZALAR: tuple[ArizaTanimi, ...] = (
     KONTROL_HATA,
     KONTROLCU_YOK,
+    POZ_SACMA,
     POZ_YOK,
     POZ_BAYAT,
     ENGEL_YOK,
@@ -136,6 +162,7 @@ ARIZALAR: tuple[ArizaTanimi, ...] = (
     SINIF_YOK,
     KAPI_YOK,
     GPU_YOK,
+    SAAT_YOK,
 )
 
 
@@ -151,6 +178,7 @@ ARIZALAR: tuple[ArizaTanimi, ...] = (
 # gürültüye gömer.
 _SEBEP_KODLARI: dict[str, ArizaTanimi] = {
     "KONTROLCU-HAZIR-DEGIL": KONTROLCU_YOK,
+    "POZ-SACMA": POZ_SACMA,
     "POZ-YOK": POZ_YOK,
     "POZ-BAYAT": POZ_BAYAT,
     "ENGEL-YOK": ENGEL_YOK,

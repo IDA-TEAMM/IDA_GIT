@@ -15,6 +15,7 @@ rclpy gerektirir → .venv'de SKIP.
 from __future__ import annotations
 
 import numpy as np
+import re
 import pytest
 
 rclpy = pytest.importorskip("rclpy", reason="rclpy yok (.venv) — ROS ortamında koş")
@@ -456,12 +457,17 @@ def test_turuncu_kenar_dubasi_HEM_kapiya_HEM_huniyle_torbaya_gider(ros_context) 
     node = pn.PlanningNode()
     try:
         node._on_odom(_odom_poz(0.0, 0.0, 0.0))
-        node._on_classified(_classified([
-            (10.0, +2.0, 0.15, 0),      # turuncu kenar (kapı sol)
-            (10.0, -2.0, 0.15, 0),      # turuncu kenar (kapı sağ)
-            (12.0, +1.0, 0.20, 1),      # sarı ENGEL
-            (14.0, -1.0, 0.20, 99),     # eşleşmeyen (CLASS_UNKNOWN) → engel KALIR
-        ]))
+        # 🔴 F-A.1 (13.08.2026): tek kare turuncu ONAY DEĞİL — kenar dubası
+        # olmak için aynı konum ≥2 karede turuncu görülmeli (ölçüm: kameranın
+        # yanlış pozitifleri tek kare parlamasıydı, 0 tekrar). İkinci kare
+        # eklendi; testin korduğu güvence aynen duruyor.
+        for _ in range(2):
+            node._on_classified(_classified([
+                (10.0, +2.0, 0.15, 0),      # turuncu kenar (kapı sol)
+                (10.0, -2.0, 0.15, 0),      # turuncu kenar (kapı sağ)
+                (12.0, +1.0, 0.20, 1),      # sarı ENGEL
+                (14.0, -1.0, 0.20, 99),     # eşleşmeyen (CLASS_UNKNOWN) → engel KALIR
+            ]))
         # İki turuncu kapı takibine gider…
         assert len(node._edge_buoys) == 2
         # …ve torbada 2 normal engel + 2 huni paylı direk bulunur.
@@ -530,6 +536,9 @@ def test_kapi_ortasi_ham_gorev_noktasini_ezer(ros_context) -> None:  # noqa: ANN
         target = PoseStamped()
         target.pose.position.x = 20.0
         target.pose.position.y = 3.0
+        # F-A.1: ilk turuncu kare KENAR ONAYI için harcanır (tek kare
+        # kenar dubası yapmaz) → kapı onay penceresi bir kare kayar.
+        node._on_classified(_classified(dubalar))
         # B5: kapı, `ONAY_TICK` AYRI ALGI KARESİNDE görülmeden kilitlenmez.
         # Onay boyunca referans ham GN'de kalır (kapısız davranışla birebir).
         for _ in range(ONAY_TICK - 1):
@@ -538,11 +547,24 @@ def test_kapi_ortasi_ham_gorev_noktasini_ezer(ros_context) -> None:  # noqa: ANN
             assert node._pipe._ref_path[-1][1] == pytest.approx(3.0, abs=1e-6)
         node._on_classified(_classified(dubalar))
         node._on_target(target)
-        # Referansın son noktası kapı ortası (10, 0) olmalı — ham GN (20, 3) değil.
+        # Referansın son noktası kapının ÖTESİ olmalı — ham GN (20, 3) değil.
+        # 🔴 F-K.1 (13.08.2026) — SÖZLEŞME İNCELDİ: eskiden kapı ORTASI (10, 0)
+        # bekleniyordu; artık orta + gövde boyu (10 + 1,04 = 11,04). Sebep
+        # sanal gölde kapalı döngüde ÖLÇÜLDÜ: nişan kapı düzleminin ÜSTÜNDE
+        # bırakılınca MPPI referansı orada bitiyor, `_terminal_goal` referans
+        # sonuna kırpıyor ve araç TAM KAPI ORTASINDA duruyor (ölçüm: konum
+        # (0.02, 24.95), thrust 0,13 N). Düzlem geçilmediği için kilit de
+        # çözülmüyor → görev bir daha ilerlemiyor. Kapı bir VARIŞ değil,
+        # GEÇİLECEK EŞİKTİR. Uzatma = ölçülmüş gövde boyu; gerekçe yarışma
+        # tanımı: geçiş *pruva* girince başlar, ***kıç* çıkınca* biter.
+        # Korunan asıl güvence aynen duruyor: kapı ham GN'yi EZİYOR.
+        # F-K.1: hedef kapı ortası DEĞİL, ötesi (10 + gövde boyu 1,04).
+        # (F-K.2'nin hizalanma fazı ölçümle elendi — sürüş yolunda değil.)
         ref = node._pipe._ref_path
         assert ref is not None
-        assert ref[-1][0] == pytest.approx(10.0, abs=1e-6)
+        assert ref[-1][0] == pytest.approx(10.0 + 1.04, abs=1e-6)
         assert ref[-1][1] == pytest.approx(0.0, abs=1e-6)
+        assert ref[-1][0] > 0.0, "hedef aracin gerisinde"
     finally:
         node.destroy_node()
 
@@ -561,10 +583,13 @@ def test_B5_ayni_algi_karesinde_tekrar_hedef_ONAYI_ILERLETMEZ(ros_context) -> No
     )
     try:
         node._on_odom(_odom_poz(0.0, 0.0, 0.0))
-        node._on_classified(_classified([        # TEK algı karesi
-            (10.0, +2.0, 0.15, 0),
-            (10.0, -2.0, 0.15, 0),
-        ]))
+        # F-A.1: kenar onayı için 2 kare (B5'in ölçtüğü şey KAPI onayı,
+        # kenar onayı değil — kapı hâlâ kilitlenmemeli).
+        for _ in range(2):
+            node._on_classified(_classified([
+                (10.0, +2.0, 0.15, 0),
+                (10.0, -2.0, 0.15, 0),
+            ]))
         target = PoseStamped()
         target.pose.position.x = 20.0
         target.pose.position.y = 3.0
@@ -631,6 +656,9 @@ def test_parkur_degisince_kilitli_kapi_birakilir(ros_context) -> None:  # noqa: 
     try:
         node._on_odom(_odom_poz(0.0, 0.0, 0.0))
         dubalar = [(10.0, +2.0, 0.15, 0), (10.0, -2.0, 0.15, 0)]
+        # F-A.1: ilk turuncu kare KENAR ONAYI için harcanır (tek kare
+        # kenar dubası yapmaz) → kapı onay penceresi bir kare kayar.
+        node._on_classified(_classified(dubalar))
         for _ in range(ONAY_TICK):            # B5 onay penceresi (ayrı kareler)
             node._on_classified(_classified(dubalar))
             node._refine_target((20.0, 3.0))
@@ -821,7 +849,8 @@ def _kapidan_gecir(node, kapi_x: float = 10.0) -> None:  # noqa: ANN001
     target = PoseStamped()
     target.pose.position.x = kapi_x + 10.0
     target.pose.position.y = 0.0
-    for _ in range(ONAY_TICK):
+    # F-A.1: ilk kare kenar onayına gider → pencere bir kare uzun.
+    for _ in range(ONAY_TICK + 1):
         node._on_odom(_odom_poz(0.0, 0.0, 0.0))
         node._on_classified(_classified(dubalar))
         node._on_target(target)
@@ -1377,3 +1406,462 @@ def test_RRT_RED_abonesiz_donemde_BAYAT_alarm_uretmez(ros_context) -> None:  # n
         assert RRT_RED.kod not in node._ariza.aktif_kodlar
     finally:
         node.destroy_node()
+
+
+def test_bekci_KAPALIYKEN_sessiz_kalmiyor(ros_context) -> None:  # noqa: ANN001
+    """🔴 Bekçiyi kapatmak meşru ama SESSİZ olmamalı.
+
+    LiDAR yokken bilerek sürmek gerçek bir test ihtiyacı (14.08'de gate ve
+    dataset koşusu tam bunu istedi). Ama biri test için `obstacle_timeout_s=0`
+    yapıp unutursa yarışmaya **kör** girilir — Parkur-2 duba kaçınması engel
+    verisine bağlı.
+
+    Bu yüzden kapalı bekçi hem açılışta ERROR basar hem de kilit raporunda
+    görünür: operatör "sebep YOK" okuyup güvende sanmamalı, çünkü bekçi
+    kapalıyken zaten sebep ÜRETİLEMEZ.
+    """
+    from rclpy.parameter import Parameter
+    node = pn.PlanningNode(parameter_overrides=[
+        Parameter("obstacle_timeout_s", value=0.0),
+    ])
+    try:
+        sebep = []
+        node._pub_inhibit.publish = lambda m: sebep.append(m.data)
+        node._pipe.set_mission_state("PARKUR1")
+        node._last_odom_t = node._now()
+        node._on_control_step()
+        assert sebep and "BEKCI-KAPALI:ENGEL" in sebep[-1], (
+            f"kapali bekci kilit raporunda gorunmuyor: {sebep[-1]!r}"
+        )
+    finally:
+        node.destroy_node()
+
+
+# --------------------------------------------------------------------------
+# F-F.1 (§0.98a) — SAÇMA POZ KAPISI (planning_node tarafı, savunma derinliği)
+#
+# Kapı `fusion_node`'da da var; burada TEKRAR var çünkü poz kaynağı tek değil
+# (use_isam2:=false kolunda uçuş kontrolcüsü, sanal gölde sahte kaynak).
+# --------------------------------------------------------------------------
+
+
+def test_ff1_sacma_poz_MPPI_DURUMUNA_GIRMEZ(ros_context) -> None:  # noqa: ANN001
+    """10¹⁴⁹'luk poz `set_state`'e ULAŞMAMALI.
+
+    Bozuk durum bir kez girerse warm-start (U_nominal), kayan referans çapası
+    ve kenar hafızası da kirlenir; sonraki sağlıklı poz bunları geri getirmez.
+    """
+    node = pn.PlanningNode()
+    try:
+        node._on_odom(_odom_poz(10.0, 20.0, 0.0))        # sağlıklı taban
+        saglikli = np.array(node._pipe._state, copy=True)
+
+        node._on_odom(_odom_poz(1.63e149, -7.05e148, 0.0))
+        assert node._poz_sacma is True, "saçma poz işaretlenmedi (F-F.1)"
+        assert np.allclose(node._pipe._state, saglikli), (
+            "saçma poz MPPI durumuna girdi — set_state atlanmıyor"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_ff1_sacma_poz_POZ_SACMA_SEBEBI_URETIR(ros_context) -> None:  # noqa: ANN001
+    """Kapı listesinde `POZ-SACMA` görünmeli — telsize giden kod bundan türer.
+
+    Ölçülen arızada `inhibit_reason` bütün koşum boyunca `YOK` diyordu; yani
+    sistem 'sürmemem için sebep yok' derken hiç sürmüyordu (§0.98b).
+    """
+    from prototype.telemetry.ariza_bildirici import POZ_SACMA, sebepten_kodla
+
+    node = pn.PlanningNode()
+    try:
+        node._on_odom(_odom_poz(float("nan"), 0.0, 0.0))
+        assert node._poz_sacma is True
+        assert POZ_SACMA in sebepten_kodla(["POZ-SACMA"]), (
+            "POZ-SACMA sebep→arıza eşlemesi yok; operatör telsizde göremez"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_ff1_makul_poz_ENGELLENMEZ(ros_context) -> None:  # noqa: ANN001
+    """KARŞIT NÖBETÇİ: normal poz durumu güncellemeye devam etmeli."""
+    node = pn.PlanningNode()
+    try:
+        node._on_odom(_odom_poz(123.4, -56.7, 0.3))
+        assert node._poz_sacma is False, "makul poz saçma sayıldı — kapı dar"
+        assert abs(float(node._pipe._state[0]) - 123.4) < 1e-6
+    finally:
+        node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# F-F.18 — cmd_vel EĞİM SINIRLAYICI (14.08.2026, GIRDAP_DURUM §0.99u)
+# Ölçülen arıza: ardışık komut farkı azami 0,982 m/s (10 Hz'te), teknenin
+# fiili hızlanması %99'da 0,87-0,95 m/s² → komut takip edilemiyor, düşük hız
+# bölgesinde araç iki katı gidiyor.
+# 🛟 Aşağıdaki İKİNCİ test GÜVENLİK SÖZLEŞMESİni dondurur: bu node'un bütün
+# bekçileri `u = zeros(2)` yazarak durur ve AYNI yayın yolundan geçer —
+# sınırlayıcı onları rampalarsa TÜM güvenlik kapıları sakatlanır.
+# --------------------------------------------------------------------------- #
+
+
+def test_ff18_cmd_vel_egim_sinirlanir(ros_context) -> None:  # noqa: ANN001
+    """Ardışık komut sıçraması ivme tavanına kırpılmalı."""
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("cmd_vel_azami_ivme_mps2", Parameter.Type.DOUBLE, 0.8)
+        ]
+    )
+    try:
+        p = node._pipe._dyn.p
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+        t = [100.0]
+        node._saat = lambda: t[0]                      # sahte saat
+
+        node._publish_cmd_vel(np.zeros(2))             # tohumlama → 0
+        assert yakalanan[-1].linear.x == pytest.approx(0.0)
+
+        t[0] += 0.1                                    # 10 Hz
+        node._publish_cmd_vel(np.array([p.max_thrust, p.max_thrust]))
+        # Sınırsız olsaydı 2·max_thrust/|Xu| ≈ 1,17 m/s fırlardı
+        assert yakalanan[-1].linear.x == pytest.approx(0.08), (
+            "eğim sınırlayıcı devrede değil — 0,8 m/s² × 0,1 s = 0,08 bekleniyor"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_ff18_BEKCI_durusu_ASLA_rampalanmaz(ros_context) -> None:  # noqa: ANN001
+    """🛟 GÜVENLİK: `egim_sinirla=False` sıfırı ANINDA geçirmeli.
+
+    Bu bayrak bir ayar değil sözleşmedir. Rampalanırsa `POZ-SACMA`,
+    `ENGEL-BAYAT`, `DISARM-VEYA-KILL` ve fail-safe duruşlarının hepsi gecikir.
+    """
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    node = pn.PlanningNode()
+    try:
+        p = node._pipe._dyn.p
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+        t = [100.0]
+        node._saat = lambda: t[0]
+
+        node._publish_cmd_vel(np.array([p.max_thrust, p.max_thrust]))
+        assert yakalanan[-1].linear.x > 1.0             # tam gazda
+
+        t[0] += 0.1
+        node._publish_cmd_vel(np.zeros(2), egim_sinirla=False)
+        assert yakalanan[-1].linear.x == 0.0, (
+            "BEKÇİ DURUŞU RAMPALANDI — güvenlik kapıları sakatlandı"
+        )
+        assert yakalanan[-1].angular.z == 0.0
+    finally:
+        node.destroy_node()
+
+
+def test_ff18_failsafe_sinirlayiciyi_bypass_eder(ros_context) -> None:  # noqa: ANN001
+    """`_safe_stop()` (kontrol adımı çökmesi) da anında sıfır basmalı."""
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    node = pn.PlanningNode()
+    try:
+        p = node._pipe._dyn.p
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+        t = [100.0]
+        node._saat = lambda: t[0]
+
+        node._publish_cmd_vel(np.array([p.max_thrust, p.max_thrust]))
+        t[0] += 0.1
+        node._safe_stop()
+        assert yakalanan[-1].linear.x == 0.0, "fail-safe duruşu rampalandı"
+    finally:
+        node.destroy_node()
+
+
+def test_ff18_sinir_sifirda_eski_davranis(ros_context) -> None:  # noqa: ANN001
+    """0 → sınır kapalı; A/B ölçümü için eski davranış birebir geri gelmeli."""
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("cmd_vel_azami_ivme_mps2", Parameter.Type.DOUBLE, 0.0)
+        ]
+    )
+    try:
+        p = node._pipe._dyn.p
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+        t = [100.0]
+        node._saat = lambda: t[0]
+
+        node._publish_cmd_vel(np.zeros(2))
+        t[0] += 0.1
+        node._publish_cmd_vel(np.array([p.max_thrust, p.max_thrust]))
+        assert yakalanan[-1].linear.x == pytest.approx(
+            2.0 * p.max_thrust / abs(p.Xu), rel=1e-6
+        )
+    finally:
+        node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# F-F.20 — PIVOT KAPISI (14.08.2026, GIRDAP_DURUM §1.01)
+# Ölçülen arıza: waypoint dönüşünde 8 m ilerlemek 45,4 s ve 21,2 m yol aldı
+# (verim 0,38); komutun %36,7'si GERİ, işaret 139 kez değişti. Araç dönmek
+# yerine ileri-geri saldırıyordu.
+# 🛟 İKİNCİ test GÜVENLİK SIRALAMASINI dondurur: pivot MPPI'yi ezer ama
+# bekçiler pivotu ezer — kapı hiçbir duruşu geciktiremez.
+# --------------------------------------------------------------------------- #
+
+
+def _pivot_dugumu(tetik: float = 60.0):
+    """Referansı ARKAYA koyup pivot koşulunu kuran düğüm."""
+    import numpy as np
+
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("pivot_tetik_derece", Parameter.Type.DOUBLE, tetik)
+        ]
+    )
+    # araç orijinde, doğuya bakıyor (ψ=0); referans BATIDA (180° hata)
+    node._pipe.set_state(np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    node._pipe.set_reference_direct(-50.0, 0.0)
+    return node
+
+
+def test_ff20_pivot_ILERI_komutu_sifirlar(ros_context) -> None:  # noqa: ANN001
+    """Hedef arkadayken: ileri hız 0, dönüş komutu var."""
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    node = _pivot_dugumu()
+    try:
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+        node._saat = lambda: 100.0
+
+        u = node._pivot_uygula(np.array([1.0, 1.0]))   # MPPI "tam ileri" deseydi
+        assert node._pivot.aktif is True
+        assert float(u[0] + u[1]) == pytest.approx(0.0), "pivot ilerliyor"
+        node._publish_cmd_vel(u, egim_sinirla=False)
+        assert yakalanan[-1].linear.x == pytest.approx(0.0)
+        assert abs(yakalanan[-1].angular.z) > 0.0
+    finally:
+        node.destroy_node()
+
+
+def test_ff20_BEKCI_pivotu_EZER(ros_context) -> None:  # noqa: ANN001
+    """🛟 GÜVENLİK: pivot bekçi zincirinden ÖNCE uygulanır; `zero_thrust`
+    geldiğinde komut SIFIR olmalı — pivot bir duruşu asla geciktiremez."""
+    import numpy as np
+    from geometry_msgs.msg import Twist
+
+    from prototype.control.mavros_bridge import ControlGate, GateState
+
+    node = _pivot_dugumu()
+    try:
+        yakalanan: list[Twist] = []
+        node._pub_cmd_vel.publish = yakalanan.append   # type: ignore[assignment]
+        node._saat = lambda: 100.0
+        node._bridge.control_gate = lambda *_a, **_k: ControlGate(  # type: ignore[assignment]
+            state=GateState.HOLD, allow_cmd_vel=True,
+            zero_thrust=True, reason="test",
+        )
+        node._on_control_step()
+        assert yakalanan, "cmd_vel hiç yayınlanmadı"
+        assert yakalanan[-1].linear.x == 0.0, "BEKÇİ SIFIRI PIVOTA YENİLDİ"
+        assert yakalanan[-1].angular.z == 0.0, "BEKÇİ SIFIRI PIVOTA YENİLDİ"
+    finally:
+        node.destroy_node()
+
+
+def test_ff20_kapi_sifirda_MPPI_dokunulmaz(ros_context) -> None:  # noqa: ANN001
+    """0 → eski davranış birebir; MPPI'nin itkisi değişmeden geçer."""
+    import numpy as np
+
+    node = _pivot_dugumu(tetik=0.0)
+    try:
+        u = node._pivot_uygula(np.array([1.0, 1.0]))
+        assert node._pivot.aktif is False
+        assert float(u[0]) == pytest.approx(1.0)
+        assert float(u[1]) == pytest.approx(1.0)
+    finally:
+        node.destroy_node()
+
+
+def test_ff20_operator_PIVOT_gorur(ros_context) -> None:  # noqa: ANN001
+    """Operatör 'takıldı mı, bilerek mi dönüyor' ayrımını görebilmeli —
+    14.08'de araç 45 saniye salındı ve dışarıdan ayırt edilemedi."""
+    import numpy as np
+
+    from prototype.control.mavros_bridge import ControlGate, GateState
+    from std_msgs.msg import String
+
+    node = _pivot_dugumu()
+    try:
+        metinler: list[String] = []
+        node._pub_inhibit.publish = metinler.append   # type: ignore[assignment]
+        node._pivot_uygula(np.array([1.0, 1.0]))      # pivotu aç
+        node._publish_inhibit([], ControlGate(
+            state=GateState.ACTIVE, allow_cmd_vel=True,
+            zero_thrust=False, reason="test",
+        ))
+        assert metinler and "|PIVOT" in metinler[-1].data
+    finally:
+        node.destroy_node()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FAZ 2 (15.08.2026, GIRDAP_DURUM §1.13d/§1.14) — HUNİ PAYI SIFIRA DÜŞEMEZ
+#
+# 🔴 SAHA ARIZASI (göl bandı 15.08): ikiz kenar kayıtları `_huni_payi`'nin
+# W'sunu (en yakın komşu) 1,085 m'nin altına düşürüp payı direklerin
+# %84,8'inde SIFIRLADI → gerçek kapı direği MPPI torbasına çıplak 0,15 m'lik
+# daire olarak girdi, 0,785 m'lik gövde için hiç boşluk kalmadı → tekne
+# direğin üstüne nişan aldı (17 dar-kapı epizodu, 6'sında nişana girdi).
+#
+# Düzeltme: gövdenin sığamayacağı (< min_passable_width) komşu W hesabına
+# girmez — kodun kendi tanımı gereği o bir kapı partneri OLAMAZ (`select_gate`:
+# "gövde sığmıyorsa bu bir kapı değildir"). Çarpışma koruması böylece hafıza
+# kirliliğinden bağımsızlaşır.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_FAZ2_ikiz_komsu_huni_payini_SIFIRLAYAMAZ(ros_context) -> None:  # noqa: ANN001
+    """Direğin 0,4 m yanındaki ikiz kayıt payı söküyordu; artık W'ya girmez.
+
+    ⚠ `_huni_payi` DOĞRUDAN çağrılır (algı zinciri değil): FAZ 1'in
+    konsolidasyonu ikizi zincir içinde zaten eritebilir ve bu test o zaman
+    FAZ 2 süzgecini değil FAZ 1 temizliğini ölçerdi. İki savunma katmanı
+    ayrı ayrı bağlanır; burada yalnız FAZ 2.
+
+    Sahne: 12 m'lik gerçek kapı + sol direğin 0,4 m yanında ikiz. Eski kod
+    sol direğe pay=0 verirdi (W=0,4 < 1,085); yeni kod ikizi süzer → sol
+    direğin W'su kapı partneri (12 m) kalır → pay tavanda.
+    """
+    node = pn.PlanningNode()
+    try:
+        kenarlar = [(10.0, 6.0), (10.0, 6.4), (10.0, -6.0)]
+        pay = node._huni_payi(0, kenarlar)
+        assert pay > 0.0, (
+            "ikiz komşu huni payını sıfırladı — çarpışma koruması söküldü (§1.13d)"
+        )
+        assert math.isclose(pay, node._gate_post_margin, rel_tol=1e-9), (
+            "ikiz kayıt W'yu düşürdü — süzgeç çalışmıyor"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_FAZ2_gercek_dar_gecitte_pay_YINE_kuculur(ros_context) -> None:  # noqa: ANN001
+    """Süzgeç yalnız GEÇİLEMEZ komşuyu eler; gerçekten dar ama geçilebilir
+    boşlukta (1,4 m) pay eskisi gibi kendiliğinden küçülmeli — davranış
+    korunuyor, kural gevşemiyor."""
+    node = pn.PlanningNode()
+    try:
+        kenarlar = [(10.0, 0.7), (10.0, -0.7)]          # açıklık 1,4 m ≥ 1,085
+        beklenen = (1.4 - node._gate._cfg.hull_width_m - 0.30) / 2.0
+        for i in range(2):
+            pay = node._huni_payi(i, kenarlar)
+            assert 0.0 < pay < node._gate_post_margin
+            assert math.isclose(pay, beklenen, abs_tol=1e-6), (
+                "dar-ama-geçilebilir geçitte pay küçülme davranışı bozuldu"
+            )
+    finally:
+        node.destroy_node()
+
+
+def test_FAZ2_hicbir_gecilebilir_komsu_yoksa_TAVAN(ros_context) -> None:  # noqa: ANN001
+    """Bütün komşular geçilemez kadar yakınsa (ikiz bulutu) direk NORMAL engel
+    gibi tam payını korur — `len < 2` koluyla aynı güvenli varsayılan."""
+    node = pn.PlanningNode()
+    try:
+        kenarlar = [(10.0, 6.0), (10.0, 6.5)]           # yalnız ikizler (0,5 m)
+        for i in range(2):
+            pay = node._huni_payi(i, kenarlar)
+            assert math.isclose(pay, node._gate_post_margin, rel_tol=1e-9), (
+                "ikiz bulutunda pay tavana çıkmadı — koruma yine söküldü"
+            )
+    finally:
+        node.destroy_node()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FAZ 5 (15.08.2026, GIRDAP_DURUM §1.17-§1.18) — YÜRÜTÜCÜ AÇLIĞI
+#
+# 🔴 SAHA ARIZASI: tek iş parçacıklı `rclpy.spin`'de algı işlemesi kontrol
+# zamanlayıcısını boğdu — kadans 10 → 1,9 Hz (kadans↔hafıza r=+0,94), 317
+# "sınıflı algı gelmiyor" uyarısının %100'ü sahte çıktı (bant akıyordu,
+# iş parçacığı tıkalıydı). Düzeltme resmî Humble deseni: ağır algı ayrı
+# MutuallyExclusiveCallbackGroup + MultiThreadedExecutor(2) + `_pipe`'a her
+# dokunuşu saran TEK RLock (`_pipe_kilidiyle`).
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def test_FAZ5_algi_ayri_callback_grubunda(ros_context) -> None:  # noqa: ANN001
+    """Ağır algı aboneleri (classified + obstacle_map) AYRI MutEx grupta;
+    kontrol zamanlayıcısı varsayılan grupta kalır — ayrım kaybolursa tek
+    iş parçacığı düzenine sessizce geri dönülür (1,9 Hz arızası geri gelir)."""
+    from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+    node = pn.PlanningNode()
+    try:
+        assert isinstance(node._grup_algi, MutuallyExclusiveCallbackGroup)
+        assert node._sub_classified.callback_group is node._grup_algi
+        assert node._sub_obs.callback_group is node._grup_algi
+        # kontrol zamanlayıcısı algı grubunda OLMAMALI (yoksa ayrım anlamsız)
+        assert node._timer.callback_group is not node._grup_algi
+        # varsayılan gruptaki hafif aboneler de algı grubuna kaymamalı
+        assert node._sub_odom.callback_group is not node._grup_algi
+    finally:
+        node.destroy_node()
+
+
+def test_FAZ5_pipe_dokunuslari_kilitli(ros_context) -> None:  # noqa: ANN001
+    """`self._pipe` kullanan HER geri çağrı `_pipe_kilidiyle` sarılı olmalı.
+
+    Kaynak taraması: sınıf gövdesinde `self._pipe` geçen her metot,
+    dekore edilmişler listesinde olmalı — yeni bir `_pipe` kullanıcısı
+    eklenir de kilit unutulursa bu test kırmızıya döner (veri yarışı,
+    ancak gölde ve nadiren patlar; CI'da yakalanmalı)."""
+    import inspect
+
+    kaynak = inspect.getsource(pn.PlanningNode)
+    kilitli: set[str] = set()
+    metotlar = re.findall(
+        r"(@_pipe_kilidiyle\s+)?def (\w+)\(self", kaynak
+    )
+    for dekorlu, ad in metotlar:
+        if dekorlu:
+            kilitli.add(ad)
+    for dekorlu, ad in metotlar:
+        metot = getattr(pn.PlanningNode, ad, None)
+        if metot is None:
+            continue
+        govde = inspect.getsource(metot)
+        if "self._pipe." in govde and ad not in kilitli:
+            # yardımcılar kilitli bir geri çağrıdan çağrılıyorsa serbest —
+            # ama DOĞRUDAN abone/zamanlayıcı geri çağrıları mutlaka kilitli.
+            assert not ad.startswith("_on_") and ad not in (
+                "_publish_local_map", "_ariza_gonder"
+            ), f"{ad} self._pipe kullanıyor ama _pipe_kilidiyle sarılı değil"
+
+
+def test_FAZ5_main_cok_is_parcacikli_yurutucu() -> None:
+    """`main()` MultiThreadedExecutor kurmalı — tek iş parçacıklı spin'e
+    dönüş, 1,9 Hz arızasının sessizce geri gelmesi demektir."""
+    import inspect
+
+    kaynak = inspect.getsource(pn.main)
+    assert "MultiThreadedExecutor" in kaynak, (
+        "main() tek iş parçacıklı spin'e dönmüş — FAZ 5 geri alınmış (§1.17a)"
+    )

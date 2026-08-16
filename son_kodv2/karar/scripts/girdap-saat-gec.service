@@ -1,0 +1,99 @@
+# GİRDAP İDA — GEÇ SAAT KURULUMU: GPS fix geldikten SONRA, yığın ayaktayken.
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# NEDEN VAR — `girdap-saat.service` (açılış, seri yol) SOĞUK AÇILIŞTA ÇALIŞAMAZ
+# ═══════════════════════════════════════════════════════════════════════════
+# Ölçüldü (§0.59a, 01:34 açılışının kendi günlüğü):
+#     61. sn   saat servisi koştu → zaman aşımı ("GPS fix yok?")
+#    171. sn   ilk KABUL EDİLEN GPS (öncesi hep gps_red=50)
+#    391. sn   EKF3 GPS'i kullanıyor
+# Yani açılış servisi fix'ten ~2 dakika ÖNCE koşuyor; soğuk açılışta zaman
+# aşımına düşmesi neredeyse KESİN. Uzatmak da çözüm değil: `girdap-karar`
+# onu bekliyor (`Before=`), yani her saniye doğrudan açılış gecikmesi.
+#
+# Sonuç (13.08 canlı, §0.61): saat hiç kurulamadı → yığın 29 dakika 1497 s
+# geri kalmış saatle koştu → internet gelince saat TEK ADIMDA düzeldi →
+# `mavros_bridge` bunu heartbeat kaybı sanıp FAILSAFE/KILL bastı. Sahada
+# internet YOK (md 4.1 WiFi yasak), yani orada saat hiç düzelmez ve md 4.2
+# teslim damgaları bozuk kalır (geçersiz dosya başına 5 ceza puanı).
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# 🔑 NEDEN SERİ DEĞİL, ROS
+#   MAVROS `/dev/pixhawk`'ı tekeline alır; iki süreç aynı portu AÇAMAZ. Bu
+#   yüzden geç kurulum portu hiç açmaz, aynı zamanı MAVROS'un kendi
+#   `/mavros/time_reference` konusundan okur (`sys_time` eklentisi zaten
+#   `mavros_overrides.yaml` beyaz listesinde). Konu, `time_unix_usec` geçerli
+#   olur olmaz yayına başlar → "fix var mı" sorusunun cevabı konunun KENDİSİ.
+#
+# 🔑 NEDEN ARM KAPISI (script varsayılanı: ARM'lıyken KURMA)
+#   Koşu ortasında saati adımlamak Dosya-2'nin `zaman` sütununu dosyanın
+#   ORTASINDA kaydırır. Açılış ile görev başlangıcı arasında ~6,5 dakika var
+#   (§0.59a) — saat orada kurulur. ARM'lıysa disarm beklenir.
+#
+# ⚠ KALAN SINIR: teslim düğümleri oturum dizinini/dosya adını BAŞLANGIÇTA
+#   üretiyor (`datetime.now()`). Saat sonradan düzelse bile DOSYA ADLARI ve
+#   düzeltmeden önceki satırlar eski saatte kalır; `saat_guvenilir=false`
+#   damgası da launch anında hesaplandığı için "güvenilmez" olarak kalır.
+#   Veri KAYBOLMAZ, yalnız mutlak saat iddia edilmez (§0.53e ile aynı ilke).
+#
+# ═══════════════════════════════════════════════════════════════════════════
+# KURULUM (tek sefer, sudo ister)
+#   sudo cp girdap-saat-gec.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable girdap-saat-gec
+# ELLE KOŞ / ÖLÇ (saati DEĞİŞTİRMEDEN):
+#   sudo -E /usr/local/bin/girdap_saat_kur.py --kaynak ros --kuru --zaman-asimi 30
+# DOĞRULAMA:
+#   journalctl -u girdap-saat-gec -f     # "SAAT KURULDU" ya da "zaman asimi"
+#   timedatectl                          # "System clock synchronized: yes"
+
+[Unit]
+Description=GIRDAP IDA — GPS fix gelince sistem saatini MAVROS'tan kur (md 4.2)
+# Yigin ayakta olmali: MAVROS /mavros/time_reference'i o yayinliyor.
+After=girdap-karar.service
+Wants=girdap-karar.service
+# Acilis (seri) yolu once denesin; o basardiysa bu servis toleransa takilip
+# saate DOKUNMADAN 0 ile ciakr.
+After=girdap-saat.service
+# Basarisiz denemeler systemd'nin hiz sinirina takilmasin.
+StartLimitIntervalSec=0
+
+[Service]
+# 🔴 Type=simple (oneshot DEGIL): systemd `Restart=`i oneshot'ta KABUL ETMEZ,
+# oysa bu servisin tek isi YENIDEN DENEMEK. Zaman asimiyla cikarsa 60 sn
+# sonra yeniden kosar; basarinca (kod 0) durur.
+Type=simple
+Restart=on-failure
+RestartSec=60
+# 🔴🔴 ROOT KOSMAZ — YIGINLA AYNI KULLANICI (13.08 canli olcum, §0.61j).
+# Ilk surum `User=root` idi ve servis 4 dakika boyunca /mavros/time_reference'i
+# HIC alamadi; ayni anda ayni konuda `ros2 topic echo` (kullanici girdap)
+# mesaji ANINDA aldi.
+# Sebep: RMW = FastDDS ve ayni makinede PAYLASIMLI BELLEK tasimasi kullaniyor.
+# Yayinci veriyi OKUYUCUNUN /dev/shm segmentine YAZAR. Root'un actigi segment
+# 0644 (`-rw-r--r-- root root`) → yayinci (mavros, kullanici `girdap`) oraya
+# YAZAMAZ. Kesif UDP uzerinden yapildigi icin abone GORUNUR ama veri HIC
+# AKMAZ — sessiz arizanin ders kitabi ornegi. (Olculdu: /dev/shm'de 91 segment
+# girdap, 47 segment root.) Ters yon calisir, o yuzden hata tek yonlu ve
+# kolayca gozden kacar.
+#
+# 🔑 Gereken sey root DEGIL, `clock_settime` + `adjtimex(ADJ_STATUS)` icin
+# CAP_SYS_TIME'dir. Ambient yetenekle tam onu veriyoruz: DDS yigINLA ayni
+# kullanicida konusur, yetki ise yalnizca saatle sinirli kalir (root'tan
+# daha guvenli).
+# ⚠️ `hwclock --systohc` bu kullanicida basarisiz olabilir (/dev/rtc yazma
+# hakki yok) — script bunu zaten yutuyor ve RTC'de pil de YOK (§0.53e), yani
+# pratikte kayip sifir.
+User=girdap
+AmbientCapabilities=CAP_SYS_TIME
+CapabilityBoundingSet=CAP_SYS_TIME
+# Yigin ile AYNI alan adi — yoksa konu hic gorunmez (girdap-karar.service:47).
+Environment=ROS_DOMAIN_ID=42
+# 30 dakika: soguk fix (~3 dk) + EKF oturmasi + gerekirse bir kosu boyunca
+# ARM kapisinda bekleme. Bu servis hicbir seyi BEKLETMIYOR (Before= yok),
+# bu yuzden uzun pencere bedava.
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && exec /usr/local/bin/girdap_saat_kur.py --kaynak ros --zaman-asimi 1800'
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

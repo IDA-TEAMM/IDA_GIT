@@ -10,7 +10,7 @@ Durumlar ve geçişler:
     ARM        ──kill_switch_off──→    BEKLEMEDE
     BEKLEMEDE  ──YKİ "başlat"──→       PARKUR-1   (tek dış sinyal — sadece burada)
     PARKUR-1   ──son wp <1.5 m──→      PARKUR-2
-    PARKUR-2   ──tüm wp bitti + renk yüklü──→ PARKUR-3
+    PARKUR-2   ──son duba ikilisi──→   PARKUR-3
     PARKUR-3   ──IMU şok──→            TAMAMLANDI
     *          ──kill──→               KILL       (RC kumanda + YKİ + watchdog)
 
@@ -73,27 +73,16 @@ class Observation:
         kill_switch_off       — Pixhawk RC kanalı + yazılım flag'i
         kill_switch_active    — kill onaylandı (sıfırlanmaz)
         dist_to_last_wp_p1    — RRT* hedef listesindeki son wp'ye anlık mesafe
-        (last_gate_passed_p2 KALDIRILDI — 16.08.2026, ilk kapı tuzağı)
+        p2_waypoints_done     — 🔴 PARKUR2→PARKUR3'ün TEK YETKİLİ tetiği:
+                                görev yöneticisi Parkur-2'nin SON waypoint'ine
+                                vardı (waypoint-index katmanı). Bkz. aşağıdaki
+                                `_next_state` notu.
+        last_gate_passed_p2   — kapı geçişi KANITI/telemetrisi. ⚠ TEK BAŞINA
+                                GEÇİŞ YAPTIRMAZ (14.08; eskiden yapardı)
         shock_detected_p3     — IMU |a| spike eşiği (ham high-rate kanal)
         mission_complete      — görev yöneticisi TÜM waypoint'leri bitirdi
                                 (video senaryosu terminal koşulu; kamikaze
                                 çarpması olmadan da PARKUR*→TAMAMLANDI)
-
-    Parkur-3 (kamikaze) alanları — 2026-08-13, hepsi VARSAYILAN FALSE:
-        p3_bekleniyor         — hedef rengi YÜKLÜ (`kamikaze_target_color`
-                                dolu). 🔑 Bütün P3 davranışının KAPISI: false
-                                iken FSM bugünküyle **bit birebir aynı**
-                                çalışır. Renk gelmemişse/İHA başarısızsa
-                                kamikaze hiç açılmaz, tekne temiz durur.
-        p3_ilerleme_yok       — ileri komut var ama tekne İLERLEMİYOR (temas).
-                                🔴 Şok eşiği (3 g) BU İŞİ GÖREMEZ: ölçülen
-                                temas hızı 0,134-0,154 m/s ⇒ 0,03-0,14 g;
-                                IMU durağanken zaten 1,0 g okur ⇒ eşik ASLA
-                                aşılmaz (karar tarafının kendi notu,
-                                `pipeline.py:100-104`).
-        p3_sure_doldu         — P3'e girişten beri N sn geçti. Hedef hiç
-                                bulunamazsa tekne sonsuza kadar kamikaze
-                                çekicisiyle sürüklenmesin.
     """
 
     boot_ok: bool = False
@@ -101,12 +90,18 @@ class Observation:
     kill_switch_active: bool = False
 
     dist_to_last_wp_p1: float = math.inf
+    #: 🔴 P3 EMNİYET KAPISI (16.08) — hedef rengi YÜKLÜ mü?
+    #: False iken FSM PARKUR3'e HİÇ geçmez ve davranış bugünküyle bit birebir
+    #: aynı kalır. Kaynağı: `kamikaze_param_node` → latched
+    #: `/girdap/mission/hedef_rengi` → `fsm_node._on_hedef_rengi`.
+    #: Varsayılan False bilinçli: renk gelmemişse/İHA başarısızsa saldırmamak,
+    #: rastgele saldırmaktan puanlı olarak daha iyi (md s.25: 1 yanlış temas
+    #: 100→50, 2 yanlış 100→5).
+    p3_bekleniyor: bool = False
+    p2_waypoints_done: bool = False
+    last_gate_passed_p2: bool = False
     shock_detected_p3: bool = False
     mission_complete: bool = False
-
-    p3_bekleniyor: bool = False
-    p3_ilerleme_yok: bool = False
-    p3_sure_doldu: bool = False
 
 
 @dataclass
@@ -261,30 +256,11 @@ class MissionFSM:
         # buraya varır ve araç temiz durur (TAMAMLANDI'da compute_control None →
         # sıfır thrust). Parkur geçiş kurallarından ÖNCE değerlendirilir ki
         # görev bitince spurious PARKUR2 geçişi kazanmasın.
-        if obs.mission_complete:
-            # 🔑 PARKUR-3 KAPISI (2026-08-13) — yalnız hedef rengi YÜKLÜ ise.
-            # Şartname s.18/23: P3 = kamikaze angajman, 145 puan (toplamın
-            # %48'i). Tetik "son görev noktasına varmak"; bu, P1→P2 geçişiyle
-            # SİMETRİK (o da waypoint mesafesinden çalışıyor) ve Şekil 3'ün
-            # P3'e ayrı görev noktası verip vermemesinden ETKİLENMEZ.
-            # Renk boşsa aşağıdaki eski kural aynen işler ⇒ P1/P2 davranışı
-            # bit birebir korunur.
-            if obs.p3_bekleniyor and s in (MissionState.PARKUR1,
-                                           MissionState.PARKUR2):
-                return (
-                    MissionState.PARKUR3,
-                    "tüm waypoint'ler bitti + hedef rengi yüklü → kamikaze",
-                )
-            # 🔴 PARKUR3'teyken bu kural ATLANMALI: `mission_complete` LATCH'li
-            # (bir kez True olunca sıfırlanmaz). Atlanmazsa P3'e giren tekne
-            # bir SONRAKİ tick'te aynı kuralla TAMAMLANDI'ya düşer ⇒ kamikaze
-            # tek tick yaşar, hedefe hiç gidilmez. P3'ten çıkış aşağıda:
-            # şok VEYA ilerleme-yok VEYA süre doldu.
-            if not (obs.p3_bekleniyor and s is MissionState.PARKUR3):
-                if s in (MissionState.PARKUR1, MissionState.PARKUR2,
-                         MissionState.PARKUR3):
-                    return (MissionState.TAMAMLANDI,
-                            "görev tamamlandı (tüm waypoint'ler)")
+        if (
+            s in (MissionState.PARKUR1, MissionState.PARKUR2, MissionState.PARKUR3)
+            and obs.mission_complete
+        ):
+            return MissionState.TAMAMLANDI, "görev tamamlandı (tüm waypoint'ler)"
         if (
             s is MissionState.PARKUR1
             and obs.dist_to_last_wp_p1 <= self.P1_TO_P2_DIST
@@ -294,28 +270,50 @@ class MissionFSM:
                 f"son wp {obs.dist_to_last_wp_p1:.2f} m ≤ "
                 f"{self.P1_TO_P2_DIST:.1f} m",
             )
-        # 🔴 16.08.2026 — `last_gate_passed_p2` TETİĞİ KALDIRILDI.
-        # `/perception/gate_passed` gelen HERHANGİ bir True'yu bu alana
-        # yazıyordu ⇒ **İLK kapıda** PARKUR3'e atlanırdı: P2 daha başlamadan
-        # kamikaze açılır, (G2/KD2)×40 ve ödül sıralaması giderdi. Bugün
-        # zararsızdı çünkü o topic'i bilerek yayınlamıyoruz — ama uyuyan bir
-        # tuzaktı: biri açtığı anda P1+P2 sessizce sıfırlanırdı.
-        # Yerine geçen tetik (FAZ 1) aşağıda `mission_complete + p3_bekleniyor`:
-        # şartname s.20 P2 bitiş şartı zaten **"son görev noktasına ulaşmak"**,
-        # ve P1→P2 geçişi de waypoint mesafesinden çalışıyor ⇒ SİMETRİK.
-        # `fsm_node`'un kendi notu da bu seçimi bekliyordu ("iki yol var,
-        # seçim yapılmadı: B) geçişi waypoint ilerlemesinden sür").
-        if s is MissionState.PARKUR3:
-            # P3 ÇIKIŞI — üç bağımsız yol. Şok tek başına YETMEZ (bkz.
-            # Observation docstring'i: temas 0,03-0,14 g ↔ eşik 3,0 g).
-            if obs.shock_detected_p3:
-                return MissionState.TAMAMLANDI, "IMU şok algılandı"
-            if obs.p3_ilerleme_yok:
-                return (MissionState.TAMAMLANDI,
-                        "temas: ileri komut var, ilerleme yok")
-            if obs.p3_sure_doldu:
-                return (MissionState.TAMAMLANDI,
-                        "Parkur-3 süre aşımı — hedefe ulaşılamadı")
+        # 🔴 14.08 — AÇIK TUZAK KAPATILDI (fsm_node._on_gate_passed §B seçeneği).
+        # ESKİDEN: `obs.last_gate_passed_p2` TEK BAŞINA buradan PARKUR3'e
+        # atıyordu. `/perception/gate_passed`'ten gelen HERHANGİ bir True —
+        # yani **ilk kapı** — Parkur-2'yi yarıda keserdi. Sonucu md 5.5.2.4'ün
+        # *"en az iki duba ikilisi"* şartı sağlanmaz, md 657 gereği Parkur-3'ün
+        # **145 puanı hiç açılmaz**. Bugün canlı arıza değildi çünkü o topic'i
+        # üreten yayıncı yok (algı `GATE_PASSED_YAYINLA=False`) — ama "yayıncıyı
+        # açalım" diyen ilk kişi Parkur-2'yi kırardı. Yayıncı eklenmeden ÖNCE
+        # çözülmesi isteniyordu; çözüldü.
+        #
+        # ARTIK: tetik **waypoint ilerlemesi** (`p2_waypoints_done`). Gerekçe:
+        #   · CLAUDE.md kuralı: *"geçiş waypoint-index + parkur etiketi ile;
+        #     duba sayısına bağlı akış tasarlamak YASAK"* (md 5.5.2.2).
+        #   · PARKUR1→PARKUR2 zaten böyle (son wp mesafesi) — simetrik oldu.
+        #   · İki katman artık ÇELİŞMİYOR: `ParkurTransitionLogic` de aynı
+        #     waypoint index'inden sürülüyor. Eskiden MissionFSM PARKUR3'e
+        #     geçerken parkur katmanı PARKUR2'de kalabiliyordu.
+        #   · Algı zinciri suda doğrulanmamışken (YOLO modeli yok) tek bir
+        #     yanlış POZİTİF 145 puanı götürüyordu; artık götüremez.
+        # `last_gate_passed_p2` KANIT olarak duruyor (telemetri/geçiş gerekçesi),
+        # geçişi TEK BAŞINA yaptırmaz.
+        # 🔴 16.08 EKLENEN İKİNCİ ŞART — `p3_bekleniyor` (hedef rengi YÜKLÜ).
+        # Tetiğin ZAMANLAMASI 14.08'deki gibi (waypoint ilerlemesi) kalıyor;
+        # eklenen şey **emniyet kapısı**: renk yoksa P3 hiç açılmaz.
+        # Gerekçe iki katlı:
+        #   · Şartname s.25 — yanlış hedefe temas 100 → **50**, iki yanlış
+        #     100 → **5**. İHA rengi bulamadıysa saldırmamak, rastgele
+        #     saldırmaktan puanlı olarak DAHA İYİ. Renk yokken tekne son
+        #     waypoint'te temiz durur ve P1+P2 puanı korunur.
+        #   · Eyüp kararı (16.08): *"Parkur 3'ü şimdilik aktif etme, testte
+        #     bozar; P1 ve P2'yi ölçüyoruz."* — `kamikaze_target_color`
+        #     varsayılanı "" olduğu için bu kapı P3'ü KAPALI tutuyor.
+        # `p3_bekleniyor` kaynağı: `kamikaze_param_node` → latched
+        # `/girdap/mission/hedef_rengi` → `fsm_node._on_hedef_rengi`.
+        if (s is MissionState.PARKUR2 and obs.p2_waypoints_done
+                and obs.p3_bekleniyor):
+            gerekce = (
+                "Parkur-2 son waypoint'i (kapı geçişi de doğrulandı)"
+                if obs.last_gate_passed_p2
+                else "Parkur-2 son waypoint'i"
+            )
+            return MissionState.PARKUR3, gerekce
+        if s is MissionState.PARKUR3 and obs.shock_detected_p3:
+            return MissionState.TAMAMLANDI, "IMU şok algılandı"
         return None
 
     def _transition(self, new: MissionState, reason: str) -> None:
@@ -504,7 +502,8 @@ def _demo() -> None:
     fsm.tick(Observation(dist_to_last_wp_p1=1.0))   # → PARKUR2
 
     # 5) PARKUR-2: gate geçiş
-    fsm.tick(Observation(mission_complete=True, p3_bekleniyor=True))  # → PARKUR3
+    fsm.tick(Observation(last_gate_passed_p2=False))
+    fsm.tick(Observation(last_gate_passed_p2=True)) # → PARKUR3
 
     # 6) PARKUR-3: kamikaze çarpma şoku
     fsm.tick(Observation(shock_detected_p3=False))

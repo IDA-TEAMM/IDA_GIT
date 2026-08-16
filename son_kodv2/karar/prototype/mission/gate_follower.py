@@ -177,6 +177,125 @@ class Gate:
         """Sürülecek nokta: nişan varsa o, yoksa geometrik orta."""
         return self.aim if self.aim is not None else self.midpoint
 
+    def yaklasma_hedefi(self, geri: float) -> Point:
+        """🔴 F-K.2 (13.08.2026) — KAPININ ÖNÜNDEKİ HİZALANMA NOKTASI.
+
+        Kapıya **eğik** yaklaşan araç, kapıya varmadan yanına düşer; o noktadan
+        çift artık "kapı" gibi görünmez (iki duba görüş hattı BOYUNCA dizilir,
+        `select_gate`'in dikeylik testi haklı olarak reddeder) ⇒ **kapı bir
+        daha seçilemez ve kalıcı olarak kaçırılır.**
+
+        📏 Sanal gölde ölçüldü (gerçek geometri: 8 kapı, 12 m açıklık, 4 m
+        aralık, zigzag ±5 m): tekne **5/8** kapı geçti, sonra parkurun sağına
+        kaçtı — iz `(1.5, 12.1) → (8.5, 28.5) → (9.7, 23.7) → (8.1, 12.4)`,
+        ψ 252-282°, yani **geri geri** salınıma girdi. Logda 5 kez *"çift
+        kursa DİK DEĞİL"*. Şartname P2 puanı **oransal** `(G2/KD2)×40` →
+        8 kapıda 3 kaçırmak **15 puan**.
+
+        🔑 Çözüm literatürün kalıbı: **mesafelen → DİK yaklaş → geç.** Nişan
+        önce kapının **önündeki** hizalanma noktasıdır; araç oraya varınca
+        kapı normaliyle hizalanmış olur, sonra `gecis_hedefi` onu düzlemin
+        ötesine taşır (F-K.1). RoboBoat kuralı da geçişin kapıdan **önce**
+        başlamasını şart koşar.
+
+        `geri` uydurulmaz: **kapının kendi yarı genişliği** (öz-ölçekli, dış
+        eşik yok — modülün donmuş kuralı §0.0d). 12 m kapıda 6 m ≈ ölçülmüş
+        seyir hızıyla (1,05 m/s) ~6 s hizalanma payı.
+
+        `normal` yoksa uzatma gibi bu da YAPILMAZ — yön bilinmeden geri
+        gitmek aracı parkurdan uzaklaştırırdı.
+        """
+        if self.normal is None:
+            return self.drive_target
+        mx, my = self.midpoint
+        nx, ny = self.normal
+        return (mx - nx * geri, my - ny * geri)
+
+    def surus_noktasi(self, arac: Point, geri: float, uzatma: float) -> Point:
+        """İKİ FAZLI sürüş hedefi: hizalan → geç. **ASLA GERİYE nişan almaz.**
+
+        🔴 Kaptanın uyarısı (13.08): *"korkum şu, Parkur-3'te modelin geriye
+        gitmesi."* Haklı ve tasarımın gerçek açığına işaret ediyor — araç
+        yaklaşma noktasını ÇOKTAN GEÇMİŞSE oraya nişan almak **geri gitmek**
+        demektir. Kapı takibi `gate_following_enabled` tek parametresine bağlı
+        olduğu için PARKUR3'te de etkindir, yani risk teoriktir değil.
+
+        🔑 GARANTİ: faz seçimi aracın kapı normali üzerindeki İŞARETLİ
+        MESAFESİNE bakar (`signed_distance`):
+          · `d < −geri` → araç hizalanma noktasının **gerisinde**; hedef
+            YAKLAŞMA noktası — tanım gereği **ileride** (d = −geri > d).
+          · aksi hâlde → hedef ÇIKIŞ noktası (kapı düzleminin ötesi, F-K.1).
+        Her iki dalda da hedefin normal üzerindeki izdüşümü aracınkinden
+        BÜYÜKTÜR ⇒ normal yönünde geri hareket komutu üretilemez.
+        (Literatürdeki LOS/waypoint-switching kuralının ta kendisi: geçilen
+        noktaya bir daha nişan alınmaz.)
+
+        ⚠ Yanal hareket geri hareket DEĞİLDİR: araç kapının yanına düşmüşse
+        hizalanmak için yana gider, ileri bileşeni yine pozitiftir.
+        """
+        d = self.signed_distance(arac)
+        if d is None:
+            return self.drive_target
+        # 🔴 HİZALANMA FAZI ÖLÇÜLDÜ VE GERİ ALINDI (13.08). Fikir doğruydu
+        # (literatür: mesafelen → dik yaklaş → geç) ama bu parkurda ÇALIŞMIYOR:
+        # hizalanma payı kapının yarı genişliği (12 m kapıda **6 m**) iken
+        # kapılar **4 m aralıklı** → bir sonraki kapının yaklaşma noktası bir
+        # öncekinin GERİSİNE düşüyor, çekişler çatışıyor. Sanal gölde ölçüldü:
+        #     yalnız çıkış (F-K.1)      → 5 kapı, takıldı
+        #     hizalanma + çıkış (F-K.2) → **1 kapı**, tekne dondu
+        #     yalnız havuç              → parkur TAMAMLANDI
+        # `yaklasma_hedefi` yöntemi ve testleri KALIYOR (seyrek kapılı bir
+        # parkurda doğru araç olabilir), ama sürüş yolundan ÇIKARILDI.
+        # ⚠ Yeniden açılacaksa önce hizalanma payı ile KAPI ARALIĞI
+        # kıyaslanmalı: pay < aralık olmadan bu faz kullanılamaz.
+        del geri
+        # 🔴 ÇIKIŞ HAVUCU HER ZAMAN ARACIN ÖNÜNDE. Sabit `uzatma` yetmez:
+        # araç düzlemi `uzatma`dan FAZLA geçmişse (kilit henüz bırakılmamış
+        # olabilir — bırakma bir sonraki `update`'te olur, araç bu arada yol
+        # alır) sabit nokta ARKADA kalır ve GERİ komut üretir. Özellik testi
+        # bunu yakaladı: araç d=3,97 iken hedef d=1,04 (kaptanın korktuğu hâl).
+        # Çözüm pure-pursuit havucunun kendisi: hedef, düzlem ile aracın
+        # DAHA İLERİDEKİNDEN `uzatma` kadar öteye konur.
+        ileri = max(uzatma, d + uzatma)
+        mx, my = self.midpoint
+        nx, ny = self.normal                       # d not None ⇒ normal var
+        ax, ay = self.drive_target                 # kiriş üzerindeki nişan
+        # Nişanın yanal bileşeni korunur (engelden açık yer), ileri bileşen
+        # havuçtan gelir.
+        yanal = (ax - mx) * (-ny) + (ay - my) * nx
+        return (mx + nx * ileri - ny * yanal, my + ny * ileri + nx * yanal)
+
+    def gecis_hedefi(self, uzatma: float) -> Point:
+        """🔴 F-K.1 (13.08.2026) — SÜRÜLECEK NOKTA KAPININ ÖTESİNDEDİR.
+
+        Kapı bir VARIŞ NOKTASI DEĞİL, GEÇİLECEK BİR EŞİKTİR. Nişan kapı
+        düzleminin üstünde bırakılırsa MPPI referansı orada BİTER; araç
+        oraya varır, terminal maliyet sıfırlanır ve **tam kapı ortasında
+        durur**. Düzlem geçilmediği için kilit de çözülmez → görev bir daha
+        ilerlemez.
+
+        📏 Sanal gölde ölçüldü (13.08, kapalı döngü, gerçek düğümler):
+        tekne 25 m sürüp 1. kapıya vardı ve **(0.02, 24.95)'te kilitlendi** —
+        `current_target` (−0.02, 25.04)'te takılı kaldı, MPPI thrust
+        (−0.13, +0.05) N, yani fiilen sıfır. Görev yöneticisi bir sonraki
+        noktaya geçmiş olmasına rağmen araç durdu.
+
+        🔑 UZATMA MİKTARI UYDURULMADI: **gövde boyu** (`hull_length_m`,
+        ölçülmüş 1,04 m). Gerekçe yarışma tanımının kendisi: geçiş süresi
+        *pruva* dubaları geçince başlar, ***kıç* geçince biter** — yani
+        geçmiş sayılmak için TÜM tekne düzlemin ötesine çıkmalı. Nişanı
+        gövde boyu kadar öteye koymak bunu garanti eder ve yeni bir
+        ayarlanabilir eşik getirmez.
+
+        `normal` yoksa (eski kurs-ekseni kolu) uzatma yapılmaz — davranış
+        birebir eskisi gibi kalır.
+        """
+        if self.normal is None:
+            return self.drive_target
+        ax, ay = self.drive_target
+        nx, ny = self.normal
+        return (ax + nx * uzatma, ay + ny * uzatma)
+
     @property
     def aim_shift(self) -> float:
         """Nişanın geometrik ortadan kayma miktarı (m) — saha teşhisi."""
@@ -289,6 +408,15 @@ class GateResult:
     target: Point            # rafine hedef (kapı ortası) ya da fallback (ham GN)
     gate: Optional[Gate]     # seçilen kapı; fallback'te None
     used_fallback: bool      # True → kapı yok, ham GN'ye düşüldü
+    # 🔴 F-K.1: KONTROLE giden nokta. `target` kapının NİŞANIDIR (kimlik,
+    # teşhis, RViz); `surus_hedefi` onun gövde boyu kadar ÖTESİDİR — MPPI
+    # referansı buraya kurulur ki araç kapıda durmayıp GEÇSİN. Kapı yokken
+    # ikisi aynıdır (ham GN), yani kapısız davranış birebir korunur.
+    surus_hedefi: Point = (0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        if self.surus_hedefi == (0.0, 0.0) and self.gate is None:
+            object.__setattr__(self, "surus_hedefi", self.target)
 
 
 def _forward_left_axes(
@@ -423,7 +551,7 @@ def aim_point(
     return (lx + tx * en_iyi_s, ly + ty * en_iyi_s)
 
 
-def select_gate(
+def select_gate(  # noqa: PLR0913
     vehicle: Point,
     coarse_target: Point,
     edge_buoys: Sequence[Point],
@@ -431,6 +559,7 @@ def select_gate(
     diag: Optional[GateDiagnostics] = None,
     obstacles: Sequence[Circle] = (),
     gecilmis: Sequence[Circle] = (),
+    kurs: Optional[Point] = None,
 ) -> Optional[Gate]:
     """Öndeki en yakın geçerli kapıyı seç (durumsuz, saf fonksiyon).
 
@@ -520,7 +649,28 @@ def select_gate(
     if len(projected) < 2:
         return None
 
-    best: Optional[Tuple[float, float, Gate]] = None   # (menzil, |mid_lat|, Gate)
+    # 🔴 F-K.3 (13.08.2026) — SIRALAMA ANAHTARI: KURS BOYUNCA AYRIM.
+    # Kaptan: *"TEKNOFEST'te bir gate'de 2 gate'in dubalarını sağda
+    # görebiliyorsun."* Ölçüldü: gerçek geometride (12 m açıklık, 4 m aralık)
+    # **50 aday çiftin 43'ü SAHTE** — iki AYRI kapının dubalarından kurulmuş.
+    # Sanal gölde tekne 8,06 m genişlikte sahte bir kapıya kilitlenip dondu.
+    #
+    # 📏 ÖLÇÜM (35 araç konumu, en iyi sıradaki aday gerçek mi):
+    #     mevcut (menzile göre)      → **%26**
+    #     dikeylik oranına göre      → %20
+    #     **kurs BOYUNCA ayrıma göre → %100**
+    # Gerçek kapının iki direği kurs ekseninde AYNI istasyondadır (ayrım ≈ 0);
+    # çapraz çiftler ise kapı aralığının katları kadar ayrıktır (4 m, 8 m…).
+    # Eşik DEĞİL, SIRALAMA — §0.0d korunur.
+    #
+    # ⚠ KURS EKSENİ ARAÇ→GN'DEN ALINAMAZ: GN kaçık olduğu için (şartname md
+    # 5.5.2.2; §0.17c'de 2,0-6,4 m ölçüldü) tekne yana kaçınca eksen 37°'ye
+    # kadar döner ve ölçüt çöker (aynı taramada %20'ye düşüyor). Eksen
+    # PARKURUN kendi ekseninden gelir: `GateFollower` onu GEÇİLEN SON KAPININ
+    # NORMALİNDEN alır — kapılar tanımı gereği kursa diktir, yani eksen kendini
+    # besler ve dışarıdan sayı gerektirmez. İlk kapıda eksen yoktur → eski
+    # (menzil) sıralaması kullanılır, davranış birebir korunur.
+    best: Optional[Tuple[Tuple[float, float], Gate]] = None
     n = len(projected)
     for i in range(n):
         pi, _fi, li = projected[i]
@@ -577,23 +727,38 @@ def select_gate(
             # doğrudan verir (yaklaşma yönüne göre, kurs eksenine göre değil).
             left, right = (pi, pj) if d_lat >= 0.0 else (pj, pi)
             gate = Gate(left=left, right=right, midpoint=midpoint)
-            # Sıralama: birincil ölçüt EN YAKIN kapı (menzil — eksen-bağımsız),
-            # eşitlikte kurs çizgisine en yakın olan ("yolumun üstündeki").
+            # F-K.3 sıralaması (yukarıdaki blokta gerekçesi):
+            #   kurs EKSENİ VARSA → (kurs boyunca ayrım, menzil)
+            #   yoksa (ilk kapı)  → (menzil, |kurs çizgisine uzaklık|) — eski.
             menzil = math.hypot(midpoint[0] - vx, midpoint[1] - vy)
             mid_lat = 0.5 * (li + lj)
-            key = (menzil, abs(mid_lat))
-            if best is None or key < (best[0], best[1]):
-                best = (menzil, abs(mid_lat), gate)
+            if kurs is not None:
+                kx, ky = kurs
+                boyuna = abs(ddx * kx + ddy * ky)   # kurs BOYUNCA ayrım
+                # ⚠ HAM `boyuna` ile sıralama YANLIŞ: sürekli bir sayı olduğu
+                # için UZAKTAKİ bir kapı 0,01 m farkla yakındakini geçer ve
+                # nişan zinciri kopar (P1 saha senaryosunda ölçüldü: geçiş
+                # ortalaması 2,02 m → 2,60 m KÖTÜLEŞTİ). Bu yüzden "aynı
+                # istasyon" DUBA ÇAPINA (şartname: 30 cm) göre kovalanır:
+                # gerçek kapılar aynı kovaya düşüp eşitlenir, aralarında
+                # MENZİL karar verir (eski davranış). Ölçülen fiziksel boyut,
+                # ayarlanabilir eşik değil (§0.0d).
+                kova = int(boyuna / (2.0 * BUOY_RADIUS_M))
+                key = (float(kova), menzil)
+            else:
+                key = (menzil, abs(mid_lat))
+            if best is None or key < best[0]:
+                best = (key, gate)
 
     if best is None:
         return None
+    gate = best[1]
 
     # Nişan noktası YALNIZ kazanan çift için hesaplanır (her aday için değil —
     # tarama gereksiz maliyet olurdu). Açıklık dairelerine kapının kendi
     # direkleri de girer: MPPI'de engel olmadıkları için iten tek kuvvet budur.
     # Diğer kenar dubaları da katılır — koridora sarkan üçüncü bir duba
     # nişanı ondan uzağa iter (yanlış eşleşmenin sessiz zararını azaltır).
-    gate = best[2]
     circles: List[Circle] = [(bx, by, BUOY_RADIUS_M) for bx, by in edge_buoys]
     circles.extend(obstacles)
     aim = aim_point(gate.left, gate.right, circles, cfg)
@@ -667,6 +832,11 @@ class GateFollower:
         # Eleman: (orta_x, orta_y, YARI GENİŞLİK) — eşleştirme yarıçapı kapının
         # KENDİ ölçüsüdür (bkz. select_gate K1 notu).
         self._gecilen_kapilar: List[Circle] = []
+        # F-K.3: PARKURUN kurs ekseni — geçilen son kapının normali. Kapılar
+        # tanımı gereği kursa diktir, yani eksen KENDİNİ BESLER; dışarıdan
+        # sayı ya da yeni bir topic gerekmez. İlk kapıya kadar None → eski
+        # (menzil) sıralaması, davranış birebir korunur.
+        self._kurs_ekseni: Optional[Point] = None
 
     def reset(self) -> None:
         """Kilitli kapıyı temizle (parkur geçişi / yeniden başlama).
@@ -750,6 +920,8 @@ class GateFollower:
         yanal = gate.lateral_offset(vehicle)
         if yanal is not None and yanal > gate.width:
             return                       # kapının yanından değil, uzağından geçtik
+        if gate.normal is not None:
+            self._kurs_ekseni = gate.normal        # F-K.3: kurs ekseni öğrenildi
         yari = gate.width / 2.0
         for px, py, p_yari in self._gecilen_kapilar:
             if math.hypot(gate.midpoint[0] - px, gate.midpoint[1] - py) <= p_yari:
@@ -784,6 +956,23 @@ class GateFollower:
             vehicle, coarse_target, edge_buoys, self._cfg,
             self.last_diagnostics, obstacles,
             gecilmis=self._gecilen_kapilar,          # K1: arkadakiler aday değil
+            # 🔴 F-K.3 BAĞLI DEĞİL — KÖK NEDEN BULUNDU (13.08, ölçümle).
+            # Varsayım "çapraz çift = zararlı" idi; BU PARKURDA YANLIŞ:
+            # kapılar 4 m aralıklı ama ±5 m ZİGZAG, yani ardışık gerçek kapı
+            # merkezleri 5 m YANAL atlıyor. Çapraz çiftlerin ortası ise tam
+            # iki kapının ARASINDA — koridor ORTA ÇİZGİSİ, her kapıya yalnız
+            # 2,5 m. Gerçek merkeze nişan almak tekneyi bir sonraki kapıya
+            # ERKEN çekip mevcut kapıyı daha kaçık geçirtiyor.
+            # Ölçüldü (P1 kapalı döngü, geçiş sapması ortalaması):
+            #     mevcut (çapraz çiftler serbest) → 1,91 m · 7 kapı
+            #     F-K.3 sıralama                  → 2,60 m · 5 kapı
+            #     F-K.3 red                       → 2,73 m · 5 kapı
+            # ⇒ Çapraz çift burada YUMUŞATICI görev görüyor. Ayrıca F-K.3'ü
+            # tetikleyen sanal göl kilitlenmesi zaten F-K.1b (havuç) ile
+            # kapandı ("yalnız havuç" koşumu PARKUR TAMAMLANDI).
+            # Mekanizma + ölçüm testleri duruyor; SEYREK kapılı bir parkurda
+            # (aralık ≫ zigzag genliği) yeniden değerlendirilmeli.
+            kurs=None,
         )
 
         if self._committed is not None:
@@ -824,6 +1013,11 @@ class GateFollower:
                     target=self._committed.drive_target,
                     gate=self._committed,
                     used_fallback=False,
+                    surus_hedefi=self._committed.surus_noktasi(
+                        vehicle,
+                        self._committed.width / 2.0,      # öz-ölçekli hizalanma payı
+                        self._cfg.hull_length_m,
+                    ),
                 )
             # Geçildi → serbest bırak, aşağıda yeniden seç.
             # K1: bırakmadan ÖNCE "arkada" olarak işaretle — yoksa bir sonraki
@@ -837,7 +1031,10 @@ class GateFollower:
         if fresh is None:
             self._aday = None
             self._aday_sayaci = 0
-            return GateResult(target=coarse_target, gate=None, used_fallback=True)
+            return GateResult(
+                target=coarse_target, gate=None, used_fallback=True,
+                surus_hedefi=coarse_target,
+            )
 
         # Sayaç yalnız YENİ bir algı karesinde ilerler (bkz. `gozlem_no`);
         # aynı kareden gelen ikinci bir kontrol tick'i onayı ilerletemez.
@@ -855,13 +1052,19 @@ class GateFollower:
         self.last_diagnostics.aday_onay_sayaci = self._aday_sayaci
 
         if self._aday_sayaci < ONAY_TICK:
-            return GateResult(target=coarse_target, gate=None, used_fallback=True)
+            return GateResult(
+                target=coarse_target, gate=None, used_fallback=True,
+                surus_hedefi=coarse_target,
+            )
 
         self._committed = fresh
         self._aday = None
         self._aday_sayaci = 0
         return GateResult(
-            target=fresh.drive_target, gate=fresh, used_fallback=False
+            target=fresh.drive_target, gate=fresh, used_fallback=False,
+            surus_hedefi=fresh.surus_noktasi(
+                vehicle, fresh.width / 2.0, self._cfg.hull_length_m
+            ),
         )
 
 

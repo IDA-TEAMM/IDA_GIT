@@ -63,10 +63,13 @@ from __future__ import annotations
 
 import functools
 import math
+import threading
 from typing import Callable, Optional
 
 import numpy as np
 import rclpy
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 
@@ -81,10 +84,18 @@ from std_msgs.msg import Float32MultiArray, Int32, String
 _AKTIF_DURUMLAR = ("PARKUR1", "PARKUR2", "PARKUR3")
 from vision_msgs.msg import Detection3DArray
 
-from girdap_decision.qos_profiles import sensor_data_qos
+from girdap_decision.qos_profiles import latched_qos, sensor_data_qos
+from girdap_decision.saat_kaynagi import bayatlik_saati
+from prototype.control.cmd_slew import EgimSinirlayici, EgimSinirlayiciConfig
+from prototype.control.pivot_kapisi import (
+    PivotKapisi,
+    PivotKapisiConfig,
+    pivot_itkisi,
+)
 from prototype.control.mavros_bridge import MavrosBridge, MavrosBridgeConfig
 from girdap_decision.yeniden_baslama import ResetAbonesi
 from prototype.mission.edge_memory import EdgeBuoyMemory
+from prototype.perception.fusion import CLASS_UNKNOWN
 from prototype.mission.gate_follower import (
     BUOY_RADIUS_M,
     GateFollower,
@@ -99,12 +110,14 @@ from prototype.telemetry.ariza_bildirici import (
     KAPI_YOK,
     KONTROL_HATA,
     RRT_RED,
+    SAAT_YOK,
     SEBEP_TUREVLI_ARIZALAR,
     SETPOINT_BOSLUK,
     SINIF_YOK,
     ArizaBildirici,
     sebepten_kodla,
 )
+from prototype.telemetry.saat_guveni import saat_guvenilir_mi
 from prototype.planning.pipeline import PlanningPipeline, PlanningPipelineConfig
 from prototype.planning.rrt_star import Bounds, CircleObstacle
 
@@ -135,6 +148,20 @@ def _guard(fn: Callable[..., None]) -> Callable[..., None]:
     return _wrapped
 
 
+def _pipe_kilidiyle(f):
+    """FAZ 5 (§1.17): `self._pipe`'a dokunan geri çağrı bu kilitle sarılır.
+
+    Tek RLock → kilitlenme yapısal olarak imkânsız; varsayılan gruptaki
+    çağrılar kendi aralarında zaten seri olduğundan tek gerçek yarış algı
+    grubu ↔ kontrol grubu arasındadır ve bedeli yukarıdaki blokta ölçülü.
+    """
+    @functools.wraps(f)
+    def _sarili(self, *a, **k):
+        with self._pipe_kilidi:
+            return f(self, *a, **k)
+    return _sarili
+
+
 class PlanningNode(Node):
     """RRT* global + MPPI lokal planlayıcı sarmalayıcısı."""
 
@@ -142,6 +169,9 @@ class PlanningNode(Node):
         # node_kwargs → parameter_overrides passthrough (test enjeksiyonu;
         # diğer node'larla aynı desen).
         super().__init__("planning_node", **node_kwargs)
+        # §0.61: bayatlık/zaman aşımı ölçümleri tek yönlü saatte (duvar saati
+        # adımı sahte "poz bayat / setpoint boşluğu" üretiyordu).
+        self._saat = bayatlik_saati(self)
 
         # --- Parametreler ---
         # F-P.13 (robustness taraması, 2026-07-15): varsayılan buradaydı
@@ -155,6 +185,19 @@ class PlanningNode(Node):
         self.declare_parameter("bounds_x", [0.0, 200.0])
         self.declare_parameter("bounds_y", [0.0, 200.0])
         self.declare_parameter("replan_proximity", 2.0)     # m
+        # F-P.9 — REPLAN FRENİ (13.08.2026). RRT* bu düğümün TEK thread'inde
+        # koşar; blokladığı sürece hem `cmd_vel` susar hem düğüm KENDİ
+        # aboneliklerini işleyemez (sonuç: kendi "poz bayat" bekçisi ateşler).
+        # Fren sabit değil, son planın ölçülen süresine bağlıdır — ayrıntı ve
+        # türetme `PlanningPipelineConfig` içinde.
+        self.declare_parameter("replan_bosluk_katsayisi", 3.0)
+        self.declare_parameter("replan_max_interval_s", 1.9)  # s
+        # F-P.10 — RRT* AYRI SÜREÇTE. Ampirik ölçüm (bu Jetson, 10 Hz döngü,
+        # CUDA'lı ebeveyn): senkron planda döngünün en kötü gecikmesi 370,7 ms,
+        # asenkron kolda 1,1 ms. ⚠ Ayrı THREAD yetmez (Python GIL); işçi
+        # `spawn` ile kurulur (`fork` CUDA bağlamını bozar).
+        self.declare_parameter("plan_isci_enabled", True)
+        self.declare_parameter("plan_isci_zaman_asimi_s", 5.0)  # s
         self.declare_parameter("mppi_K", 1000)
         self.declare_parameter("mppi_T", 50)
         self.declare_parameter("heartbeat_timeout_s", 5.0)  # MAVROS geçidi
@@ -164,6 +207,12 @@ class PlanningNode(Node):
         # 10 Hz sürmeye devam ediyordu → GPS/EKF kesilse bile araç KÖR sürer.
         # Eşik fusion'ın pose_timeout_s'iyle aynı mantıkta (1 s); 0 → kapalı.
         self.declare_parameter("odom_timeout_s", 1.0)
+        # F-F.1 (§0.98a): pozun MAKULLÜK kapısı — `fusion_node`'dakinin ikizi.
+        # Burada da var çünkü poz kaynağı tek değil: `use_isam2:=false` video
+        # kolunda uçuş kontrolcüsünün pozu iletilir, sanal gölde sahte kaynak
+        # yayınlar. Kapıyı yalnız üreticiye koymak, üretici değişince korumayı
+        # sessizce kaybettirirdi. 0 -> kapalı.
+        self.declare_parameter("poz_makul_menzil_m", 5000.0)
         # F-P.2 (robustness taraması): obstacle_map için de F-P.1 ile aynı
         # bekçi — perception_lidar_node kaynağı (Livox sürücüsü/USB) donarsa
         # son bilinen engel listesi SONSUZA DEK kullanılmasın (var olmayan
@@ -214,6 +263,11 @@ class PlanningNode(Node):
         # classified_obstacles aktığında obstacle_map'in yerine geçsin mi?
         # false → eski davranış (sınıfsız harita), kapı dubaları da engel kalır.
         self.declare_parameter("use_classified_obstacles", True)
+        # Dosya-3 haritasına yalnız SINIFLANMIŞ nesneler çizilsin mi?
+        # True (kaptan kararı 15.08) → CLASS_UNKNOWN=99 haritada YOK.
+        # False → eski davranış (kontrol torbasının tamamı çizilir).
+        # ⚠ Her iki hâlde de KONTROL yolu aynıdır; bu salt çizim ayarı.
+        self.declare_parameter("harita_yalniz_siniflandirilmis", True)
         # 🔑 Kapı seçiminde AYARLANABİLİR EŞİK YOK (2026-08-03 kararı: "tahmine
         # dayalı hiçbir şey olmasın"). Geriye yalnız ÖLÇÜLMÜŞ tekne boyutları
         # kalıyor; genişlik bandı / menzil / derinlik toleransı / bırakma
@@ -255,6 +309,18 @@ class PlanningNode(Node):
 
         cfg = PlanningPipelineConfig(
             replan_proximity=float(self.get_parameter("replan_proximity").value),
+            replan_bosluk_katsayisi=float(
+                self.get_parameter("replan_bosluk_katsayisi").value
+            ),
+            replan_max_interval_s=float(
+                self.get_parameter("replan_max_interval_s").value
+            ),
+            plan_isci_enabled=bool(
+                self.get_parameter("plan_isci_enabled").value
+            ),
+            plan_isci_zaman_asimi_s=float(
+                self.get_parameter("plan_isci_zaman_asimi_s").value
+            ),
             mppi_K=int(self.get_parameter("mppi_K").value),
             mppi_T=int(self.get_parameter("mppi_T").value),
             control_mode=control_mode,
@@ -274,7 +340,10 @@ class PlanningNode(Node):
                 self.get_parameter("mppi_ref_window_enabled").value
             ),
         )
-        self._pipe = PlanningPipeline(bounds, cfg)
+        # F-P.9: fren "ne kadar zaman geçti" sorar → düğümün F-S.14 saati
+        # (donanımda monotonic, sim zamanında `/clock`). Boru hattının kendi
+        # `time.monotonic` varsayılanı sim'de bant oynatmayla ayrışırdı.
+        self._pipe = PlanningPipeline(bounds, cfg, saat=self._saat)
 
         # Video bypass: use_rrt=false → global plan atlanır, current_target
         # doğrudan MPPI referansı. Son poz absolute hedef hesabı için tutulur.
@@ -288,6 +357,9 @@ class PlanningNode(Node):
         self._edge_class_id = int(self.get_parameter("edge_buoy_class_id").value)
         self._use_classified = bool(
             self.get_parameter("use_classified_obstacles").value
+        )
+        self._harita_yalniz_siniflandirilmis = bool(
+            self.get_parameter("harita_yalniz_siniflandirilmis").value
         )
         self._gate = GateFollower(
             GateFollowerConfig(
@@ -364,6 +436,12 @@ class PlanningNode(Node):
         self._odom_timeout = float(self.get_parameter("odom_timeout_s").value)
         self._last_odom_t: float | None = None
         self._stale_warn_t = 0.0
+        # F-F.1: son gelen odom makul müydü? Kapı listesinde POZ-SACMA üretir.
+        self._poz_makul_menzil = float(
+            self.get_parameter("poz_makul_menzil_m").value
+        )
+        self._poz_sacma = False
+        self._poz_sacma_warn_t = 0.0
         # F-P.2: obstacle_map bayatlık takibi
         self._obstacle_timeout = float(
             self.get_parameter("obstacle_timeout_s").value
@@ -387,6 +465,28 @@ class PlanningNode(Node):
         self._last_obstacle_t: float | None = None
         self._obstacle_stale_warn_t = 0.0
 
+        # 🔴 FAZ 5 (15.08, GIRDAP_DURUM §1.17a-b) — İKİ İŞ PARÇACIĞI, TEK KİLİT.
+        # Ölçüldü: tek iş parçacıklı `rclpy.spin`'de algı işlemesi kontrol
+        # zamanlayıcısını boğuyordu (kadans↔hafıza korelasyonu r=+0,94; 317
+        # "sınıflı algı gelmiyor" uyarısının %100'ü sahteydi — akış sürüyordu,
+        # iş parçacığı tıkalıydı). Resmî Humble deseni uygulanıyor: ağır algı
+        # geri çağrıları AYRI MutuallyExclusiveCallbackGroup'ta koşar
+        # (kendi içinde seri — `_edge_memory` kilitsiz güvenli kalır), geri
+        # kalan her şey düğümün varsayılan grubunda kalır; `main()`
+        # MultiThreadedExecutor(num_threads=2) kurar.
+        # ⚠ Paylaşılan durum kuralı: `self._pipe`'a DOKUNAN her geri çağrı
+        # `_pipe_kilidiyle` sarılıdır (aşağıdaki dekoratör). Tek kilit →
+        # kilitlenme (deadlock) yapısal olarak imkânsız; RLock → aynı iş
+        # parçacığının iç içe çağrıları serbest. Bedeli sınırlı: algı, kontrol
+        # adımının MPPI süresi kadar (~60 ms) bekleyebilir; kontrol ise artık
+        # en fazla vektörleştirilmiş taramanın süresi (~6 ms, §1.18) kadar.
+        # GIL notu: saf Python taramaları FAZ 5'te numpy'ye alındı; numpy/cupy
+        # çekirdekleri GIL'i bıraktığı için iki grup gerçekten örtüşebiliyor.
+        self._pipe_kilidi = threading.RLock()
+        # Araştırma uyarısı (docs.ros.org Humble): gruba referans tutulmazsa
+        # geri çağrılar HİÇ çağrılmaz — bu yüzden üye değişken.
+        self._grup_algi = MutuallyExclusiveCallbackGroup()
+
         # --- Subscribers ---
         self._sub_odom = self.create_subscription(
             Odometry, "/girdap/fusion/odom", self._on_odom, 10
@@ -398,7 +498,8 @@ class PlanningNode(Node):
             MavState, "/mavros/state", self._on_mav_state, 10
         )
         self._sub_obs = self.create_subscription(
-            PoseArray, "/perception/obstacle_map", self._on_obstacles, 10
+            PoseArray, "/perception/obstacle_map", self._on_obstacles, 10,
+            callback_group=self._grup_algi,       # FAZ 5: ağır algı ayrı iş parçacığı
         )
         # F-S.9 füzyon çıktısı — sınıflı engeller. Aktığı anda obstacle_map'in
         # yerine geçer; turuncu kenar dubaları buradan kapı takibine gider.
@@ -407,6 +508,7 @@ class PlanningNode(Node):
             "/perception/classified_obstacles",
             self._on_classified,
             10,
+            callback_group=self._grup_algi,       # FAZ 5: ağır algı ayrı iş parçacığı
         )
         self._sub_wp = self.create_subscription(
             Path, "/girdap/mission/waypoints", self._on_waypoints, 10
@@ -444,8 +546,19 @@ class PlanningNode(Node):
         # her oturumda BASKA bir kilit devredeydi (BOOT / KILL / BEKLEMEDE) —
         # ama bag'e bakan kisi bunu ancak dort ayri topic'i capraz okuyarak
         # cikarabildi. Sebep, komutun KENDI yaninda yayinlanmali.
+        # F-F.10 (14.08, §0.98o): LATCH'Lİ yayın. Bu topic yalnız METİN
+        # DEĞİŞTİĞİNDE yayınlanır; volatile QoS'ta yayına sonradan bağlanan
+        # tüketici (canlı nöbetçi · `ros2 topic echo` · **yeniden açılan
+        # Mission Planner**) bir sonraki değişime kadar KÖR kalıyordu — nöbetçi
+        # ilk 90 saniye "kilit: YOK" sandı, oysa araç `FSM-DISI(KILL)` idi.
+        # ⚠ mission_manager'daki "latched abone bir ÖNCEKİ koşunun mesajını
+        # alır" uyarısı BURAYA GEÇMEZ: orada yayıncı MAVROS'tur ve koşumlar
+        # arasında yaşar; burada yayıncı bu düğümdür — düğüm yeniden doğduğunda
+        # geçmişi de sıfırlanır, bayat değer taşınamaz.
+        # ⚠ Geriye uyumlu: TRANSIENT_LOCAL yayıncı, VOLATILE aboneyle uyumludur
+        # (yayıncının sunduğu ≥ abonenin istediği) — mevcut tüketiciler etkilenmez.
         self._pub_inhibit = self.create_publisher(
-            String, "/girdap/control/inhibit_reason", 10
+            String, "/girdap/control/inhibit_reason", latched_qos(depth=1)
         )
         self._son_inhibit = ""
         # 🔴 KAR-10 (12.08): ArduPilot GUIDED modunda setpoint akisi KESILIRSE
@@ -461,6 +574,62 @@ class PlanningNode(Node):
         )
         self._son_setpoint_t: float | None = None
         self._setpoint_bosluk_sayaci = 0
+        # F-F.18 (14.08, §0.99u): cmd_vel EĞİM SINIRLAYICI.
+        # Su koşumunda ardışık komut farkı **azami 0,982 m/s** ölçüldü (10 Hz'te);
+        # teknenin fiilen yaptığı hızlanma ise %99'da 0,87-0,95 m/s². Yani
+        # komutun büyük kısmı takip edilemez ve düşük hız bölgesinde araç
+        # **iki katı** gidiyor (+0,34 m/s) — kapıya yaklaşırken çarpma riski.
+        # Varsayılan 0,8 m/s²: hem ölçülen %99'un altında hem `ATC_ACCEL_MAX`
+        # (1,0) ile yarışmıyor. Açısal eksen ölçülmediği için KAPALI (0.0).
+        self.declare_parameter("cmd_vel_azami_ivme_mps2", 0.8)
+        self.declare_parameter("cmd_vel_azami_acisal_ivme_rps2", 0.0)
+        self._egim = EgimSinirlayici(
+            EgimSinirlayiciConfig(
+                azami_ivme_mps2=float(
+                    self.get_parameter("cmd_vel_azami_ivme_mps2").value
+                ),
+                azami_acisal_ivme_rps2=float(
+                    self.get_parameter("cmd_vel_azami_acisal_ivme_rps2").value
+                ),
+            )
+        )
+        # F-F.20 (14.08, §1.01): PIVOT KAPISI — hedef arkadayken önce dön.
+        # 14.08 ölçümü: waypoint dönüşünde 8 m ilerlemek 45,4 s ve 21,2 m yol
+        # aldı (verim 0,38); komutun %36,7'si GERİ ve işaret 139 kez değişti.
+        # Eşikler teknenin KENDİ uçuş kontrolcüsü ayarlarından: `WP_PIVOT_ANGLE`
+        # =60 (tetik) ve ArduPilot'un "10° içinde devam et" kuralı (bırakma).
+        # ⚠ Bunlar ArduPilot'ta KURULU ama GUIDED'da hız setpoint'i
+        # gönderdiğimiz için uçuş kontrolcüsünün seyir mantığı devre dışı —
+        # yani doğru davranışı bizim katmanımızda geri kurmak zorundayız.
+        self.declare_parameter("pivot_tetik_derece", 60.0)
+        self.declare_parameter("pivot_birak_derece", 10.0)
+        self.declare_parameter("pivot_ufuk_m", 3.0)
+        self._pivot = PivotKapisi(
+            PivotKapisiConfig(
+                tetik_derece=float(self.get_parameter("pivot_tetik_derece").value),
+                birak_derece=float(self.get_parameter("pivot_birak_derece").value),
+                ufuk_m=float(self.get_parameter("pivot_ufuk_m").value),
+            )
+        )
+        self._pivot_sayaci = 0
+        self._isci_uyarildi = False
+        # 🔴 14.08: bekçiyi kapatmak SESSİZ olmamalı. LiDAR yokken bilerek
+        # sürmek meşru bir test ihtiyacı (gate/dataset koşusu), ama biri test
+        # için kapatıp unutursa yarışmaya KÖR girilir. Kapalıysa hem açılışta
+        # hem her kilit raporunda görünür.
+        if self._obstacle_timeout <= 0.0:
+            self.get_logger().error(
+                "🔴 ENGEL BEKCISI KAPALI (obstacle_timeout_s=0) — arac engel "
+                "verisi OLMADAN da surer. Bu yalniz bilincli bir test icin "
+                "olmali; yarisma kosusunda ACIK olmak zorunda (Parkur-2 duba "
+                "kacinmasi buna bagli)."
+            )
+        if self._odom_timeout <= 0.0:
+            self.get_logger().error(
+                "🔴 POZ BEKCISI KAPALI (odom_timeout_s=0) — arac bayat/hic "
+                "olmayan pozla surer."
+            )
+        self._isci_zaman_asimi_son = 0
         # Dosya-3: yerel maliyet haritası (RViz + local_map_node PNG dumper).
         self._pub_map = self.create_publisher(
             OccupancyGrid, "/girdap/map/local", sensor_data_qos()
@@ -584,6 +753,15 @@ class PlanningNode(Node):
                 "noktasına gidilir; md 5.5.2.2 puanı kapıdan geçmekten gelir"
             )
 
+    # 🔴 FAZ 5 boşluğu (16.08): bu geri çağrı `self._pipe.yeniden_basla()` ve
+    # `self._edge_buoys` yazıyor ama `_pipe_kilidiyle` SARILI DEĞİLDİ.
+    # `ResetAbonesi` aboneliği düğümün VARSAYILAN grubunda (callback_group
+    # verilmiyor), algı abonelikleri ise `_grup_algi`'da → iki ayrı
+    # MutuallyExclusiveCallbackGroup, `MultiThreadedExecutor(num_threads=2)`
+    # altında GERÇEKTEN aynı anda koşabilirler. Yani sıfırlama, algı taraması
+    # boru hattını okurken araya girebiliyordu. Dar pencere ama pahalı an:
+    # yeniden başlama hakkı yarışmada BİR kez (md 5.5.3.1).
+    @_pipe_kilidiyle
     def _yeniden_basla(self) -> None:
         """md 5.5.3.1 yeniden baslama — planlama tarafinin sifirlanmasi.
 
@@ -610,6 +788,7 @@ class PlanningNode(Node):
     # ----- subscriber callback'leri -----
 
     @_guard
+    @_pipe_kilidiyle
     def _on_odom(self, msg: Odometry) -> None:
         """ENU pose + velocity → durum vektörü [x, y, ψ, u, v, r]."""
         self._last_odom_t = self._now()          # F-P.1: bayatlık saati
@@ -618,9 +797,47 @@ class PlanningNode(Node):
         psi = 2.0 * math.atan2(q.z, q.w)             # z-eksen quaternion → yaw
         v = msg.twist.twist.linear
         w = msg.twist.twist.angular
+
+        # 🔴 F-F.1 (§0.98a): SAÇMA POZ MPPI DURUMUNA GİRMEZ.
+        # `_last_odom_t` bilerek YUKARIDA güncellendi: mesaj GELDİ, kaynak
+        # susmuş değil. Onu güncellememek POZ-BAYAT üretirdi ve operatöre
+        # yanlış yeri gösterirdi ("kaynak sustu" ≠ "kaynak saçmalıyor").
+        # `set_state` ATLANIR — bozuk durum MPPI'ye girerse warm-start,
+        # kayan referans çapası ve kenar hafızası da kirlenir; sonraki
+        # sağlıklı poz gelse bile bunlar geri gelmez.
+        if not self._poz_makul(p.x, p.y, psi):
+            self._poz_sacma = True
+            return
+        self._poz_sacma = False
+
         self._pipe.set_state(np.array([p.x, p.y, psi, v.x, v.y, w.z]))
         self._last_xy = (p.x, p.y)               # bypass absolute hedef için
         self._last_psi = psi                     # gövde→dünya dönüşümü için
+
+    def _poz_makul(self, x: float, y: float, psi: float) -> bool:
+        """F-F.1: gelen poz sonlu ve makul menzilde mi (§0.98a).
+
+        `fusion_node._poz_makul` ile aynı ölçüt; ikisi ayrı ayrı durur çünkü
+        poz kaynağı değişebilir (iSAM2 / uçuş kontrolcüsü geçişi / sanal göl).
+        `isfinite` menzil testinden ÖNCE gelmeli: `nan` her karşılaştırmada
+        `False` döndürür, yani `hypot(nan,nan) <= menzil` testi `nan`'ı
+        "makul" saymaz ama `nan` psi'yi tek başına yakalayamaz.
+        """
+        if self._poz_makul_menzil <= 0.0:
+            return True
+        if (math.isfinite(x) and math.isfinite(y) and math.isfinite(psi)
+                and math.hypot(x, y) <= self._poz_makul_menzil):
+            return True
+        simdi = self._now()
+        if simdi - self._poz_sacma_warn_t >= 5.0:
+            self._poz_sacma_warn_t = simdi
+            self.get_logger().error(
+                f"🔴 POZ SACMA: x={x:.3e} y={y:.3e} psi={psi:.3e} "
+                f"(sinir {self._poz_makul_menzil:.0f} m) — MPPI durumu "
+                "GUNCELLENMEDI, thrust sifirlanacak. Fuzyon diverjansi "
+                "olabilir (§0.98a); kacis: use_isam2:=false."
+            )
+        return False
 
     # ----- frame dönüşümü -----
 
@@ -651,6 +868,7 @@ class PlanningNode(Node):
         )
 
     @_guard
+    @_pipe_kilidiyle
     def _on_obstacles(self, msg: PoseArray) -> None:
         """PLACEHOLDER şema: position.{x,y} merkez, orientation.z yarıçap.
 
@@ -693,6 +911,11 @@ class PlanningNode(Node):
         ]
         self._obstacles_world = [(o.cx, o.cy, o.r) for o in obstacles]
         self._pipe.set_obstacles(obstacles)
+        # Sınıfsız kol: burada "99" diye bir kavram YOK — kümelerin hiçbirinin
+        # sınıfı yok, hepsi ham LiDAR. Gösterim süzgecini KALDIRIYORUZ, yoksa
+        # sınıflı akış düştüğü anda Dosya-3 haritası bomboş kalırdı (kaptanın
+        # istediği "99'u gösterme", "haritayı boşalt" değil).
+        self._pipe.set_gosterim_engelleri(None)
         self._bos_akis_denetle(len(obstacles))
 
     def _classified_taze(self) -> bool:
@@ -722,6 +945,7 @@ class PlanningNode(Node):
         # guncelle`'de her turda `_classified_taze()` yüklemiyle kurulur;
         # akış dönünce kendiliğinden düşer.
 
+    @_pipe_kilidiyle
     def _on_classified(self, msg: Detection3DArray) -> None:
         """Sınıflı engeller → kapı dubaları AYRIŞTIRILIR, gerisi engel kalır.
 
@@ -828,6 +1052,18 @@ class PlanningNode(Node):
         self._bos_akis_denetle(len(msg.detections))
         self._obstacles_world = [(o.cx, o.cy, o.r) for o in obstacles]
         self._pipe.set_obstacles(obstacles)
+        # 🔴 Dosya-3 HARİTASI: eşleşmemiş küme (CLASS_UNKNOWN=99) ÇİZİLMEZ —
+        # kaptan kararı 15.08.2026 (*"canlı haritada da 99 verileri
+        # olmayacak"*). Ölçüm: gerçek göl koşumunda tespitlerin %98,6'sı 99,
+        # harita gri bir bulut oluyordu. ⚠ KONTROL YOLU DEĞİŞMEZ — 99'lar
+        # yukarıdaki `set_obstacles` torbasında KALIR (güvenlik: füzyon
+        # sözleşmesi "bilinmeyeni atma"; 99'suz kaçınma fiilen kör olurdu).
+        if self._harita_yalniz_siniflandirilmis:
+            self._pipe.set_gosterim_engelleri([
+                CircleObstacle(wx, wy, r)
+                for (wx, wy, r, cls) in tespitler
+                if cls is not None and cls != CLASS_UNKNOWN
+            ])
         self._algi_no += 1                # B5 onayı: yeni algı karesi geldi
         self._publish_edge_buoys(edges)
 
@@ -848,7 +1084,8 @@ class PlanningNode(Node):
 
             m = clamp( (W − hull_width − 2r) / 2 , 0 , gate_post_margin_m )
 
-        `W` = bu direğin **en yakın diğer kenar dubasına** ölçülen mesafe.
+        `W` = bu direğin, **geçilebilir boşluk oluşturan** (≥ `min_passable_width`,
+        FAZ 2) en yakın diğer kenar dubasına ölçülen mesafesi.
         Formülün girdileri ya ölçülmüş tekne boyutu (`hull_width_m`) ya şartname
         sabiti (duba çapı 30 cm) ya da **o an ölçülen** geometri; tek serbest
         sayı TAVAN'dır ve o da kapı SEÇİMİNE değil kaçınma şiddetine ait
@@ -876,13 +1113,32 @@ class PlanningNode(Node):
         if len(kenarlar) < 2:
             return self._gate_post_margin
         dx, dy = kenarlar[i]
+        # 🔴 FAZ 2 (15.08, GIRDAP_DURUM §1.13d): gövdenin SIĞAMAYACAĞI kadar
+        # yakın bir komşu W hesabına GİRMEZ. Gerekçe kodun kendi tanımı
+        # (`select_gate`: "gövde sığmıyorsa bu bir kapı değildir"): böyle bir
+        # komşu ya aynı dubanın ikiz kaydıdır ya duvar parçasıdır — iki hâlde
+        # de oradan GEÇİLMEYECEKtir, yani "geçmem gereken en dar boşluk" o
+        # değildir. Eski hâl payı sıfırlıyordu: göl bandında ikiz kayıtlar
+        # yüzünden direklerin %84,8'i PAYSIZ kaldı ve tekne direğe nişan aldı
+        # (17 dar-kapı epizodu, 6'sında nişana girildi). Bu süzgeçle çarpışma
+        # koruması hafıza kirliliğinden bağımsızlaşır. Kullanılan sınır yeni
+        # bir eşik değil, kapı kabulünün kendi sınırı (`min_passable_width` =
+        # gövde + 2r); gerçekten dar ama GEÇİLEBİLİR boşlukta pay eskisi gibi
+        # kendiliğinden küçülür.
+        min_gecilebilir = self._gate._cfg.min_passable_width
         # İndeksle dışla, koordinatla DEĞİL: iki tespit aynı noktaya düşerse
         # koordinat karşılaştırması ikisini birden eler ve pay tavana çıkardı.
-        en_yakin = min(
-            math.hypot(dx - kx, dy - ky)
-            for j, (kx, ky) in enumerate(kenarlar) if j != i
-        )
-        serbest = en_yakin - self._gate._cfg.hull_width_m - 2.0 * BUOY_RADIUS_M
+        adaylar = [
+            d
+            for j, (kx, ky) in enumerate(kenarlar)
+            if j != i
+            and (d := math.hypot(dx - kx, dy - ky)) >= min_gecilebilir
+        ]
+        if not adaylar:
+            # Geçilebilir boşluk oluşturan komşu yok → direk normal engel gibi
+            # tam payını korur (len<2 koluyla aynı mantık).
+            return self._gate_post_margin
+        serbest = min(adaylar) - self._gate._cfg.hull_width_m - 2.0 * BUOY_RADIUS_M
         return max(0.0, min(self._gate_post_margin, serbest / 2.0))
 
     def _log_edge_memory(self) -> None:
@@ -911,7 +1167,12 @@ class PlanningNode(Node):
             f"rengi görünmezken kurtarılan tespit "
             f"{self._edge_memory.hatirlanarak_kurtarilan}, "
             f"unutulan {self._edge_memory.unutulan}, "
-            f"sınıfı güncellenen {self._edge_memory.celiskiyle_silinen} "
+            f"sınıfı güncellenen {self._edge_memory.celiskiyle_silinen}, "
+            # F-A.1 teşhisi: onaya ulaşan konum sayısı ve onaysız kaldığı için
+            # ENGEL olarak bırakılan turuncu kare sayısı. İkincisi yüksek,
+            # birincisi sıfırsa kameranın turuncuları tek kare parlamasıdır.
+            f"onaylanan kenar {self._edge_memory.onaylanan} "
+            f"(onaysız turuncu kare {self._edge_memory.onay_bekleyen_kare}) "
             f"(şu an {len(self._edge_buoys)} kenar / kapı takibi)"
         )
 
@@ -1049,11 +1310,21 @@ class PlanningNode(Node):
                     "kapı görüş dışı → ham görev noktasına dönüldü (fallback)"
                 )
         if result.gate is not None:
+            # Teşhis kanalı NİŞANI gösterir (kapının kimliği, RViz'de kapı
+            # ortası); kontrole giden nokta ise onun ÖTESİDİR (F-K.1).
             self._publish_gate(result.target)
         else:
             self._warn_sessiz_ret()
         self._publish_gate_count()
-        return result.target
+        # 🔴 F-K.1: MPPI referansı kapının ÖTESİNE kurulur — kapı bir varış
+        # noktası değil, geçilecek eşiktir. Nişan düzlemin üstünde bırakılırsa
+        # referans orada biter, MPPI'nin terminal hedefi `ref[-1]`e kırpılır
+        # (mppi._terminal_goal) ve araç tam kapı ortasında frenler; düzlem
+        # geçilmediği için kilit de çözülmez → görev bir daha ilerlemez.
+        # Sanal gölde ölçüldü: tekne (0.02, 24.95)'te kilitlendi, thrust
+        # 0,13 N. Kapı yokken `surus_hedefi == target` (ham GN) — kapısız
+        # davranış birebir korunur.
+        return result.surus_hedefi
 
     def _parkur3_nisani(self, coarse):
         """PARKUR-3'te görülen hedefe nişan al. Uygun değilse `None`.
@@ -1194,6 +1465,7 @@ class PlanningNode(Node):
         # turuncu duba görünüyor" yüklemiyle kurulur; kapı kilitlenince düşer.
 
     @_guard
+    @_pipe_kilidiyle
     def _on_waypoints(self, msg: Path) -> None:
         """F-S.6/F-S.11: mission_manager_node current_target'la AYNI referansta
         (base_link-göreli ENU ÖTELEMESİ) TEK aktif waypoint yayınlar — burada
@@ -1218,6 +1490,7 @@ class PlanningNode(Node):
                 self._publish_path(path)
 
     @_guard
+    @_pipe_kilidiyle
     def _on_target(self, msg: PoseStamped) -> None:
         """Video bypass: mission_manager hedefi → düz çizgi MPPI referansı.
 
@@ -1250,30 +1523,7 @@ class PlanningNode(Node):
                 f"(kod {yeni})"
             )
 
-    @_guard
-    def _on_targets(self, msg: Detection3DArray) -> None:
-        """`/perception/targets` → dünya çerçevesinde hedef adayları.
-
-        🔴 Çerçeve: algı topic'leri **GÖVDE (base_link)**, boru hattı **DÜNYA**
-        çalışır ⇒ `_body_to_world` ŞART (2026-08-03'te engel yolunda tam bu
-        dönüşüm eksikti ve engeller yanlış yere düşüyordu).
-        """
-        hedefler = []
-        for det in msg.detections:
-            if not det.results:
-                continue
-            try:
-                kod = int(det.results[0].hypothesis.class_id)
-            except (ValueError, TypeError):
-                continue                       # sayısal olmayan sınıf → atla
-            wx, wy = self._body_to_world(det.bbox.center.position.x,
-                                         det.bbox.center.position.y)
-            hedefler.append(Hedef(wx, wy, kod, float(det.bbox.size.x),
-                                  float(det.results[0].hypothesis.score)))
-        self._hedefler = hedefler
-        self._hedef_t = self._now()
-
-    @_guard
+    @_pipe_kilidiyle
     def _on_mission_state(self, msg: String) -> None:
         # Parkur değişince kilitli kapıyı BIRAK: Parkur-1'in son kapısına
         # kilitliyken Parkur-2'ye geçilirse eski kapı hedefi taşınmamalı
@@ -1357,8 +1607,10 @@ class PlanningNode(Node):
         )
 
     def _now(self) -> float:
-        return self.get_clock().now().nanoseconds * 1e-9
+        """Bayatlık saati — TEK YÖNLÜ (§0.61). Mutlak an olarak kullanılmaz."""
+        return self._saat()
 
+    @_pipe_kilidiyle
     def _on_control_step(self) -> None:
         """20 Hz'te MPPI step → thrust komut + Twist setpoint (MAVROS geçitli).
 
@@ -1375,6 +1627,10 @@ class PlanningNode(Node):
         try:
             gate = self._bridge.control_gate(self._now())
             self._log_backend()      # MPPI kurulur kurulmaz bir kez yazar
+            # F-P.10: ayrı süreçteki RRT* bitirdiyse yolu BURADA kur. Maliyet
+            # bir kuyruk yoklaması; sonuç yoksa hiçbir şey olmaz. MPPI'den
+            # ÖNCE çağrılır ki taze yol aynı turda kullanılsın.
+            self._pipe.plan_sonucunu_isle()
 
             # KAR-04: sebepleri SIRAYLA topla — bir komutu birden fazla kilit
             # sifirlayabilir ve hepsini bilmek gerekir. Yalniz ilkini yazmak,
@@ -1398,9 +1654,20 @@ class PlanningNode(Node):
                     sebepler.append(f"FSM-DISI({self._pipe.mission_state})")
                 else:
                     sebepler.append("KONTROLCU-HAZIR-DEGIL")
+            # F-F.20 — PIVOT KAPISI. Yeri BİLİNÇLİ: MPPI'den SONRA (onun
+            # kararını ezer) ama bütün bekçilerden ÖNCE (bekçi sıfırı pivotu
+            # her zaman ezer, yani kapı hiçbir duruşu geciktiremez).
+            u = self._pivot_uygula(u)
+
             if gate.zero_thrust:                     # disarm / KILL → motor stop
                 u = np.zeros(2)
                 sebepler.append("DISARM-VEYA-KILL")
+            if self._poz_sacma:                       # F-F.1: poz patladı → kör sürme
+                # POZ-BAYAT'tan ÖNCE: ikisi aynı anda doğru olabilir (saçma
+                # poz akarken kaynak sonra susarsa), ama operatöre gösterilecek
+                # olan SEBEP budur — "bayat" onu yanlış yere bakmaya iter.
+                u = np.zeros(2)
+                sebepler.append("POZ-SACMA")
             if self._odom_stale():                   # F-P.1: poz bayat → kör sürme
                 u = np.zeros(2)
                 self._warn_stale_odom()
@@ -1415,17 +1682,24 @@ class PlanningNode(Node):
                     else "ENGEL-BAYAT"
                 )
 
+            self._plan_isci_sagligi_denetle()
             self._publish_inhibit(sebepler, gate)
             self._ariza_kilitlerden_guncelle(sebepler)
             self._ariza.temizle(KONTROL_HATA)     # bu tur çökmeden tamamlandı
             self._publish_thrust(u)
             if gate.allow_cmd_vel:                   # yalnız GUIDED + armed
                 self._setpoint_akisini_denetle()
-                self._publish_cmd_vel(u)
+                # F-F.18 güvenlik sözleşmesi: `sebepler` doluysa bu tur bir
+                # BEKÇİ duruşudur (u yukarıda sıfırlandı) — eğim sınırlayıcı
+                # devre dışı, duruş ANINDA gider. Yalnız normal sürüşte yumuşat.
+                self._publish_cmd_vel(u, egim_sinirla=not sebepler)
             else:
                 # Geçit kapandı → sayaç sıfırlanır, yoksa bir sonraki arm'da
                 # kasıtlı sessizlik "kesinti" diye raporlanır.
                 self._son_setpoint_t = None
+                # Sınırlayıcı da düşer: bir sonraki arm'da eski komuttan
+                # rampalamak, aradaki duruşu yok sayıp araca sıçrama yaptırırdı.
+                self._egim.sifirla()
         except Exception as exc:                     # kontrol adımı ASLA çökmemeli
             self.get_logger().error(
                 f"kontrol adımı hatası → motorlar DURDURULDU: {exc!r}",
@@ -1483,8 +1757,20 @@ class PlanningNode(Node):
         şişirir ve asıl geçiş anını gürültüye gömer.
         """
         metin = ",".join(sebepler) if sebepler else "YOK"
+        # Kapatılmış bekçi, kilit raporunda da görünür: operatör "sebep YOK"
+        # okuyup güvende sanmasın — bekçi kapalıysa zaten sebep üretilemez.
+        kapali = [ad for ad, v in (("ENGEL", self._obstacle_timeout),
+                                   ("POZ", self._odom_timeout)) if v <= 0.0]
+        if kapali:
+            metin += "|BEKCI-KAPALI:" + "+".join(kapali)
         if not gate.allow_cmd_vel:
             metin += "|SETPOINT-KAPALI"
+        # F-F.20: pivot bir KİLİT DEĞİL (itki üretiliyor, araç bilerek dönüyor)
+        # — bu yüzden `sebepler`e girmez, arıza koduna çevrilmez. Ama operatör
+        # için ayrımı hayati: 14.08'de araç 45 saniye yerinde salındı ve dışarıdan
+        # "takıldı mı?" ile "dönüyor" birbirinden ayırt edilemedi.
+        if self._pivot.aktif:
+            metin += "|PIVOT"
         if metin == self._son_inhibit:
             return
         self._son_inhibit = metin
@@ -1563,6 +1849,17 @@ class PlanningNode(Node):
             ),
         )
 
+        # SAAT-YOK (§0.61h): sistem saati bir referansa (GPS) göre kuruldu mu?
+        # Kaptanın isteği — *"fix oldu ya da olmadı diye pixhawkta göreyim"*.
+        # Kodun VARLIĞI "kurulmadı", YOKLUĞU "kuruldu" demek; `girdap-saat-gec`
+        # fix gelince saati kurunca bu kod KENDİLİĞİNDEN düşer (§0.58b: arıza
+        # kodu DURUMDUR, olay değil). Ölçüt teslim damgalarınınkiyle AYNI
+        # (`saat_guveni`, çekirdek STA_UNSYNC) — ikisi ayrışamaz.
+        # ⚠ 1 Hz'de bir `adjtimex` salt-okunur çağrısı: yetki istemez, ağ
+        # istemez, saniyenin çok altında sürer.
+        saat_ok, _gerekce = saat_guvenilir_mi()
+        self._ariza.ayarla(SAAT_YOK, aktif=not saat_ok)
+
         # SETPOINT / CMDVEL: olay tabanlı — son olaydan `ariza_olay_tutma_s`
         # sonra düşer (bir olay "düzelmez", bu yüzden durum yüklemi yazılamaz).
         for tanim, olay_t in (
@@ -1577,6 +1874,7 @@ class PlanningNode(Node):
                 ),
             )
 
+    @_pipe_kilidiyle
     def _ariza_gonder(self) -> None:
         """Sırası gelen arıza kodunu STATUSTEXT ile yer istasyonuna yolla.
 
@@ -1611,6 +1909,36 @@ class PlanningNode(Node):
         msg.data = [float(u[0]), float(u[1])]
         self._pub_thrust.publish(msg)
 
+    def _plan_isci_sagligi_denetle(self) -> None:
+        """F-P.10 asenkron planlayıcı çöktüyse ya da zaman aşıyorsa BAĞIR.
+
+        13.08 kod incelemesi bulgusu: işçi kurulamazsa boru hattı SESSİZCE
+        senkron kola dönüyordu — kontrol döngüsü yeniden 370 ms'ye kadar
+        bloklanır (KAR-11/KAR-09 belirtilerinin kaynağı) ve dışarıdan hiçbir
+        şey görünmezdi. Mekanizma doğruydu, görünürlük yoktu.
+        """
+        try:
+            s = self._pipe.plan_isci_saglik()
+        except Exception:                       # noqa: BLE001
+            return
+        if not s["acik"]:
+            return                              # asenkron kol kapalı — normal
+        if s["kullanilabilir"] is False and not self._isci_uyarildi:
+            self._isci_uyarildi = True
+            self.get_logger().error(
+                "🔴 ASENKRON PLANLAYICI DUSTU — boru hatti SENKRON kola dondu. "
+                "RRT* artik kontrol dongusunu blokluyor (olculen en kotu 370 ms; "
+                "asenkron kolda 1,1 ms). Gorev yurur ama kontrol dongusu "
+                "butcesini asar — KAR-11/KAR-09 belirtileri geri gelebilir."
+            )
+        if s["zaman_asimi"] > self._isci_zaman_asimi_son:
+            self._isci_zaman_asimi_son = s["zaman_asimi"]
+            self.get_logger().error(
+                f"plan iscisi ZAMAN ASIMI (toplam {s['zaman_asimi']}) — her biri "
+                "5 s bekleme + isci yeniden kurulumu demek; ust uste olursa "
+                "yeniden planlama fiilen durur."
+            )
+
     def _setpoint_akisini_denetle(self) -> None:
         """KAR-10: iki setpoint yayını arasındaki boşluğu ölç ve bağır.
 
@@ -1641,7 +1969,40 @@ class PlanningNode(Node):
         # kodu `ariza_olay_tutma_s` boyunca aktif tutar, sonra düşürür.
         self._son_setpoint_bosluk_t = simdi
 
-    def _publish_cmd_vel(self, u: np.ndarray) -> None:
+    def _pivot_uygula(self, u: np.ndarray) -> np.ndarray:
+        """F-F.20: yön hatası büyükse itkiyi SAF DÖNÜŞLE değiştir.
+
+        Kapı kapalıysa (`pivot_tetik_derece <= 0`), referans yoksa ya da hata
+        küçükse `u` **dokunulmadan** döner — yani eski davranış birebir korunur.
+        """
+        durum = self._pipe._state
+        aktif, hata = self._pivot.guncelle(
+            float(durum[0]), float(durum[1]), float(durum[2]),
+            self._pipe.global_path,
+        )
+        if not aktif or hata is None:
+            return u
+        self._pivot_sayaci += 1
+        self.get_logger().info(
+            f"PIVOT: yön hatası {math.degrees(hata):+.0f}° > "
+            f"{self._pivot.config.tetik_derece:.0f}° — yerinde dönülüyor "
+            f"(bırakma {self._pivot.config.birak_derece:.0f}°). "
+            "İleri komut sıfırlandı; araç TAKILMADI, bilerek dönüyor (F-F.20).",
+            throttle_duration_sec=2.0,
+        )
+        return np.asarray(
+            pivot_itkisi(hata, float(self._pipe._dyn.p.max_thrust)), dtype=float
+        )
+
+    def _publish_cmd_vel(self, u: np.ndarray, *, egim_sinirla: bool = True) -> None:
+        # 🛟 `egim_sinirla=False` → EĞİM SINIRLAYICI TAMAMEN BYPASS (F-F.18).
+        # Bu bayrak bir ayar değil, GÜVENLİK SÖZLEŞMESİdir: bu node'daki bütün
+        # bekçiler (`DISARM-VEYA-KILL`, `POZ-SACMA`, `POZ-BAYAT`, `ENGEL-BAYAT`,
+        # kontrol adımı çökmesi) `u = zeros(2)` yazarak durur ve AYNI yayın
+        # yolundan geçer. Sınırlayıcı simetrik uygulanırsa o duruşlar da rampaya
+        # girer, yani sınırlayıcı deponun TÜM güvenlik kapılarını sakatlar.
+        # Bekçi kaynaklı sıfır bu yüzden hiç uğramaz + sınırlayıcı sıfırlanır.
+        #
         # Diferansiyel thruster → ileri sürat + yaw rate.
         #
         # 🔴 2026-08-06 (ÖLÇÜLDÜ, GIRDAP_DURUM §0.7d): eski formül
@@ -1680,11 +2041,17 @@ class PlanningNode(Node):
         # söylüyor; eski 2,0× hata bunu kısmen sönümlüyordu. Yani sahada fark
         # küçük görünebilir — ama iki hatanın birbirini götürmesine güvenilmez.
         p = self._pipe._dyn.p
-        twist = Twist()
-        twist.linear.x = float((u[0] + u[1]) / max(1e-6, abs(p.Xu)))
-        twist.angular.z = float(
+        hedef_u = float((u[0] + u[1]) / max(1e-6, abs(p.Xu)))
+        hedef_r = float(
             (u[1] - u[0]) * (p.thruster_spacing / 2.0) / max(1e-6, abs(p.Nr))
         )
+        if egim_sinirla:
+            hedef_u, hedef_r = self._egim.uygula(hedef_u, hedef_r, self._saat())
+        else:
+            self._egim.sifirla()
+        twist = Twist()
+        twist.linear.x = hedef_u
+        twist.angular.z = hedef_r
         self._pub_cmd_vel.publish(twist)
         self._cmd_vel_kadans_denetle()
 
@@ -1758,11 +2125,13 @@ class PlanningNode(Node):
         bir şey kalmaz — MAVROS kendi setpoint-timeout failsafe'ine düşer."""
         try:
             self._publish_thrust(np.zeros(2))
-            self._publish_cmd_vel(np.zeros(2))
+            # F-F.18: fail-safe duruşu ASLA rampalanmaz (güvenlik sözleşmesi).
+            self._publish_cmd_vel(np.zeros(2), egim_sinirla=False)
         except Exception:                            # yayım da çöktü — son çare
             pass
 
     @_guard
+    @_pipe_kilidiyle
     def _publish_local_map(self) -> None:
         """Dosya-3: araç merkezli yerel maliyet haritası (OccupancyGrid).
 
@@ -1799,9 +2168,20 @@ class PlanningNode(Node):
 def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = PlanningNode()
+    # 🔴 FAZ 5 (§1.17a): tek iş parçacıklı spin, algı taramasının kontrol
+    # zamanlayıcısını boğmasına yol açıyordu (kadans 10 → 1,9 Hz, r=+0,94).
+    # İki iş parçacığı yeter ve bilerek 2: varsayılan grup da algı grubu da
+    # kendi içinde MutuallyExclusive — daha fazla iş parçacığı yalnız rclpy
+    # yürütücü ek yükü getirir (bilinen sorun: rclpy #1223/#1452).
+    executor = MultiThreadedExecutor(num_threads=2)
     try:
-        rclpy.spin(node)
+        rclpy.spin(node, executor=executor)
     finally:
+        # F-P.10: işçi sürecini düzgünce durdur. Düğüm kurulumu yarıda
+        # kaldıysa `_pipe` olmayabilir — kapanış yolu asla çökmemeli.
+        pipe = getattr(node, "_pipe", None)
+        if pipe is not None:
+            pipe.kapat()
         node.destroy_node()
         rclpy.shutdown()
 

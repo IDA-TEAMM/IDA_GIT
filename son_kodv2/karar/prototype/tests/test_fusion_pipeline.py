@@ -182,3 +182,66 @@ def test_fusion_pipeline_latlon_roundtrip() -> None:
         x_out, y_out = fp._latlon_to_enu(lat, lon)
         assert abs(x_out - x_in) < 1e-3
         assert abs(y_out - y_in) < 1e-3
+
+
+# --------------------------------------------------------------------------- #
+# 14.08 — SIGSEGV bulgusu: NaN/Inf giriş kapısı (Jetson, 13.08 22:46 fusion_node
+# exit code -11). Traceback yok (native çökme); kesin kök neden bir çekirdek
+# dökümü olmadan kanıtlanamaz, ama üç giriş noktası DIŞ DONANIMDAN geliyor ve
+# GTSAM'ın Cholesky çözücüsü NaN/Inf'te C++ tarafında segfault üretebilir.
+# --------------------------------------------------------------------------- #
+
+
+def test_on_gps_NAN_REDDEDILIYOR_smoother_COKMUYOR() -> None:
+    fp = FusionPipeline()
+    fp.on_gps(36.85, 28.27)                     # origin
+    fp.on_gps(float("nan"), 28.30)               # reddedilmeli
+    fp.on_gps(float("inf"), 28.30)               # reddedilmeli
+    assert fp._n_non_finite_rejected == 2
+    # smoother hâlâ SAĞLAM — origin'den sonraki geçerli bir fix normal işler.
+    fp.on_gps(36.851, 28.271)
+    x, y, psi = fp.current_pose()
+    assert math.isfinite(x) and math.isfinite(y) and math.isfinite(psi)
+
+
+def test_on_imu_NAN_omega_REDDEDILIYOR() -> None:
+    fp = FusionPipeline()
+    fp.on_gps(36.85, 28.27)
+    fp.on_velocity(1.0, 0.0)
+    yazildi = fp.on_imu(0.02, float("nan"))
+    assert yazildi is False
+    assert fp._n_non_finite_rejected == 1
+
+
+def test_on_imu_NAN_heading_REDDEDILIYOR() -> None:
+    """psi (FC AHRS) de dış donanımdan gelir — o da denetlenir."""
+    fp = FusionPipeline()
+    fp.on_gps(36.85, 28.27)
+    fp.on_velocity(1.0, 0.0)
+    yazildi = fp.on_imu(0.02, 0.1, psi=float("nan"))
+    assert yazildi is False
+    assert fp._n_non_finite_rejected == 1
+
+
+def test_on_velocity_INF_REDDEDILIYOR_akumulator_KIRLENMIYOR() -> None:
+    fp = FusionPipeline()
+    fp.on_gps(36.85, 28.27)
+    fp.on_velocity(1.0, 0.0)                     # geçerli
+    fp.on_velocity(float("inf"), 0.0)             # reddedilmeli
+    assert fp._n_non_finite_rejected == 1
+    # akümülatör KİRLENMEDİ — hâlâ son geçerli değeri taşıyor.
+    assert fp._vx_body == 1.0
+
+
+def test_NAN_KAPISI_gecerli_akisi_ETKILEMIYOR() -> None:
+    """Regresyon: kapı yalnız NaN/Inf'i eler — normal senaryo bit-birebir aynı
+    kalmalı (test_fusion_pipeline_origin_lock_no_drift'in aynısı, kapı sonrası)."""
+    fp = FusionPipeline()
+    fp.on_gps(36.85, 28.27)
+    for k in range(50):
+        t = (k + 1) * 0.02
+        fp.on_velocity(0.0, 0.0)
+        fp.on_imu(t, 0.0)
+    x, y, psi = fp.current_pose()
+    assert abs(x) < 0.05 and abs(y) < 0.05 and abs(psi) < 0.01
+    assert fp._n_non_finite_rejected == 0

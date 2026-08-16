@@ -84,6 +84,7 @@ from vision_msgs.msg import (
 )
 
 from girdap_decision.kamikaze_param import KamikazeHedefKapisi
+from girdap_decision.saat_kaynagi import bayatlik_saati
 from prototype.perception.fusion import (
     CameraDetection,
     FusionConfig,
@@ -99,6 +100,7 @@ class PerceptionFusionNode(Node):
         # node_kwargs → parameter_overrides passthrough (test enjeksiyonu,
         # diğer node'larla tutarlı — F-P.10 testi bunu gerektirir).
         super().__init__("perception_fusion_node", **node_kwargs)
+        self._saat = bayatlik_saati(self)          # §0.61: tek yönlü saat
 
         # --- Parametreler (config/hardware.yaml perception.fusion bloğu) ---
         self.declare_parameter("bearing_tolerance_rad", 0.15)
@@ -390,7 +392,7 @@ class PerceptionFusionNode(Node):
         ya LiDAR her şeyi zaten görüyor (iyi) ya da `/perception/buoys_3d`
         akmıyor (kötü — `konumlu` sütunu 0 ise sebep budur).
         """
-        now = self.get_clock().now().nanoseconds * 1e-9
+        now = self._saat()
         if self._last_log_t is None or now - self._last_log_t >= self._log_period_s:
             self._last_log_t = now
             self.get_logger().info(

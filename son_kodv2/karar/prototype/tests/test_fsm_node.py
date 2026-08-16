@@ -1084,3 +1084,343 @@ def test_KAR08_ARM_durumunda_da_teshis_basilir(ros_context, tmp_path) -> None:  
         )
     finally:
         node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# Belge madde 0 / B5.2 (2026-08-13) — parkur senkronu OPERATÖRE bildiriliyor.
+# --------------------------------------------------------------------------- #
+
+
+def _statustext_yakala(node):  # noqa: ANN001, ANN201
+    yollanan = []
+    node._pub_statustext.get_subscription_count = lambda: 1
+    node._pub_statustext.publish = lambda m: yollanan.append(m)
+    return yollanan
+
+
+def test_MADDE0_senkron_YOKSA_operator_ekraninda(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 Senkron tutmazsa PARKUR2/PARKUR3'e HİÇ geçilmez — kamikaze yapılmaz.
+
+    Bu, koşu bittikten sonra bag'den anlaşılacak bir şey olamaz: puanı
+    doğrudan yok eder. Operatör görevi yükledikten hemen sonra, BOKSTA
+    görmeli.
+    """
+    node = _fc_node(tmp_path)
+    try:
+        if node._pub_statustext is None:
+            pytest.skip("statustext kapalı")
+        yollanan = _statustext_yakala(node)
+        node._on_waypoints(_path(7))              # dosyada 3 etiket var
+        node._publish_statustext(MissionState.BOOT)
+        assert yollanan, "statustext hic yollanmadi"
+        m = yollanan[-1]
+        assert "SENKRON YOK" in m.text and "7!=3" in m.text, f"gelen: {m.text!r}"
+        assert len(m.text) <= 50, "MAVLink STATUSTEXT 50 karakter"
+        from mavros_msgs.msg import StatusText
+        assert m.severity == StatusText.ERROR, "MP akisinda kaybolmamali"
+    finally:
+        node.destroy_node()
+
+
+def test_MADDE0_senkron_VARSA_da_bildiriliyor(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Olumlu teyit de gerekli: operatör "sistem parkurları gördü mü" sorusunu
+    ekrandan cevaplayabilmeli, sessizlikten çıkarım yapmak zorunda kalmamalı."""
+    node = _fc_node(tmp_path)
+    try:
+        if node._pub_statustext is None:
+            pytest.skip("statustext kapalı")
+        yollanan = _statustext_yakala(node)
+        node._on_waypoints(_path(3))              # dosyadaki etiket sayisi
+        node._publish_statustext(MissionState.BOOT)
+        assert "SENKRON OK 3wp" in yollanan[-1].text, f"gelen: {yollanan[-1].text!r}"
+        # 🔴 14.08 — SEVİYE DE SINANIYOR. Bu satır yokken bir ölü dal fark
+        # edilmeden geçti: `severity` hiç atanmıyordu ve varsayılan
+        # **0 = EMERGENCY** kalıyordu, yani OLUMLU teyit MAVLink'in en yüksek
+        # seviyesinden gidiyordu. Metni sınayıp seviyeyi sınamamak, mesajın
+        # operatör ekranındaki ASIL etkisini ölçmemek demek.
+        from mavros_msgs.msg import StatusText
+        assert yollanan[-1].severity == StatusText.NOTICE, (
+            f"olumlu teyit NOTICE olmalı, gelen severity={yollanan[-1].severity} "
+            "(0=EMERGENCY gerçek arızayı gölgeler, §0.58b)"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_MADDE0_ilan_TEK_ATIS(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔑 Sürekli basmak asıl görev durumunu ekrandan siler — bir kez gönderilip
+    normal duruma dönülmeli."""
+    node = _fc_node(tmp_path)
+    try:
+        if node._pub_statustext is None:
+            pytest.skip("statustext kapalı")
+        yollanan = _statustext_yakala(node)
+        node._on_waypoints(_path(3))
+        node._publish_statustext(MissionState.BOOT)
+        node._last_statustext = ""                # periyot kapısını atla
+        node._publish_statustext(MissionState.BOOT)
+        assert "SENKRON" not in yollanan[-1].text, (
+            f"ilan tekrar basildi: {yollanan[-1].text!r}"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_MADDE0_olumlu_teyit_EMERGENCY_DEGIL(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 13/14.08 KUSURUNUN NÖBETÇİSİ (kaptan yakaladı).
+
+    `_publish_statustext`'te iki `elif` vardı; ikincisinin koşulu birincisinin
+    ALT KÜMESİ olduğu için hiç çalışmıyor, `severity` atanmıyor ve varsayılan
+    **0 = EMERGENCY** kalıyordu. Yani olumlu teyit (`SENKRON OK`) bile
+    MAVLink'in en yüksek seviyesinden gidiyordu.
+
+    Neden ölümcül: Mission Planner'da EMERGENCY ekranı kilitleyen en yüksek
+    uyarı. Her görev yüklemesinde olumlu teyit bile EMERGENCY basarsa operatör
+    GERÇEK acil durumu ayırt edemez — "gerçek arızayı gölgeleme" kuralının
+    tam ihlali.
+
+    Bu test iki seviyeyi birden dondurur: olumlu → NOTICE, olumsuz → ERROR.
+    """
+    from mavros_msgs.msg import StatusText
+    for wp, beklenen, iz in ((3, StatusText.NOTICE, "OK"),
+                             (7, StatusText.ERROR, "YOK")):
+        node = _fc_node(tmp_path)
+        try:
+            if node._pub_statustext is None:
+                pytest.skip("statustext kapalı")
+            yollanan = _statustext_yakala(node)
+            node._on_waypoints(_path(wp))
+            node._publish_statustext(MissionState.BOOT)
+            m = yollanan[-1]
+            assert iz in m.text, f"{wp}wp icin metin yanlis: {m.text!r}"
+            assert m.severity == beklenen, (
+                f"{iz} icin severity {m.severity}, beklenen {beklenen} "
+                f"(0 = EMERGENCY, ekrani kilitler)"
+            )
+        finally:
+            node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# 14.08 — AÇIK TUZAK kapanışının DÜĞÜM tarafı (yalnız Jetson/ROS ortamında koşar)
+# --------------------------------------------------------------------------- #
+
+
+def test_KAPI_SINYALI_tek_basina_kamikazeye_ATMIYOR(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 md 5.5.2.4 + md 657 — Parkur-2 ilk kapıda kesilmemeli.
+
+    `/perception/gate_passed` bugün yayıncısızdır; açıldığı gün bu test
+    kırmızıya dönerek uyarır.
+    """
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
+    try:
+        _drive_to_parkur1(node)
+        node._on_waypoint_reached(Int32(data=0))          # parkur-1 SON wp
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR2
+
+        for _ in range(20):                                # kapı sinyali yağmuru
+            node._on_gate_passed(Bool(data=True))
+            node._on_tick()
+
+        assert node._fsm.state is MissionState.PARKUR2, (
+            "kapı sinyali tek başına Parkur-2'yi kesti — 145 puan açılmıyor"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_PARKUR2_SON_waypointi_kamikazeyi_ACAR(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Yetkili tetik: parkur-2'nin SON waypoint'ine varış → PARKUR3."""
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
+    try:
+        _drive_to_parkur1(node)
+        node._on_waypoint_reached(Int32(data=0))          # parkur-1 SON wp
+        node._on_tick()
+        node._on_waypoint_reached(Int32(data=1))          # parkur-2 ARA wp
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR2, "ara wp erken geçirdi"
+        node._on_waypoint_reached(Int32(data=2))          # parkur-2 SON wp
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR3
+    finally:
+        node.destroy_node()
+
+
+def test_PARKUR3_YOKSA_sahte_kamikaze_gecisi_OLMUYOR(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """P1→P2'deki BULGU 1 korumasının eşi: parkur-3 etiketi yoksa beslenmez."""
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2])   # parkur-3 YOK
+    try:
+        _drive_to_parkur1(node)
+        node._on_waypoint_reached(Int32(data=0))
+        node._on_tick()
+        node._on_waypoint_reached(Int32(data=2))          # parkur-2 SON wp
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR2, (
+            "parkur-3 hiç yokken sahte kamikaze geçişi oldu"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_YENIDEN_BASLAMA_gorev_ilerlemesini_SIFIRLIYOR(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 md 5.5.3.1 — yeniden başlatılan araç parkurları BAŞTAN koşmalı.
+
+    Bulundu 14.08: `_yeniden_basla` `_parkur.reset()` yapıyordu ama
+    `Observation` bayraklarına dokunmuyordu. Eski koşumdan kalan
+    `dist_to_last_wp_p1=0.0` yeniden başlatmadan sonra PARKUR1'e girer girmez
+    PARKUR2'yi tetikliyordu; aynı şekilde `p2_waypoints_done` doğrudan
+    kamikazeye atardı. Yani yeniden başlama hakkı kullanılınca araç parkurları
+    ATLAYARAK koşuyordu.
+    """
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
+    try:
+        _drive_to_parkur1(node)
+        node._on_waypoint_reached(Int32(data=0))
+        node._on_tick()
+        node._on_waypoint_reached(Int32(data=2))          # parkur-2 SON wp
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR3
+
+        node._on_reset_srv(Trigger.Request(), Trigger.Response())
+        assert node._obs.p2_waypoints_done is False
+        assert node._obs.last_gate_passed_p2 is False
+
+        node._fsm.request_start()
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR1, (
+            "yeniden başlatılan araç PARKUR1'de başlamadı"
+        )
+        node._on_tick()
+        assert node._fsm.state is MissionState.PARKUR1, (
+            "eski görev ilerlemesi taşındı — parkurlar atlanıyor (md 5.5.3.1)"
+        )
+    finally:
+        node.destroy_node()
+
+
+# --------------------------------------------------------------------------- #
+# 14.08 — md 5.5.2.4 geçit şartı denetimi (algının gate_count'u BAĞLANDI)
+# --------------------------------------------------------------------------- #
+
+
+def _parkur3e_surukle(node) -> None:                        # noqa: ANN001
+    """labels=[1,2,2,3] görevinde PARKUR3'e kadar götür."""
+    _drive_to_parkur1(node)
+    node._on_waypoint_reached(Int32(data=0))
+    node._on_tick()
+    node._on_waypoint_reached(Int32(data=2))
+    node._on_tick()
+
+
+def test_GECIT_SAYACI_HIC_GELMEZSE_bagiriyor(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Algı düğümü kapalı/çökmüşse şart ÖLÇÜLEMEZ — bu da söylenmeli.
+
+    "0 geçit" ile "ölçen kimse yok" farklı arızalardır; ikisi aynı mesajı
+    verirse operatör algı çöküşünü parkur ihlali sanır.
+    """
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
+    try:
+        _parkur3e_surukle(node)
+        assert node._fsm.state is MissionState.PARKUR3
+        assert node._senkron_ilani == "GECIT SAYACI YOK"
+        assert node._ilan_ciddi is True
+    finally:
+        node.destroy_node()
+
+
+def test_GECIT_EKSIKSE_sartname_riski_bagiriliyor(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """md 5.5.2.4: iki duba ikilisi altında Parkur-2 sayılmayabilir."""
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
+    try:
+        _drive_to_parkur1(node)
+        node._on_gate_count(Int32(data=1))              # yalnız 1 geçit
+        node._on_waypoint_reached(Int32(data=0))
+        node._on_tick()
+        node._on_waypoint_reached(Int32(data=2))
+        node._on_tick()
+        assert node._senkron_ilani == "PARKUR2 EKSIK GECIT 1<2"
+        assert node._ilan_ciddi is True
+    finally:
+        node.destroy_node()
+
+
+def test_GECIT_YETERLIYSE_olumlu_teyit_NORMAL_seviyede(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Olumlu teyit de yazılır ama ciddi DEĞİL (kaptanın 14.08 ölü-dal dersi)."""
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
+    try:
+        _drive_to_parkur1(node)
+        node._on_gate_count(Int32(data=3))
+        node._on_waypoint_reached(Int32(data=0))
+        node._on_tick()
+        node._on_waypoint_reached(Int32(data=2))
+        node._on_tick()
+        assert node._senkron_ilani == "PARKUR2 GECIT OK 3"
+        assert node._ilan_ciddi is False
+    finally:
+        node.destroy_node()
+
+
+def test_TEK_ATISLIK_ILAN_periyodu_BEKLEMEDEN_gidiyor(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 İlan, durum metni değişmedi diye tazeleme periyodunu BEKLEMEMELİ.
+
+    14.08 mutasyon turunda bulundu — hem de önceki testim boş çıktığı için.
+    İlk teşhisim "ilan parkurdayken operatöre hiç ulaşmıyor" idi; YANLIŞTI,
+    seviye zinciri `text`i ilanla yeniden atıyordu. Gerçek kusur: kısma kararı
+    (`degisti` + `statustext_periyot_s`) DURUM metnine, yayın ise İLANA göre
+    yapılıyordu. Araç bir parkurda dururken durum metni değişmez → ilan
+    **10 s'ye kadar bekler**. İlan tam da beklememesi gereken şeydir: parkur
+    senkronu kurulum doğrulaması, geçit şartı ise koşu-içi telafi penceresi.
+
+    Kurgu: önce normal durum metni yayınlanır (periyot saati başlar), sonra
+    periyot DOLMADAN ilan konur. İlan aynı çağrıda gitmelidir.
+    """
+    node = _make_node(ros_context, tmp_path, labels=[1, 2, 2, 3])
+    try:
+        _drive_to_parkur1(node)
+        yayinlanan: list[str] = []
+        node._pub_statustext = _SahteStatusTextYayinci(yayinlanan)
+        node._statustext_periyot_s = 10.0
+
+        node._publish_statustext(node._fsm.state)          # durum metni gitti
+        assert yayinlanan, "durum metni hic yayinlanmadi (kurgu bozuk)"
+        yayinlanan.clear()
+
+        node._senkron_ilani = "PARKUR SENKRON OK 4wp"      # periyot DOLMADAN
+        node._ilan_ciddi = False
+        node._publish_statustext(node._fsm.state)
+
+        assert any("SENKRON OK" in t for t in yayinlanan), (
+            "ilan tazeleme periyodunu bekledi — kurulum dogrulamasi 10 s gec"
+        )
+        assert node._last_statustext == "GIRDAP PARKUR SENKRON OK 4wp", (
+            "_last_statustext yayinlanmayan bir metni kaydetti"
+        )
+    finally:
+        node.destroy_node()
+
+
+def test_ILAN_SEVIYESI_metinle_AYNI_kaynaktan(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """Metin tek noktada atanır; seviye zinciri onu YENİDEN atamamalı.
+
+    İki ayrı yerde `text` atamak, kaptanın 14.08'de ölü dal olarak yakaladığı
+    hatanın kaynağıydı. Bu test o birleştirmeyi donduruyor.
+    """
+    kaynak = Path(girdap.__file__).read_text(encoding="utf-8")
+    seviye_blogu = kaynak[kaynak.index("msg = StatusText()"):]
+    assert 'text = f"GIRDAP {self._senkron_ilani}"' not in seviye_blogu, (
+        "seviye zinciri metni yeniden atiyor — tek atama noktasi bozuldu"
+    )
+
+
+class _SahteStatusTextYayinci:
+    """`_pub_statustext` yerine geçen sahte — metni toplar, aboneli görünür."""
+
+    def __init__(self, kutu: list) -> None:                  # noqa: ANN001
+        self._kutu = kutu
+
+    def get_subscription_count(self) -> int:
+        return 1
+
+    def publish(self, msg) -> None:                          # noqa: ANN001
+        self._kutu.append(msg.text)

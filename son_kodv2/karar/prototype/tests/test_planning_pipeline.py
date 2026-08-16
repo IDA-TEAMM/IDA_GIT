@@ -13,6 +13,8 @@ Kapsam:
 
 from __future__ import annotations
 
+import contextlib
+import logging
 import math
 from dataclasses import replace
 
@@ -31,6 +33,26 @@ from prototype.planning.rrt_star import Bounds, CircleObstacle, RRTStarConfig
 # Testlerde hız için küçük MPPI (matematik aynı, rollout sayısı düşük)
 def _fast_cfg() -> PlanningPipelineConfig:
     return PlanningPipelineConfig(mppi_K=200, mppi_T=30)
+
+
+class _IlerletilebilirSaat:
+    """F-P.9 replan frenini testte geçmek için elle sürülen tek yönlü saat.
+
+    Her okumada `adim` kadar ilerler — böylece `plan()` sıfır saniye sürmüş
+    görünmez (fren son planın ÖLÇÜLEN süresinden türer).
+    """
+
+    def __init__(self, adim: float = 0.15) -> None:
+        self.t = 1000.0
+        self.adim = adim
+
+    def __call__(self) -> float:
+        simdi = self.t
+        self.t += self.adim
+        return simdi
+
+    def ilerlet(self, s: float) -> None:
+        self.t += s
 
 
 @pytest.fixture
@@ -625,13 +647,199 @@ def test_A3_DEGISMEYEN_engel_kumesi_replan_TETIKLEMEZ(bounds: Bounds) -> None:
 
 
 def test_A3_DEGISEN_engel_rotaya_yakinsa_replan_tetikler(bounds: Bounds) -> None:
-    """Koruma zayıflamadı: gerçekten yeni bir engel hâlâ yeniden planlatır."""
-    pipe = PlanningPipeline(bounds, _fast_cfg())
+    """Koruma zayıflamadı: gerçekten yeni bir engel hâlâ yeniden planlatır.
+
+    🔄 **F-P.9 (13.08.2026) ile sözleşme inceldi: "ANINDA" değil, "≤ tavan".**
+    Replan freni geldiğinden beri engel kaynaklı yeniden planlama en fazla
+    `replan_max_interval_s` (1,9 s) gecikebilir. Gecikme BİLİNÇLİ ve ölçüme
+    dayanıyor:
+      · RRT* bu düğümün TEK thread'inde koşuyor; 0,3-1,5 s bloklama boyunca
+        `cmd_vel` susuyor ve düğüm kendi odom'unu işleyemiyor.
+      · Yakın engelde ANINDA replan, tam da tehlike anında aracı 0,5 s KÖR
+        bırakırdı (ArduPilot son hız komutunu 3 s sürdürür).
+      · Anlık kaçınma zaten MPPI'nin işi: 10 Hz, 1,0 m yumuşak ceza, engel
+        listesi HER karede tazeleniyor (F-P.9 fren yalnız GLOBAL rotayı
+        erteler — `test_FP9_fren_MPPI_ENGELLERINI_GECIKTIRMEZ` bunu bağlar).
+    Test bu yüzden freni saati ilerleterek geçiyor; "yeni engel replan
+    tetikler" güvencesi aynen duruyor.
+    """
+    saat = _IlerletilebilirSaat()
+    pipe = PlanningPipeline(bounds, _fast_cfg(), saat=saat)
     pipe.set_state(np.array([5.0, 5.0, 0.0, 0.0, 0.0, 0.0]))
     pipe.set_waypoints([(45.0, 45.0)])
     pipe.set_obstacles([CircleObstacle(25.0, 25.0, 1.0)])
     kosan = pipe.replan_sayaclari[0]
+    saat.ilerlet(PlanningPipelineConfig().replan_max_interval_s + 0.1)
     pipe.set_obstacles([                              # rotanın üstünde YENİ engel
         CircleObstacle(25.0, 25.0, 1.0), CircleObstacle(15.0, 15.0, 1.5),
     ])
     assert pipe.replan_sayaclari[0] > kosan
+
+
+# ---------------------------------------------------------------------------
+# F-S.17 — MPPI SINIR KUTUSU RRT* İLE AYNI OLMALI (14.08.2026)
+# ---------------------------------------------------------------------------
+# İki yerde ölçülen arıza: hedef statik kutunun dışında kalınca MPPI
+# `w_boundary` duvarıyla aracı sessizce durduruyordu (sanal: 900 s tavan;
+# gerçek donanım 13.08 GUIDED: hedef y=-23,7, kutu y∈[0,200]).
+# RRT* aynı hedefe F10.2 sayesinde sorunsuz yol çiziyordu → iki planlayıcı
+# anlaşmıyordu. Bu testler o anlaşmayı DONDURUR.
+
+
+def _sinir_testi_pipe(bounds, hedef):
+    dyn = CatamaranDynamics()
+    pipe = PlanningPipeline(bounds, _fast_cfg(), dynamics=dyn)
+    pipe.set_mission_state("PARKUR1")
+    pipe.set_state(np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    pipe.set_waypoints([hedef])
+    return pipe
+
+
+def test_fs17_kutu_disindaki_hedef_mppi_sinirina_alinir():
+    """Statik kutunun DIŞINDAKİ hedef, MPPI'nin kutusunun İÇİNDE kalmalı."""
+    bounds = Bounds(0.0, 200.0, 0.0, 200.0)      # params.yaml'ın yer tutucusu
+    hedef = (27.3, -23.7)                         # 13.08 sahada verilen hedef
+    pipe = _sinir_testi_pipe(bounds, hedef)
+    pipe.compute_control()                        # MPPI'yi kurdurur
+
+    assert pipe._mppi is not None, "MPPI kurulmadı — test kalıbı bozuk"
+    b = pipe._mppi.bounds
+    assert b.y_min <= hedef[1] <= b.y_max, (
+        f"hedef y={hedef[1]} MPPI kutusunun ({b.y_min}, {b.y_max}) DIŞINDA — "
+        "F-S.17 geriledi: araç duvara dayanıp sessizce durur"
+    )
+    assert b.x_min <= hedef[0] <= b.x_max
+
+
+def test_fs17_mppi_ve_rrt_yildiz_ayni_kutuyu_gorur():
+    """İki planlayıcı TEK kısıt kümesi paylaşmalı (hiyerarşik uyum)."""
+    bounds = Bounds(0.0, 200.0, 0.0, 200.0)
+    pipe = _sinir_testi_pipe(bounds, (27.3, -23.7))
+    pipe.compute_control()
+
+    ortak = pipe._etkin_sinir()
+    b = pipe._mppi.bounds
+    assert (b.x_min, b.x_max, b.y_min, b.y_max) == (
+        ortak.x_min, ortak.x_max, ortak.y_min, ortak.y_max
+    ), "MPPI ile RRT* farklı kutu görüyor — F-S.17'nin tam olarak yasakladığı hâl"
+
+
+def test_fs17_sicak_yolda_da_sinir_tazelenir():
+    """⚠ EN SİNSİ HÂL: `cfg` değişmeyince kontrolcü korunur (warm-start).
+
+    Sınır `cfg`'nin parçası olmadığı için o yolda ELLE tazelenmezse MPPI eski
+    kutuyla kalır ve arıza yalnız parkur geçişlerinde düzelir.
+    """
+    bounds = Bounds(0.0, 200.0, 0.0, 200.0)
+    pipe = _sinir_testi_pipe(bounds, (10.0, 10.0))
+    pipe.compute_control()
+    ilk = pipe._mppi
+    assert ilk is not None
+    ilk_y_min = ilk.bounds.y_min
+
+    # ⚠ İKİNCİ HEDEF, İLK KUTUNUN PAYINDAN DAHA UZAĞA konmalı. Aksi hâlde
+    # ilk kurulumun `bounds_margin_m` payı hedefi zaten kapsar ve test,
+    # tazeleme kaldırılsa bile geçer (mutasyon turunda tam bu yaşandı:
+    # ilk kutu y_min=-30 idi ve -23,7'yi kendiliğinden içeriyordu).
+    uzak = (27.3, ilk_y_min - 50.0)
+    pipe.set_waypoints([uzak])
+    pipe.compute_control()
+
+    assert pipe._mppi is ilk, "kontrolcü yeniden kuruldu — warm-start koruması bozuldu"
+    b = pipe._mppi.bounds
+    assert b.y_min <= uzak[1], (
+        f"sıcak yolda sınır tazelenmedi (y_min={b.y_min}, hedef y={uzak[1]}) — "
+        "araç ilerledikçe MPPI eski kutuyla kalır"
+    )
+
+
+def test_fs17_kutu_yalnizca_buyur_asla_kucultmez():
+    """Sınırın koruma işlevi kaybolmamalı: statik kutu daima ALT sınır."""
+    bounds = Bounds(-5.0, 5.0, -5.0, 5.0)
+    pipe = _sinir_testi_pipe(bounds, (1.0, 1.0))   # hedef zaten içeride
+    ortak = pipe._etkin_sinir()
+    assert ortak.x_min <= -5.0 and ortak.x_max >= 5.0
+    assert ortak.y_min <= -5.0 and ortak.y_max >= 5.0
+
+
+# --------------------------------------------------------------------------- #
+# 14.08 — F-S.17 EKİ: arena dışı hedef SESSİZ kalmamalı
+# --------------------------------------------------------------------------- #
+
+
+def _boru_hatti_arena(bounds: Bounds) -> PlanningPipeline:
+    """Sade boru hattı (yalnız sınır kutusu davranışı sınanıyor)."""
+    return PlanningPipeline(bounds=bounds)
+
+
+class _UyariYakala(logging.Handler):
+    """`caplog` YERİNE doğrudan handler — bkz. test_mppi.py §2026-08-10.
+
+    🔴 `caplog` YALNIZ rclpy PYTHONPATH'te DEĞİLKEN çalışır: ROS'un kurduğu
+    logging yönlendiricisi propagate yolunu atlar. Bu test dosyası hem
+    laptopta (rclpy yok → caplog çalışır) hem container/Jetson'da (rclpy var →
+    caplog SESSİZCE boş döner) koşuyor; caplog kullansaydı ROS ortamında
+    "uyarı basılmadı" diye yanlış kırmızı verirdi — 14.08'de tam bu oldu.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(level=logging.WARNING)
+        self.kayitlar: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.kayitlar.append(record.getMessage())
+
+    @property
+    def metin(self) -> str:
+        return "\n".join(self.kayitlar)
+
+
+@contextlib.contextmanager
+def _uyarilari_dinle():                                    # noqa: ANN201
+    """`prototype.planning.pipeline` WARN'larını topla (ROS'tan bağımsız)."""
+    logger = logging.getLogger("prototype.planning.pipeline")
+    h = _UyariYakala()
+    eski = logger.level
+    logger.addHandler(h)
+    logger.setLevel(logging.WARNING)
+    try:
+        yield h
+    finally:
+        logger.removeHandler(h)
+        logger.setLevel(eski)
+
+
+def test_ARENA_ICI_hedefte_uyari_YOK() -> None:
+    """Pay içinde kalan hedef normaldir — gürültü üretilmemeli."""
+    pipe = _boru_hatti_arena(Bounds(0.0, 200.0, 0.0, 200.0))
+    pipe.set_state(np.array([10.0, 10.0, 0.0, 0.0, 0.0, 0.0]))
+    with _uyarilari_dinle() as log:
+        pipe.set_waypoints([(120.0, 150.0)])
+    assert pipe.arena_tasma_sayisi == 0
+    assert "ARENA DIŞI" not in log.metin
+
+
+def test_PAY_ICINDEKI_tasma_uyari_URETMIYOR() -> None:
+    """`bounds_margin_m` kadar genişleme TASARIM — arıza sayılmaz."""
+    pipe = _boru_hatti_arena(Bounds(0.0, 200.0, 0.0, 200.0))
+    pipe.set_state(np.array([5.0, 5.0, 0.0, 0.0, 0.0, 0.0]))
+    # 13.08 gerçek donanım vakası: hedef (27,3, −23,7) → 23,7 m dışarıda,
+    # pay 30 m olduğu için bu HÂLÂ normal sayılır (F-S.17 tam da bunu çözdü).
+    pipe.set_waypoints([(27.3, -23.7)])
+    assert pipe.arena_tasma_sayisi == 0
+
+
+def test_ARENA_DISI_hedef_BAGIRIYOR() -> None:
+    """🔴 Bozuk hedef (yanlış orijin / 0.0-0.0 yer tutucu) sessiz kalmamalı.
+
+    F-S.17 kutuyu hedefe uydurarak kilidi çözdü; bedeli, hedefin NEREYE
+    düşerse düşsün kabul edilmesiydi. Araç artık durmuyor — o yüzden
+    "gitmiyor" diye fark edilemez; tek savunma bağırmaktır.
+    """
+    pipe = _boru_hatti_arena(Bounds(0.0, 200.0, 0.0, 200.0))
+    pipe.set_state(np.array([10.0, 10.0, 0.0, 0.0, 0.0, 0.0]))
+    with _uyarilari_dinle() as log:
+        pipe.set_waypoints([(5000.0, 200.0)])         # 4,8 km dışarıda
+    assert pipe.arena_tasma_sayisi > 0
+    assert "ARENA DIŞI HEDEF" in log.metin
+    assert "GÖREVİ DOĞRULA" in log.metin

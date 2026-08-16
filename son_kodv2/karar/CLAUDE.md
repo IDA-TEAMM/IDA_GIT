@@ -50,7 +50,7 @@
   - Kamera: Luxonis OAK-D Lite (stereo + Myriad X VPU)
   - GPS: Holybro H-RTK F9P (Rover + Base)
   - Telemetri: RFD868x (868 MHz)
-- **Platform:** Çift gövdeli katamaran, 4× 2838 sualtı thruster
+- **Platform:** Çift gövdeli katamaran, 2× 2838 sualtı thruster
   (diferansiyel tahrik), 4S7P 28× Samsung INR21700-50S batarya
 
 ### Kritik Tarihler
@@ -124,7 +124,7 @@ LiDAR engel haritası ──→ Cost map (≥1 Hz) ─────────�
                                                               ↓
                                 MPPI (10 Hz CPU; CUDA→50 Hz hedef) ──→ (u_l, u_r)
                                                               ↓
-                                            Cascade PID ──→ ESC (4× thruster)
+                                            Cascade PID ──→ ESC (2× thruster)
 
          ┌──────────────────────────────┐
          │  FSM: BOOT → ARM → BEKLEME    │

@@ -103,12 +103,24 @@ def res_ayristir(s: str):
     return int(m.group(1)), int(m.group(2))
 
 
-def cihaz_bekle(bulucu, timeout_s: float, uyku_s: float = 2.0, log=print) -> bool:
+def cihaz_bekle(bulucu, timeout_s: float, uyku_s: float = 2.0,
+                log=lambda m: print(m, flush=True)) -> bool:
     """OAK görünene kadar bekle. Saf/enjekte edilebilir (kamerasız test edilir).
 
     NEDEN: boot'ta USB geç enumere olabilir ya da kamera sonradan takılır.
     Script hemen exit(1) verirse systemd birkaç denemede pes eder ve SAHADA
     (monitör/SSH yok) tek kare toplanmadan koşu biter — sessiz başarısızlık.
+
+    🔴 2026-08-13 — `log` VARSAYILANI `print` DEĞİL, TAMPONU BOŞALTAN print.
+    Betiğin diğer 10 print'inin hepsinde `flush=True` vardı, yalnız buradaki
+    varsayılan çıplak `print`'ti ve servis dosyasında `PYTHONUNBUFFERED` yok.
+    Çıktı journal'a BORU üzerinden gittiği için blok tamponlanır (~4 KB): tek
+    satırlık "OAK görünmüyor" mesajı tampona takılır ve journal'a HİÇ ULAŞMAZ.
+    Ölçüldü: `--cihaz-bekle 3600` ile servis 5 dakika koştu, journal'da
+    systemd'nin `Started` satırından başka HİÇBİR ŞEY yoktu.
+    Bedeli tam da bu fonksiyonun önlemek için var olduğu hâl: sahada ekran/SSH
+    yok, operatör `active (running)` görüp "topluyor" sanır, oysa toplayıcı
+    olmayan bir kamerayı bir saat bekler ve oturum tek karesiz biter.
 
     `bulucu()` cihaz listesi döndürür. timeout_s <= 0 → beklemeden tek deneme.
     """

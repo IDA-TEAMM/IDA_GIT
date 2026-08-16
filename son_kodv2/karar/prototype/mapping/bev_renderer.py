@@ -82,6 +82,12 @@ SINIF_RENK: dict = {
 }
 SINIF_AD: dict = {0: "KENAR", 1: "ENGEL", 2: "HEDEF", 99: "?"}
 
+#: Füzyonun eşleştiremediği küme (`prototype.perception.fusion.CLASS_UNKNOWN`).
+#: Burada yeniden tanımlanıyor çünkü bu modül algı paketine bağımlı DEĞİL
+#: (çizici ROS'suz ve füzyonsuz koşabilmeli); değer tek yerde değişirse
+#: `test_bev_renderer` ikisinin eşitliğini bağlar.
+SINIF_BILINMEYEN: int = 99
+
 # Küme paleti — "ayırma"nın görünmesi için komşu kümeler ayrı renk almalı.
 # Sabit ve döngüsel: aynı girdi aynı kareyi verir (belirlenimci, test edilebilir).
 KUME_PALETI: Tuple[RGB, ...] = (
@@ -112,6 +118,18 @@ class BevConfig:
     izgara_m: float = 5.0         # referans ızgara adımı
     nokta_yaricap_px: int = 1
     kume_nokta_yaricap_px: int = 2
+    # 🔴 KAPTAN KARARI 15.08.2026: SINIFLANMAMIŞ ("?") KÜMEYE HALKA/ETİKET YOK.
+    #
+    # Ölçüm (session_20260814_153256, gerçek göl koşumu): sınıflı akıştaki
+    # tespitlerin **%98,6'sı** CLASS_UNKNOWN=99 (315 543 / 320 126; turuncu
+    # 3 118, sarı 1 465). Yani kare, üstünde "?" yazan yüzlerce gri halkayla
+    # doluyordu ve gerçekten sınıflanmış üç-beş nesne görünmez oluyordu.
+    #
+    # ⚠ SİLİNEN YALNIZ 3. KATMAN (halka + etiket). 1. katman (ham nokta) ve
+    # 2. katman (küme rengi) DURUYOR — şartname md 493 *"kümeleme, ayırma vs.
+    # görünecek şekilde"* diyor, sınıf etiketi İSTEMİYOR. Kümeleri tamamen
+    # silseydik teslim edilen dosya boşalır ve madde ihlal edilirdi.
+    gizle_siniflanmamis: bool = True
 
     def __post_init__(self) -> None:
         if self.genislik_px <= 0 or self.yukseklik_px <= 0:
@@ -297,6 +315,14 @@ class BevRenderer:
             # rengini KAPATIR ve md 493'ün istediği "ayırma" görünmez olur
             # (ilk denemede tam bu oldu). Bu yüzden yarıçap, küme nokta
             # yarıçapı + boşluk kadar dışarı itilir.
+            # Sınıflanmamış küme → halka/etiket YOK (bkz. BevConfig
+            # `gizle_siniflanmamis`). Küme rengi yukarıda çizildi, yani
+            # "kümeleme/ayırma" görünürlüğü korunuyor; kaybolan yalnız
+            # anlamsız "?" yazısı.
+            siniflanmamis = k.sinif is None or k.sinif == SINIF_BILINMEYEN
+            if siniflanmamis and cfg.gizle_siniflanmamis:
+                continue
+
             cxp, cyp = self.dunya_to_px(k.merkez, arac)
             rp = max(7.0, k.yaricap / cfg.m_per_px + rk + 3.0)
             sinif_renk = SINIF_RENK.get(
