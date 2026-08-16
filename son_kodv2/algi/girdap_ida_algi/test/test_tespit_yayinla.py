@@ -33,8 +33,13 @@ def _duba(cls, x, z, cx, cy, w=None, h=0.07, conf=0.9):
     return dgn.Duba(cls=cls, x=x, z=z, conf=conf, cx=cx, cy=cy, w=w, h=h)
 
 
-def _yayinla(dubalar, kenar_cls=0, engel_cls=1, lb_pay=0.0):
-    """`tespit_yayinla`'yı sahte yayıncılarla koştur, yayınlanan mesajları döndür."""
+def _yayinla(dubalar, kenar_cls=0, engel_cls=1, lb_pay=0.0, kare=None):
+    """`tespit_yayinla`'yı sahte yayıncılarla koştur, yayınlanan mesajları döndür.
+
+    `kare`: mono yolunun renk kapısı için sahte görüntü (None = kare yok ⇒
+    kapı kapalı kalır, kör kabul YOK). `_mono_hedef_mi` GERÇEK metottur —
+    sahteye bağlanır ki yeni yol da gerçekten sınansın.
+    """
     kutu = {}
 
     class _Pub:
@@ -49,7 +54,8 @@ def _yayinla(dubalar, kenar_cls=0, engel_cls=1, lb_pay=0.0):
         sinif_esleme={kenar_cls: "0", engel_cls: "1"},
         buoys_pub=_Pub("2d"), buoys3d_pub=_Pub("3d"),
         _f_norm=gm.odak_px(1.0),
-        _tani={"buyuk_cisim": 0},
+        _son_kare=kare,
+        _tani={"buyuk_cisim": 0, "mono_hedef": 0},
         get_logger=lambda: types.SimpleNamespace(
             warn=lambda *a, **k: None, info=lambda *a, **k: None,
             error=lambda *a, **k: None),
@@ -57,7 +63,10 @@ def _yayinla(dubalar, kenar_cls=0, engel_cls=1, lb_pay=0.0):
             now=lambda: types.SimpleNamespace(
                 to_msg=lambda: dgn.Detection2DArray().header.stamp)),
     )
+    ns._mono_hedef_mi = types.MethodType(
+        dgn.DubaNavigator._mono_hedef_mi, ns)      # gerçek metot, sahte self
     dgn.DubaNavigator.tespit_yayinla(ns)
+    _yayinla.son_ns = ns          # sahte self'i sonraki denetim için sakla
     return kutu["2d"], kutu["3d"]
 
 
@@ -235,3 +244,58 @@ def test_sigterm_isleyicisi_kuruluyor():
         assert callable(h)
     finally:
         signal.signal(signal.SIGTERM, onceki)
+
+
+# ── STEREO YOKKEN P3 HEDEFİ (16.08.2026) ──────────────────────────────────
+# Ölçüm: 6.042 gerçek kenar/engel kutusunda 0,45 kapsama eşiğiyle yeşil
+# %0,000 · siyah %0,000 yanlış pozitif; kırmızı 0,65'te bile %0,53.
+def _kare_renkli(hsv, boyut=(240, 320)):
+    """Tamamı tek HSV rengi olan sahte kare (bbox nereye düşerse düşsün dolu)."""
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    im = np.zeros((boyut[0], boyut[1], 3), np.uint8)
+    im[:, :] = hsv
+    return cv2.cvtColor(im, cv2.COLOR_HSV2BGR)
+
+
+_YESIL = (73, 200, 150)      # h 62-85 · s>=80 · v>=50
+_SIYAH = (0, 20, 30)         # s<=70 · v<=60
+_KIRMIZI = (3, 220, 200)     # h 0-7 · s>=130 · v>=90
+_TURUNCU = (12, 200, 200)    # bizim kenar dubamız — hiçbir hedef eşiğine girmemeli
+
+
+def _mono(z=14.0):
+    d = _duba(0, 0.0, z, 0.5, 0.5, w=_tutarli_w(0.64, z))
+    d.kaynak = "mono"
+    return d
+
+
+@pytest.mark.parametrize("hsv,ad", [(_YESIL, "yesil"), (_SIYAH, "siyah")])
+def test_mono_hedef_rengi_SUZULUR(hsv, ad):
+    """Stereo yokken yeşil/siyah = P3 hedefi ⇒ /perception/buoys'a GİRMEZ.
+
+    Girerse EdgeBuoyMemory'de KALICI kenar kaydı açar (unutma yok) ⇒ hayalet
+    kapı + MPPI hedeften kaçar.
+    """
+    arr, _ = _yayinla([_mono()], kare=_kare_renkli(hsv))
+    assert arr.detections == [], f"{ad} hedef yayınlandı — hayalet engel olur"
+
+
+@pytest.mark.parametrize("hsv,ad", [(_KIRMIZI, "kirmizi"), (_TURUNCU, "turuncu")])
+def test_mono_KIRMIZI_bu_yoldan_gecmez(hsv, ad):
+    """Kırmızı hiçbir eşikte temizlenmiyor (RAL 3026 ↔ RAL 2003 komşu) ⇒
+    kırmızı hedef stereo İSTER; turuncu zaten bizim kenar dubamız."""
+    arr, _ = _yayinla([_mono()], kare=_kare_renkli(hsv))
+    assert len(arr.detections) == 1, f"{ad} süzüldü — gerçek duba kaybolur"
+
+
+def test_mono_hedef_SAYACA_islenir():
+    """Sahada SSH yok; sessiz süzme görünmez arıza olur (06.08 dersi)."""
+    _yayinla([_mono()], kare=_kare_renkli(_YESIL))
+    assert _yayinla.son_ns._tani["mono_hedef"] == 1
+
+
+def test_mono_hedef_adayina_eklenir():
+    """Süzülen tespit ATILMIYOR — /perception/targets'a gidecek listede."""
+    _yayinla([_mono()], kare=_kare_renkli(_YESIL))
+    assert len(_yayinla.son_ns._hedef_adaylari) == 1

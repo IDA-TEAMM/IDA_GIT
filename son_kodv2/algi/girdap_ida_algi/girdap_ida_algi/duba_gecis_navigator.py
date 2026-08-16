@@ -353,6 +353,24 @@ KAYIT_HZ = 2.0            # şart ≥1 Hz; 2 Hz pay bırakır (VPU'ya ek yük yo
 #: çekiliyor; hedef adımı ondan hızlı koşamaz, ek kare ÇEKMİYORUZ.
 HEDEF_HZ = 2.0
 TARGETS_TOPIC = "/perception/targets"
+
+#: 🔴 STEREO YOKKEN hedef ayrımı — 16.08.2026, ÖLÇÜMLE belirlendi.
+#: Menzil yoksa boyut kapısı kurulamaz (mono z zaten Ø0,30 varsayımından
+#: türetilir ⇒ kıyas dairesel). Geriye tek ayırt edici kalıyor: RENK.
+#: 6.042 GERÇEK kenar/engel kutusunda (eski+yeni oturum, karanlık/ters ışık
+#: dahil) hedef renk eşiklerinin yanlış pozitif oranı:
+#:   kapsama eşiği | yeşil  | siyah  | kırmızı
+#:   0,25          | 0,000% | 0,232% | 13,87%
+#:   0,35          | 0,000% | 0,050% |  7,75%
+#:   **0,45**      | **0,000%** | **0,000%** |  4,83%
+#:   0,65          | 0,000% | 0,000% |  0,53%
+#: ⇒ 0,45'te yeşil ve siyah TEMİZ; kırmızı hiçbir eşikte temizlenmiyor
+#: (RAL 3026 ↔ turuncu kenar dubamız RAL 2003 tonda komşu) ⇒ **kırmızı yok**.
+#: ⛔ GERİ ALINIRSA: >10 m'de hedef dubası yine `/perception/buoys`'a girer,
+#: `EdgeBuoyMemory`'de KALICI kenar kaydı açar (unutma yok) ⇒ hayalet kapı
+#: (P1/P2 rotası bozulur) + MPPI hedeften KAÇAR (P3 angajmanı kaçar).
+MONO_HEDEF_ORANI = 0.45
+MONO_HEDEF_RENKLERI = ("yesil", "siyah")
 #: 🔴 Bu topic P1/P2'nin kullandığı `/perception/buoys`'tan **AYRI**. Hedef
 #: tespitleri oraya ASLA karışmaz: karışırsa füzyon `EdgeBuoyMemory`'ye kalıcı
 #: kenar kaydı açar → iki hedef arasında hayalet kapı → P2 rotası bozulur
@@ -709,6 +727,11 @@ class DubaNavigator(Node):
                       # Sahada YÜKSEK çıkarsa stereo suda çalışmıyor demektir —
                       # SSH olmadığı için tek görünürlük kanalı bu sayaç.
                       "mono_menzil": 0,
+                      # Stereo yokken RENKTEN P3 hedefi sayılan tespit
+                      # (yalnız yeşil/siyah, `MONO_HEDEF_ORANI`). Sahada 0
+                      # kalırsa ya hedef görünmedi ya renk çözülemedi —
+                      # ikisi de P3'ün sessizce çalışmadığı anlamına gelir.
+                      "mono_hedef": 0,
                       # Ne stereo ne mono menzil üretilemedi → tespit atıldı.
                       "menzil_yok": 0}
         # Geçilen geçitlerin orta noktaları (dünya/odom çerçevesi). Şartname G
@@ -892,6 +915,32 @@ class DubaNavigator(Node):
             return None
         return gm.hedef_rengi_bgr(kare[y1:y2, x1:x2])[0]
 
+    def _mono_hedef_mi(self, d) -> bool:
+        """Stereo yokken: bu tespit P3 hedef dubası MI (renkten)?
+
+        Yalnız **yeşil ve siyah** için True döner ve normal eşikten daha SIKI
+        bir kapsama ister (`MONO_HEDEF_ORANI`). Gerekçe ölçüm:
+        6.042 gerçek kenar/engel kutusunda 0,45 eşiğiyle yeşil **%0,000**,
+        siyah **%0,000** yanlış pozitif; kırmızı 0,65'te bile %0,53 ⇒
+        **kırmızı bu yoldan GEÇMEZ**, stereo ister.
+
+        Kare yoksa/bayatsa False — kör kabul yok (yanlış angajman TS3'te
+        100 → 50 puan, iki yanlış → 5).
+        """
+        kare = self._son_kare
+        if kare is None or self._f_norm is None:
+            return False
+        h, w = kare.shape[:2]
+        x1 = max(0, int((d.cx - d.w / 2.0) * w))
+        y1 = max(0, int((d.cy - d.h / 2.0) * h))
+        x2 = min(w, int((d.cx + d.w / 2.0) * w))
+        y2 = min(h, int((d.cy + d.h / 2.0) * h))
+        if x2 <= x1 or y2 <= y1:
+            return False
+        renk, kapsama = gm.hedef_rengi_bgr(kare[y1:y2, x1:x2],
+                                           oran=MONO_HEDEF_ORANI)
+        return renk in MONO_HEDEF_RENKLERI and kapsama > MONO_HEDEF_ORANI
+
     def kayit_adimi(self):
         """bbox+sınıf overlay'li, zaman etiketli mp4 karesi yaz (~KAYIT_HZ).
 
@@ -1042,8 +1091,8 @@ class DubaNavigator(Node):
             # Hedefler parkurun SONUNDA ama 64 cm 25 m'den 7,7 px eder ⇒ tekne
             # daha P2'nin İÇİNDEYKEN görüyor. Bu yüzden süzgeç parkurdan
             # BAĞIMSIZ, her zaman açık: mod yok, tetik yok, kilitlenme yok.
-            if getattr(d, "kaynak", "stereo") != "mono" and gm.buyuk_cisim_mi(
-                    d.z, d.w, self._f_norm):
+            mono = getattr(d, "kaynak", "stereo") == "mono"
+            if not mono and gm.buyuk_cisim_mi(d.z, d.w, self._f_norm):
                 self._tani["buyuk_cisim"] += 1
                 # FAZ 2: ATMIYORUZ ARTIK — Parkur-3 hedef adayı olarak
                 # ayrı tutuluyor. `/perception/buoys` sözleşmesi DEĞİŞMEDİ:
@@ -1052,6 +1101,30 @@ class DubaNavigator(Node):
                 self.get_logger().warn(
                     f"Tespit SÜZÜLDÜ — stereo {d.z:.1f} m ile bbox genişliği "
                     f"uyuşmuyor: cisim Ø0,30 m'den büyük (P3 hedef dubası?). "
+                    "Kenar/engel olarak YAYINLANMADI.",
+                    throttle_duration_sec=5.0)
+                continue
+            if mono and self._mono_hedef_mi(d):
+                # 🔴 16.08.2026 — STEREO YOKKEN HEDEF KAYBOLUYORDU (ve engele
+                # dönüşüyordu). Mekanizma: `buyuk_cisim_mi` mono'da atlanıyor —
+                # haklı olarak, çünkü mono `z` zaten Ø0,30 varsayarak
+                # genişlikten türetiliyor ⇒ kıyas DAİRESEL olurdu. Ama sonuç:
+                # stereo tavanı (10 m) ötesinde hedef dubası `/perception/buoys`'a
+                # NORMAL DUBA olarak giriyordu ⇒ `EdgeBuoyMemory` kalıcı kenar
+                # kaydı (unutma YOK) ⇒ hayalet kapı + MPPI'nin `w_obstacle=50`
+                # ile KAÇTIĞI engel. Süzgecin kendi gerekçesi *"tekne P2'nin
+                # içindeyken görüyor"* tam da o menzilde çalışmıyordu.
+                # ÇÖZÜM: menzil yoksa RENK karar versin — ama yalnız renk
+                # AYIRDIĞI yerde. 6.042 gerçek kenar/engel kutusunda ölçüldü
+                # (16.08, eski+yeni oturum, karanlık/ters ışık dahil):
+                #   kapsama eşiği 0,45'te  yeşil %0,000 · siyah %0,000 yanlış pozitif
+                #   kırmızı ise 0,65'te bile %0,53 (turuncu kenar dubamızla
+                #   karışıyor: RAL 3026 ↔ RAL 2003) ⇒ KIRMIZI STEREO İSTER.
+                self._tani["mono_hedef"] += 1
+                self._hedef_adaylari.append(d)
+                self.get_logger().warn(
+                    f"Tespit SÜZÜLDÜ — stereo yok, mono {d.z:.1f} m; rengi "
+                    "hedef paletinde (yeşil/siyah) ⇒ P3 hedef adayı. "
                     "Kenar/engel olarak YAYINLANMADI.",
                     throttle_duration_sec=5.0)
                 continue
