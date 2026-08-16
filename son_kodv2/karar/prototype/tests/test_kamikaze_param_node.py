@@ -195,3 +195,25 @@ def test_idempotent_zaten_etiketli_sahnede_yanlis_alarm_YOK(ros_context) -> None
         )
     finally:
         n.destroy_node()
+
+
+# ── PARAMETRE SAHİPSİZ KALMASIN (16.08.2026 regresyonu) ───────────────────
+def test_kamikaze_param_node_MODULU_VAR():
+    """🔴 `KamikazeHedefKapisi` eskiden `perception_camera_node` içindeydi.
+    O node (HSV yedek hattı) kaldırılınca `kamikaze_target_color` SAHİPSİZ
+    kalmıştı ⇒ renk yüklenemez ⇒ FSM PARKUR3'e geçmez ⇒ P3 = 0 puan, ve bu
+    SESSİZ olurdu. Ayrı node bu yüzden var."""
+    import importlib
+    m = importlib.import_module("girdap_decision.kamikaze_param_node")
+    assert hasattr(m, "KamikazeParamNode") and hasattr(m, "main")
+
+
+def test_node_parametreyi_ILAN_EDER(ros_context):
+    """Node ayağa kalkınca parametre gerçekten var olmalı."""
+    from girdap_decision.kamikaze_param_node import KamikazeParamNode
+    n = KamikazeParamNode()
+    try:
+        assert n.has_parameter("kamikaze_target_color")
+        assert n.kapi is not None
+    finally:
+        n.destroy_node()

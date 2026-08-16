@@ -983,6 +983,16 @@ def generate_launch_description() -> LaunchDescription:
         # saf OpenCV tespiti: girdap-ida-p3/p3_hedef/hedef_bul.py (kırmızı/yeşil/
         # SİYAH — siyah burada hiç yoktu). `camera_buoys.py` yalnız SINIF KİMLİĞİ
         # SÖZLEŞMESİ olarak duruyor (fusion + kamikaze_hedef oradan okuyor).
+        # Parkur-3 hedef rengi parametresini BARINDIRAN node. HSV yedek
+        # node'u kaldirilinca `kamikaze_target_color` sahipsiz kalmisti =>
+        # renk yuklenemez => FSM PARKUR3'e gecmez => P3 = 0 puan, SESSIZCE.
+        # Operator (KALKISTAN ONCE, sartname s.22):
+        #   ros2 param set /kamikaze_param_node kamikaze_target_color <renk>
+        Node(package=_PKG, executable="kamikaze_param_node",
+             name="kamikaze_param_node",
+             parameters=[{"kamikaze_target_color":
+                          str(hw["kamikaze_target_color"])}],
+             output="screen"),
         # Sprint 3: obstacle_map + buoys (sync) → /perception/classified_obstacles.
         # LiDAR+kamera node'larından SONRA gelmeli (mesajları tüketiyor).
         Node(package=_PKG, executable="perception_fusion_node",
