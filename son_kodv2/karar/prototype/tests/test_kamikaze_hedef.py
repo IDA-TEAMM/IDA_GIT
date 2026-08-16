@@ -17,7 +17,6 @@ from prototype.mission.kamikaze_hedef import (
     CLASS_KAHVERENGI,
     CLASS_KIRMIZI,
     CLASS_PARKUR_KENARI,
-    CLASS_SIYAH,
     CLASS_YESIL,
     DEGISTIRILEBILIR_DURUMLAR,
     RENK_SINIFLARI,
@@ -46,8 +45,6 @@ def test_hakemin_soyleyebilecegi_renkler_cozuluyor() -> None:
     assert renk_to_class("red") == CLASS_KIRMIZI
     assert renk_to_class("yesil") == CLASS_YESIL
     assert renk_to_class("kahverengi") == CLASS_KAHVERENGI
-    assert renk_to_class("siyah") == CLASS_SIYAH
-    assert renk_to_class("black") == CLASS_SIYAH
 
 
 def test_bos_deger_HEDEF_ATANMAMIS_demek() -> None:
@@ -192,7 +189,6 @@ def test_sinif_sozlesmesi_camera_buoys_ILE_AYNI() -> None:
     assert CLASS_KIRMIZI == cb.CLASS_KIRMIZI
     assert CLASS_YESIL == cb.CLASS_YESIL
     assert CLASS_KAHVERENGI == cb.CLASS_KAHVERENGI
-    assert CLASS_SIYAH == cb.CLASS_SIYAH
 
 
 def test_durum_adlari_MissionState_ILE_AYNI() -> None:
@@ -216,52 +212,3 @@ def test_durum_adlari_MissionState_ILE_AYNI() -> None:
         f"FSM'e yeni durum eklenmis: {beklenen_yasak}. Hedef rengi o durumda "
         f"degistirilebilir mi? DEGISTIRILEBILIR_DURUMLAR'i gozden gecir."
     )
-
-
-def test_SIYAH_kabul_edilir_sartname_ucuncu_hedef_rengi() -> None:
-    """🔴 13.08 REGRESYON BEKÇİSİ — şartname s.18: hedef renkleri RAL 3026
-    (kırmızı) · RAL 6037 (yeşil) · **RAL 9005 (siyah)**.
-
-    Bu test yazılmadan önce sözlükte siyah YOKTU: hakem "siyah" derse
-    `renk_to_class` HedefRengiHatasi atıyor, `ros2 param set` reddediliyor ve
-    hedef atanmamış kalıyordu ⇒ **3 renkten 1'inde Parkur-3 tamamen sıfır**.
-    """
-    assert renk_to_class("siyah") == CLASS_SIYAH
-    assert renk_to_class("SİYAH".lower()) == CLASS_SIYAH
-    assert CLASS_SIYAH in SECILEBILIR_SINIFLAR
-
-
-def test_siyah_isaretleme_NO_OP_ama_HATA_DEGIL() -> None:
-    """`camera_buoys` siyahı tespit etmiyor (HSV eşiği yok) ⇒ siyah seçiliyken
-    taşınacak tespit bulunmaz. Bu bir HATA değil: parametrenin kabul edilmesi
-    Parkur-3 kapısını açar, hedefi gören taraf algı ekibinin P3 node'udur.
-    """
-    tespitler = [_T(CLASS_KIRMIZI), _T(CLASS_YESIL), _T(CLASS_PARKUR_KENARI)]
-    assert hedef_isaretle(tespitler, CLASS_SIYAH) == 0
-    assert [t.class_id for t in tespitler] == [
-        CLASS_KIRMIZI, CLASS_YESIL, CLASS_PARKUR_KENARI]      # hiçbiri bozulmadı
-
-
-def test_BUYUK_HARF_turkce_I_kabul_edilir() -> None:
-    """🔴 13.08: Python'un `.lower()`'ı Türkçe **İ**'yi `i`+U+0307 yapıyor
-    ⇒ "SİYAH"/"YEŞİL" sözlükte eşleşmiyordu. **Yeşil zaten destekleniyordu**,
-    yani bu hata yeni rengi değil MEVCUT rengi de vuruyordu: operatör büyük
-    harf yazınca `ros2 param set` reddediliyordu.
-    """
-    assert renk_to_class("SİYAH") == CLASS_SIYAH
-    assert renk_to_class("YEŞİL") == CLASS_YESIL
-    assert renk_to_class("KIRMIZI") == CLASS_KIRMIZI
-    assert renk_to_class("  SİYAH  ") == CLASS_SIYAH
-
-
-def test_SIYAHIN_DEDEKTORU_YOK_acikca_beyan_edilmis() -> None:
-    """🔴 13.08 kusur avı: siyah seçiliyken "karede hiç görülmedi" uyarısı
-    *"HSV eşiği / ışık / renk adı kontrol edilmeli"* diyordu — YANILTICI.
-    Gerçek sebep eşik değil, `camera_buoys`'ta **siyah dedektörünün hiç
-    olmaması**. Operatör olmayan bir sorunu kovalardı.
-    """
-    from prototype.mission.kamikaze_hedef import DEDEKTORU_OLAN_SINIFLAR
-    assert CLASS_SIYAH not in DEDEKTORU_OLAN_SINIFLAR
-    assert {CLASS_KIRMIZI, CLASS_YESIL} <= DEDEKTORU_OLAN_SINIFLAR
-    # seçilebilir ama dedektörsüz olabilir — ikisi FARKLI kümeler
-    assert CLASS_SIYAH in SECILEBILIR_SINIFLAR

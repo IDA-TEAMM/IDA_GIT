@@ -518,22 +518,9 @@ def generate_launch_description() -> LaunchDescription:
             "control_mode", default_value="mppi",
             description="planning_node yerel kontrolcüsü: mppi | pid (F-S.10)",
         ),
-        DeclareLaunchArgument(
-            "use_onboard_camera", default_value="false",
-            description="HSV YEDEK kamera node'u (perception_camera_node). "
-                        "VARSAYILAN false (2026-08-04, algı ekibi kararı): "
-                        "/perception/buoys'un ASIL üreticisi artık repoda — "
-                        "son_kodv2/algi (girdap-ida-algi, DepthAI ile OAK-D'yi "
-                        "doğrudan açar, YOLO kameranın VPU'sunda). İkisi aynı "
-                        "anda açılırsa hem topic'te ÇİFT PUBLISHER olur hem de "
-                        "bbox piksel uzayları farklı olduğu için füzyon bearing'i "
-                        "karışır. Geçmiş (F-P.22, 2026-07-17): varsayılan geçici "
-                        "olarak true yapılmıştı çünkü algı paketi o ortamda hiç "
-                        "yoktu ve /perception/buoys sessizce hiç üretilmedi; "
-                        "artık paket burada ve fusion sync bekçisi de bu sessiz "
-                        "hâli WARN'la yakalıyor. ⚠ true yaparsan algı node'unu "
-                        "kapatmak ZORUNDASIN (tek OAK, tek süreç açabilir).",
-        ),
+        # 🔴 16.08.2026: `use_onboard_camera` argümanı KALDIRILDI —
+        # kontrol ettiği HSV yedek node'u da kaldırıldı (bkz. camera_buoys.py).
+        # Kamera sahipliği algı ekibinde; bu bayrak zaten hep false idi.
         DeclareLaunchArgument(
             "use_mppi", default_value=_bool_default(hw["use_mppi"]),
             description="REZERVE (F3.2): şu an HİÇBİR node okumuyor — MPPI her "
@@ -989,20 +976,22 @@ def generate_launch_description() -> LaunchDescription:
              parameters=_perception_params("lidar", _LIDAR_DEFAULTS)
              + [_mount_params("livox_frame", hw["tf"])],
              output="screen"),
-        # Sprint 2 — F3.1: VARSAYILAN KAPALI. /perception/buoys'un asıl
-        # üreticisi algı ekibinin OAK node'u (girdap-ida-algi, DepthAI
-        # doğrudan — VPU'da YOLO). Bu HSV node'u yalnız YEDEK; ikisi aynı
-        # anda açılırsa hem topic çakışır hem OAK USB cihazı iki süreçte
-        # açılamaz. Açmak için: use_onboard_camera:=true.
-        Node(package=_PKG, executable="perception_camera_node",
-             name="perception_camera_node",
-             # madde #4: hedef rengi `mission:` bloğunda yaşıyor (kamera TUNING
-             # ayarı değil, hakemin verdiği GÖREV bilgisi) → perception.camera.*
-             # zincirine değil, buraya ayrı ekleniyor.
-             parameters=_perception_params("camera", _CAMERA_DEFAULTS) + [
-                 {"kamikaze_target_color": str(hw["kamikaze_target_color"])},
-             ],
-             condition=IfCondition(LaunchConfiguration("use_onboard_camera")),
+        # 🔴 16.08.2026 — HSV YEDEK KAMERA NODE'U KALDIRILDI.
+        # Zaten VARSAYILAN KAPALI idi (`use_onboard_camera=false`) ve tek OAK'ı
+        # algı ekibi tutuyor ⇒ bu node'a kare hiç ulaşmıyordu. İki ayrı OpenCV
+        # hattının yan yana durması karışıklık üretiyordu. Parkur-3 hedefi için
+        # saf OpenCV tespiti: girdap-ida-p3/p3_hedef/hedef_bul.py (kırmızı/yeşil/
+        # SİYAH — siyah burada hiç yoktu). `camera_buoys.py` yalnız SINIF KİMLİĞİ
+        # SÖZLEŞMESİ olarak duruyor (fusion + kamikaze_hedef oradan okuyor).
+        # Parkur-3 hedef rengi parametresini BARINDIRAN node. HSV yedek
+        # node'u kaldirilinca `kamikaze_target_color` sahipsiz kalmisti =>
+        # renk yuklenemez => FSM PARKUR3'e gecmez => P3 = 0 puan, SESSIZCE.
+        # Operator (KALKISTAN ONCE, sartname s.22):
+        #   ros2 param set /kamikaze_param_node kamikaze_target_color <renk>
+        Node(package=_PKG, executable="kamikaze_param_node",
+             name="kamikaze_param_node",
+             parameters=[{"kamikaze_target_color":
+                          str(hw["kamikaze_target_color"])}],
              output="screen"),
         # Sprint 3: obstacle_map + buoys (sync) → /perception/classified_obstacles.
         # LiDAR+kamera node'larından SONRA gelmeli (mesajları tüketiyor).
@@ -1109,7 +1098,6 @@ def generate_launch_description() -> LaunchDescription:
             LogInfo(msg=[
                 "[hardware] ArduRover — fcu_url=", fcu_url,
                 " | algorithm: isam2=", use_isam2, " rrt=", use_rrt,
-                " | onboard_camera=", LaunchConfiguration("use_onboard_camera"),
                 " | with_mavros=", LaunchConfiguration("with_mavros"),
                 " (false=masa testi, mock_sensors besler)",
             ]),

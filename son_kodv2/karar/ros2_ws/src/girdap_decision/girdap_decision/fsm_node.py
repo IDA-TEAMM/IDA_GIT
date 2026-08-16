@@ -61,9 +61,6 @@ Notlar:
 from __future__ import annotations
 
 import math
-import time
-
-from rclpy.qos import DurabilityPolicy, QoSProfile
 from typing import Optional, Tuple
 
 import rclpy
@@ -82,18 +79,12 @@ from girdap_decision.yeniden_baslama import (
     RESET_SERVICE,
     ResetYayinci,
 )
-from prototype.mission.p3_cikis import P3CikisIzleyici
 from prototype.fsm.mission_fsm import MissionFSM, MissionState, Observation
 from prototype.mission.parkur_fsm import (
     ParkurState,
     ParkurTransitionLogic,
     load_parkur_labels,
 )
-
-
-#: Odometri bu süreden eskiyse hız ölçümü GEÇERSİZ sayılır (bayat odomla
-#: 'tekne durdu' sonucu çıkarılamaz — sahte temas üretirdi).
-_ODOM_BAYATLIK_S = 2.0
 
 
 class FSMNode(Node):
@@ -179,12 +170,6 @@ class FSMNode(Node):
             self.get_parameter("p1_to_p2_dist").value
         )
         self._obs = Observation()
-        # Parkur-3 (FAZ 1) — çıkış ölçütleri. Şok kanalı P3'ü BİTİREMEZ
-        # (temas 0,03-0,14 g ↔ eşik 3,0 g), bu yüzden ilerleme-yok + süre
-        # aşımı eklendi; çekirdek `prototype/mission/p3_cikis.py`de (ROS'suz).
-        self._p3_izleyici = P3CikisIzleyici()
-        self._hiz_mps = 0.0
-        self._hiz_t: float | None = None
 
         # --- Parkur geçiş katmanı (waypoint-index tabanlı, MissionFSM'den ayrı) ---
         self._cift_denetim_s = float(
@@ -254,15 +239,6 @@ class FSMNode(Node):
         )
         self._sub_odom = self.create_subscription(
             Odometry, "/girdap/fusion/odom", self._on_odom, 10
-        )
-        # Hedef rengi YÜKLÜ mü? Sahibi (`KamikazeHedefKapisi`) ilan eder;
-        # parametreyi ikinci bir yerden okumak yerine tek kaynaktan dinliyoruz.
-        # Boş dize = hedef atanmamış ⇒ tüm P3 yolu KAPALI (P1/P2 aynen).
-        # LATCH'li: yayıncı önce açılmış olsa bile son değeri alırız
-        # (başlatma sırası garanti değil — yayıncı tarafındaki nota bakın).
-        self.create_subscription(
-            String, "/girdap/mission/hedef_rengi", self._on_hedef_rengi,
-            QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
         # IMU mavros'ta BEST_EFFORT yayınlanır → sensor_data QoS ile abone ol.
         self._sub_imu = self.create_subscription(
@@ -489,14 +465,7 @@ class FSMNode(Node):
             "başlatıldı (F-V.6; FC görevi koşuyor, FSM izliyor)"
         )
 
-    def _on_hedef_rengi(self, msg: String) -> None:
-        """Hedef rengi yüklendi/temizlendi → Parkur-3 kapısı."""
-        self._obs.p3_bekleniyor = bool(msg.data.strip())
-
     def _on_odom(self, msg: Odometry) -> None:
-        v = msg.twist.twist.linear
-        self._hiz_mps = math.hypot(v.x, v.y)
-        self._hiz_t = time.monotonic()
         self._pose_xy = (
             msg.pose.pose.position.x,
             msg.pose.pose.position.y,
@@ -716,27 +685,6 @@ class FSMNode(Node):
         # onun yerini aldı. Sebep: `self._mav_armed` şartına bağlıydı ve
         # PAR-03'e göre araç 14 oturumun hiçbirinde ARM edilmedi — bekçi bir
         # kez bile ateşlemedi. Yeni bekçi ARM YOKLUĞUNU da bir sebep sayıyor.
-
-        # Parkur-3 çıkış ölçütleri (yalnız P3'teyken anlamlı).
-        simdi = time.monotonic()
-        if self._fsm.state is MissionState.PARKUR3:
-            if not self._p3_izleyici.p3te_mi:
-                self._p3_izleyici.p3ye_girildi(simdi)
-            # 🔴 13.08 av turu: odom SUSARSA `_hiz_mps` son değerinde DONAR.
-            # Tekne o sırada duruyorsa "ilerleme yok" sahte tetiklenir ve
-            # görev, temas olmadığı hâlde TAMAMLANDI'ya düşer. Odometri
-            # ölmüşse "durdu" SONUCU ÇIKARILAMAZ — ölçemediğimiz şeyde
-            # çelişki iddia etmiyoruz (aynı kural `menzil_tutarli`da da var).
-            taze = (self._hiz_t is not None
-                    and (simdi - self._hiz_t) <= _ODOM_BAYATLIK_S)
-            self._obs.p3_ilerleme_yok, self._obs.p3_sure_doldu = (
-                self._p3_izleyici.guncelle(simdi, self._hiz_mps,
-                                           hiz_gecerli=taze)
-            )
-        elif self._p3_izleyici.p3te_mi:
-            self._p3_izleyici.sifirla()
-            self._obs.p3_ilerleme_yok = False
-            self._obs.p3_sure_doldu = False
 
         new_state = self._fsm.tick(self._obs)
 
