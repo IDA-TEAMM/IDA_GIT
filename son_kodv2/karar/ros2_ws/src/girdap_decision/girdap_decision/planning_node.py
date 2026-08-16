@@ -260,6 +260,36 @@ class PlanningNode(Node):
         # (ve planning_node cv2 bağımlısı camera_buoys'u import etmek zorunda
         # kalmasın — bu node algı kütüphanesi çekmemeli).
         self.declare_parameter("edge_buoy_class_id", 0)
+        # Kenar hafızası UNUTMA MENZİLİ = yayım yarıçapı × BU KATSAYI.
+        # 🔴 VARSAYILAN 2.0 = 17.08 öncesi davranış, BİT BİREBİR AYNI.
+        #
+        # NEDEN AYARLANABİLİR OLDU (17.08 bant ölçümü, 16.08 18:36 oturumu):
+        # Katsayı 2.0 ⇒ menzil 50 m; ölçülen çalışma alanı 20×35 m (köşegen
+        # ~40 m) ⇒ menzil alanın TAMAMINI kapsıyor, unutma HİÇ devreye
+        # girmiyor. Gerçek `EdgeBuoyMemory` bantla beslendiğinde torba
+        # **843 kayda** çıkıyor (yayımlanan `edge_buoys` yalnız 120 gösteriyor
+        # — o konu yayım menzili içindekileri basıyor, tarama maliyeti ise
+        # torbanın TAMAMINA göre; §1.13'ün "2404 kayıt → döngü 117→1062 ms"
+        # ölçümüyle aynı sınıf).
+        #
+        # A/B (11.644 kare, gerçek kütüphane çağrılarak):
+        #   katsayı  menzil  tepe  son   ort    unutulan  KURTARILAN
+        #      2.0     50 m   843  190  328.2       750      22 928
+        #      1.0     25 m   689   47  229.8     2 909      22 713   ← bedava
+        #      0.5     12 m   426   45  112.1   159 815      11 749   🔴 zararlı
+        # 1.0'da torba %30 küçülüyor ama `kurtarılan` yalnız %0,9 düşüyor ⇒
+        # 09.08'in "duba geçici görünmez olunca hafıza kurtarsın" gerekçesi
+        # korunuyor. 0.5'te kurtarma YARIYA iniyor = gerçek duba kaybı.
+        #
+        # ⚠️ KANITLANMAYAN: bunun kapı sıçramasını azalttığı. Deney yalnız
+        # hafıza katmanını izole etti, `GateFollower` zincirde yoktu.
+        # "Torba küçülür → kapı seçimi kararlı olur" HÂLÂ HİPOTEZ; bu
+        # parametre tam da onu SAHADA/izole koşumda sınamak için açıldı.
+        # Kabul ölçütü önceden sabitlendi (§1.30 tabanı, 15.08 16:34):
+        #   `/girdap/planning/gate` >1 m atlama oranı %7,39 — bu düşmeli.
+        #   Aynı katsayıyla İKİ koşu arasındaki fark = gürültü tabanı;
+        #   2.0↔1.0 farkı o tabandan büyük değilse SONUÇ İLAN EDİLMEZ.
+        self.declare_parameter("edge_unutma_katsayisi", 2.0)
         # classified_obstacles aktığında obstacle_map'in yerine geçsin mi?
         # false → eski davranış (sınıfsız harita), kapı dubaları da engel kalır.
         self.declare_parameter("use_classified_obstacles", True)
@@ -378,6 +408,23 @@ class PlanningNode(Node):
         # Hatırlanan cisimlerin engel torbasına konacağı yarıçap (m) — yeni bir
         # ayar DEĞİL, yerel maliyet haritası penceresinin yarısı (§0.26c).
         self._harita_yaricapi = cfg.map_width * cfg.map_resolution / 2.0
+        # Unutma menzili katsayısı (bkz. declare_parameter'daki ölçüm tablosu).
+        # 🔴 SIFIR/NEGATİF KABUL EDİLMEZ: 0 verilirse menzil 0 olur ve HER
+        #    kayıt her karede silinir — hafıza fiilen kapanır, "duba geçici
+        #    kaybolunca kurtar" yeteneği yok olur. Geçersiz değerde uyarı
+        #    basılıp varsayılana dönülür (düğüm ÖLMEZ — saha yüzeyinde
+        #    yazım hatası koşumu bitirmemeli).
+        _kat = float(self.get_parameter("edge_unutma_katsayisi").value)
+        if not (_kat > 0.0) or not math.isfinite(_kat):
+            self.get_logger().warn(
+                f"edge_unutma_katsayisi={_kat} GEÇERSİZ (>0 olmalı) — "
+                f"varsayılan 2.0 kullanılıyor")
+            _kat = 2.0
+        self._edge_unutma_kat = _kat
+        self.get_logger().info(
+            f"[kenar hafızası] unutma menzili = {self._harita_yaricapi:.0f} m "
+            f"× {self._edge_unutma_kat:.2f} = "
+            f"{self._harita_yaricapi * self._edge_unutma_kat:.0f} m")
         self._edge_mem_son_acilan = 0        # log penceresi başına yeni kayıt
         self._son_cmd_vel_t: Optional[float] = None   # çıkış kadansı bekçisi
         self._backend_loglandi = False       # MPPI hesap yolu bir kez yazılır
@@ -1021,7 +1068,7 @@ class PlanningNode(Node):
             for tespit, kenar in self._edge_memory.hatirlananlar(
                 self._last_xy,
                 self._harita_yaricapi,
-                unutma_menzili=self._harita_yaricapi * 2.0,
+                unutma_menzili=self._harita_yaricapi * self._edge_unutma_kat,
             ):
                 tespitler.append(tespit)
                 kenar_mi.append(kenar)

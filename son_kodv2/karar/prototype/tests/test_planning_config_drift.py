@@ -18,6 +18,7 @@ launch/launch_ros GEREKTİRMEZ (dosya `ast` ile okunur) — CI'ın ROS'suz
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -556,3 +557,89 @@ def test_hicbir_URETIM_modulu_sigma_u_yu_ELLE_yazmiyor() -> None:
     assert not ihlal, (
         "σ_u elle yazılmış (ölçülen varsayılandan kopuk):\n  " + "\n  ".join(ihlal)
     )
+
+
+# ────────────── kenar hafızası unutma katsayısı (17.08) ──────────────
+# 🔴 NEDEN AYRI TEST: yukarıdaki drift testleri YALNIZ `mppi_*` önekli
+# anahtarları bağlıyor. `edge_unutma_katsayisi` o kapsamın dışında doğdu ⇒
+# CI'yi kırmaz ama KORUMAZ da. Bu dosyanın var oluş gerekçesi tam olarak
+# şuydu: "ROS bilinmeyen yaml anahtarını SESSİZCE atar → `mppi_lambdaa: 50`
+# yazım hatası fark edilmez." Yeni parametre ölçüm yapan bir parametre
+# olduğu için o tuzak burada DAHA pahalı: `edge_unutma_katsayasi` yazarsan
+# ROS yutar, varsayılan 2.0 kazanır, sen 1.0 denediğini sanırsın ve
+# DENEYİN SONUCU SAHTE ÇIKAR.
+# (Uyarıyı paralel oturum verdi — parametreyi açarken kapsam dışında
+#  bıraktığımı gösterdi.)
+_EDGE_ANAHTAR = "edge_unutma_katsayisi"
+_EDGE_VARSAYILAN = 2.0
+
+
+def _planning_node_kaynagi():
+    kok = Path(__file__).resolve().parents[2]
+    p = (kok / "ros2_ws" / "src" / "girdap_decision" / "girdap_decision"
+         / "planning_node.py")
+    assert p.exists(), f"planning_node.py bulunamadı: {p}"
+    return p.read_text(encoding="utf-8")
+
+
+def test_edge_unutma_katsayisi_ANAHTAR_ADI_DEGISMEDI():
+    """Anahtar adı tek yerde: bildirim ↔ okuma. İkisi de aynı dizgeyi kullanmalı.
+
+    Biri değişip diğeri kalırsa ROS okuma tarafında ParameterNotDeclared atar
+    ya da (yaml'da yazım hatası varsa) sessizce varsayılana düşer.
+    """
+    kaynak = _planning_node_kaynagi()
+    assert f'declare_parameter("{_EDGE_ANAHTAR}"' in kaynak, (
+        f"{_EDGE_ANAHTAR} BİLDİRİLMEMİŞ — parametre kayboldu")
+    assert f'get_parameter("{_EDGE_ANAHTAR}")' in kaynak, (
+        f"{_EDGE_ANAHTAR} OKUNMUYOR — bildirildi ama kullanılmıyor "
+        "(F-A.4 dersi: yazılmış ama çağrılmamış kod)")
+
+
+def test_edge_unutma_VARSAYILAN_ESKI_DAVRANIS():
+    """Varsayılan 2.0 = 17.08 öncesi davranış. Değişirse SESSİZ davranış değişimi.
+
+    Bu sayı ölçümle seçilmedi; ESKİ DAVRANIŞI KORUMAK için 2.0. Ölçüm 1.0'ın
+    daha iyi olduğunu söylüyor ama kapı sıçramasına etkisi HENÜZ KANITLANMADI
+    (deney yalnız hafıza katmanını izole etti). Kanıtlanana kadar varsayılan
+    değişmez — değiştirmek isteyen bu testi de bilerek değiştirsin.
+    """
+    kaynak = _planning_node_kaynagi()
+    m = re.search(rf'declare_parameter\("{_EDGE_ANAHTAR}",\s*([0-9.]+)\)',
+                  kaynak)
+    assert m, f"{_EDGE_ANAHTAR} bildirimi bulunamadı"
+    assert float(m.group(1)) == _EDGE_VARSAYILAN, (
+        f"varsayılan {m.group(1)} ≠ {_EDGE_VARSAYILAN} — eski davranış artık "
+        "bit-birebir korunmuyor")
+
+
+def test_edge_unutma_SABIT_KOD_KALMADI():
+    """`unutma_menzili=` çağrısı artık sabit çarpan İÇERMEMELİ.
+
+    Parametre açıldı ama çağrı yerinde `* 2.0` kalırsa parametre HİÇBİR ŞEY
+    YAPMAZ ve deney sessizce taban koşumu tekrarlar (F-A.4'ün aynısı:
+    yazıldı, bağlanmadı).
+    """
+    kaynak = _planning_node_kaynagi()
+    for satir in kaynak.splitlines():
+        s = satir.strip()
+        if s.startswith("#") or "unutma_menzili=" not in s:
+            continue
+        assert not re.search(r"unutma_menzili=.*\*\s*[0-9]+\.?[0-9]*\s*,?\s*$", s), (
+            f"unutma_menzili sabit çarpanla çağrılıyor — parametre bağlı "
+            f"değil:\n    {s}")
+        assert "_edge_unutma_kat" in s, (
+            f"unutma_menzili parametreden beslenmiyor:\n    {s}")
+
+
+def test_edge_unutma_GECERSIZ_DEGERDE_DUGUM_OLMEZ():
+    """0/negatif/NaN verilirse uyarı basılıp varsayılana dönülmeli.
+
+    0 verilirse menzil 0 olur ⇒ HER kayıt her karede silinir ⇒ hafıza fiilen
+    kapanır ve "duba geçici kaybolunca kurtar" yeteneği yok olur. Saha
+    yüzeyinde bir yazım hatası koşumu bitirmemeli.
+    """
+    kaynak = _planning_node_kaynagi()
+    assert "isfinite(_kat)" in kaynak and "_kat > 0.0" in kaynak, (
+        "edge_unutma_katsayisi geçerlilik denetimi YOK — 0 yazılırsa hafıza "
+        "sessizce kapanır")
