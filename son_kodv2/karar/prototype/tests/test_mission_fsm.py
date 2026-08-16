@@ -208,8 +208,10 @@ def test_last_gate_passed_output_derivation() -> None:
     fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
                          dist_to_last_wp_p1=1.0))                   # PARKUR2
     assert fsm.last_gate_passed is False
+    # 16.08.2026: tetik `last_gate_passed_p2` DEĞİL (ilk kapı tuzağıydı) —
+    # şartname s.20'ye uygun olarak "tüm waypoint'ler bitti + renk yüklü".
     fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
-                         last_gate_passed_p2=True))                 # PARKUR3
+                         mission_complete=True, p3_bekleniyor=True))  # PARKUR3
     assert fsm.state is MissionState.PARKUR3
     assert fsm.last_gate_passed is True
 
@@ -229,7 +231,7 @@ def test_full_mission_sequence() -> None:
     fsm.request_start()
     fsm.tick(Observation(**on))                        # PARKUR1
     fsm.tick(Observation(**on, dist_to_last_wp_p1=1.0))  # PARKUR2
-    fsm.tick(Observation(**on, last_gate_passed_p2=True))  # PARKUR3
+    fsm.tick(Observation(**on, mission_complete=True, p3_bekleniyor=True))  # PARKUR3
     fsm.tick(Observation(**on, shock_detected_p3=True))    # TAMAMLANDI
 
     assert fsm.state is MissionState.TAMAMLANDI
@@ -238,3 +240,55 @@ def test_full_mission_sequence() -> None:
     assert chain == [
         "ARM", "BEKLEMEDE", "PARKUR1", "PARKUR2", "PARKUR3", "TAMAMLANDI",
     ]
+
+
+# --------------------------------------------------------------------------- #
+# İLK KAPI TUZAĞI — regresyon (16.08.2026)
+# --------------------------------------------------------------------------- #
+def test_gate_passed_alani_ARTIK_YOK() -> None:
+    """`last_gate_passed_p2` geri eklenirse bu test düşer.
+
+    O alan `/perception/gate_passed`'den gelen HERHANGİ bir True'yu
+    "P2'nin SON ikilisi geçildi" sayıp **ilk kapıda** PARKUR3'e atlatıyordu:
+    P2 daha başlamadan kamikaze açılır, (G2/KD2)×40 ve ödül sıralaması giderdi.
+    """
+    import pytest as _pytest
+    with _pytest.raises(TypeError):
+        Observation(last_gate_passed_p2=True)      # type: ignore[call-arg]
+
+
+def _p2(fsm):
+    on = dict(boot_ok=True, kill_switch_off=True)
+    fsm.tick(Observation(boot_ok=True))
+    fsm.tick(Observation(**on))
+    fsm.request_start()
+    fsm.tick(Observation(**on))
+    fsm.tick(Observation(**on, dist_to_last_wp_p1=1.0))
+    assert fsm.state is MissionState.PARKUR2
+    return on
+
+
+def test_P2de_kapi_gecmek_TEK_BASINA_P3e_atlatmaz() -> None:
+    """Kapı geçmek P3 tetiği DEĞİL — şartname s.20: P2 bitişi 'son görev
+    noktasına ulaşmak'. Kapılar yalnız PUAN üretir."""
+    fsm = MissionFSM()
+    on = _p2(fsm)
+    for _ in range(5):
+        fsm.tick(Observation(**on))
+    assert fsm.state is MissionState.PARKUR2, "kapı geçmekle P3'e atlanmamalı"
+
+
+def test_renk_YUKLU_DEGILSE_P3e_gecilmez() -> None:
+    """İHA başarısız olur / renk gelmezse kamikaze HİÇ açılmaz; tekne son
+    noktada temiz durur ve P1+P2 puanı korunur."""
+    fsm = MissionFSM()
+    on = _p2(fsm)
+    fsm.tick(Observation(**on, mission_complete=True))     # renk YOK
+    assert fsm.state is MissionState.TAMAMLANDI
+
+
+def test_tum_wp_bitti_VE_renk_yuklu_ise_P3() -> None:
+    fsm = MissionFSM()
+    on = _p2(fsm)
+    fsm.tick(Observation(**on, mission_complete=True, p3_bekleniyor=True))
+    assert fsm.state is MissionState.PARKUR3

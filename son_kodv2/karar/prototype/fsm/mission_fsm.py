@@ -10,7 +10,7 @@ Durumlar ve geçişler:
     ARM        ──kill_switch_off──→    BEKLEMEDE
     BEKLEMEDE  ──YKİ "başlat"──→       PARKUR-1   (tek dış sinyal — sadece burada)
     PARKUR-1   ──son wp <1.5 m──→      PARKUR-2
-    PARKUR-2   ──son duba ikilisi──→   PARKUR-3
+    PARKUR-2   ──tüm wp bitti + renk yüklü──→ PARKUR-3
     PARKUR-3   ──IMU şok──→            TAMAMLANDI
     *          ──kill──→               KILL       (RC kumanda + YKİ + watchdog)
 
@@ -73,7 +73,7 @@ class Observation:
         kill_switch_off       — Pixhawk RC kanalı + yazılım flag'i
         kill_switch_active    — kill onaylandı (sıfırlanmaz)
         dist_to_last_wp_p1    — RRT* hedef listesindeki son wp'ye anlık mesafe
-        last_gate_passed_p2   — görev kütüphanesi (gate geometri kontrolü)
+        (last_gate_passed_p2 KALDIRILDI — 16.08.2026, ilk kapı tuzağı)
         shock_detected_p3     — IMU |a| spike eşiği (ham high-rate kanal)
         mission_complete      — görev yöneticisi TÜM waypoint'leri bitirdi
                                 (video senaryosu terminal koşulu; kamikaze
@@ -101,7 +101,6 @@ class Observation:
     kill_switch_active: bool = False
 
     dist_to_last_wp_p1: float = math.inf
-    last_gate_passed_p2: bool = False
     shock_detected_p3: bool = False
     mission_complete: bool = False
 
@@ -295,8 +294,17 @@ class MissionFSM:
                 f"son wp {obs.dist_to_last_wp_p1:.2f} m ≤ "
                 f"{self.P1_TO_P2_DIST:.1f} m",
             )
-        if s is MissionState.PARKUR2 and obs.last_gate_passed_p2:
-            return MissionState.PARKUR3, "son duba ikilisi geçildi"
+        # 🔴 16.08.2026 — `last_gate_passed_p2` TETİĞİ KALDIRILDI.
+        # `/perception/gate_passed` gelen HERHANGİ bir True'yu bu alana
+        # yazıyordu ⇒ **İLK kapıda** PARKUR3'e atlanırdı: P2 daha başlamadan
+        # kamikaze açılır, (G2/KD2)×40 ve ödül sıralaması giderdi. Bugün
+        # zararsızdı çünkü o topic'i bilerek yayınlamıyoruz — ama uyuyan bir
+        # tuzaktı: biri açtığı anda P1+P2 sessizce sıfırlanırdı.
+        # Yerine geçen tetik (FAZ 1) aşağıda `mission_complete + p3_bekleniyor`:
+        # şartname s.20 P2 bitiş şartı zaten **"son görev noktasına ulaşmak"**,
+        # ve P1→P2 geçişi de waypoint mesafesinden çalışıyor ⇒ SİMETRİK.
+        # `fsm_node`'un kendi notu da bu seçimi bekliyordu ("iki yol var,
+        # seçim yapılmadı: B) geçişi waypoint ilerlemesinden sür").
         if s is MissionState.PARKUR3:
             # P3 ÇIKIŞI — üç bağımsız yol. Şok tek başına YETMEZ (bkz.
             # Observation docstring'i: temas 0,03-0,14 g ↔ eşik 3,0 g).
@@ -496,8 +504,7 @@ def _demo() -> None:
     fsm.tick(Observation(dist_to_last_wp_p1=1.0))   # → PARKUR2
 
     # 5) PARKUR-2: gate geçiş
-    fsm.tick(Observation(last_gate_passed_p2=False))
-    fsm.tick(Observation(last_gate_passed_p2=True)) # → PARKUR3
+    fsm.tick(Observation(mission_complete=True, p3_bekleniyor=True))  # → PARKUR3
 
     # 6) PARKUR-3: kamikaze çarpma şoku
     fsm.tick(Observation(shock_detected_p3=False))

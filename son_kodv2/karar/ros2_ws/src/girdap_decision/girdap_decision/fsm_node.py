@@ -268,9 +268,9 @@ class FSMNode(Node):
         self._sub_imu = self.create_subscription(
             Imu, "/mavros/imu/data", self._on_imu, sensor_data_qos()
         )
-        self._sub_gate = self.create_subscription(
-            Bool, "/perception/gate_passed", self._on_gate_passed, 10
-        )
+        # 🔴 16.08.2026: `/perception/gate_passed` aboneliği KALDIRILDI —
+        # gelen HERHANGİ bir True İLK kapıda PARKUR3'e atlatıyordu (P1+P2 gider).
+        # P2→P3 artık waypoint ilerlemesinden (mission_complete + renk yüklü).
         # Görev yöneticisi tüm waypoint'leri bitirdi → TAMAMLANDI terminal (F12.2).
         # Video senaryosu (tek parkur, kamikaze yok) buradan temiz durur.
         self._sub_complete = self.create_subscription(
@@ -533,33 +533,13 @@ class FSMNode(Node):
             self._parkur.confirm_impact()
             self._emit_parkur_transition()
 
-    def _on_gate_passed(self, msg: Bool) -> None:
-        """Perception duba ikilisi geçiş tespiti → PARKUR2→PARKUR3 tetiği.
-
-        🔴 **AÇIK TUZAK — bir yayıncı eklenmeden ÖNCE çözülmeli.**
-        Burası gelen HERHANGİ bir `True`'yu "Parkur-2'nin SON ikilisi geçildi"
-        sayıp `MissionFSM`'i doğrudan PARKUR3'e (kamikaze) atar → **ilk kapıda**
-        Parkur-2 yarıda kesilir; md 5.5.2.4'ün *"en az iki duba ikilisi"* şartı
-        sağlanmaz ve md 657 gereği Parkur-3'ün **145 puanı hiç açılmaz**.
-
-        ⚠ Bugün **canlı bir arıza DEĞİL**: `/perception/gate_passed`'i üreten
-        gerçek bir yayıncı yok — algı katmanı bunu tam bu yüzden bilerek kapalı
-        tutuyor (`GATE_PASSED_YAYINLA=False`) ve `yarisma_simulasyonu.py`
-        sahtedir. Ama "yayıncıyı açalım" diyen ilk kişi Parkur-2'yi kırar.
-        `GateFollower.passed_gate_count` (B3) bağlanmadan önce sıra bunda.
-
-        İki yol var, seçim yapılmadı:
-          **A)** Tetiği bırak ama **şartname sayısını** şart koş: geçiş ancak
-             sayaç ≥ 2 iken kabul edilsin. Basit; ama P3'ü kendi kapı
-             sayacımıza bağlar → algı zinciri suda doğrulanmamışken (B0 açık,
-             YOLO modeli yok) tek bir yanlış negatif 145 puanı götürür.
-          **B)** Geçişi **waypoint ilerlemesinden** sür (§14.8: *"P2→P3 = son P2
-             noktası VE büyük duba görüldü"*), sayacı yalnız **kanıt/telemetri**
-             olarak kullan. Şartnameye daha yakın; `ParkurTransitionLogic`
-             zaten waypoint-index tabanlı, yani altyapı var.
-        """
-        if msg.data:
-            self._obs.last_gate_passed_p2 = True
+    # 🔴 16.08.2026 — `_on_gate_passed` KALDIRILDI (abonesi de).
+    # Gelen HERHANGİ bir True'yu "P2'nin SON ikilisi geçildi" sayıp FSM'i
+    # doğrudan PARKUR3'e atıyordu ⇒ **ilk kapıda** kamikaze açılır, P1+P2
+    # sessizce giderdi. Kendi notu iki yol öneriyordu ve "seçim yapılmadı"
+    # diyordu; B yolu (waypoint ilerlemesi) FAZ 1'de uygulandı:
+    #   mission_complete + p3_bekleniyor → PARKUR3
+    # Şartname s.20: P2 bitiş şartı zaten "son görev noktasına ulaşmak".
 
     def _on_mission_complete(self, msg: Bool) -> None:
         """Görev yöneticisi tüm waypoint'leri bitirdi → TAMAMLANDI terminal.
@@ -768,8 +748,6 @@ class FSMNode(Node):
             new_state = self._fsm.state          # başladıysa PARKUR1 yayınlansın
 
         # Tek atış sinyalleri tüketildiğinde sıfırla
-        if self._obs.last_gate_passed_p2 and new_state is MissionState.PARKUR3:
-            self._obs.last_gate_passed_p2 = False
         if self._obs.shock_detected_p3 and new_state is MissionState.TAMAMLANDI:
             self._obs.shock_detected_p3 = False
 
