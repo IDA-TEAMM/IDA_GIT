@@ -324,24 +324,102 @@ class FFAyar(Node):
                 "salinim": salinim, "puan": puan}, None
 
     # ── geri yükleme
+    def _baglam_gecerli_mi(self):
+        """rclpy bağlamı hâlâ ayakta mı — servis çağırmadan ÖNCE sorulur."""
+        try:
+            return rclpy.ok()
+        except Exception:
+            return False
+
+    def _taze_baglamla_geri_yaz(self):
+        """🔴 SON ÇARE: rclpy kapandıysa YENİ bağlam açıp geri yaz.
+
+        NEDEN VAR (17.08.2026'da CANLI ÖLÇÜLDÜ — `ayar_20260817_001622.log`):
+        `KillSignal=SIGINT` (ya da Ctrl-C) geldiğinde rclpy'nin KENDİ sinyal
+        işleyicisi bağlamı bizim `except` bloğumuz koşmadan ÖNCE geçersiz
+        kılıyor. Sonuç: geri yükleme üç denemesinin DOKUZU da
+            "failed to check service availability: rcl node's context is invalid"
+        ile düştü ve araç yalnız günlüğe *"ELLE YAZ"* yazabildi.
+
+        O koşuda zararsızdı (0/4 adımında iptal, hiç aday yazılmamıştı) ama
+        süpürme ORTASINDA aynı şey olsaydı FC **son denenen aday değerinde**
+        (örn. FF=0,80) kalırdı — üstelik sahada SSH yok, o satırı okuyacak
+        kimse de yok. Yani "acil durumda geri al" yolunun kendisi acil
+        durumda çalışmıyordu.
+
+        Bu yüzden geri yükleme, bağlam ölmüşse SIFIRDAN kurulur.
+        """
+        import rclpy.context
+        ctx = rclpy.context.Context()
+        rclpy.init(context=ctx)
+        try:
+            dugum = Node("otomatik_ff_ayar_geri", context=ctx)
+            ist = dugum.create_client(
+                SetParameters, f"{PARAM_DUGUM}/set_parameters")
+            if not ist.wait_for_service(timeout_sec=15.0):
+                raise RuntimeError("taze bağlamda da param servisi yok")
+            for ad, d in self._ozgun.items():
+                p = Parameter(name=ad, value=ParameterValue(
+                    type=ParameterType.PARAMETER_DOUBLE, double_value=float(d)))
+                gel = ist.call_async(SetParameters.Request(parameters=[p]))
+                rclpy.spin_until_future_complete(dugum, gel, timeout_sec=10.0)
+                s = gel.result()
+                ok = bool(s and s.results and s.results[0].successful)
+                self._bas("GERİ", f"{'✅' if ok else '🔴'} (taze bağlam) "
+                                  f"{ad} = {d:.3f}")
+            dugum.destroy_node()
+        finally:
+            try:
+                rclpy.shutdown(context=ctx)
+            except Exception:
+                pass
+
     def geri_yukle(self):
         if self._geri_yuklendi or not self._ozgun:
             return
         self._geri_yuklendi = True
-        for ad, d in self._ozgun.items():
-            for deneme in range(3):
-                try:
-                    if self.kuru:
-                        self._bas("GERİ", f"(KURU) {ad} = {d:.3f}")
-                    else:
+
+        if self.kuru:
+            for ad, d in self._ozgun.items():
+                self._bas("GERİ", f"(KURU) {ad} = {d:.3f}")
+            self._bas("GERİ", f"özgün değerler dosyada: {self._yedek_yolu}")
+            return
+
+        # 1. yol: mevcut bağlam hâlâ geçerliyse normal yazma
+        kalan = dict(self._ozgun)
+        if self._baglam_gecerli_mi():
+            for ad, d in list(kalan.items()):
+                for deneme in range(3):
+                    try:
                         self._yaz(ad, d, zorla=True)
                         self._bas("GERİ", f"{ad} = {d:.3f} ✅")
-                    break
-                except Exception as e:
-                    self._bas("GERİ", f"🔴 {ad} geri yüklenemedi ({deneme+1}/3): {e}")
-                    time.sleep(1.0)
-            else:
-                self._bas("GERİ", f"🔴🔴 {ad} GERİ YÜKLENEMEDİ — ELLE YAZ: {d}")
+                        kalan.pop(ad, None)
+                        break
+                    except Exception as e:
+                        self._bas("GERİ",
+                                  f"🔴 {ad} geri yüklenemedi ({deneme+1}/3): {e}")
+                        if not self._baglam_gecerli_mi():
+                            self._bas("GERİ", "bağlam ÖLDÜ — taze bağlama "
+                                              "geçiliyor")
+                            break
+                        time.sleep(1.0)
+        else:
+            self._bas("GERİ", "rclpy bağlamı zaten geçersiz (SIGINT) — "
+                              "doğrudan taze bağlam")
+
+        # 2. yol: bağlam öldüyse SIFIRDAN kur
+        if kalan:
+            try:
+                self._taze_baglamla_geri_yaz()
+                kalan.clear()
+            except Exception as e:
+                self._bas("GERİ", f"🔴 taze bağlam da başarısız: {e}")
+
+        for ad, d in kalan.items():
+            self._bas("GERİ", f"🔴🔴 {ad} GERİ YÜKLENEMEDİ — ELLE YAZ: {d}")
+        if kalan:
+            self._bas("GERİ", "ELLE:  ros2 param set /mavros/param <AD> <DEĞER>"
+                              "   (ROS_DOMAIN_ID=42 ROS_LOCALHOST_ONLY=1)")
         self._bas("GERİ", f"özgün değerler dosyada: {self._yedek_yolu}")
 
     # ── bekleme kipi (servis olarak açılışta koşarken)
