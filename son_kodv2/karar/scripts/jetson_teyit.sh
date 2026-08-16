@@ -49,10 +49,45 @@ else
 fi
 D=/etc/systemd/system/girdap-karar.service.d
 if [[ -d $D ]]; then
-  n=$(ls -1 $D/*.conf 2>/dev/null | wc -l)
   ls -1 $D/*.conf 2>/dev/null | sed 's/^/     drop-in: /'
-  (( n > 1 )) && ht "BİRDEN FAZLA drop-in — yarisma.conf ile parkur1.conf AYNI ANDA KURULMAZ"
+  # 🔴 16.08 DÜZELTME — eski kontrol `drop-in sayısı > 1` diyordu ve DOĞRU
+  # yapılandırmada da ateşliyordu: 10-cift-yigin.conf + 20-oncelik.conf zaten
+  # KALICI, üstüne profil drop-in'i gelince sayı hep ≥3 oluyor. Yani alarm
+  # her koşuda yanıyordu ⇒ okuyan kişi onu gürültü sayıp geçiyor
+  # ("bir alarm her zaman yanıyorsa alarm değildir"). Asıl sorulacak soru
+  # sayı değil, İKİ PROFİLİN BİRDEN kurulu olup olmadığı.
+  y=$([[ -f $D/girdap-karar-yarisma.conf ]] && echo 1 || echo 0)
+  p=$([[ -f $D/girdap-karar-parkur1.conf ]] && echo 1 || echo 0)
+  if (( y && p )); then
+    ht "yarisma.conf İLE parkur1.conf AYNI ANDA KURULU — ikisi aynı anda kurulmaz"
+  elif (( y )); then
+    ok "profil: YARIŞMA (girdap-karar-yarisma.conf)"
+  elif (( p )); then
+    uy "profil: PARKUR-1 testi (girdap-karar-parkur1.conf) — yarışma günü DEĞİŞTİR"
+  else
+    uy "profil drop-in'i YOK — hardware.yaml tabanıyla koşuyor"
+  fi
   grep -h 'GIRDAP_CONFIG_OVERLAY' $D/*.conf 2>/dev/null | sed 's/^/     /'
+
+  # 🔴 16.08'de ÖLÇÜLDÜ — yarışma profili tek başına algı↔karar hattını KESER.
+  # `ROS_LOCALHOST_ONLY=1` DDS keşfini loopback'e hapseder; bayrağı OLMAYAN
+  # servisler AYRI keşif dünyasında kalır. Karar bayraklı, algı bayraksızken
+  # `/perception/buoys` karar tarafına HİÇ ulaşmaz ⇒ kapı takibi yok, sınıflı
+  # engel yok ⇒ P1+P2 = 0. Belirtisi yok: planning_node "engel haritası HİÇ
+  # gelmedi" der, ama aynı satır LiDAR takılı değilken de basılıyor.
+  if (( y )); then
+    eksik=""
+    for s in girdap-algi girdap-livox girdap-rosbag girdap-saat-gec; do
+      systemctl show $s -p Environment 2>/dev/null \
+        | grep -q 'ROS_LOCALHOST_ONLY=1' || eksik="$eksik $s"
+    done
+    if [[ -n $eksik ]]; then
+      ht "ROS_LOCALHOST_ONLY EKSİK:$eksik → algı↔karar AYRI keşif dünyasında, /perception/buoys ULAŞMAZ (P1+P2=0, belirtisiz)"
+      echo "     düzelt: sudo cp girdap-yarisma-localhost.conf /etc/systemd/system/<servis>.service.d/"
+    else
+      ok "ROS_LOCALHOST_ONLY dört servise de kurulu (algı↔karar aynı dünyada)"
+    fi
+  fi
 else
   uy "drop-in dizini yok → overlay YOK"
   echo "     ℹ 11.08 sonrası bu ARTIK KRİTİK DEĞİL: hardware.yaml yarışma tabanı oldu"
