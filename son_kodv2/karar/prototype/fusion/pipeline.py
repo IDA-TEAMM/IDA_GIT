@@ -55,6 +55,13 @@ _log = logging.getLogger(__name__)
 _EARTH_R = 6378137.0
 
 
+# GPS prior'unu mevcut key'e bagladigimizda olusan konum hatasi, olcumun
+# kendi sigma'sinin bu kesrini asiyorsa YENI KEY acilir. 0,2 = "hatanin
+# katkisi olcumun gurultusunun besde birinden kucukse ihmal edilebilir".
+# Sabit bir mesafe DEGIL, olcumun belirsizligine gore olceklenen bir oran.
+GPS_KEY_BAYATLIK_PAYI = 0.2
+
+
 @dataclass
 class FusionPipelineConfig:
     """Boru hattı ayarları. ROS 2 parametre arayüzünden aynı isimle gelir."""
@@ -244,9 +251,39 @@ class FusionPipeline:
             self._cos_lat0 = math.cos(math.radians(lat))
             return
 
-        # Bekleyen IMU integrasyonu varsa önce flush et — latest_key güncel olsun
-        if self._t_since_flush > 1e-6:
-            self._flush(force=True)
+        # 🔴 17.08.2026 — KEYFRAME THROTTLE'INI GPS EZİYORDU.
+        #
+        # Eskiden burada koşulsuz `_flush(force=True)` vardı ve `force=True`
+        # `keyframe_period_s` kapısını ATLAR. Tasarım GPS'i **1 Hz** varsaymış
+        # (CLAUDE.md: "IMU 50 Hz + GPS 1 Hz" → 11.416 key'i 6.000'e indirdi).
+        # Cihazda MAVROS GPS'i **9,9 Hz** veriyor (ölçüldü: gps=50/5 sn) ⇒ her
+        # fix yeni key açıyordu ve throttle'ın kazancı sahada TAMAMEN geri
+        # veriliyordu — hata basılmadan.
+        #
+        # ÖLÇÜLDÜ (gerçek boru hattı, 8 dk görev, IMU 10 Hz):
+        #     GPS  1,0 Hz →  2.016 key ·  36,6 s hesap  (%7,6 çekirdek)
+        #     GPS  9,9 Hz →  4.799 key · 112,9 s hesap  (%23,5 çekirdek)
+        #   throttle'ın vaat ettiği: 2.400 key ⇒ gerçekte 2× fazla, 3,1× pahalı
+        # Cihazda karşılığı: fusion_node %16 → %40 (11 dk), 1,5 saatte %85-96.
+        #
+        # ÇÖZÜM — eşik SABİT YAZILMIYOR, ölçümün KENDİ belirsizliğinden
+        # türetiliyor (§"koruma, koruduğu değerden TÜRETİLİR"):
+        # Prior'u mevcut key'e bağlamak, key'in bayatlığı kadar konum hatası
+        # katar. O hata ölçümün kendi σ'sının yanında ihmal edilebilirse yeni
+        # key AÇMAYA DEĞMEZ; değilse açılır. Böylece:
+        #   * tek-nokta fix (σ=2,5 m) → eşik 50 cm; 0,6 m/s'de 0,83 s ⇒
+        #     throttle yönetir, key sayısı tasarımdaki gibi kalır
+        #   * RTK (σ=5 cm)           → eşik 1 cm; neredeyse her fix'te flush ⇒
+        #     ESKİ DAVRANIŞ birebir korunur, hassasiyet kaybı YOK
+        # Yani düzeltme fix kalitesine göre kendini ayarlıyor; RTK gelirse
+        # hiçbir şey değişmiyor.
+        kaymis = self._acc_delta.translation()
+        mesafe = float(math.hypot(float(kaymis[0]), float(kaymis[1])))
+        sigma = self.cfg.gps_sigma_xy if sigma_xy is None else float(sigma_xy)
+        if mesafe > GPS_KEY_BAYATLIK_PAYI * max(sigma, 1e-9):
+            self._flush(force=True)      # bayatlık ölçümün yanında ANLAMLI
+        else:
+            self._flush()                # vakti geldiyse açar, gelmediyse AÇMAZ
 
         x, y = self._latlon_to_enu(lat, lon)
         self._sm.add_gps(self._sm.latest_key, x, y, sigma_xy=sigma_xy)

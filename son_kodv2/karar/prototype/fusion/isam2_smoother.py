@@ -37,7 +37,7 @@ GTSAM API: 4.2+. ISAM2 inkremental — sadece etkilenen düğümler relinearize.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import gtsam
@@ -144,8 +144,20 @@ class ISAM2Smoother:
         self._graph = gtsam.NonlinearFactorGraph()
         self._initial = gtsam.Values()
 
-        # Son ISAM2 tahmini — add_odometry'nin compose'u için referans
-        self._latest_estimate: Optional[gtsam.Values] = None
+        # 🔴 17.08.2026 — TAM `calculateEstimate()` SICAK YOLDAN KALDIRILDI.
+        # GTSAM dokümanı: "If only a single variable is needed, it is faster
+        # to call calculateEstimate(const KEY&)". Ölçüldü (bu Jetson):
+        #     N=250  → tam 0,11 ms · tek-anahtar 0,098 ms
+        #     N=6000 → tam 3,87 ms · tek-anahtar 0,008 ms   ⇒ tek-anahtar DÜZ
+        # Tam sorgu N ile 36× büyüyor, tek-anahtar N'den BAĞIMSIZ.
+        #
+        # ⚠️ Ama `_latest_estimate` yalnız hız için tutulmuyordu: tekilleşme
+        # kurtarması onu "son ÇÖZÜLMÜŞ hâl" ÇAPASI olarak kullanıyor. Graf
+        # tekilleştiğinde ISAM2'ye canlı sorgu atmak yeniden patlar — 11.08'de
+        # fusion_node'u öldüren zincir buydu. O yüzden tam anlık görüntü
+        # yerine, çözülmüş son (anahtar, poz) İKİLİSİ saklanıyor: kurtarma
+        # için yeterli, ve geriye doğru tarama gerektirmediği için daha kesin.
+        self._son_iyi: Optional[Tuple[int, gtsam.Pose2]] = None
         self._latest_key: int = -1
 
         # Önceden hesaplanmış gürültü modelleri (her faktör için yeniden
@@ -318,8 +330,8 @@ class ISAM2Smoother:
         if self._initial.exists(prev_key):
             prev_pose = self._initial.atPose2(prev_key)
         else:
-            assert self._latest_estimate is not None  # initialize sonrası garantili
-            prev_pose = self._latest_estimate.atPose2(prev_key)
+            assert self._son_iyi is not None  # initialize sonrası garantili
+            prev_pose = self._isam.calculateEstimatePose2(prev_key)
 
         self._initial.insert(new_key, prev_pose.compose(delta))
         return self._latest_key
@@ -413,11 +425,14 @@ class ISAM2Smoother:
             # GTSAM Python: graph.resize(0) yerine yeni instance — taşınabilir
             self._graph = gtsam.NonlinearFactorGraph()
             self._initial = gtsam.Values()
-            self._latest_estimate = self._isam.calculateEstimate()
+            self._son_iyi = (
+                self._latest_key,
+                self._isam.calculateEstimatePose2(X(self._latest_key)),
+            )
         except RuntimeError as exc:
             if not _is_indeterminant(exc):
                 raise
-            if self._latest_estimate is None:
+            if self._son_iyi is None:
                 # Çözülmüş tek bir tahmin bile yok → çapa yok. Buradan
                 # "kurtarmak" uydurma bir poz üretmek olurdu; sessiz yanlış
                 # veri, gürültülü çökmeden daha tehlikelidir.
@@ -433,15 +448,15 @@ class ISAM2Smoother:
         node İKİNCİ kez ölür — yani kurtarma, kurtardığı arızayı bir adım
         öteler.
         """
-        son = self._latest_key
-        while son >= 0 and not self._latest_estimate.exists(X(son)):
-            son -= 1
-        if son < 0:
+        if self._son_iyi is None:
             raise RuntimeError(
                 "tekillesme kurtarilamadi: cozulmus hicbir anahtar yok"
             )
-
-        capa = self._latest_estimate.atPose2(X(son))
+        # Eskiden burada `_latest_estimate` içinde GERİYE DOĞRU taranıyordu
+        # ("hangi anahtar çözülmüş?"). Artık çözülmüş son anahtar ZATEN
+        # kayıtlı — tarama gereksiz ve saklanan ikili daha kesin: tam olarak
+        # başarıyla çözülen anahtarı verir, "Values'ta var" olanı değil.
+        son, capa = self._son_iyi
         self._isam = gtsam.ISAM2(self._isam_params())
         self._graph = gtsam.NonlinearFactorGraph()
         self._initial = gtsam.Values()
@@ -452,30 +467,36 @@ class ISAM2Smoother:
         self._isam.update(self._graph, self._initial)
         self._graph = gtsam.NonlinearFactorGraph()
         self._initial = gtsam.Values()
-        self._latest_estimate = self._isam.calculateEstimate()
+        self._son_iyi = (son, self._isam.calculateEstimatePose2(X(son)))
         self._recovery_count += 1
 
     # ----- queries -----
 
     def current_pose(self) -> gtsam.Pose2:
-        """En son anahtarın smooth tahminini döndür."""
-        if self._latest_estimate is None:
+        """En son anahtarın smooth tahminini döndür — TEK ANAHTAR sorgusu.
+
+        Maliyeti N'den bağımsız (ölçüldü: 6000 key'de 0,008 ms).
+        """
+        if self._son_iyi is None:
             raise RuntimeError("Henüz update edilmedi")
-        return self._latest_estimate.atPose2(X(self._latest_key))
+        return self._isam.calculateEstimatePose2(X(self._latest_key))
 
     def pose_at(self, key_index: int) -> gtsam.Pose2:
-        if self._latest_estimate is None:
+        if self._son_iyi is None:
             raise RuntimeError("Henüz update edilmedi")
-        return self._latest_estimate.atPose2(X(key_index))
+        return self._isam.calculateEstimatePose2(X(key_index))
 
     def all_poses(self) -> List[gtsam.Pose2]:
-        """Tüm geçmiş Pose2 tahminlerini sırayla döndür."""
-        if self._latest_estimate is None:
+        """Tüm geçmiş Pose2 tahminlerini sırayla döndür.
+
+        ⚠️ SOĞUK YOL: burada tam `calculateEstimate()` BİLEREK kullanılıyor —
+        zaten bütün pozlar isteniyor. Sıcak yolda (`current_pose`) çağrılmaz;
+        çağrılırsa 17.08'de kaldırılan O(N) maliyeti geri gelir.
+        """
+        if self._son_iyi is None:
             return []
-        return [
-            self._latest_estimate.atPose2(X(i))
-            for i in range(self._latest_key + 1)
-        ]
+        est = self._isam.calculateEstimate()
+        return [est.atPose2(X(i)) for i in range(self._latest_key + 1)]
 
     def all_xy_psi(self) -> np.ndarray:
         """Smooth yörüngeyi (N, 3) numpy array olarak döndür: [x, y, psi]."""
