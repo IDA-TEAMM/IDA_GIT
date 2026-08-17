@@ -20,6 +20,8 @@ L="$L_KOK"
 mkdir -p "$L"; rm -f "$L"/*.log; : > "$L/gol.pgids"
 
 KAPI="${1:-8}"; ACIK="${2:-12.0}"; ARALIK="${3:-4.0}"; ENGEL="${4:-4}"
+# 5./6. argüman: dalga bozucusu (yanal sürüklenme m/s · yaw rad/s) — 0 = kapalı
+DALGA="${5:-0.0}"; DALGA_YAW="${6:-0.0}"
 
 basla() {
     local ad="$1"; shift
@@ -29,11 +31,12 @@ basla() {
 
 basla sanal_gol python3 "$S/sanal_gol.py" --ros-args \
     -p kapi_sayisi:="$KAPI" -p kapi_acikligi_m:="$ACIK" \
-    -p kapi_araligi_m:="$ARALIK" -p engel_sayisi:="$ENGEL"
+    -p kapi_araligi_m:="$ARALIK" -p engel_sayisi:="$ENGEL" \
+    -p dalga_genlik_mps:="$DALGA" -p dalga_yaw_rps:="$DALGA_YAW"
 sleep 2
 basla fusion   ros2 run girdap_decision fusion_node --ros-args --params-file "$P" -p use_isam2:=false
 basla mission  ros2 run girdap_decision mission_manager_node --ros-args --params-file "$P" -p mission_source:=fc
 basla fsm      ros2 run girdap_decision fsm_node --ros-args --params-file "$P"
 basla bridge   ros2 run girdap_decision mavros_bridge_node --ros-args --params-file "$P"
 basla planning ros2 run girdap_decision planning_node --ros-args --params-file "$P" -p use_rrt:=true
-echo "sanal göl: $KAPI kapı · açıklık $ACIK m · aralık $ARALIK m · $ENGEL engel"
+echo "sanal göl: $KAPI kapı · açıklık $ACIK m · aralık $ARALIK m · $ENGEL engel · dalga ${DALGA} m/s yanal + ${DALGA_YAW} rad/s yaw"

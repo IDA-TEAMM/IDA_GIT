@@ -107,6 +107,26 @@ class SanalGol(Node):
             (2.0 if i % 2 else -2.0, son_y + 6.0 + i * 4.0) for i in range(m)
         ]
 
+        # --- Dalga bozucusu (varsayılan KAPALI) ---------------------------
+        # 🔑 Genlik "Deniz Durumu-2 ölçümü" İDDİASI DEĞİL, §0.8a'nın kuralıyla
+        # **seyir hızının oranı** olarak verilir (bu modelde seyir 1,05 m/s;
+        # 0,18 m/s ≈ %17 yanal sürüklenme). `dynamics.yaml`'ın `wave.Fx_amp=5.0`
+        # sayısı BAYAT — 30 N/motor'luk hayali tekneye ait, buraya konamaz.
+        # ⚠ Yön DÜNYA çerçevesinde: parkur ekseni +y boyunca uzuyor (kapı
+        # ortaları `gy = 6 + i·aralık`), o yüzden varsayılan yön **+x = YANAL**
+        # — yani koridordan dışarı iten bileşen. PDÇ ölçümü için doğru eksen bu.
+        self.declare_parameter("dalga_genlik_mps", 0.0)
+        self.declare_parameter("dalga_frekans_hz", 0.5)      # ~2 s periyot
+        self.declare_parameter("dalga_yon_rad", 0.0)         # +x = yanal
+        self.declare_parameter("dalga_yaw_rps", 0.0)         # rad/s, yaw bozucu
+        self.declare_parameter("dalga_yaw_frekans_hz", 0.3)  # ~3,3 s periyot
+        self.dalga_genlik = float(self.get_parameter("dalga_genlik_mps").value)
+        self.dalga_frekans = float(self.get_parameter("dalga_frekans_hz").value)
+        self.dalga_yon = float(self.get_parameter("dalga_yon_rad").value)
+        self.dalga_yaw = float(self.get_parameter("dalga_yaw_rps").value)
+        self.dalga_yaw_frekans = float(
+            self.get_parameter("dalga_yaw_frekans_hz").value)
+
         # --- Tekne durumu (ENU, göl orijinine göre) -----------------------
         self.x, self.y, self.psi = 0.0, 0.0, math.radians(90.0)   # burun kuzeye
         self.u, self.r = 0.0, 0.0
@@ -189,6 +209,18 @@ class SanalGol(Node):
         self.psi += self.r * dt
         self.x += self.u * math.cos(self.psi) * dt
         self.y += self.u * math.sin(self.psi) * dt
+
+        # Dalga: kontrolcünün YENEMEDİĞİ dış sürüklenme. Kuvvet değil doğrudan
+        # konum/yön bozucusu olarak eklenir — bu model itki değil hız
+        # entegrasyonu yapıyor, "kuvvet" eklemek uydurma bir kütle gerektirirdi.
+        if self.dalga_genlik != 0.0:
+            surukle = self.dalga_genlik * math.sin(
+                2.0 * math.pi * self.dalga_frekans * self.t)
+            self.x += surukle * math.cos(self.dalga_yon) * dt
+            self.y += surukle * math.sin(self.dalga_yon) * dt
+        if self.dalga_yaw != 0.0:
+            self.psi += self.dalga_yaw * math.sin(
+                2.0 * math.pi * self.dalga_yaw_frekans * self.t + 1.0) * dt
 
         imu = Imu()
         imu.header.stamp = self.get_clock().now().to_msg()
