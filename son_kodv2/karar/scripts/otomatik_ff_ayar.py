@@ -170,6 +170,22 @@ FF_OLCULEN = 0.52
 
 VERI_ZAMAN_ASIMI = 3.0                # sn — veri kesilirse iptal
 BEKLEME_BILDIRIM_SN = 60.0            # servis kipinde "hâlâ bekliyorum" aralığı
+
+# 🔴 17.08 SABAHI, REBOOT'TA ÖLÇÜLDÜ — iki ayrı kusur, aynı sonuç:
+#    "araç yaşıyor sanılıyor, oysa çoktan ölmüş".
+#
+# ① MAVROS ayağa kalkar kalkmaz `get_parameters` servisi VARDIR ama FC'den
+#    parametreleri henüz indirmemiştir; okuma `PARAMETER_NOT_SET` (tip 0)
+#    döner. Araç bunu "FC'de yok" sanıp İPTAL etti:
+#      İPTAL 🔴 RuntimeError: ATC_STR_RAT_FF beklenmedik tip (0) — FC'de var mı?
+#    Boot'tan 29 sn sonra. Yani araç, tekne suya girmeden saatler önce ölmüştü.
+# ② Servis `Restart=on-failure`; araç 0 ile çıktığı için systemd de
+#    diriltmedi. Kimse fark etmez — "enabled" görünür, `is-active` inactive.
+#
+# Kural: parametrenin HENÜZ GELMEMİŞ olması bir hata değil, bir BEKLEME
+# sebebidir. Gerçekten yok olsaydı FC'ye bağlıyken de sürekli boş dönerdi.
+PARAM_BEKLEME_AZAMI = 90.0            # elle koşumda: bu kadar bekle, sonra söyle
+YENIDEN_DENE_SN = 30.0                # servis kipinde iki deneme arası
 GUNLUK_DIZIN = os.path.expanduser("~/girdap_logs/ff_ayar")
 
 
@@ -197,6 +213,11 @@ class FFAyar(Node):
         self._rc10 = None
         self._ozgun = {}
         self._geri_yuklendi = False
+        # 🔑 "İş bitti mi?" sorusunun TEK doğru cevabı. `_geri_yuklendi` bu
+        # soruyu cevaplayamaz: hem "yazdım, bilerek bıraktım" hem "geri
+        # yükledim" hâlinde True olur. Servis kipi buna bakarak ölmeli ya da
+        # beklemeye dönmeli.
+        self._ayar_yazildi = False
 
         os.makedirs(GUNLUK_DIZIN, exist_ok=True)
         damga = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -240,8 +261,17 @@ class FFAyar(Node):
             self._rc10 = m.channels[9]
 
     # ── parametre erişimi
-    def _oku(self, ad, zaman_asimi=20.0):
+    def _oku(self, ad, zaman_asimi=20.0, hosgor=False):
+        """FC parametresini oku.
+
+        `hosgor=True` iken "henüz gelmedi" hâli **hata değil** — None döner.
+        Ayrım önemli: servis yoksa/yanıt boşsa/tip NOT_SET ise parametre
+        gerçekten yok DEĞİL, MAVROS henüz FC'den indirmemiş olabilir
+        (bkz. PARAM_BEKLEME_AZAMI'nin başındaki not).
+        """
         if not self._get.wait_for_service(timeout_sec=zaman_asimi):
+            if hosgor:
+                return None
             raise RuntimeError(
                 f"{PARAM_DUGUM}/get_parameters servisi yok — MAVROS ayakta mı? "
                 "ROS_LOCALHOST_ONLY servisle AYNI olmalı (bkz. başlık)")
@@ -249,13 +279,58 @@ class FFAyar(Node):
         rclpy.spin_until_future_complete(self, gel, timeout_sec=zaman_asimi)
         s = gel.result()
         if s is None or not s.values:
+            if hosgor:
+                return None
             raise RuntimeError(f"{ad} OKUNAMADI (yanıt yok)")
         v = s.values[0]
         if v.type == ParameterType.PARAMETER_DOUBLE:
             return float(v.double_value)
         if v.type == ParameterType.PARAMETER_INTEGER:
             return float(v.integer_value)
+        if hosgor:
+            return None
         raise RuntimeError(f"{ad} beklenmedik tip ({v.type}) — FC'de var mı?")
+
+    def _ozgunleri_oku(self, adlar):
+        """Özgün değerleri, FC'den inene kadar SABIRLA oku.
+
+        🔴 Bu metot 17.08 sabahının hatasının doğrudan karşılığı: eskiden
+        `_oku` boş dönünce araç İPTAL ediyordu ve bir daha hiç koşmuyordu.
+        Artık bekliyor — çünkü beklemenin riski YOK: bu noktada hiçbir
+        parametreye dokunulmamıştır.
+
+        Servis kipinde süresiz bekler (tekne saatler sonra suya girebilir);
+        elle koşumda PARAM_BEKLEME_AZAMI sonunda **sebebi söyleyerek** düşer.
+        """
+        deger = {}
+        son_bildirim = -BEKLEME_BILDIRIM_SN
+        t0 = time.monotonic()
+        while True:
+            for ad in adlar:
+                if ad not in deger:
+                    v = self._oku(ad, hosgor=True)
+                    if v is not None:
+                        deger[ad] = v
+            if len(deger) == len(adlar):
+                gecen = time.monotonic() - t0
+                if gecen > 2.0:
+                    self._bas("ADIM", f"FC parametreleri geldi ({gecen:.0f} sn "
+                                      "beklendi — MAVROS indirme gecikmesi)")
+                return deger
+            gecen = time.monotonic() - t0
+            if not self.bekle and gecen > PARAM_BEKLEME_AZAMI:
+                eksik = [a for a in adlar if a not in deger]
+                raise RuntimeError(
+                    f"{', '.join(eksik)} {gecen:.0f} sn'de FC'den gelmedi. "
+                    "MAVROS bağlı mı (`ros2 topic echo /mavros/state`)? "
+                    "Servis kipinde (--bekle) bu bir hata değildir, beklenir.")
+            if gecen - son_bildirim >= BEKLEME_BILDIRIM_SN:
+                son_bildirim = gecen
+                eksik = [a for a in adlar if a not in deger]
+                self._bas("ADIM", f"⏳ FC parametreleri bekleniyor ({gecen:.0f} sn) "
+                                  f"— eksik: {', '.join(eksik)}")
+            rclpy.spin_once(self, timeout_sec=0.2)
+            time.sleep(0.8)
 
     def _yaz(self, ad, deger, zorla=False):
         if ad == PARAM_FF and not (FF_ALT <= deger <= FF_UST) and not zorla:
@@ -540,8 +615,7 @@ class FFAyar(Node):
         if self._mod is None:
             raise RuntimeError("/mavros/state gelmiyor — MAVROS/FC bağlı değil")
 
-        for ad in (PARAM_FF, PARAM_P, PARAM_I):
-            self._ozgun[ad] = self._oku(ad)
+        self._ozgun.update(self._ozgunleri_oku((PARAM_FF, PARAM_P, PARAM_I)))
         with open(self._yedek_yolu, "w", encoding="utf-8") as f:
             json.dump(self._ozgun, f, indent=2)
         self._bas("ADIM", f"özgün: FF={self._ozgun[PARAM_FF]:.3f} "
@@ -678,6 +752,7 @@ class FFAyar(Node):
                         self._yaz(PARAM_P, p_o)
                         self._yaz(PARAM_I, p_o)
                         self._geri_yuklendi = True
+                        self._ayar_yazildi = True
                         self._bas("SONUÇ", "🔴 Bir sonraki koşumda DOĞRULA: "
                                            "PIVOT oranı %71'den düştü mü?")
                         return
@@ -704,9 +779,58 @@ class FFAyar(Node):
         self._yaz(PARAM_P, p_iyi)
         self._yaz(PARAM_I, p_iyi)
         self._geri_yuklendi = True          # bilerek bırakıyoruz
+        self._ayar_yazildi = True
         self._bas("SONUÇ", f"yazıldı. Özgün değerler: {self._yedek_yolu}")
         self._bas("SONUÇ", "🔴 FC'de KALICI olması için parametreler yazıldı; "
                            "yeniden başlatmadan önce bir koşumla DOĞRULA.")
+
+
+def _servis_dongusu(dugum):
+    """SERVİS KİPİ: ayar YAZILANA kadar yaşamaya devam et.
+
+    🔴 NEDEN (17.08 sabahı, reboot'ta ölçüldü): eski akış ilk hatada
+    `except Exception` → geri yükle → **çık** idi. `Restart=on-failure` olan
+    servis, süreç 0 ile çıktığı için diriltmedi. Sonuç: araç boot'tan 29 sn
+    sonra öldü ve tekne suya girdiğinde **ortada yoktu** — üstelik
+    `systemctl is-enabled` hâlâ "enabled" diyordu.
+
+    Bu, kendi kural setimizdeki *"bir kapının var olması açılabildiği anlamına
+    gelmez"* dersinin kontrol tarafındaki karşılığı.
+
+    Döngü şu hâllerde devam eder: FC parametreleri henüz gelmedi · tekne
+    disarm · GUIDED değil · görev yeterli dönüş komutu vermedi · gürültü
+    kapısı sonucu ilan edemedi. Hepsinde özgün değerler GERİ YÜKLENMİŞTİR;
+    beklemenin riski yoktur.
+
+    Yalnız iki şey döngüyü bitirir: ayarın YAZILMASI (iş bitti) ve SIGTERM
+    (systemd durduruyor).
+    """
+    dene = 0
+    while True:
+        dene += 1
+        try:
+            dugum.calistir()
+            if dugum._ayar_yazildi:
+                dugum._bas("SONUÇ", f"✅ ayar yazıldı ({dene}. denemede) — servis çıkıyor")
+                return
+            dugum._bas("ADIM", "ölçüm sonuç vermedi — koşullar yeniden beklenecek")
+        except KeyboardInterrupt as e:
+            dugum._bas("İPTAL", f"{e or 'Ctrl-C'} — özgün değerlere dönülüyor")
+            dugum.geri_yukle()
+            if str(e) in ("SIGTERM", ""):
+                return                      # systemd durduruyor: itiraz etme
+        except Exception as e:
+            dugum._bas("İPTAL", f"🔴 {type(e).__name__}: {e} — geri yükleniyor")
+            dugum.geri_yukle()
+        dugum._bas("ADIM", f"🔁 servis kipi — {YENIDEN_DENE_SN:.0f} sn sonra "
+                           f"{dene + 1}. deneme")
+        try:
+            time.sleep(YENIDEN_DENE_SN)
+        except KeyboardInterrupt:
+            return
+        # Sonraki deneme temiz başlasın: özgün değerler yeniden okunacak.
+        dugum._geri_yuklendi = False
+        dugum._ozgun = {}
 
 
 def main():
@@ -742,24 +866,13 @@ def main():
                 dugum._ozgun = json.load(f)
             dugum._geri_yuklendi = False
             dugum.geri_yukle()
+        elif a.bekle:
+            _servis_dongusu(dugum)
         else:
             dugum.calistir()
     except KeyboardInterrupt as e:
         dugum._bas("İPTAL", f"{e or 'Ctrl-C'} — özgün değerlere dönülüyor")
         dugum.geri_yukle()
-        if a.bekle and str(e) not in ("SIGTERM", ""):
-            # 🔑 Servis kipinde ayar yarıda kaldıysa (disarm / acil durdurma /
-            #    bağlantı kopması) SÜREÇ ÖLMEZ: özgün değerler geri yüklendi,
-            #    koşullar yeniden oluşunca baştan dener. Sahada tekne bir kez
-            #    disarm olunca ayarın bir daha hiç koşmaması istenmiyor.
-            dugum._bas("ADIM", "🔁 servis kipi — koşullar yeniden bekleniyor")
-            dugum._geri_yuklendi = False
-            dugum._ozgun = {}
-            try:
-                dugum.calistir()
-            except KeyboardInterrupt as e2:
-                dugum._bas("İPTAL", f"{e2} — geri yükleniyor")
-                dugum.geri_yukle()
     except Exception as e:
         dugum._bas("İPTAL", f"🔴 {type(e).__name__}: {e} — geri yükleniyor")
         dugum.geri_yukle()
