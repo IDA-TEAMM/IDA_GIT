@@ -131,6 +131,23 @@ OTURMA_SN = 4.0                       # parametre yazıldıktan sonra bekleme
 ASGARI_ORNEK = 40                     # bu kadar uyarımlı örnek yoksa ÖLÇME
 UYARIM_ESIK = math.radians(5.0)       # |istenen| bunun üstündeyse "uyarım var"
 
+# ── ÖLÇÜLMÜŞ BAŞLANGIÇ DEĞERİ ──────────────────────────────────────────────
+# 🔑 NEDEN VAR (Eyüp kararı 17.08): "GUIDED'a kötü değerle başlamayalım."
+# Süpürme kullanılabilir bir fark bulamazsa (gürültü kapısı) ya da hiç
+# ölçülemezse, araç özgün 0,20'ye dönmek yerine ÖLÇÜLMÜŞ değeri yazar.
+# Tahmin DEĞİL — üç bağımsız yol, iki ayrı göl bandı, GUIDED-only:
+#     medyan(direksiyon/dönüş)   0,644 · 0,671
+#     regresyon eğimi            0,566 · 0,533
+#     sistem kimliklendirme 1/K  0,591   (K=1,693 rad/s, τ=1,42 s)
+#   + bağımsız doğrulama R=v/ω : gerçek yarıçap 3,86 m ↔ TURN_RADIUS 1,0
+# Bant 0,53-0,67 ⇒ ORTA NOKTA 0,60. Yüklü 0,20 bunun ÜÇTE BİRİ.
+#
+# ⚠️ SINIRI: bu değer, ölçümün 0,15-0,50 m/s hız bandından geldi ve
+# `WP_SPEED` o zamandan beri değişti (Sude 17.08: 0,95→1,2). ArduPilot'ta FF
+# hız ölçekli ⇒ seyir hızında doğrulanmalı. Yine de 0,20'den İYİ bir
+# başlangıç: 0,20 ölçülen bandın çok altında, 0,60 içinde.
+FF_OLCULEN = 0.60
+
 VERI_ZAMAN_ASIMI = 3.0                # sn — veri kesilirse iptal
 BEKLEME_BILDIRIM_SN = 60.0            # servis kipinde "hâlâ bekliyorum" aralığı
 GUNLUK_DIZIN = os.path.expanduser("~/girdap_logs/ff_ayar")
@@ -621,14 +638,31 @@ class FFAyar(Node):
                                f"{gurultu:.3f}")
             self._bas("SONUÇ", f"en iyi ↔ ikinci farkı              : {fark:.3f}")
             if fark < gurultu:
-                self._bas("SONUÇ", "🔴 FARK GÜRÜLTÜDEN KÜÇÜK — SONUÇ İLAN "
+                self._bas("SONUÇ", "🔴 FARK GÜRÜLTÜDEN KÜÇÜK — SIRALAMA İLAN "
                                    "EDİLMİYOR.")
                 self._bas("SONUÇ", f"   FF={en_iyi['ff']:.2f} 'en iyi' göründü "
                                    f"ama bu sıralama tekrarlanabilir DEĞİL.")
-                self._bas("SONUÇ", "   Özgün değerlere dönülüyor. Daha uzun "
-                                   "pencere (--sure) ya da daha çok tur "
-                                   "(--tur) ile tekrar dene; ya da elle "
-                                   "kademeli ayarla (0,20→0,40→0,60).")
+                # 🔑 Özgün 0,20'ye dönmek yerine ÖLÇÜLMÜŞ değeri yaz:
+                # süpürme ayırt edemedi ama 0,20'nin ölçülen bandın (0,53-0,67)
+                # üçte biri olduğu AYRI ve daha güçlü bir kanıtla biliniyor.
+                ozgun_ff = self._ozgun.get(PARAM_FF, 0.0)
+                if abs(ozgun_ff - FF_OLCULEN) > 0.02:
+                    p_o = round(P_ORANI * FF_OLCULEN, 3)
+                    self._bas("SONUÇ", f"   ⇒ ÖLÇÜLMÜŞ değere geçiliyor: "
+                                       f"FF={FF_OLCULEN:.2f} P=I={p_o:.3f} "
+                                       f"(yüklü {ozgun_ff:.2f}). Süpürme "
+                                       "ayırt edemedi, ama bant ölçümü 3 "
+                                       "bağımsız yoldan bunu söylüyor.")
+                    try:
+                        self._yaz(PARAM_FF, FF_OLCULEN)
+                        self._yaz(PARAM_P, p_o)
+                        self._yaz(PARAM_I, p_o)
+                        self._geri_yuklendi = True
+                        self._bas("SONUÇ", "🔴 Bir sonraki koşumda DOĞRULA: "
+                                           "PIVOT oranı %71'den düştü mü?")
+                        return
+                    except Exception as e:
+                        self._bas("SONUÇ", f"🔴 yazılamadı ({e}) — özgüne dönülüyor")
                 self.geri_yukle()
                 return
             self._bas("SONUÇ", "✅ fark gürültü tabanının ÜSTÜNDE — sonuç "

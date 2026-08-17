@@ -135,6 +135,32 @@ BASAMAK_TOL = 0.10                       # ±%10 bandında sayılır
 BASAMAK_ORNEK = 40                       # kova başına asgari kararlı örnek
 BASAMAK_BILDIRIM_SN = 8.0
 
+# ── ÖLÇÜLMÜŞ BAŞLANGIÇ DEĞERLERİ (17.08, 4 oturum havuzu) ──────────────────
+# 🔑 NEDEN VAR: ölçüm yetersiz kalırsa GUIDED'a BİLİNEN-KÖTÜ değerle
+# girmeyelim. Bunlar tahmin DEĞİL — 11.218 kararlı-hâl örneği (eğri) ve
+# 295.782 ivme örneği (4 oturum, 15-16.08) üzerinden hesaplandı:
+#
+#   gaz %20 → 0,47 m/s   ·   %40 → 0,71   ·   %60 → 0,86   ·   %80 → 0,78
+#   birleşik eğri: v = 0,87 · u^0,41
+#   üs dört oturumda da tutarlı: 0,41 · 0,47 · 0,38 · 0,45
+#   ivme %95: 0,28 m/s²   ·   fren %95: 0,28 m/s²
+#
+# ⚠️ İVME SINIRINI DÜŞÜRMENİN YAN ETKİSİ (ArduPilot dokümanı):
+#   *"Azami ivmeler düşürülürse araç KÖŞELERİ DAHA ÇOK KESER"* — bağlayıcı
+#   kısıt `min(ATC_ACCEL_MAX, ATC_DECEL_MAX, ATC_TURN_MAX_G×9,81)`.
+#   Bizde TURN_MAX_G=0,6 ⇒ 5,9 m/s², yani ivme bağlayıcı olan.
+#   Kapıya yaklaşırken köşe kesmek DUBAYA ÇARPMAK olabilir (Ç2 cezası).
+#   Karşı argüman: tekne gerçekten 0,28 yapabiliyor; 1,0 yazmak planlayıcının
+#   YAPILAMAYACAK manevra planlaması demek (aşımın kaynağı). Ölçüme sadık
+#   kalınıyor ama ilk koşumda kapı yaklaşması GÖZLE İZLENMELİ.
+#
+# ⚠️ `ATC_DECEL_MAX = 0` EKSİK DEĞİL, GEÇERLİ VARSAYILAN: "ivme değerini
+#   yavaşlama için de kullan" demek. Ölçüm ivme≈fren (0,28↔0,28) olduğunu
+#   gösterdiği için SIFIR BIRAKMAK DOĞRU — doküman da öyle diyor.
+#   ⇒ Bu araç DECEL'i yalnız ivmeden BELİRGİN ayrıldığında yazar.
+BASLANGIC = {P_ACCEL: 0.30}          # ölçülen 0,28 → temkinli yukarı yuvarlama
+DECEL_AYRIM_ESIGI = 0.25             # fren ivmeden %25+ farklıysa DECEL yazılır
+
 
 def yuzdelik(v, p):
     s = sorted(v)
@@ -519,16 +545,35 @@ class PlantAyar(Node):
             ai, af = yuzdelik(poz, 95), yuzdelik(neg, 95)
             self._bas("ÖLÇÜM", f"ivme %95 {ai:.2f} (maks {max(poz):.2f}) · "
                                f"fren %95 {af:.2f} (maks {max(neg):.2f}) m/s²")
-            for ad, v in ((P_ACCEL, ai), (P_DECEL, af)):
-                if ad not in self._ozgun:
-                    self._bas("ÖLÇÜM", f"⚠️ {ad} FC'de yok — atlandı")
-                elif IVME_ALT <= v <= IVME_UST:
-                    yazilacak[ad] = round(v, 2)
-                else:
-                    self._bas("ÖLÇÜM", f"🔴 {ad}={v:.2f} sınır dışı — atlandı")
+            if P_ACCEL in self._ozgun and IVME_ALT <= ai <= IVME_UST:
+                yazilacak[P_ACCEL] = round(ai, 2)
+            else:
+                self._bas("ÖLÇÜM", f"🔴 {P_ACCEL}={ai:.2f} yazılamadı "
+                                   "(sınır dışı ya da FC'de yok)")
+            # DECEL yalnız ivmeden BELİRGİN ayrılırsa yazılır (0 = "ivmeyi kullan")
+            ayrim = abs(af - ai) / max(ai, 1e-9)
+            if ayrim < DECEL_AYRIM_ESIGI:
+                self._bas("ÖLÇÜM", f"✅ fren ≈ ivme (fark %{100*ayrim:.0f}) ⇒ "
+                                   f"{P_DECEL} SIFIR bırakılıyor (ArduPilot: "
+                                   "sıfır = 'ivme değerini kullan')")
+            elif P_DECEL in self._ozgun and IVME_ALT <= af <= IVME_UST:
+                yazilacak[P_DECEL] = round(af, 2)
+                self._bas("ÖLÇÜM", f"fren ivmeden %{100*ayrim:.0f} ayrılıyor ⇒ "
+                                   f"{P_DECEL} ayrıca yazılıyor")
 
         # ── ③ yaz
         self._bas("ADIM", "3/3 — yazma")
+        # ölçüm yetersizse ÖLÇÜLMÜŞ BAŞLANGIÇ değerine düş (bilinen-kötüden iyi)
+        for ad, v in BASLANGIC.items():
+            if ad in yazilacak or ad not in self._ozgun:
+                continue
+            if abs(self._ozgun[ad] - v) < 0.02:
+                continue
+            yazilacak[ad] = v
+            self._bas("ÖLÇÜM", f"⚠️ {ad} bu koşumda ölçülemedi — 17.08 havuzunun "
+                               f"ÖLÇÜLMÜŞ değeri yazılıyor: {v:.2f} "
+                               f"(yüklü {self._ozgun[ad]:.2f}). "
+                               "Tahmin değil: 295.782 ivme örneği, 4 oturum.")
         if not yazilacak:
             self._bas("SONUÇ", "🔴 HİÇBİR PARAMETRE YAZILMADI — ölçüm ölçütleri "
                                "sağlanmadı. Bu bir HATA DEĞİL: 'ölçemedim' demek, "
