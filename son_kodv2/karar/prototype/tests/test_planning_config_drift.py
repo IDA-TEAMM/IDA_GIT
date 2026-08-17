@@ -643,3 +643,62 @@ def test_edge_unutma_GECERSIZ_DEGERDE_DUGUM_OLMEZ():
     assert "isfinite(_kat)" in kaynak and "_kat > 0.0" in kaynak, (
         "edge_unutma_katsayisi geçerlilik denetimi YOK — 0 yazılırsa hafıza "
         "sessizce kapanır")
+
+
+# ────────────── orantılı pivot (17.08) ──────────────
+# 🔴 NEDEN: `pivot_orantili` YENİ bir davranış ve varsayılanı False olmalı —
+# yarışmaya 3 gün kala ölçülmemiş bir riski görev gününe taşımayalım. Bu
+# testler varsayılanı ve tabanın anlamını DONDURUYOR.
+_PIVOT_VARSAYILAN = "False"
+_PIVOT_TABAN = 0.30
+
+
+def test_pivot_orantili_VARSAYILAN_KAPALI():
+    """Varsayılan False = bang-bang, 17.08 öncesiyle BİT BİREBİR."""
+    kaynak = _planning_node_kaynagi()
+    m = re.search(r'declare_parameter\("pivot_orantili",\s*(\w+)\)', kaynak)
+    assert m, "pivot_orantili bildirimi bulunamadı"
+    assert m.group(1) == _PIVOT_VARSAYILAN, (
+        f"pivot_orantili varsayılanı {m.group(1)} — False olmalı. Değiştiren "
+        "kişi bu testi de bilerek değiştirsin (davranış değişimi sessiz olmasın).")
+
+
+def test_pivot_taban_OLCULEN_DEGER():
+    """Taban 0,30 — ölçümle seçildi, tahmin değil.
+
+    Ham ölçüm 0,035 çıkmıştı ama reddedildi: bırakma eşiğinde 0,8 °/s bırakır
+    ⇒ tekne fiilen durur, pivot HİÇ BİTMEZ.
+    """
+    kaynak = _planning_node_kaynagi()
+    m = re.search(r'declare_parameter\("pivot_taban",\s*([0-9.]+)\)', kaynak)
+    assert m, "pivot_taban bildirimi bulunamadı"
+    assert float(m.group(1)) == _PIVOT_TABAN, (
+        f"pivot_taban {m.group(1)} ≠ {_PIVOT_TABAN} — ölçülen değer değişti mi?")
+
+
+def test_pivot_itkisi_VARSAYILAN_BANG_BANG():
+    """Çekirdek: `orantili` verilmezse çıkış tam ±itki olmalı."""
+    import math as _m
+    from prototype.control.pivot_kapisi import pivot_itkisi
+    for h in (-3.0, -0.5, 0.0, 0.5, 3.0):
+        u = pivot_itkisi(h, 1.455)
+        assert abs(abs(u[0]) - 1.455) < 1e-9, (
+            f"varsayılan çıkış ölçeklenmiş ({u}) — bang-bang bozuldu")
+        assert u == pivot_itkisi(h, 1.455, orantili=False)
+
+
+def test_pivot_itkisi_ORANTILI_SINIRLARI():
+    """Orantılı kipte: tetik eşiğinde TAM, bırakma eşiğinde TABAN."""
+    import math as _m
+    from prototype.control.pivot_kapisi import pivot_itkisi
+    tam = pivot_itkisi(_m.radians(60), 1.455, orantili=True)
+    assert abs(abs(tam[1]) - 1.455) < 1e-6, "60°'de tam itki olmalı"
+    tb = pivot_itkisi(_m.radians(10), 1.455, orantili=True)
+    assert abs(abs(tb[1]) - 0.30 * 1.455) < 1e-6, "10°'de taban itkisi olmalı"
+    # 🔴 taban ALTINA inmemeli — inerse pivot hiç bitmez
+    kucuk = pivot_itkisi(_m.radians(2), 1.455, orantili=True)
+    assert abs(kucuk[1]) >= 0.30 * 1.455 - 1e-6, (
+        "taban altına inildi — tekne dönmez, pivot HİÇ BİTMEZ")
+    # yön işareti korunmalı
+    assert pivot_itkisi(_m.radians(30), 1.455, orantili=True)[1] > 0
+    assert pivot_itkisi(-_m.radians(30), 1.455, orantili=True)[1] < 0

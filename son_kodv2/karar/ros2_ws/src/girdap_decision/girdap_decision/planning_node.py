@@ -290,6 +290,16 @@ class PlanningNode(Node):
         #   Aynı katsayıyla İKİ koşu arasındaki fark = gürültü tabanı;
         #   2.0↔1.0 farkı o tabandan büyük değilse SONUÇ İLAN EDİLMEZ.
         self.declare_parameter("edge_unutma_katsayisi", 2.0)
+        # Pivot itkisi yön hatasıyla ÖLÇEKLENSİN mi?
+        # 🔴 VARSAYILAN False = 17.08 öncesi BANG-BANG davranışı, BİT BİREBİR.
+        # Ölçüldü (16.08 183648, 92 pivot atağı): atak süresi medyan 9,5 s
+        # (geometrik beklenti 2,3 s) · atakların %28'inde dönüş YÖNÜ değişiyor,
+        # %14'ünde salınım — bang-bang aşımının doğrudan izi.
+        # Ama aynı ölçüm dönüş hızının atak içinde 7,7→16,6 °/s ARTTIĞINI da
+        # gösterdi ⇒ birincil sebep FF'in üçte bir olması. Orantılı pivot
+        # İKİNCİL düzeltmedir; sahada A/B edilmeli, ölçüt PIVOT oranı (%71).
+        self.declare_parameter("pivot_orantili", False)
+        self.declare_parameter("pivot_taban", 0.30)
         # classified_obstacles aktığında obstacle_map'in yerine geçsin mi?
         # false → eski davranış (sınıfsız harita), kapı dubaları da engel kalır.
         self.declare_parameter("use_classified_obstacles", True)
@@ -421,6 +431,20 @@ class PlanningNode(Node):
                 f"varsayılan 2.0 kullanılıyor")
             _kat = 2.0
         self._edge_unutma_kat = _kat
+        self._pivot_orantili = bool(
+            self.get_parameter("pivot_orantili").value)
+        _tb = float(self.get_parameter("pivot_taban").value)
+        # 🔴 Taban 0,05'in altı: bırakma eşiğinde tekne fiilen DURUR ve pivot
+        #    HİÇ BİTMEZ (ölçüldü: 0,035'te 0,8 °/s kalıyor). Üstü 1,0: anlamsız.
+        if not (0.05 <= _tb <= 1.0) or not math.isfinite(_tb):
+            self.get_logger().warn(
+                f"pivot_taban={_tb} GEÇERSİZ (0,05-1,0 olmalı) — 0,30 kullanılıyor")
+            _tb = 0.30
+        self._pivot_taban = _tb
+        if self._pivot_orantili:
+            self.get_logger().info(
+                f"[pivot] ORANTILI kip AÇIK · taban {self._pivot_taban:.2f} "
+                f"⇒ bırakma eşiğinde ~%{100*self._pivot_taban:.0f} itki")
         self.get_logger().info(
             f"[kenar hafızası] unutma menzili = {self._harita_yaricapi:.0f} m "
             f"× {self._edge_unutma_kat:.2f} = "
@@ -2074,7 +2098,15 @@ class PlanningNode(Node):
             throttle_duration_sec=2.0,
         )
         return np.asarray(
-            pivot_itkisi(hata, float(self._pipe._dyn.p.max_thrust)), dtype=float
+            pivot_itkisi(
+                hata,
+                float(self._pipe._dyn.p.max_thrust),
+                orantili=self._pivot_orantili,
+                taban=self._pivot_taban,
+                tetik_derece=self._pivot.config.tetik_derece,
+                birak_derece=self._pivot.config.birak_derece,
+            ),
+            dtype=float,
         )
 
     def _publish_cmd_vel(self, u: np.ndarray, *, egim_sinirla: bool = True) -> None:

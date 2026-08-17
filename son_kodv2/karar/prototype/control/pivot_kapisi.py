@@ -148,14 +148,78 @@ class PivotKapisi:
         return (sx, sy) if math.hypot(sx - x, sy - y) >= 0.5 else None
 
 
-def pivot_itkisi(hata_rad: float, itki: float) -> List[float]:
+def pivot_itkisi(
+    hata_rad: float,
+    itki: float,
+    *,
+    orantili: bool = False,
+    taban: float = 0.30,
+    tetik_derece: float = 60.0,
+    birak_derece: float = 10.0,
+) -> List[float]:
     """Saf dönüş itkisi: ileri bileşen SIFIR, yalnız diferansiyel.
 
     `_publish_cmd_vel` çevirisi: `linear.x ∝ (u0+u1)` → toplam sıfır olmalı;
     `angular.z ∝ (u1-u0)` → pozitif hata (hedef saat yönünün TERSİNDE) için
     `u1 > u0`.
+
+    ─────────────────────────────────────────────────────────────────────
+    `orantili=False` (VARSAYILAN) → eski BANG-BANG davranışı, BİT BİREBİR.
+    `orantili=True`  → itki yön hatasıyla ölçeklenir.
+    ─────────────────────────────────────────────────────────────────────
+
+    🔴 NEDEN ORANTILI SEÇENEĞİ VAR (17.08 bant ölçümü + literatür):
+
+    Bang-bang kontrolün bilinen kusuru: *"ara kontrol seviyeleri olmadan
+    sistem HEDEFE YAKLAŞIRKEN BİLE tam aktüasyon uygular, bu da hedefi
+    aşmasına ve DÖNGÜYE girmesine neden olur."* ArduPilot'un kendi pivot
+    çözümü de orantılıdır (`target_turn_rate = (steering/4500)·ACRO_TURN_RATE`).
+
+    Bandımızda o imza ÖLÇÜLDÜ (16.08 183648, 92 pivot atağı, GUIDED):
+        atak süresi     : medyan 9,5 s · %90 73,3 s · maks 265 s
+        geometrik beklenti (50° / 21,8 °/s) : 2,3 s      ⇒ 4-32 KAT uzun
+        atak içinde dönüş YÖNÜ değişimi (aşımın doğrudan izi):
+            ≥1 kez : 24/87 = %28
+            ≥2 kez : 12/87 = %14   ← salınım
+    Orantılı kontrolde bu ~0 olmalıydı.
+
+    ⚠️ AMA ÖLÇÜM İKİNCİ BİR ŞEY DE GÖSTERDİ — dönüş hızı profili:
+        ilk çeyrek 7,7 °/s → son çeyrek 16,6 °/s   (2,16 KAT ARTIYOR)
+    Bang-bang'de SABİT, orantılıda AZALAN olmalıydı. Artması, teknenin
+    komutu ancak yavaş yavaş yakaladığını gösteriyor ⇒ **birincil sebep
+    `ATC_STR_RAT_FF`'in üçte bir olması** (0,20 ↔ ölçülen 0,55).
+    ⇒ Orantılı pivot İKİNCİL bir düzeltmedir; FF düzeltilmeden tek başına
+      beklenen kazancı vermeyebilir.
+
+    📐 `taban` NEREDEN GELİYOR (ölçüldü, tahmin DEĞİL):
+    Teknenin gerçekten dönmeye başladığı en küçük direksiyon çıkışı, GUIDED
+    kesitlerinde 9.890 örnekle kova kova ölçüldü:
+        |direksiyon| 0,00-0,02 → medyan  2,4 °/s · >3°/s oranı %44
+        |direksiyon| 0,02-0,05 → medyan  4,2 °/s · >3°/s oranı %61  ← eşik
+        |direksiyon| 0,05-0,08 → medyan  7,6 °/s · >3°/s oranı %75
+    Ham eşik **0,035** çıktı ama o REDDEDİLDİ: `birak_derece`de (10°) yalnız
+    0,8 °/s bırakır ⇒ tekne fiilen durur, **pivot HİÇ BİTMEZ** — yeni bir
+    arıza sınıfı açardı (14.08'in *"dönmek yerine ileri-geri saldırıyordu"*
+    vakasının kardeşi).
+    **`taban = 0,30` seçildi:**
+        10° (bırakma) → kazanç 0,30 ⇒  6,5 °/s   — 0,05-0,08 bandı 7,6 °/s
+                                                    ürettiği için ULAŞILABİLİR
+        35°           → kazanç 0,52 ⇒ 14,2 °/s
+        60° (tetik)   → kazanç 1,00 ⇒ 21,8 °/s   — bang-bang ile AYNI
+    Aşım payı: 10°'de 6,5 °/s ⇒ 0,1 s'de 0,65° ⇒ bırakma eşiği aşılmaz.
+
+    ⛔ VARSAYILAN KAPALI: bu YENİ bir davranış ve suda sınanmadı. Yarışmaya
+    3 gün kala varsayılanı değiştirmek, ölçülmemiş bir riski görev gününe
+    taşımak olurdu. Sahada `--orantili` ile A/B edilebilir; ölçüt hazır:
+    `inhibit_reason`daki PIVOT oranı (%71) ve atak süresi (medyan 9,5 s).
     """
     a = abs(itki)
+    if orantili:
+        # hata bırakma eşiğindeyken `taban`, tetik eşiğinde tam itki
+        pay = max(1e-6, tetik_derece - birak_derece)
+        oran = (abs(math.degrees(hata_rad)) - birak_derece) / pay
+        kazanc = taban + (1.0 - taban) * min(1.0, max(0.0, oran))
+        a *= kazanc
     return [-a, a] if hata_rad >= 0.0 else [a, -a]
 
 
