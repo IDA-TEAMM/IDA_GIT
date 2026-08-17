@@ -1,0 +1,23 @@
+{
+  "_oku": "Bu dosya blob'un NASIL derlendiğini kaydeder. 3_kabul_testi.py KONTROL 0 blob'un sha256'sını buradaki kayıtla karşılaştırır: elle kopyalanmış, kaynağı belirsiz bir blob testi GEÇEMEZ. 17.08.2026'da yazıldı — çünkü derleme bayrağının düştüğü ancak blob dağıtıldıktan SONRA, hash arkeolojisiyle anlaşıldı.",
+  "blob": "yolo11n_duba_rvc2.blob",
+  "blob_sha256": "c4d69ec75132854a51d7388ab3f922bd3e415cd0446ed16b3706c75c984fceb2",
+  "blob_boyut": 5697816,
+  "nn_giris": 512,
+  "shaves": 4,
+  "openvino": "2022.1",
+  "data_type": "FP16",
+  "optimizer_params": [
+    "--scale_values=[255,255,255]",
+    "--mean_values=[0,0,0]",
+    "--reverse_input_channels"
+  ],
+  "onnx": "girdap_NIHAI_512.onnx",
+  "onnx_sha256": "2e74123d8bf851327abc67070a3dca15915ffc8630d2ad0f7be81eff3f9c6775",
+  "pt": "girdap_NIHAI_0816_1543/weights/best.pt (epoch 135)",
+  "pt_sha256": "9fc271798a5fdb88645de8244bb6e10040aafe0305ecbb25c27ff825d9877cf2",
+  "uretim_tarihi": "2026-08-17",
+  "uretim_yolu": "blobconverter.from_onnx (elle) — 16.08 blob'unun ölçek bayrağı eksikti, aynı ONNX doğru parametrelerle yeniden derlendi",
+  "onceki_blob_sha256": "6df2d644a0de42a22d50d5b3ae9179ebb9531b8282920cf0b7a8d5ad66874abc",
+  "onceki_blob_kusuru": "yalnız --reverse_input_channels ile derlenmişti; --scale_values/--mean_values yoktu ⇒ ağa 0..255 giriyordu (ölçüldü: karede 300 uydurma tespit, medyan güven 0,906)"
+}

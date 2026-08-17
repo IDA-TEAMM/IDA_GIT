@@ -1,6 +1,10 @@
 # algi — GİRDAP görüntü işleme katmanı (son_kodv2'nin algı ayağı)
 
-**Kaynak repo:** github.com/EyupEker1/girdap-ida-algi — commit `605d713`
+**Kaynak repo:** github.com/EyupEker1/girdap-ida-algi — commit `a466a20`
+(17.08.2026 senkronu. ⚠️ 16-17.08 gecesi iş **bu aynaya** yapılmıştı ve kaynak
+`b3b3fea`'da donmuştu — 23 dosya ayrışmıştı; kaynağa geri alındı
+[`girdap-ida-algi@61f507f`], sonra normal yön yeniden kuruldu. Kural 7 iki
+yönlüdür: ayna güncel varsayılmaz, **kaynak da** güncel varsayılmaz.)
 **Kopya tarihi:** 2026-08-07 (bu klasör kaynağın **birebir aynası**; burada
 düzenleme yapılmaz, kaynak repoda yapılıp buraya yeniden kopyalanır)
 **Sorumlu:** Eyüp (görüntü işleme)

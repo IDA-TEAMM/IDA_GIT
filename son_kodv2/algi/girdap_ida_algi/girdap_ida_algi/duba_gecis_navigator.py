@@ -87,10 +87,12 @@ import rclpy
 
 try:                                  # paket içi saf mantık (kamerasız testli)
     from girdap_ida_algi import gecit_mantik as gm
+    from girdap_ida_algi import p3_hedef_bul as p3
     from girdap_ida_algi import oak_baglanti as ob
     from girdap_ida_algi import saat as st
 except ImportError:                   # dosya doğrudan çalıştırılırsa
     import gecit_mantik as gm
+    import p3_hedef_bul as p3
     import oak_baglanti as ob
     import saat as st
 # ⚠️ `ob` import'u 05.08 smoke testinde eklendi — daha önce YOKTU ama kod
@@ -659,6 +661,21 @@ def _sinif_indeksleri_coz(siniflar):
     return kenar, engel, True
 
 
+class _P3Aday:
+    """Saf OpenCV'nin bulduğu P3 hedef adayı (YOLO tespiti DEĞİL).
+
+    YOLO tespitiyle aynı alan adlarını taşır ki yayın döngüsü ikisini de aynı
+    şekilde işleyebilsin; farkı **rengi zaten bilmesi** (maskeden geldi, ayrıca
+    bbox kırpıp çözmeye gerek yok) ve **model güveni olmaması**.
+    """
+
+    __slots__ = ("cx", "cy", "w", "h", "z", "x", "renk")
+
+    def __init__(self, cx, cy, w, h, z, x, renk):
+        self.cx, self.cy, self.w, self.h = cx, cy, w, h
+        self.z, self.x, self.renk = z, x, renk
+
+
 class DubaNavigator(Node):
     def __init__(self):
         super().__init__("duba_gecis_navigator")
@@ -751,6 +768,15 @@ class DubaNavigator(Node):
         # süzgecine takılan tespitler. Her karede sıfırlanır (bayat hedef
         # yayınlamamak için).
         self._hedef_adaylari = []
+        #: `/perception/buoys`'a GERÇEKTEN yayınlanmış tespitlerin normalize
+        #: kutuları — P3 OpenCV vetosunun girdisi. 🔑 "YOLO'nun gördüğü her şey"
+        #: DEĞİL, "sistemin BİZİM DUBAMIZ dediği" kutular: hedef adayına
+        #: ayrılanlar buraya girmez. Yoksa OpenCV kendi bulduğu GERÇEK hedefi
+        #: veto ederdi — kırmızı hedef mono'da tam bu yola düşüyor
+        #: (`_mono_hedef_mi` kırmızıyı bilerek dışlıyor, yani hedef "normal
+        #: duba" olarak yayınlanır; onu veto listesine koyarsak OpenCV'nin
+        #: hedefi bulan TEK yolu da kapanırdı).
+        self._yayinlanan_kutular = []
         # Kare TEK YERDEN tazelenir (`_kare_tazele`); kayıt ve hedef adımı
         # ikisi de bunu okur. Numarayla takip: aynı kare iki kez işlenmesin,
         # ve biri diğerinin karesini "tüketmiş" olmasın.
@@ -788,7 +814,18 @@ class DubaNavigator(Node):
                       # ikisi de P3'ün sessizce çalışmadığı anlamına gelir.
                       "mono_hedef": 0,
                       # Ne stereo ne mono menzil üretilemedi → tespit atıldı.
-                      "menzil_yok": 0}
+                      "menzil_yok": 0,
+                      # SAF OpenCV'nin (YOLO'dan bağımsız) bulduğu P3 hedef
+                      # adayı. 🔑 Bu sayaç iki soruyu birden ayırıyor: YOLO
+                      # hedefi hiç görmediğinde (yeni model P3 hedefini
+                      # GÖRMEMEYİ öğrendi — etiketsiz P3 negatifleri) tek
+                      # üretici bu yol oluyor. Sahada 0 kalırsa P3'te hedef
+                      # HİÇ görülmüyor demektir; SSH yok, tek görünürlük bu.
+                      "p3_opencv": 0,
+                      # OpenCV adayı YOLO'nun "bizim duba" dediği yere denk
+                      # geldiği için elendi (veto). Ölçüm: kırmızı yanlış
+                      # adayların %95'i buraya düşüyor.
+                      "p3_veto": 0}
         # 🔴 2026-08-13: sessiz-ret alarmının ÖNCEKİ görüntüsü. Sayaçlar
         # KÜMÜLATİF (bilerek — toplamı sahada görmek istiyoruz) ama alarm
         # doğrudan onların sıfırdan büyük olmasına bakıyordu ⇒ ölçüldü:
@@ -961,6 +998,36 @@ class DubaNavigator(Node):
                 hyp.hypothesis.score = d.conf
                 det.results.append(hyp)
                 arr.detections.append(det)
+            # ── SAF OpenCV üreticisi (YOLO'dan bağımsız) ──────────────────
+            # Yukarıdaki adaylar YOLO kutularından türüyor; model P3 hedefini
+            # görmemeyi öğrendiği için o yol tek başına BOŞ kalabilir.
+            # Ayrıntı ve ölçümler: `_p3_opencv_adaylari` docstring'i.
+            for a in self._p3_opencv_adaylari(kare if kare_taze else None):
+                # Aynı cismi iki kez yayınlama: merkezi, YOLO'dan gelen bir
+                # adayın kutusunun içine düşüyorsa o zaten yayınlandı.
+                if any(abs(a.cx - d.cx) < max(d.w, a.w) / 2.0
+                       and abs(a.cy - d.cy) < max(d.h, a.h) / 2.0
+                       for d in self._hedef_adaylari):
+                    continue
+                det = Detection3D()
+                det.header = arr.header
+                det.bbox.center.position.x = a.z + KAMERA_OFSET_ILERI
+                det.bbox.center.position.y = -a.x
+                # 🔑 ÇAP 0,0 = "ÖLÇEMEDİM" — kasıtlı. Menzil Ø0,64 VARSAYARAK
+                # kurulduğu için ondan türetilen çap her zaman 0,64 çıkar
+                # (dairesel) ve tüketicide "ölçüm" gibi görünürdü.
+                # `hedef_secim.cap_makul_mu` 0'ı açıkça "iddia yok" sayıyor
+                # ⇒ kör eleme de olmuyor, sahte kanıt da üretmiyoruz.
+                det.bbox.size.x = 0.0
+                det.bbox.size.y = 0.0
+                hyp = ObjectHypothesisWithPose()
+                hyp.hypothesis.class_id = str(gm.HEDEF_RENK_KODU[a.renk])
+                # Saf OpenCV'nin model güveni YOKTUR. Doluluk oranını buraya
+                # yazmak onu "güven" gibi gösterirdi (tüketici `skor`u bugün
+                # kullanmıyor ama yarın sıralamada kullanabilir).
+                hyp.hypothesis.score = 0.0
+                det.results.append(hyp)
+                arr.detections.append(det)
             self.targets_pub.publish(arr)
             if arr.detections:
                 self._tani["hedef_yayin"] += len(arr.detections)
@@ -969,6 +1036,78 @@ class DubaNavigator(Node):
             # P3 geçici bir hatadan sonra kendini toparlayabilmeli.
             self.get_logger().warn(f"hedef yayını atlandı: {e}",
                                    throttle_duration_sec=5.0)
+
+    def _p3_opencv_adaylari(self, kare):
+        """SAF OpenCV ile P3 hedef adayları — **YOLO'dan bağımsız üretici**.
+
+        🔴 NEDEN GEREKLİ (yoksa P3'ün gözü yok):
+        Buraya kadarki hedef adayları **YOLO kutularından** türüyordu
+        (`buyuk_cisim_mi` / `_mono_hedef_mi`). Ama modelimiz 2 sınıflı ve
+        **P3 hedefini GÖRMEMEYİ öğrendi** (eğitim setinde etiketsiz P3
+        negatifleri var). YOLO hedefi hiç kutulamazsa o iki süzgeç de hiç
+        tetiklenmez ⇒ `/perception/targets` boş kalır ⇒ `hedef_sec` seçim
+        yapamaz ⇒ **P3 = 0**, hiçbir hata basılmadan. Bu yol o boşluğu
+        kapatıyor: renk maskeleri hedefi modelden bağımsız bulur.
+
+        🔑 İKİ DEDEKTÖR BİRBİRİNİ TAMAMLIYOR: YOLO *"bizim duba"*yı bilir,
+        OpenCV *"hedef rengi"*ni bulur, YOLO'nun **yayınladığı** kutular veto
+        edilir. Ölçüldü (16.08, gerçek kareler): kırmızı yanlış adayların
+        **%95'i** YOLO kutusuyla örtüşüyor — onlar zaten bizim dubalarımız.
+
+        ⚠️ VETO LİSTESİ = **yayınlanan** kutular, "YOLO'nun gördüğü her şey"
+        değil. Hedef adayına ayrılan tespitler dışarıda: kırmızı hedef
+        mono'da `_mono_hedef_mi`'den geçemediği için *normal duba* olarak
+        yayınlanır — onu veto listesine koysaydık OpenCV'nin hedefi bulan tek
+        yolunu da kapatırdık.
+
+        📏 ÖLÇÜM (17.08, 240 GERÇEK göl karesi, 512×512 deploy boyutu,
+        kadrajda hedef YOK): kare başına yanlış aday **vetosuz 0,267 →
+        vetolu 0,212**; renk kırılımı `kırmızı 3→0` · `siyah 8→2` ·
+        **`yeşil 53→49`**. Yeşilin kaynağı **kıyı bitkisinin su yüzeyindeki
+        yansıması** (gözle bakıldı) ve veto onu kesmiyor — konumla da
+        ayrılmıyor (medyan cy 0,84 = suyun içi), boyutla da (medyan alan 503 px
+        ↔ gerçek hedef 8 m'de 513 px). ⇒ **Hakem YEŞİL derse yanlış kilit
+        riski en yüksektir.** Eşikler BİLEREK değiştirilmedi: kanonik süpürme
+        yeşilde `doluluk 0,55 → 0,62`'nin yanlış alarmı 3 kat kestiğini ama
+        bulmayı **%88 → %73**'e düşürdüğünü ölçmüş; bu takas Eyüp'ün kararı,
+        elimizde tek bir gerçek hedef karesi yokken tek taraflı verilmez
+        (16.08 dersi: eşikleri kopyalayan ilk sürüm hedefin %81'ini elemişti).
+
+        Maliyet: 512×512'de **7,6 ms/kare** (bu PC, ölçüldü) ve yalnız
+        `HEDEF_HZ`=2 Hz'te koşar ⇒ Jetson'da 3-5 kat olsa bile tek çekirdeğin
+        ~%5'i. Kontrol döngüsünü **bloklayamaz**: ayrı süreç (algı node'u).
+        """
+        if kare is None or self._f_norm is None:
+            return []
+        h, w = kare.shape[:2]
+        if not h or not w:
+            return []
+        # Kapı modülün İÇİNDE (`hedef_bul_p3`): PARKUR3 dışında hiç koşmaz.
+        adaylar = p3.hedef_bul_p3(kare, self.son_gorev_durumu or "")
+        if not adaylar:
+            return []
+        veto_px = [(cx * w, cy * h, bw * w, bh * h)
+                   for (cx, cy, bw, bh) in self._yayinlanan_kutular]
+        # Örtüşme kuralı modülden alınıyor — burada YENİDEN YAZILMAZ; iki
+        # kopya ayrışırsa veto sessizce farklı davranır (tam da bu zincirde
+        # yaşanan sınıf: aynı tablonun iki kopyası ters düşmüştü).
+        kalan = [a for a in adaylar
+                 if not any(p3._ortusuyor(a, k) for k in veto_px)]
+        self._tani["p3_veto"] += len(adaylar) - len(kalan)
+        out = []
+        for a in kalan:
+            w_norm = a.w / float(w)
+            cx_norm = a.cx / float(w)
+            z = gm.mesafe_genislikten(w_norm, gm.HEDEF_CAP_M, self._f_norm)
+            if not z:                      # menzil kurulamadı → sessiz atma
+                continue
+            out.append(_P3Aday(
+                cx=cx_norm, cy=a.cy / float(h),
+                w=w_norm, h=a.h / float(h),
+                z=z, x=gm.yanal_konum(z, cx_norm, self._f_norm),
+                renk=a.renk))
+        self._tani["p3_opencv"] += len(out)
+        return out
 
     def _hedef_rengi_coz(self, kare, d):
         """Tespitin bbox'ını karede kırp, rengini çöz. Çözülemezse None."""
@@ -1175,6 +1314,7 @@ class DubaNavigator(Node):
         # 🔴 Her karede sıfırlanır: temizlenmezse eski hedefler birikir ve
         # tekne çoktan geçmiş bir hedefe nişan almaya devam eder.
         self._hedef_adaylari = []
+        yayinlanan = []
 
         for d in self.dubalar:
             # 🔴 BÜYÜK CİSİM SÜZGECİ (2026-08-11) — P3 hedef dubası bizim
@@ -1258,7 +1398,11 @@ class DubaNavigator(Node):
             p.orientation.z = DUBA_CAP / 2.0   # obstacle_map hack'i: z = yarıçap
             p.orientation.w = 1.0
             arr3d.poses.append(p)
+            # P3 OpenCV vetosunun girdisi — yalnız GERÇEKTEN yayınlananlar
+            # (yukarıdaki iki `continue` hedef adaylarını zaten ayırdı).
+            yayinlanan.append((d.cx, d.cy, d.w, d.h))
 
+        self._yayinlanan_kutular = yayinlanan
         self.buoys_pub.publish(arr)
         self.buoys3d_pub.publish(arr3d)
 

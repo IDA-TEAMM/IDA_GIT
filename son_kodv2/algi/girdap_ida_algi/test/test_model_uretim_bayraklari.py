@@ -70,16 +70,27 @@ def test_ZORUNLU_optimizer_bayraklari_yerinde():
     )
 
 
-def test_bayrak_optimizer_params_ICINDE_yorumda_degil():
-    """🪤 Bayrak yalnız yorum satırında geçiyorsa OpenVINO'ya GİTMEZ.
+def _liste_blogu(s: str) -> str:
+    """OpenVINO'ya GERÇEKTEN giden listenin gövdesi (yorum satırları elenmiş).
 
-    `--reverse_input_channels` kelimesi dosyada 'ZORUNLU' diye bir açıklamada
-    da geçebilir; asıl soru listeye girip girmediği. `optimizer_params=[...]`
-    bloğunu ayıklayıp orada arıyoruz — yorum satırları elenerek.
+    İki yazım da desteklenir:
+      · `optimizer_params=[...]`            (doğrudan)
+      · `params = [...]` + `optimizer_params=params`  (dolaylı — 17.08'den beri;
+        aynı liste PROVENANS.json'a da gittiği için tek kaynak olmalı)
+    🪤 Dolaylı yazıma geçilince bu test önce KIRILDI ve doğru yaptı: değişkenin
+    içeriğine bakmasaydı, bayrak listeden çıkarılsa bile yeşil verecekti.
     """
-    s = _metin()
     i = s.find("optimizer_params")
-    assert i >= 0, "optimizer_params listesi bulunamadı"
+    assert i >= 0, "optimizer_params bulunamadı"
+    kuyruk = s[i + len("optimizer_params"):].lstrip(" =")
+    if not kuyruk.startswith("["):                      # dolaylı: değişken adı
+        ad = re.match(r"[A-Za-z_][A-Za-z0-9_]*", kuyruk)
+        assert ad, "optimizer_params'a ne verildiği çözülemedi"
+        i = s.find(f"{ad.group(0)} = [")
+        assert i >= 0, (
+            f"optimizer_params={ad.group(0)} deniyor ama '{ad.group(0)}' "
+            "listesi betikte tanımlı değil"
+        )
     # ⚠ Basit `\[(.*?)\]` regex'i BURADA ÇALIŞMAZ: değerlerin kendisi köşeli
     # parantez içeriyor (`--scale_values=[255,255,255]`) ⇒ tembel eşleşme ilk
     # iç `]`'de kesiyor ve bayrağı göremiyordu (17.08'de bu test onu yakaladı).
@@ -95,13 +106,59 @@ def test_bayrak_optimizer_params_ICINDE_yorumda_degil():
                 son = k
                 break
     assert son is not None, "optimizer_params listesi kapanmıyor"
-    blok = "\n".join(
+    return "\n".join(
         satir for satir in s[bas:son].splitlines()
         if not satir.lstrip().startswith("#")
     )
-    assert "--reverse_input_channels" in blok, (
-        "--reverse_input_channels yalnız yorumda/belgede geçiyor, "
-        "optimizer_params LİSTESİNE girmiyor ⇒ OpenVINO'ya hiç gitmez"
+
+
+def test_bayraklar_LISTENIN_ICINDE_yorumda_degil():
+    """🪤 Bayrak yalnız yorum satırında geçiyorsa OpenVINO'ya GİTMEZ.
+
+    🔴 17.08.2026 — bu test ÜÇ bayrağı birden denetliyor, çünkü o gün
+    dağıtılmış blob'da **`--scale_values` düşmüştü** (reverse vardı). Yani
+    "listede bir bayrak var" görmek yetmiyor; biri düşünce diğerinin varlığı
+    yanlış güven veriyor. Ölçüm: ölçek düşerse ağa 0..255 girer ve karede 300
+    uydurma tespit çıkar (max_det doyumu) ⇒ /perception/buoys çöp.
+    """
+    blok = _liste_blogu(_metin())
+    eksik = [f"{b} ({n})" for b, n in ZORUNLU.items() if b not in blok]
+    assert not eksik, (
+        "Bayrak yalnız yorumda/belgede geçiyor, OpenVINO'ya giden LİSTEDE yok:\n  "
+        + "\n  ".join(eksik)
+    )
+
+
+def test_GIRIS_SABIT_YAZILMAZ_deploydan_turetilir():
+    """🔴 Giriş boyutu `NN_GIRIS`'ten okunmalı — sabit yazılırsa bayatlar.
+
+    Yaşandı: 12.08'de deploy 416 → 512 oldu, bu betikte `GIRIS=416` KALDI
+    (17.08'de bulundu). Bu betikle üretilen blob 416 olur, preview 512
+    gönderir ⇒ node'un kendi uyarısıyla "çöp tespit", hata basılmadan.
+    Kural (12.08 dersi): **koruma, koruduğu değerden türetilmeli.**
+    """
+    s = _metin()
+    assert re.search(r"GIRIS=.*NN_GIRIS|NN_GIRIS.*\n.*GIRIS=", s) or \
+        ("NN_GIRIS" in s and re.search(r'GIRIS="\$\(', s)), \
+        "GİRİŞ boyutu duba_gecis_navigator.NN_GIRIS'ten türetilmiyor"
+    assert not re.search(r"^\s*GIRIS=[0-9]+", s, re.M), \
+        "GİRİŞ boyutu SABİT yazılmış — deploy değişince sessizce bayatlar"
+
+
+def test_PROVENANS_json_uretiliyor():
+    """Üretim, blob'un sha256'sını PROVENANS.json'a yazmalı.
+
+    🔴 NEDEN: derleme parametreleri blob çıktısından okunamıyor. 17.08'de
+    dağıtılmış bir blob'un parametreleri ancak blobconverter cache hash'i
+    kaba kuvvetle yeniden üretilerek anlaşıldı. Kayıt üretim anında düşmezse
+    "bu blob nasıl derlendi" sorusunun cevabı yine kalmaz.
+    """
+    s = _metin()
+    assert "PROVENANS.json" in s, "üretim betiği PROVENANS.json yazmıyor"
+    assert "blob_sha256" in s, "PROVENANS.json'a blob sha256'sı yazılmıyor"
+    assert '"optimizer_params": params' in s, (
+        "provenans, derlemede kullanılan listeyi DEĞİL kendi kopyasını yazıyor "
+        "— ikisi ayrışırsa provenans yanlış güven verir"
     )
 
 

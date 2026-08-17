@@ -28,7 +28,52 @@ ap.add_argument("--kare", help="cihazin passthrough'undan alinmis kare")
 a = ap.parse_args()
 
 print("=" * 68)
-print("KONTROL 1 — numShaves == 4")
+print("KONTROL 0 — PROVENANS (blob'un NASIL derlendigi)")
+print("=" * 68)
+# 🔴 17.08.2026'da eklendi. O gune kadar bu betik "blob --reverse_input_channels
+# ILE derlendi" cumlesini SABIT METIN olarak basiyordu; dagitilan blob'da
+# --scale_values EKSIK oldugu halde test GECTI. Derleme parametreleri blob'un
+# ciktisindan OKUNAMIYOR (shave/giris metadata'si ve config.json bilinen IYI
+# blob'da da ayni gorunuyor) ⇒ tek yol uretim anindaki kaydi denetlemek.
+# Kayit `model_uret.sh` tarafindan otomatik yaziliyor: elle kopyalanmis,
+# kaynagi belirsiz bir blob bu kontrolu GECEMEZ.
+ZORUNLU_BAYRAK = ["--scale_values", "--mean_values", "--reverse_input_channels"]
+prov_yolu = os.path.join(os.path.dirname(os.path.abspath(a.blob)), "PROVENANS.json")
+prov = None
+try:
+    import hashlib
+    prov = json.load(open(prov_yolu))
+    h = hashlib.sha256()
+    with open(a.blob, "rb") as f:
+        for parca in iter(lambda: f.read(1 << 20), b""):
+            h.update(parca)
+    blob_sha = h.hexdigest()
+    print(f"  blob sha256 = {blob_sha[:16]}…")
+    print(f"  kayit       = {str(prov.get('blob_sha256'))[:16]}…")
+    if blob_sha != prov.get("blob_sha256"):
+        hata.append(
+            "blob sha256'si PROVENANS.json ile TUTMUYOR — bu blob'un nasil "
+            "derlendigi BILINMIYOR (kayitsiz blob sahaya cikmaz)")
+    else:
+        print("  ✅ blob, kayitli derlemenin ta kendisi")
+    eksik = [b for b in ZORUNLU_BAYRAK
+             if not any(b in p for p in prov.get("optimizer_params", []))]
+    print(f"  optimizer_params = {prov.get('optimizer_params')}")
+    if eksik:
+        hata.append(f"derlemede ZORUNLU bayrak(lar) yok: {eksik} — "
+                    "olcek dusesse aga 0..255 girer (karede 300 uydurma tespit), "
+                    "kanal takasi dusesse recall %96,8 -> %43")
+    else:
+        print("  ✅ ucu de derlemede var (olcek + mean + kanal takasi)")
+except FileNotFoundError:
+    hata.append(f"PROVENANS.json YOK ({prov_yolu}) — blob'un derleme kaydi "
+                "olmadan sahaya cikilmaz; `scripts/model_uret.sh` onu uretir")
+except Exception as e:
+    hata.append(f"PROVENANS.json okunamadi: {e}")
+
+print()
+print("=" * 68)
+print("KONTROL 1 — numShaves == 4 + giris boyutu deploy ile AYNI")
 print("=" * 68)
 # 🔴 Fazla shave = model HIC YUKLENMEZ (hiz kaybi degil, sert ret).
 #    depthai 2.30'da superblob YOK -> shave export aninda donuyor, sahada telafi yok.
@@ -40,6 +85,18 @@ try:
         hata.append(f"numShaves {b.numShaves} (4 OLMALI) — cihazda model yuklenmez")
     else:
         print("  ✅ 4 shave")
+    # 🔴 Giris boyutu blob'un KENDI metadata'sindan okunuyor (metin degil).
+    # preview 512 ↔ blob 416 olursa node'un kendi uyarisiyla "cop tespit"
+    # cikar ve hicbir hata basilmaz. IMGSZ deploy NN_GIRIS ile ayni tutulur.
+    for ad, t in b.networkInputs.items():
+        d = list(t.dims)
+        print(f"  giris '{ad}' = {d}")
+        if IMGSZ not in d:
+            hata.append(f"blob girisi {d}, deploy NN_GIRIS={IMGSZ} — "
+                        "olcek uyumsuzlugu, tespitler cop olur")
+        if prov and prov.get("nn_giris") not in (None, IMGSZ):
+            hata.append(f"PROVENANS nn_giris={prov.get('nn_giris')} ↔ "
+                        f"deploy NN_GIRIS={IMGSZ} — biri bayat")
 except ImportError:
     uyari.append("depthai kurulu degil — KONTROL 1 Jetson'da tekrarlanmali")
     print("  ⚠️  depthai yok, atlandi")
@@ -86,10 +143,15 @@ print("=" * 68)
 print("""
   KANAL SIRASI — model RGB bekler (ultralytics img[::-1]), kamera BGR gonderir
      (duba_gecis_navigator.py:406). Ceviren olmazsa recall %96,8 -> %43,0 (olculdu).
-  ✅ 10.08 UYGULANDI: blob '--reverse_input_channels' ILE derlendi
-     (sha256 5726819a...31871b9c). Kamera BGR kalir => sartname Dosya-1 mp4'u
-     dogru renkte. 🔴 (A) ve (B) BIRLIKTE UYGULANMAZ - cift cevirme geri alir.
-  🚨 Saha kurtarma (internetsiz): blob yanlissa deploy'da setColorOrder(RGB).
+  ⚠️ BU BASLIK ARTIK IDDIA ICERMIYOR: bayragin uygulanip uygulanmadigi
+     KONTROL 0'da (PROVENANS.json) DENETLENIYOR. Eskiden burada "10.08
+     UYGULANDI" diye SABIT METIN vardi ve 17.08'de dagitilan bozuk blob bu
+     testten gecti — cumle blob'a degil, gecmise bakiyordu.
+  🔬 Burada kalan is BASKA: blob SIKISTIRMASI siniflari cokertiyor mu
+     (turuncu <-> sari). Bunu yalniz cihaz karesi gosterir.
+  🚨 Saha kurtarmasi (internetsiz) `setColorOrder(RGB)` YALNIZ provenans
+     'reverse yok' diyorsa uygulanir — bayrak zaten varken uygulanirsa CIFT
+     CEVIRME olur ve recall %43'e duser.
   🔬 CIHAZDA DOGRULAMA: passthrough'dan kare al, ayni kareyi PC'de .pt ile kostur.
      Tespit sayisi yari yariya dusuyorsa KANAL SIRASI TERS demektir.
 """)
