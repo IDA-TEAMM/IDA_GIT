@@ -57,6 +57,55 @@ from prototype.mapping.bev_renderer import (
 )
 
 
+def hizli_xy_seyrelt(msg: "PointCloud2", seyrelt: int) -> Optional[np.ndarray]:
+    """PointCloud2 → (M,2) float64 x/y — ÖNCE seyreltilmiş, tek `frombuffer`.
+
+    Ön koşullar tutmazsa **None** döner ve çağıran eski `read_points` yoluna
+    düşer. "Hızlı ama bazen sessizce yanlış" bir yol istemiyoruz.
+
+    🔴 NEDEN (17.08.2026, gerçek Livox mesajıyla ölçüldü):
+    eski yol noktaları ÖNCE tamamen ayrıştırıp SONRA seyreltiyordu, üstelik
+    dönüşümü **nokta başına Python döngüsüyle** yapıyordu:
+        read_points + [govde_to_dunya(...) for ...]  →  4,82 ms/mesaj
+        bu fonksiyon                                 →  0,07 ms/mesaj  (72×)
+    Çıktı **bit-birebir aynı** ölçüldü (maks |fark| = 0,000001 m).
+    Kazanç mütevazı (10 Hz'de çekirdeğin ~%5'i) ama bedeli sıfır.
+
+    ⚠️ ÖN KOŞULLAR — hepsi ölçülebilir, hiçbiri varsayım değil:
+      * `is_bigendian` False (bayt sırası ters olsaydı float'lar çöp okunurdu)
+      * x ve y alanları FLOAT32 (datatype 7) — tipi alandan OKUNUYOR, varsayılmıyor
+      * `row_step == width * point_step` (düzenli bulutta satır dolgusu olabilir;
+        Livox'ta height=1 ama kural burada yazılı)
+      * `data` uzunluğu `point_step`'in tam katı
+    Dolgu/`offset` sorunu YOK: bayt görünümü `point_step` adımıyla dilimlendiği
+    için alanlar arası dolgu doğal olarak atlanıyor.
+    """
+    if seyrelt < 1 or msg.is_bigendian:
+        return None
+    nokta_adim = int(msg.point_step)
+    if nokta_adim <= 0 or len(msg.data) % nokta_adim != 0:
+        return None
+    if int(msg.row_step) != int(msg.width) * nokta_adim:
+        return None
+    ofset = {}
+    for f in msg.fields:
+        if f.name in ("x", "y"):
+            if int(f.datatype) != 7 or int(f.count) != 1:   # 7 = FLOAT32
+                return None
+            ofset[f.name] = int(f.offset)
+    if "x" not in ofset or "y" not in ofset:
+        return None
+    if any(o + 4 > nokta_adim for o in ofset.values()):
+        return None
+
+    bayt = np.frombuffer(msg.data, dtype=np.uint8).reshape(-1, nokta_adim)
+    alt = bayt[::seyrelt]                       # 🔑 ÖNCE seyrelt, SONRA ayrıştır
+    x = alt[:, ofset["x"]:ofset["x"] + 4].copy().view(np.float32).ravel()
+    y = alt[:, ofset["y"]:ofset["y"] + 4].copy().view(np.float32).ravel()
+    gecerli = np.isfinite(x) & np.isfinite(y)   # read_points(skip_nans=True) karşılığı
+    return np.column_stack((x[gecerli], y[gecerli])).astype(np.float64)
+
+
 def govde_to_dunya(
     px: float, py: float, arac: Tuple[float, float], psi: float
 ) -> Tuple[float, float]:
@@ -282,22 +331,40 @@ class LidarKayitNode(Node):
         yüzden patlamıştı (GIRDAP_DURUM §11.3/1).
         """
         try:
-            from sensor_msgs_py import point_cloud2
+            xy = hizli_xy_seyrelt(msg, self._seyrelt)
+            if xy is None:
+                # YEDEK YOL — ön koşullardan biri tutmadı (bayt sırası, alan
+                # tipi, satır dolgusu). Yavaş ama her bulutu okur.
+                from sensor_msgs_py import point_cloud2
 
-            s = point_cloud2.read_points(
-                msg, field_names=("x", "y", "z"), skip_nans=True
-            )
-            xs, ys = np.asarray(s["x"]), np.asarray(s["y"])
+                s = point_cloud2.read_points(
+                    msg, field_names=("x", "y", "z"), skip_nans=True
+                )
+                xs, ys = np.asarray(s["x"]), np.asarray(s["y"])
+                xy = np.column_stack(
+                    (xs[:: self._seyrelt], ys[:: self._seyrelt])
+                ).astype(np.float64)
+                self.get_logger().info(
+                    "ham bulut: yedek (yavaş) okuma yolu kullanılıyor — "
+                    "hızlı yolun ön koşulları tutmadı",
+                    throttle_duration_sec=30.0)
         except Exception as exc:                       # kayıt teslimi ölmesin
             self.get_logger().warn(
                 f"ham bulut okunamadı, kümeler yine çizilecek: {exc!r}",
                 throttle_duration_sec=10.0)
             return
-        xs, ys = xs[:: self._seyrelt], ys[:: self._seyrelt]
-        self._ham = [
-            govde_to_dunya(float(x), float(y), self._arac, self._psi)
-            for x, y in zip(xs, ys)
-        ]
+        # Dönüşüm VEKTÖREL — ama `govde_to_dunya` ile birebir aynı formül
+        # olmak zorunda (§0.0b: "aynı dönüşümün iki kopyası ayrıştı" hatası).
+        # `test_lidar_kayit_node_hizli_yol.py` ikisini karşılaştırıp donduruyor.
+        c, s_ = math.cos(self._psi), math.sin(self._psi)
+        if len(xy):
+            dunya = np.column_stack((
+                self._arac[0] + c * xy[:, 0] - s_ * xy[:, 1],
+                self._arac[1] + s_ * xy[:, 0] + c * xy[:, 1],
+            ))
+            self._ham = [(float(a), float(b)) for a, b in dunya]
+        else:
+            self._ham = []
 
     # ----- yardımcılar -----
 
