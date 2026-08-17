@@ -1,0 +1,122 @@
+From 4d5d965380a62a92b811fb64361b6a04a39b8f67 Mon Sep 17 00:00:00 2001
+From: GIRDAP <girdap@local>
+Date: Mon, 17 Aug 2026 11:41:11 +0300
+Subject: [PATCH] GIRDAP: IMU dagitici thread'i BOS KUYRUGU SPIN EDIYORDU (%97
+ cekirdek)
+
+YUKARI AKIS DUZELTMESININ GERI PORTU. Bu vendored kopya, upstream'in
+IMU semaforunu eklemesinden onceki surum (upstream master'da
+lds_->imu_semaphore_.Wait() VAR).
+
+NE: Lddc::DistributeImuData semaforsuz while(true) donuyordu. Nokta bulutu
+yolunda lds_->semaphore_.Wait() vardi, IMU yolunda YOKTU. Kuyruk bos ->
+aninda don -> tekrar sor.
+
+OLCUM (Jetson Orin Nano, MAXN_SUPER, gdb yigin izi):
+  tek thread durum 'R', wchan=0, %97 cekirdek KESINTISIZ
+  yigin: PollingLidarImuData -> LidarImuDataQueue::Empty() -> mutex spin
+  /livox/imu abone sayisi: 0  (IMU'muz MAVROS'tan geliyor)
+
+NEDEN PUAN MESELESI: makine doyunca planning_node'un odom callback'i ac
+kaliyor, F-P.1 bekcisi "poz 1.0 s'dir gelmiyor" deyip THRUST'I SIFIRLIYOR
+-- poz kaynagi 8 Hz akarken, EKF saglikliyken, esik 1,0 s iken.
+
+SONUC (olculdu):
+  GIRDAP CPU     %74,3 -> %55,6   (446% -> 333% / 600%)
+  yuk ortalamasi  8,4  -> 6,3
+  POZ-BAYAT      68/120sn -> 15/120sn
+  /livox/lidar 10 Hz ve /livox/imu 200 Hz DEGISMEDI
+
+Ayrica RequestExit() artik IKI semaforu da uyandiriyor: bayrak tek basina
+yetmez, tuketici thread'ler semaforda BLOKE bekler; LiDAR susarsa sinyal
+hic gelmez ve join() sonsuza kadar asilir. Upstream bunu yapmiyor.
+
+GERI ALINIRSA NE KIRILIR: bir cekirdek yeniden bos donguye gider ve
+POZ-BAYAT geri gelir. IMU yayini etkilenmez.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+---
+ src/lddc.cpp | 10 +++++++++-
+ src/lds.cpp  | 12 ++++++++++++
+ src/lds.h    |  7 +++++++
+ 3 files changed, 28 insertions(+), 1 deletion(-)
+
+diff --git a/src/lddc.cpp b/src/lddc.cpp
+index 3ab322b..58bef80 100644
+--- a/src/lddc.cpp
++++ b/src/lddc.cpp
+@@ -141,7 +141,15 @@ void Lddc::DistributeImuData(void) {
+     return;
+   }
+   
+-  while (!lds_->IsRequestExit()) {    
++  while (!lds_->IsRequestExit()) {
++    /* 🔴 GIRDAP 17.08.2026 — ASIL DUZELTME (upstream master ile ayni).
++       Bu satir yokken dongu hic beklemiyordu: kuyruk bos -> aninda don ->
++       tekrar sor. Olculdu: tek thread durum 'R', wchan=0, %97 cekirdek,
++       KESINTISIZ. Sonucu CPU degil, PUAN kaybi: makine doyunca
++       planning_node'un odom callback'i ac kaliyor, F-P.1 bekcisi
++       "poz 1.0 s'dir gelmiyor" deyip THRUST'I SIFIRLIYOR. Olcum:
++       LiDAR acikken 34 POZ-BAYAT/60 sn, kapaliyken 1/90 sn. */
++    lds_->imu_semaphore_.Wait();
+     for (uint32_t i = 0; i < lds_->lidar_count_; i++) {
+       uint32_t lidar_id = i;
+       LidarDevice *lidar = &lds_->lidars_[lidar_id];
+diff --git a/src/lds.cpp b/src/lds.cpp
+index b46f2c9..0d3edd8 100644
+--- a/src/lds.cpp
++++ b/src/lds.cpp
+@@ -40,6 +40,7 @@ CacheIndex Lds::cache_index_;
+ Lds::Lds(const double publish_freq, const uint8_t data_src)
+     : lidar_count_(kMaxSourceLidar),
+       semaphore_(0),
++      imu_semaphore_(0),
+       publish_freq_(publish_freq),
+       data_src_(data_src),
+       request_exit_(false) {
+@@ -74,6 +75,13 @@ void Lds::ResetLds(uint8_t data_src) {
+ 
+ void Lds::RequestExit() {
+   request_exit_ = true;
++  /* 🔴 GIRDAP: bayrak tek basina YETMEZ — tuketici thread'ler semaforda
++     BLOKE bekliyor. LiDAR susmussa (kablo cikti, cihaz kapandi) sinyal
++     hic gelmez, `join()` sonsuza kadar asilir ve servis durdurulamaz.
++     Upstream bunu yapmiyor; bizim eklememiz, IMU semaforu ile birlikte
++     ortaya cikan asilma yolunu kapatiyor. */
++  semaphore_.Signal();
++  imu_semaphore_.Signal();
+ }
+ 
+ bool Lds::IsAllQueueEmpty() {
+@@ -114,6 +122,10 @@ void Lds::StorageImuData(ImuData* imu_data) {
+   LidarDevice *p_lidar = &lidars_[index];
+   LidarImuDataQueue* imu_queue = &p_lidar->imu_data;
+   imu_queue->Push(imu_data);
++  /* GIRDAP: tuketici thread'i UYANDIR (nokta bulutu yolundaki desenin ayni). */
++  if (imu_semaphore_.GetCount() <= 0) {
++    imu_semaphore_.Signal();
++  }
+ }
+ 
+ void Lds::StorageLvxPointData(PointFrame* frame) {
+diff --git a/src/lds.h b/src/lds.h
+index 7e97fae..a9a33f1 100644
+--- a/src/lds.h
++++ b/src/lds.h
+@@ -69,6 +69,13 @@ class Lds {
+   uint8_t lidar_count_;                 /**< Lidar access handle. */
+   LidarDevice lidars_[kMaxSourceLidar]; /**< The index is the handle */
+   Semaphore semaphore_;
++  /* 🔴 GIRDAP 17.08.2026 — YUKARI AKIS DUZELTMESININ GERI PORTU.
++     Bu vendored kopya, upstream'in IMU semaforunu eklemesinden ONCEKI
++     surum. Eksikligi olculdu (Jetson Orin Nano, gdb yigin izi):
++     `Lddc::DistributeImuData` semaforsuz `while(true)` doner, kuyrugu
++     bos bulur, aninda tekrar dener -> tek thread SUREKLI %97 CEKIRDEK.
++     Nokta bulutu yolunda `semaphore_` zaten vardi; IMU yolunda yoktu. */
++  Semaphore imu_semaphore_;
+   static CacheIndex cache_index_;
+  protected:
+   double publish_freq_;
+-- 
+2.34.1
+
