@@ -140,13 +140,33 @@ UYARIM_ESIK = math.radians(5.0)       # |istenen| bunun üstündeyse "uyarım va
 #     regresyon eğimi            0,566 · 0,533
 #     sistem kimliklendirme 1/K  0,591   (K=1,693 rad/s, τ=1,42 s)
 #   + bağımsız doğrulama R=v/ω : gerçek yarıçap 3,86 m ↔ TURN_RADIUS 1,0
-# Bant 0,53-0,67 ⇒ ORTA NOKTA 0,60. Yüklü 0,20 bunun ÜÇTE BİRİ.
+# Bant 0,53-0,67 ⇒ ilk kestirim 0,60'tı.
+#
+# 🔑 17.08 RAFİNE ÖLÇÜM — 25.744 örnek, 4 oturum, GUIDED, doygun elendi:
+# FF'in dönüş hızına göre DEĞİŞİP değişmediği sınandı. İki BAĞIMSIZ tahminci
+# (medyan oran ↔ regresyon) kovalarda:
+#     3-8   °/s : 0,96 ↔ **−0,18**   🔴 regresyon NEGATİF = fiziksel olarak
+#                                       imkânsız ⇒ o kova ÖLÇÜM ÇÖPÜ
+#     8-15  °/s : 0,68 ↔  0,37       🔴 çelişiyor
+#     15-25 °/s : 0,52 ↔  0,52       ✅ TAM UYUŞUYOR (n=3045-7374)
+# Kararlı-hâl süzgeci (|dω/dt| < 0,15 ve < 0,05) 15-25 kovasını DEĞİŞTİRMİYOR
+# (0,53 · 0,52 · 0,52) ⇒ sonuç geçici rejimden de bağımsız.
+#
+# 🔑 ÇALIŞMA NOKTAMIZ: istenen dönüş medyanı **16,6 °/s** ⇒ tam o güvenilir
+# kovada. ⇒ **FF SABİT = 0,52** — "dönüş hızına göre değişiyor" görüntüsü,
+# düşük sinyal/gürültüde tahmincilerin ZIT YÖNDE sapmasıdır (medyan oranı
+# yukarı, regresyon zayıflatma yüzünden aşağı), gerçek bir etki değil.
+#
+# ⇒ FF'i "orantılı" yapmaya GEREK YOK: FF zaten doğrusaldır
+#   (`çıkış = FF × istenen_dönüş`) ve çalışma bandında sabit olduğu ÖLÇÜLDÜ.
+#   (Pivot'taki bang-bang sorunu ayrıydı; orası düzeltildi.)
+# Yüklü 0,20, ölçülenin ÜÇTE BİRİ.
 #
 # ⚠️ SINIRI: bu değer, ölçümün 0,15-0,50 m/s hız bandından geldi ve
 # `WP_SPEED` o zamandan beri değişti (Sude 17.08: 0,95→1,2). ArduPilot'ta FF
 # hız ölçekli ⇒ seyir hızında doğrulanmalı. Yine de 0,20'den İYİ bir
 # başlangıç: 0,20 ölçülen bandın çok altında, 0,60 içinde.
-FF_OLCULEN = 0.60
+FF_OLCULEN = 0.52
 
 VERI_ZAMAN_ASIMI = 3.0                # sn — veri kesilirse iptal
 BEKLEME_BILDIRIM_SN = 60.0            # servis kipinde "hâlâ bekliyorum" aralığı
