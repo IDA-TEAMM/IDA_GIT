@@ -112,15 +112,29 @@ KAMERA_USB_KIMLIK = "03e7"       # Luxonis OAK — §0.95b/1
 BEKLENEN_PARAMETRELER: dict[str, float | None] = {
     "CRUISE_THROTTLE": 95.0,
     "CRUISE_SPEED": 1.05,
-    # 🔴 0.95 → 1.20 (15.08.2026, §1.08b). Kaptan: *"MP GUIDED modunda
-    # motorlar çok yavaş."* Arıza değildi, TAVANDI: tekne tam gazda ölçülen
-    # 1,26 m/s yapıyor (§0.98), WP_SPEED 0,95 ise kabiliyetin yalnız %75'i.
-    # 1,20 = %95. Değer telemetriden yazıldı ve `force_pull` ile uçuş
-    # kontrolcüsünden geri okunarak doğrulandı.
-    # ⚠ Bu satır güncellenmeseydi nöbetçi kendi doğru değişikliğimize sonsuza
-    # dek ALARM basardı — yalan söyleyen alarm, gerçek parametre kaymasını da
-    # görünmez yapar. Beklenen değer değiştiğinde BURASI da değişir.
-    "WP_SPEED": 1.20,
+    # ❌ `WP_SPEED` ALARMI KALDIRILDI (17.08.2026) — GUIDED'da GEÇERSİZ.
+    #
+    # ÖLÇÜLDÜ (16.08 183648 bandı, o gün WP_SPEED = 0,6 m/s idi):
+    #     gerçekleşen hız  : medyan 0,27 · %90 0,92 · MAKS 1,14 m/s
+    #     0,6'yı AŞAN örnek: 2799/9889 = **%28,3**
+    #     bizim komutumuzun %60,5'i zaten 0,6'nın ÜSTÜNDE
+    # ⇒ `WP_SPEED` hiçbir şeyi sınırlamıyor.
+    #
+    # NEDEN: biz `/mavros/setpoint_velocity/cmd_vel_unstamped` ile doğrudan
+    # HIZ setpoint'i gönderiyoruz (planning_node._publish_cmd_vel). ArduPilot'un
+    # WAYPOINT NAVİGASYON katmanı (`WP_*`, `TURN_RADIUS`) devrede DEĞİL; o
+    # katman yalnız AUTO'da ve konum hedefli GUIDED'da çalışır.
+    #
+    # 🔴 BU ALARM ZARARLIYDI: nöbetçi, GUIDED koşumunu hiç etkilemeyen bir
+    # parametre için `PARAM-WP_SPEED` basıyordu. Kendi kuralımız: *"bir alarm
+    # her zaman yanıyorsa alarm değildir"* — ve yalan söyleyen alarm, gerçek
+    # parametre kaymasını da görünmez yapar. (16.08 18:36 oturumunda tam bu
+    # oldu: WP_SPEED 1,2→0,6 değişmişti, alarm yandı, ama GUIDED davranışına
+    # etkisi YOKTU; asıl sorun ATC_STR_RAT_FF ve pivot kilidiydi.)
+    #
+    # ⚠ AUTO'ya düşülen kısa anlarda (16.08'de 31 kez, medyan 2,0 sn)
+    # `WP_SPEED` geçerlidir — ama o pencereler zaten görev dışıdır.
+    # Yarışmada AUTO kullanılmayacak (md 4.1).
     "ATC_SPEED_P": None,
     "ATC_SPEED_I": None,
     "MOT_THR_MIN": 10.0,
