@@ -118,6 +118,23 @@ VERI_ZAMAN_ASIMI = 3.0
 BEKLEME_BILDIRIM_SN = 60.0
 GUNLUK_DIZIN = os.path.expanduser("~/girdap_logs/plant_ayar")
 
+# ── YÖNLENDİRİLMİŞ BASAMAK TESTİ (--basamak) ────────────────────────────────
+# 🔑 NEDEN VAR: gaz→hız eğrisi GUIDED'da ölçülemez. Ölçüldü (17.08):
+#   · kapalı çevrim LS  → MANUAL'den %37 ve %129 sapıyor (YANLI)
+#   · IV yöntemi        → %68 ve %107 sapıyor (DAHA KÖTÜ)
+#   IV'nin araç değişkeni GEÇERSİZ: rüzgâr tekneyi yavaşlatınca planlayıcı
+#   komutu değiştiriyor ⇒ referans bozucuyla İLİŞKİLİ hâle geliyor. Otonomi
+#   döngüsünün İÇİNDEKİ hiçbir sinyal geçerli araç değişken değil.
+#   Uyarım eksikliği DEĞİL (ölçüldü: MANUAL 0,72 ↔ GUIDED 0,62 ln-std, benzer).
+#   ⇒ Geçerli yol: AÇIK ÇEVRİM (MANUAL) veri. Bu kip onu düzenli toplatır.
+#
+# ⛔ ARAÇ TEKNEYE KOMUT VERMEZ — kaptana NE YAPACAĞINI söyler, veriyi
+#    doğrular. Aktüatör insan, ölçüm ve karar araçta.
+BASAMAKLAR = (0.20, 0.40, 0.60, 0.80)   # hedef gaz seviyeleri
+BASAMAK_TOL = 0.10                       # ±%10 bandında sayılır
+BASAMAK_ORNEK = 40                       # kova başına asgari kararlı örnek
+BASAMAK_BILDIRIM_SN = 8.0
+
 
 def yuzdelik(v, p):
     s = sorted(v)
@@ -165,9 +182,10 @@ def expo_kaba_tahmin(n):
 
 
 class PlantAyar(Node):
-    def __init__(self, kuru, bekle, sure):
+    def __init__(self, kuru, bekle, sure, basamak=False):
         super().__init__("otomatik_plant_ayar")
         self.kuru, self.bekle, self.sure = kuru, bekle, sure
+        self.basamak = basamak
         self._mod = None
         self._armed = False
         self._bagli = False
@@ -383,6 +401,49 @@ class PlantAyar(Node):
                                    f"ivme örneği {len(self._ivme)} · "
                                    f"mod {self._mod}")
 
+    def _basamak_topla(self):
+        """Kaptanı yönlendirerek kova kova veri topla. KOMUT VERMEZ."""
+        kova = {b: 0 for b in BASAMAKLAR}
+        son_bildirim = 0.0
+        son_sayilan = len(self._egri)
+        t0 = time.monotonic()
+        self._bas("BASAMAK", "🔑 MANUAL moda geç. Araç sana ne yapacağını "
+                             "söyleyecek; TEKNEYE KOMUT VERMEZ.")
+        while True:
+            rclpy.spin_once(self, timeout_sec=0.05)
+            iptal, sebep = self._iptal_mi()
+            if iptal:
+                raise KeyboardInterrupt(sebep)
+            # yeni gelen eğri örneklerini kovalara dağıt
+            for u, _v in self._egri[son_sayilan:]:
+                for b in BASAMAKLAR:
+                    if abs(u - b) <= BASAMAK_TOL:
+                        kova[b] += 1
+                        break
+            son_sayilan = len(self._egri)
+            eksik = [b for b in BASAMAKLAR if kova[b] < BASAMAK_ORNEK]
+            if not eksik:
+                self._bas("BASAMAK", "✅ DÖRT KOVA DA DOLDU — test bitti, "
+                                     "gazı serbest bırakabilirsin")
+                return True
+            gecen = time.monotonic() - t0
+            if gecen - son_bildirim >= BASAMAK_BILDIRIM_SN:
+                son_bildirim = gecen
+                if self._mod != "MANUAL":
+                    self._bas("BASAMAK", f"⏸ mod {self._mod} — bu test MANUAL "
+                                         f"gerektirir (açık çevrim)")
+                    continue
+                hedef = eksik[0]
+                durum = " · ".join(f"%{int(100*b)}:{kova[b]}/{BASAMAK_ORNEK}"
+                                   for b in BASAMAKLAR)
+                self._bas("BASAMAK", f"👉 şimdi ~%{int(100*hedef)} gaz ver ve "
+                                     f"SABİT TUT   [{durum}]")
+            if gecen > self.sure:
+                self._bas("BASAMAK", f"⏱ süre doldu — dolan kova: "
+                                     f"{sum(1 for b in BASAMAKLAR if kova[b]>=BASAMAK_ORNEK)}"
+                                     f"/{len(BASAMAKLAR)}")
+                return sum(1 for b in BASAMAKLAR if kova[b] >= BASAMAK_ORNEK) >= 3
+
     def calistir(self):
         self._bas("ADIM", "0/3 — bağlantı ve özgün değerler")
         t0 = time.monotonic()
@@ -400,10 +461,15 @@ class PlantAyar(Node):
         self._bas("ADIM", "özgün: " + " · ".join(
             f"{k}={v:.3f}" for k, v in self._ozgun.items()) + f" → {self._yedek}")
 
-        self._bas("ADIM", f"1/3 — PASİF toplama ({self.sure:.0f} sn). "
-                          "🔑 Eğri YALNIZ MANUAL'de toplanır (açık çevrim); "
-                          "ivme her modda.")
-        self._topla()
+        if self.basamak:
+            self._bas("ADIM", "1/3 — YÖNLENDİRİLMİŞ BASAMAK TESTİ "
+                              "(araç komut VERMEZ, sana söyler)")
+            self._basamak_topla()
+        else:
+            self._bas("ADIM", f"1/3 — PASİF toplama ({self.sure:.0f} sn). "
+                              "🔑 Eğri YALNIZ MANUAL'de toplanır (açık çevrim); "
+                              "ivme her modda.")
+            self._topla()
 
         self._bas("ADIM", "2/3 — çözümleme")
         yazilacak = {}
@@ -489,12 +555,16 @@ def main():
                     help="SERVİS KİPİ: FC bağlanana kadar bekle")
     ap.add_argument("--sure", type=float, default=OLCUM_SN,
                     help=f"pasif toplama saniyesi (varsayılan {OLCUM_SN:.0f})")
+    ap.add_argument("--basamak", action="store_true",
+                    help="YÖNLENDİRİLMİŞ BASAMAK TESTİ: kaptana %%20/%%40/%%60/%%80 "
+                         "gaz sırasını söyler, kovalar dolunca biter (~10 dk). "
+                         "Araç tekneye KOMUT VERMEZ. En temiz eğri verisi.")
     ap.add_argument("--geri-yukle", metavar="DOSYA",
                     help="kaydedilmiş özgün değerleri geri yaz (acil)")
     a = ap.parse_args()
 
     rclpy.init()
-    d = PlantAyar(a.kuru, a.bekle, a.sure)
+    d = PlantAyar(a.kuru, a.bekle, a.sure, basamak=a.basamak)
     signal.signal(signal.SIGTERM,
                   lambda *_: (_ for _ in ()).throw(KeyboardInterrupt("SIGTERM")))
     try:
