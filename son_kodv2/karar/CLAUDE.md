@@ -420,6 +420,15 @@ bitiremedi**; la=3 → **3/3 bitti**, ort 4,0/6 kapı; la=5 → 3/3 ama 3,0/6 ka
 `T` bilerek 50 kaldı (Orin Nano maliyeti değişmesin). Yukarıdaki eski tablo
 tarihsel kayıt olarak duruyor — gerçek tekneyle yeniden ölçülmedi.
 
+⚠️ **AÇIK (2026-08-16/17 gecesi):** kaptanın gerçek göl bandından ölçtüğü
+seyir hızı **0,62 m/s** çıktı, burada varsayılan **1,05 m/s** — henüz
+uzlaştırılmadı, kaptanın kendi oturumu da bunu "bayat" olarak işaretledi.
+Hız düşüklüğü **kasıtlı bir karar**: kaçınma payını artırmak + algı→planlama
+zincirindeki publish gecikmesini telafi etmek için bilinçli tutuluyor (ekip
+kararı, 16.08). Yani "neden yavaş" sorusunun cevabı var, ama
+`terminal_lookahead_m`'in hangi hıza göre hesaplanacağı (1,05 mi 0,62 mi)
+henüz kesinleşmedi — sahada gerçek kapı geçme performansıyla doğrulanmalı.
+
 **✅ BENİMSENDİ (2026-08-02):** `terminal_mode="lookahead"` varsayılan +
 `_PARKUR_PROFILES` üçünde de `w_terminal=50.0`. **İKİSİ AYRILMAZ** — biri
 diğeri olmadan değiştirilirse araç ya sürünür (w=5) ya köşe keser (global,
