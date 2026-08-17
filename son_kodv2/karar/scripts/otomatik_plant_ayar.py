@@ -50,6 +50,12 @@ NEDEN (17.08 bant ölçümü — iki oturum, bağımsız, UYUŞUYOR):
        ilk ve ikinci yarısında ayrı ayrı hesaplanır; ikisi %35'ten fazla
        ayrışırsa YAZILMAZ (16.08'in GUIDED verisi tam böyle ayrışıyordu).
     8. `--kuru` hiçbir şey yazmadan yalnız ölçer (ÖNCE bununla dene).
+    9. 🔑 KONTROL GRUPLU ÖLÇÜM: ivme örnekleri YALNIZ tekne ARMED iken
+       sayılır; DISARM iken toplananlar ayrı kovada **gürültü tabanı**
+       olur (disarm tekne itki üretemez ⇒ o ivme fiziği değil kestirim
+       gürültüsüdür). Ölçüm, kendi gürültü tabanının GURULTU_ORANI katını
+       aşmıyorsa YAZILMAZ. 17.08'de bu kapı yoktu ve araç yerinde duran
+       teknede 3,42 m/s² "ölçtü" (gerçeği 0,28 — 12 kat).
 
 📐 `MOT_THST_EXPO` — 🔴 BU ARAÇ ONU **YAZMAZ**, YALNIZ RAPOR EDER:
     ArduPilot'un itki modeli:   itki = (1−e)·u + e·u²
@@ -116,6 +122,39 @@ ASGARI_GAZ = 0.05         # bunun altındaki gaz kullanılmaz
 ASGARI_HIZ = 0.03
 VERI_ZAMAN_ASIMI = 3.0
 BEKLEME_BILDIRIM_SN = 60.0
+
+# ── 🔴 17.08 REBOOT KOŞUMUNDA ÖLÇÜLDÜ — ARAÇ GÜRÜLTÜYÜ İVME SANDI ─────────
+# Boot koşumu 4.301 "ivme" örneği topladı ve **%95'i 3,42 m/s²** çıkardı
+# (tepe 12,22). Havuzun 4 oturumluk ölçülmüş değeri **0,28 m/s²** — yani
+# bulunan sayı teknenin gerçek sınırının **12 katı**. Tekne o sırada
+# karadaydı: `eğri örneği 0` (hiç arm olmadı, hiç kımıldamadı) ve EKF3
+# `is using GPS` ancak **10:55:49**'da, ölçüm bittikten **13 dakika sonra**
+# geldi. Toplanan şey hızın kendisi değil, EKF'in yerinde duran tekneyi
+# metrelerce gezdiren poz gürültüsünün türeviydi.
+#
+# 🔑 KUSUR ŞUYDU: `_on_hiz` ivme örneğini KOŞULSUZ topluyordu — eğri örneği
+#    `armed`+`MANUAL`+hareket şartına bağlıyken ivmenin hiçbir şartı yoktu.
+#    Aracın "tekne kımıldıyor mu?" diye soran hiçbir kapısı yoktu.
+#
+# ⚠️ ASIL TEHLİKE SESSİZ OLANDI: yazmayı durduran tek şey `IVME_UST=3,00`
+#    sert sınırıydı ve onu **tesadüfen** yakaladı. Gürültü %95'i 3,42 yerine
+#    2,5 çıksaydı araç `ATC_ACCEL_MAX=2,5`'i FC'ye **KALICI** (EEPROM)
+#    yazacak, "geri okundu ✅" basacak ve başarıyla çıkacaktı — gerçek
+#    sınırın 9 katı bir değerle. Sert sınır bir kapı değil, son çareydi.
+#
+# ÇÖZÜM — KONTROL GRUPLU ÖLÇÜM (§1.41b'nin `--bant` deseninin fizik hâli):
+#   Disarm hâlindeki tekne **itki üretemez** ⇒ o sırada ölçülen her ivme
+#   TANIMI GEREĞİ gürültüdür. Araç bunu ayrı kovada biriktirir ve kendi
+#   gürültü tabanını ölçer. Gerçek ölçüm bu tabanı belirgin aşmıyorsa
+#   sayı ilan EDİLMEZ. Eşiği sahadan tahmin etmeye gerek yok — kontrol
+#   grubu her koşumda kendini yeniden ölçer.
+#   Bu kapı donanım şartı GEREKTİRMEZ: disarm tekne her koşumda vardır.
+GURULTU_ORANI = 3.0        # gerçek ölçüm, gürültü tabanının bu katını aşmalı
+ASGARI_GURULTU = 300       # gürültü tabanını ilan etmek için asgari örnek
+
+# Servis kipi: ayar YAZILANA kadar yaşa (kardeş araçla aynı desen).
+PARAM_BEKLEME_AZAMI = 90.0   # elle koşumda: bu kadar bekle, sonra sebebi söyle
+YENIDEN_DENE_SN = 30.0       # servis kipinde iki deneme arası
 GUNLUK_DIZIN = os.path.expanduser("~/girdap_logs/plant_ayar")
 
 # ── YÖNLENDİRİLMİŞ BASAMAK TESTİ (--basamak) ────────────────────────────────
@@ -222,8 +261,14 @@ class PlantAyar(Node):
         self._pwm_min, self._pwm_maks = 10**9, -10**9
         self._ozgun = {}
         self._geri_yuklendi = False
+        # 🔑 "İş bitti mi?" sorusunun TEK doğru cevabı. `_geri_yuklendi` bunu
+        # cevaplayamaz (hem "yazdım, bıraktım" hem "geri yükledim" hâlinde
+        # True olur). Yedek değer yazmak da BU bayrağı kaldırmaz — yedek
+        # "ölçtüm" demek değil, "bilinen-kötüye düşme" demektir.
+        self._ayar_yazildi = False
         self._egri = []          # (u, v) — YALNIZ MANUAL
-        self._ivme = []          # a (m/s²) — her mod
+        self._ivme = []          # a (m/s²) — YALNIZ ARMED (itki üretilebilir)
+        self._gurultu = []       # a (m/s²) — YALNIZ DISARM = kontrol grubu
 
         os.makedirs(GUNLUK_DIZIN, exist_ok=True)
         d = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -268,7 +313,12 @@ class PlantAyar(Node):
             dt = t - self._hiz_t
             if 0.05 < dt < 0.5:
                 a = (v - self._hiz) / dt
-                self._ivme.append(a)
+                # 🔑 KONTROL GRUPLU AYIRIM (bkz. GURULTU_ORANI'nın başındaki
+                # not). Disarm tekne itki ÜRETEMEZ ⇒ o sırada ölçülen ivme
+                # teknenin fiziği değil, hız kestiriminin gürültüsüdür.
+                # İkisini aynı kovaya atmak 17.08'de 12 kat şişmiş bir
+                # "fiziksel sınır" üretti.
+                (self._ivme if self._armed else self._gurultu).append(a)
                 # eğri örneği: YALNIZ MANUAL + armed + kararlı hâl
                 if (self._mod == "MANUAL" and self._armed and self._rc
                         and abs(a) < KARARLI_IVME and v > ASGARI_HIZ):
@@ -286,21 +336,82 @@ class PlantAyar(Node):
         self._hiz, self._hiz_t = v, t
 
     # ── parametre
-    def _oku(self, ad, ts=20.0):
+    def _oku(self, ad, ts=20.0, hosgor=False):
+        """FC parametresini oku. `hosgor=True` iken "henüz gelmedi" → None.
+
+        🔴 Ayrım 17.08 reboot'unda ölçüldü: MAVROS ayağa kalkar kalkmaz
+        `get_parameters` servisi VARDIR ama FC'den parametreleri henüz
+        indirmemiştir; okuma `PARAMETER_NOT_SET` (tip 0) döner. O koşumda
+        `ATC_DECEL_MAX` bu yüzden *"FC'de var mı?"* denip **koşumun tamamı
+        boyunca atlandı** — oysa parametre FC'de duruyordu, sadece 1 saniye
+        erken sorulmuştu.
+        """
         if not self._get.wait_for_service(timeout_sec=ts):
+            if hosgor:
+                return None
             raise RuntimeError(f"{PARAM_DUGUM}/get_parameters yok — "
                                "ROS_LOCALHOST_ONLY servisle aynı mı?")
         g = self._get.call_async(GetParameters.Request(names=[ad]))
         rclpy.spin_until_future_complete(self, g, timeout_sec=ts)
         s = g.result()
         if s is None or not s.values:
+            if hosgor:
+                return None
             raise RuntimeError(f"{ad} OKUNAMADI")
         v = s.values[0]
         if v.type == ParameterType.PARAMETER_DOUBLE:
             return float(v.double_value)
         if v.type == ParameterType.PARAMETER_INTEGER:
             return float(v.integer_value)
+        if hosgor:
+            return None
         raise RuntimeError(f"{ad} beklenmedik tip ({v.type}) — FC'de var mı?")
+
+    def _ozgunleri_oku(self, zorunlu, istege_bagli=()):
+        """Özgün değerleri FC'den inene kadar SABIRLA oku.
+
+        `zorunlu` hepsi gelene kadar beklenir (servis kipinde süresiz —
+        beklemenin riski YOK, bu noktada hiçbir parametreye dokunulmamıştır).
+        `istege_bagli` yalnız zorunlular geldiği ANDA elde varsa alınır:
+        o noktada FC parametre indirmesi bitmiştir, hâlâ boş dönen parametre
+        gerçekten FC'de yoktur.
+        """
+        deger = {}
+        son_bildirim = -BEKLEME_BILDIRIM_SN
+        t0 = time.monotonic()
+        while True:
+            for ad in zorunlu:
+                if ad not in deger:
+                    v = self._oku(ad, hosgor=True)
+                    if v is not None:
+                        deger[ad] = v
+            if len(deger) == len(zorunlu):
+                gecen = time.monotonic() - t0
+                if gecen > 2.0:
+                    self._bas("ADIM", f"FC parametreleri geldi ({gecen:.0f} sn "
+                                      "beklendi — MAVROS indirme gecikmesi)")
+                for ad in istege_bagli:
+                    v = self._oku(ad, hosgor=True)
+                    if v is not None:
+                        deger[ad] = v
+                    else:
+                        self._bas("ADIM", f"⚠️ {ad} FC'de YOK (zorunlular "
+                                          "geldiği hâlde boş döndü) — atlanıyor")
+                return deger
+            gecen = time.monotonic() - t0
+            if not self.bekle and gecen > PARAM_BEKLEME_AZAMI:
+                eksik = [a for a in zorunlu if a not in deger]
+                raise RuntimeError(
+                    f"{', '.join(eksik)} {gecen:.0f} sn'de FC'den gelmedi. "
+                    "MAVROS bağlı mı (`ros2 topic echo /mavros/state`)? "
+                    "Servis kipinde (--bekle) bu bir hata değildir, beklenir.")
+            if gecen - son_bildirim >= BEKLEME_BILDIRIM_SN:
+                son_bildirim = gecen
+                eksik = [a for a in zorunlu if a not in deger]
+                self._bas("ADIM", f"⏳ FC parametreleri bekleniyor ({gecen:.0f} sn)"
+                                  f" — eksik: {', '.join(eksik)}")
+            rclpy.spin_once(self, timeout_sec=0.2)
+            time.sleep(0.8)
 
     def _yaz(self, ad, deger):
         if ad == P_EXPO and not (EXPO_ALT <= deger <= EXPO_UST):
@@ -402,6 +513,46 @@ class PlantAyar(Node):
             self._bas("GERİ", f"🔴🔴 {ad} GERİ YÜKLENEMEDİ — ELLE YAZ: {v}")
         self._bas("GERİ", f"özgün değerler: {self._yedek}")
 
+    # ── kontrol grubu (gürültü tabanı)
+    def _gurultu_tabani(self):
+        """Disarm hâlinde ölçülen ivmenin %95'i — yani ölçüm zemininin gürültüsü.
+
+        Örnek yetmezse `None` (taban ilan edilemez, kapı uygulanamaz).
+        """
+        m = [abs(x) for x in self._gurultu]
+        if len(m) < ASGARI_GURULTU:
+            return None
+        return yuzdelik(m, 95)
+
+    def _gurultu_kapisi(self, olculen, taban):
+        """Ölçülen ivme, kendi gürültü tabanından ayırt edilebiliyor mu?
+
+        🔑 Bu kapı bir EŞİK AYARI DEĞİL, bir KONTROL GRUBUDUR: taban her
+        koşumda o günün donanımı/ortamıyla yeniden ölçülür. Kapalı alanda
+        (GPS fix yok) taban tavana vurur ve araç *"ölçemem"* der — 17.08'de
+        olması gereken buydu.
+
+        `(geçti_mi, sebep)` döner.
+        """
+        if taban is None:
+            # Kapı UYGULANAMADI. Bu bir geçiş değil — sessizce geçmiş
+            # sayılmasın diye ayrıca raporlanır.
+            self._bas("ÖLÇÜM", f"⚠️ gürültü tabanı ilan edilemedi (disarm "
+                               f"örneği {len(self._gurultu)} < {ASGARI_GURULTU}) "
+                               "— kontrol grubu YOK, ölçüm sert sınırlara emanet")
+            return True, ""
+        oran = olculen / max(taban, 1e-9)
+        self._bas("ÖLÇÜM", f"kontrol grubu: disarm gürültü %95 {taban:.2f} m/s² "
+                           f"({len(self._gurultu)} örnek) ↔ ölçülen {olculen:.2f} "
+                           f"⇒ oran {oran:.2f} (gereken ≥{GURULTU_ORANI:.1f})")
+        if oran < GURULTU_ORANI:
+            return False, (
+                f"ölçülen {olculen:.2f} m/s², gürültü tabanının yalnız "
+                f"{oran:.2f} katı. Tekne ya hiç hareket etmedi ya hız kaynağı "
+                "sağlıksız (kapalı alan / GPS fix yok / EKF hazır değil). "
+                "Bu sayı teknenin fiziği DEĞİL, kestirim gürültüsüdür.")
+        return True, ""
+
     # ── akış
     def _iptal_mi(self):
         if not self._bagli:
@@ -424,8 +575,10 @@ class PlantAyar(Node):
                 son_bildirim = gecen
                 self._bas("ÖLÇÜM", f"⏳ {gecen:.0f}/{self.sure:.0f} sn · "
                                    f"eğri örneği {len(self._egri)} (MANUAL) · "
-                                   f"ivme örneği {len(self._ivme)} · "
-                                   f"mod {self._mod}")
+                                   f"ivme örneği {len(self._ivme)} (ARMED) · "
+                                   f"gürültü {len(self._gurultu)} (disarm) · "
+                                   f"mod {self._mod} "
+                                   f"{'ARMED' if self._armed else 'DISARM'}")
 
     def _basamak_topla(self):
         """Kaptanı yönlendirerek kova kova veri topla. KOMUT VERMEZ."""
@@ -477,11 +630,8 @@ class PlantAyar(Node):
             rclpy.spin_once(self, timeout_sec=0.1)
         if self._mod is None:
             raise RuntimeError("/mavros/state gelmiyor — MAVROS/FC bağlı değil")
-        for ad in (P_EXPO, P_ACCEL, P_DECEL):
-            try:
-                self._ozgun[ad] = self._oku(ad)
-            except Exception as e:
-                self._bas("ADIM", f"⚠️ {ad} okunamadı ({e}) — o parametre ATLANACAK")
+        self._ozgun.update(self._ozgunleri_oku((P_EXPO, P_ACCEL),
+                                               istege_bagli=(P_DECEL,)))
         with open(self._yedek, "w", encoding="utf-8") as f:
             json.dump(self._ozgun, f, indent=2)
         self._bas("ADIM", "özgün: " + " · ".join(
@@ -535,35 +685,75 @@ class PlantAyar(Node):
                                            f"değil (işaret n=0,5'te dönüyor). "
                                            f"MANUAL basamak testiyle doğrula.")
 
-        # ── ② ivme sınırları
+        # ── ② ivme sınırları (ÖNCE kontrol grubu, SONRA ölçüm)
+        taban = self._gurultu_tabani()
+        if taban is not None:
+            # 🔑 Ölçüm atlansa bile BAS: bu sayı "bu ortamda ölçüm yapılabilir
+            # mi?" sorusunun cevabı. Havuzun gerçek değeri 0,28 m/s² — taban
+            # ona yakın ya da üstündeyse ortam (kapalı alan / GPS fix yok)
+            # bu ölçümü fiziken taşımıyor demektir, tekne arm edilse bile.
+            self._bas("ÖLÇÜM", f"gürültü tabanı (disarm, {len(self._gurultu)} "
+                               f"örnek): %95 {taban:.2f} m/s² · "
+                               f"ölçüm için gereken en az "
+                               f"{GURULTU_ORANI * taban:.2f} m/s²"
+                               + ("  🔴 havuzun ölçtüğü 0,28'in üstünde — bu "
+                                  "ortamda ivme sınırı ÖLÇÜLEMEZ (hız kaynağı "
+                                  "sağlıksız: kapalı alan / GPS fix yok / EKF "
+                                  "hazır değil)" if GURULTU_ORANI * taban > 0.28
+                                  else ""))
         poz = [x for x in self._ivme if x > 0]
         neg = [-x for x in self._ivme if x < 0]
         if len(poz) < ASGARI_IVME or len(neg) < ASGARI_IVME:
-            self._bas("ÖLÇÜM", f"⚠️ ivme sınırları ATLANDI — örnek az "
-                               f"(+{len(poz)} / −{len(neg)}, gereken {ASGARI_IVME})")
+            self._bas("ÖLÇÜM", f"⚠️ ivme sınırları ATLANDI — ARMED örnek az "
+                               f"(+{len(poz)} / −{len(neg)}, gereken {ASGARI_IVME})"
+                               + (f". Disarm gürültü kovasında {len(self._gurultu)} "
+                                  "örnek var: tekne hiç arm olmadı, ölçülecek "
+                                  "itki YOK." if len(self._gurultu) > len(poz) else ""))
         else:
             ai, af = yuzdelik(poz, 95), yuzdelik(neg, 95)
             self._bas("ÖLÇÜM", f"ivme %95 {ai:.2f} (maks {max(poz):.2f}) · "
                                f"fren %95 {af:.2f} (maks {max(neg):.2f}) m/s²")
-            if P_ACCEL in self._ozgun and IVME_ALT <= ai <= IVME_UST:
-                yazilacak[P_ACCEL] = round(ai, 2)
+            gecti, sebep = self._gurultu_kapisi(ai, taban)
+            if not gecti:
+                self._bas("ÖLÇÜM", f"🔴 {P_ACCEL} YAZILMIYOR — {sebep}")
+            elif P_ACCEL not in self._ozgun:
+                self._bas("ÖLÇÜM", f"🔴 {P_ACCEL} yazılamadı — FC'de okunamadı "
+                                   "(parametre yok ya da MAVROS indirmedi)")
+            elif not (IVME_ALT <= ai <= IVME_UST):
+                self._bas("ÖLÇÜM", f"🔴 {P_ACCEL}={ai:.2f} SERT SINIR DIŞI "
+                                   f"[{IVME_ALT} … {IVME_UST}] — yazılmıyor. "
+                                   "Bu sınır bir kapı değil SON ÇAREDİR; "
+                                   "buraya düşülüyorsa ölçüm zaten şüpheli.")
             else:
-                self._bas("ÖLÇÜM", f"🔴 {P_ACCEL}={ai:.2f} yazılamadı "
-                                   "(sınır dışı ya da FC'de yok)")
+                yazilacak[P_ACCEL] = round(ai, 2)
             # DECEL yalnız ivmeden BELİRGİN ayrılırsa yazılır (0 = "ivmeyi kullan")
             ayrim = abs(af - ai) / max(ai, 1e-9)
             if ayrim < DECEL_AYRIM_ESIGI:
                 self._bas("ÖLÇÜM", f"✅ fren ≈ ivme (fark %{100*ayrim:.0f}) ⇒ "
                                    f"{P_DECEL} SIFIR bırakılıyor (ArduPilot: "
                                    "sıfır = 'ivme değerini kullan')")
-            elif P_DECEL in self._ozgun and IVME_ALT <= af <= IVME_UST:
+            elif gecti and P_DECEL in self._ozgun and IVME_ALT <= af <= IVME_UST:
                 yazilacak[P_DECEL] = round(af, 2)
                 self._bas("ÖLÇÜM", f"fren ivmeden %{100*ayrim:.0f} ayrılıyor ⇒ "
                                    f"{P_DECEL} ayrıca yazılıyor")
 
         # ── ③ yaz
+        self._yazma_asamasi(yazilacak)
+
+    def _yazma_asamasi(self, yazilacak):
+        """Ölçülenleri yaz, eksikleri yedeğe düşür, 'iş bitti mi'ye karar ver.
+
+        🔑 Ayrı metot çünkü bu aşamanın kararı sınanabilir olmalı: hangi
+        yazmanın servisi bitirdiği (`_ayar_yazildi`) 17.08 kusurunun tam
+        kalbi. Ölçüm toplama ROS gerektirir, bu karar gerektirmez.
+        """
         self._bas("ADIM", "3/3 — yazma")
-        # ölçüm yetersizse ÖLÇÜLMÜŞ BAŞLANGIÇ değerine düş (bilinen-kötüden iyi)
+        olculdu = set(yazilacak)          # 🔑 gerçekten ÖLÇÜLENLER
+        # Ölçüm yetersizse ÖLÇÜLMÜŞ BAŞLANGIÇ değerine düş (bilinen-kötüden iyi).
+        # ⚠️ Bu bir SONUÇ DEĞİL, bir emniyet tabanıdır: `_ayar_yazildi`
+        # bayrağını KALDIRMAZ, yani servis kipi bunu "iş bitti" saymaz ve
+        # gerçek ölçüm için beklemeye devam eder. Yüklü değer zaten yedeğe
+        # eşitse hiç yazılmaz (her turda aynı değeri tekrar yazmaz).
         for ad, v in BASLANGIC.items():
             if ad in yazilacak or ad not in self._ozgun:
                 continue
@@ -573,7 +763,8 @@ class PlantAyar(Node):
             self._bas("ÖLÇÜM", f"⚠️ {ad} bu koşumda ölçülemedi — 17.08 havuzunun "
                                f"ÖLÇÜLMÜŞ değeri yazılıyor: {v:.2f} "
                                f"(yüklü {self._ozgun[ad]:.2f}). "
-                               "Tahmin değil: 295.782 ivme örneği, 4 oturum.")
+                               "Tahmin değil: 295.782 ivme örneği, 4 oturum. "
+                               "İŞ BİTMEDİ — gerçek ölçüm hâlâ bekleniyor.")
         if not yazilacak:
             self._bas("SONUÇ", "🔴 HİÇBİR PARAMETRE YAZILMADI — ölçüm ölçütleri "
                                "sağlanmadı. Bu bir HATA DEĞİL: 'ölçemedim' demek, "
@@ -584,12 +775,67 @@ class PlantAyar(Node):
         for ad, v in yazilacak.items():
             self._yaz(ad, v)
         self._geri_yuklendi = True          # bilerek bırakıyoruz
+        self._ayar_yazildi = bool(olculdu)  # yalnız GERÇEK ölçüm işi bitirir
         self._bas("SONUÇ", "yazıldı: " + " · ".join(
-            f"{k}={v}" for k, v in yazilacak.items()))
+            f"{k}={v}" + ("" if k in olculdu else " (yedek — ölçüm değil)")
+            for k, v in yazilacak.items()))
         self._bas("SONUÇ", f"özgün değerler: {self._yedek}")
         self._bas("SONUÇ", "🔴 KALICI yazıldı (ArduPilot PARAM_SET → EEPROM). "
                            "Bir sonraki koşumda DOĞRULA: alt uçtaki hız aşımı "
                            "3× seviyesinden düştü mü?")
+
+
+def _servis_dongusu(dugum):
+    """SERVİS KİPİ: GERÇEK ölçüm yazılana kadar yaşamaya devam et.
+
+    🔴 NEDEN (17.08 reboot koşumunda ölçüldü): eski akış tek 600 sn'lik
+    pencere koşuyor, ölçemese bile **0 ile çıkıyordu**. `Restart=on-failure`
+    olan servis, çıkış başarılı göründüğü için onu diriltmedi:
+
+        10:42:51  Deactivated successfully.  (Consumed 20.475s CPU time)
+
+    Yani tekne suya girdiğinde plant aracı **ortada olmayacaktı** ve
+    MOT_THST_EXPO için gereken gaz→hız eğrisi hiç ölçülmeyecekti — üstelik
+    `systemctl is-enabled` hâlâ "enabled" diyor, kimse fark etmiyor.
+
+    ⚠️ Bu araç için beklemek ZORUNLU, çünkü ölçüm koşulu insana bağlı:
+    eğri YALNIZ kaptan MANUAL'de değişken gazla sürerken oluşur (açık
+    çevrim). Boot anında o koşul tanımı gereği yoktur.
+
+    Döngüyü YALNIZ iki şey bitirir: gerçek ölçümün yazılması ve SIGTERM.
+    Yedek değere düşmek bitirmez (`_ayar_yazildi` kalkmaz) — "bilinen-kötüye
+    düşmedim" ile "ölçtüm" aynı şey değildir.
+    """
+    dene = 0
+    while True:
+        dene += 1
+        try:
+            dugum.calistir()
+            if dugum._ayar_yazildi:
+                dugum._bas("SONUÇ", f"✅ ölçüm yazıldı ({dene}. denemede) — "
+                                    "servis çıkıyor")
+                return
+            dugum._bas("ADIM", "ölçüm sonuç vermedi — koşullar yeniden beklenecek")
+        except KeyboardInterrupt as e:
+            dugum._bas("İPTAL", f"{e or 'Ctrl-C'} — özgün değerlere dönülüyor")
+            dugum.geri_yukle()
+            if str(e) in ("SIGTERM", ""):
+                return                      # systemd durduruyor: itiraz etme
+        except Exception as e:
+            dugum._bas("İPTAL", f"🔴 {type(e).__name__}: {e} — geri yükleniyor")
+            dugum.geri_yukle()
+        dugum._bas("ADIM", f"🔁 servis kipi — {YENIDEN_DENE_SN:.0f} sn sonra "
+                           f"{dene + 1}. deneme")
+        try:
+            time.sleep(YENIDEN_DENE_SN)
+        except KeyboardInterrupt:
+            return
+        # Sonraki deneme temiz başlasın.
+        dugum._geri_yuklendi = False
+        dugum._ozgun = {}
+        dugum._egri = []
+        dugum._ivme = []
+        dugum._gurultu = []
 
 
 def main():
@@ -628,7 +874,9 @@ def main():
                     if g - son >= BEKLEME_BILDIRIM_SN:
                         son = g
                         d._bas("ADIM", f"⏳ FC bekleniyor ({g:.0f} sn)")
-            d.calistir()
+                _servis_dongusu(d)          # ölçene kadar yaşa
+            else:
+                d.calistir()
     except KeyboardInterrupt as e:
         d._bas("İPTAL", f"{e or 'Ctrl-C'} — özgün değerlere dönülüyor")
         d.geri_yukle()
