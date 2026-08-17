@@ -55,7 +55,8 @@ def _ns(kare, durum="PARKUR3", yayinlanan=(), hedef_adaylari=()):
         _son_kare=kare, _kare_no=1, _hedef_kare_no=-1, _son_hedef_t=-1e9,
         _f_norm=gm.odak_px(1.0), _hedef_adaylari=list(hedef_adaylari),
         _yayinlanan_kutular=list(yayinlanan), son_gorev_durumu=durum,
-        _tani={"hedef_yayin": 0, "p3_opencv": 0, "p3_veto": 0},
+        _tani={"hedef_yayin": 0, "p3_opencv": 0, "p3_veto": 0,
+               "p3_su_hatti": 0},
         targets_pub=_Pub(),
         get_logger=lambda: types.SimpleNamespace(
             warn=lambda *a, **k: None, info=lambda *a, **k: None),
@@ -210,3 +211,69 @@ def test_kopya_kanonik_kaynakla_AYNI():
         "kanonik `hedef_bul.py` DEĞİŞMİŞ, kopya eski kalmış.\n"
         "Yapılacak: dosyayı yeniden kopyala + başlıktaki sha256'yı güncelle.\n"
         f"  kopyadaki: {m.group(1)[:16]}…\n  kanonikte : {gercek[:16]}…")
+
+
+# =========================================================== SU HATTI ====
+# 🔑 Yüzen duba SU ÜZERİNDEDİR: bbox alt kenarından (su değme noktası)
+# hesaplanan menzil ile bbox genişliğinden hesaplanan menzil uyuşmalı.
+# Kıyı bitkisinin su yansıması bu sınavda çöküyor.
+# ÖLÇÜM (240 gerçek kare, iki popülasyon da GERÇEK): K=3'te yanlış adayların
+# %90'ı elenir (yeşil 44/49 · siyah 2/2), 599 gerçek duba kutusunda kayıp %0.
+# Ufuk (0,5015) ve eğim (0,2228) 327 gerçek duba kutusundan uydurma ile çıktı.
+
+U = dgn.SU_HATTI_UFUK_CY
+E = dgn.SU_HATTI_EGIM
+PAY = dgn.P3_PITCH_PAYI_CY
+K = dgn.P3_CELISKI_KATI
+
+
+def _cy_alt(mesafe_m, ufuk=None):
+    """Verilen mesafedeki YÜZEN cismin su değme noktasının normalize cy'si."""
+    return (U if ufuk is None else ufuk) + E / mesafe_m
+
+
+def test_su_hatti_YANSIMAYI_eler():
+    """Teknenin ~0,5 m yanındaki suda duran leke '8 m'deki hedef' diyemez."""
+    assert gm.su_hatti_celiskili(0.98, 8.0, U, E, PAY, K)
+
+
+def test_su_hatti_GERCEK_hedefi_ELEMEZ():
+    """Gerçekten 10 m'de yüzen hedef: iki menzil uyuşur, elenmez."""
+    assert not gm.su_hatti_celiskili(_cy_alt(10.0), 10.0, U, E, PAY, K)
+
+
+def test_yakin_hedef_de_ELENMEZ():
+    """3 m'deki hedef: su hattı da genişlik de 3 m diyor."""
+    assert not gm.su_hatti_celiskili(_cy_alt(3.0), 3.0, U, E, PAY, K)
+
+
+def test_PITCH_PAYI_dalgada_hedefi_KURTARIR():
+    """🔴 MUTASYON KAPISI: pay olmadan, ufku 0,06 kaydıran bir dalga/trim
+    10 m'deki GERÇEK hedefi eletiyor. Pay bunu kurtarıyor. 09.08'de ufuk
+    süzgeci tam bu belirsizlik yüzünden reddedilmişti."""
+    cy = _cy_alt(10.0, ufuk=U + 0.06)          # dalga: ufuk kaydı
+    assert gm.su_hatti_celiskili(cy, 10.0, U, E, 0.0, K), \
+        "kontrol grubu: pay olmadan bu hedef elenmeliydi"
+    assert not gm.su_hatti_celiskili(cy, 10.0, U, E, PAY, K), \
+        "pitch payı dalgadaki gerçek hedefi kurtarmıyor"
+
+
+def test_ufka_yakin_cisimde_CELISKI_IDDIA_EDILMEZ():
+    """Uzak hedef ufka yakındır; orada geometri bilgi vermez ⇒ eleme YOK."""
+    assert gm.su_hatti_menzili(U + 0.01, U, E, PAY) is None
+
+
+def test_su_hatti_kapisi_TEK_YONLU():
+    """Su hattına göre daha UZAK görünen aday elenmez (dalga/kırpık bbox)."""
+    assert not gm.su_hatti_celiskili(_cy_alt(4.0), 1.0, U, E, PAY, K)
+
+
+def test_yansima_node_yolunda_da_elenir_ve_sayilir(p3_acik):
+    """Uçtan uca: karenin altındaki geniş yeşil leke yayınlanmamalı."""
+    import cv2
+    im = _kare()
+    cv2.ellipse(im, (256, 470), (44, 30), 0, 0, 360, (60, 200, 60), -1)
+    ns, kutu = _ns(im)
+    ns.hedef_adimi(0.0)
+    assert ns._tani["p3_su_hatti"] >= 1, "su hattı kapısı hiç tetiklenmedi"
+    assert not kutu["targets"].detections, "yansıma yayınlandı"

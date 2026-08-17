@@ -41,6 +41,57 @@ def odak_px(genislik_px: float, hfov_rad: float = HFOV_RAD) -> float:
     return (genislik_px / 2.0) / math.tan(hfov_rad / 2.0)
 
 
+#: Deploy ön işlemesi 4:3 kareyi 1:1'e **SIKIŞTIRIYOR** (`setPreviewKeepAspectRatio(False)`),
+#: yani dikey piksel ölçeği yatayınkinden 4/3 kat büyük. `odak_px` YATAY odağı
+#: verir; su hattı hesabı DİKEY eksende olduğu için bu çarpan şart.
+#: 🔴 Ön işleme letterbox'a dönerse bu sayı da değişir — ikisi ASLA ayrı
+#: değişmez (aynı sözleşme: `duba_gecis_navigator.py:272-280`).
+DIKEY_ODAK_KATI = 4.0 / 3.0
+
+
+def su_hatti_menzili(cy_alt_norm: float, ufuk_cy: float, egim: float,
+                     pay_cy: float = 0.0):
+    """Su değme noktasından menzil (m) — **en CÖMERT** (en uzak) tahmin.
+
+    Yüzen cisim su üzerindedir; bbox'ın ALT kenarı su değme noktasıdır:
+        cy_alt = ufuk + (h·f_y)·(1/d)      ⇒      d = egim / (cy_alt − ufuk)
+    `egim` = h·f_y ve `ufuk_cy` **veriden çıkarıldı** (aşağıya bak), pitch
+    işaret konvansiyonuna hiç bağlanmadan.
+
+    `pay_cy` (dalga/trim belirsizliği) ufku **aşağı** alarak paydayı küçültür
+    ⇒ dönen değer *"olabileceğin en uzağı"*. Bu yüzden bununla kurulan çelişki
+    kapısı tek yönlü ve güvenlidir: ufka yakın (uzak) cisimlerde payda sıfırın
+    altına düşer ve **None** döner = *"çelişki İDDİA EDEMEM"*.
+
+    🔴 09.08'de reddedilen "ufuk süzgeci"nin aynısı DEĞİL: o, ufkun üstünü
+    kesip atıyordu ve pitch ±5° belirsizliği onu güvensiz yapıyordu. Burada
+    aynı belirsizlik **kapıyı gevşetmek** için kullanılıyor.
+    """
+    if egim is None or egim <= 0.0:
+        return None
+    dy = (float(cy_alt_norm) - float(ufuk_cy)) - float(pay_cy)
+    if dy <= 1e-3:
+        return None                     # ufka çok yakın ⇒ çelişki iddia edilemez
+    return float(egim) / dy
+
+
+def su_hatti_celiskili(cy_alt_norm: float, d_genislik_m: float,
+                       ufuk_cy: float, egim: float, pay_cy: float = 0.0,
+                       kat: float = 3.0) -> bool:
+    """Su hattı "çok yakın" derken genişlik "uzak" mı diyor? (TEK YÖNLÜ)
+
+    ⚖️ Tek yönlü, bilerek: yalnız *"su hattına göre olduğundan UZAK görünen"*
+    adayı eler. Tersi elenmez — dalga, kırpık bbox ve gövdenin kendi
+    yansımasıyla birleşmesi o yöne sapma üretebilir.
+    """
+    if not d_genislik_m or d_genislik_m <= 0.0:
+        return False
+    d_su = su_hatti_menzili(cy_alt_norm, ufuk_cy, egim, pay_cy)
+    if d_su is None:
+        return False
+    return d_su * float(kat) < float(d_genislik_m)
+
+
 def mesafe_genislikten(w_px: float, cap_m: float, f_px: float):
     """Bilinen çaptan menzil: D = f·W/w_px. Geçersiz pikselde None.
 

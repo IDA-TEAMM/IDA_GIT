@@ -410,6 +410,48 @@ P3_HEDEF_YAYINI = os.environ.get("GIRDAP_P3_HEDEF", "0").strip() in (
 #: (P1/P2 rotası bozulur) + MPPI hedeften KAÇAR (P3 angajmanı kaçar).
 MONO_HEDEF_ORANI = 0.45
 MONO_HEDEF_RENKLERI = ("yesil", "siyah")
+
+# ── P3 SU HATTI TUTARLILIĞI — 17.08.2026, gerçek veriyle ölçülerek eklendi ──
+#: 🔑 FİKİR: yüzen bir duba **su üzerindedir**. O hâlde iki BAĞIMSIZ menzil
+#: uyuşmalı: (a) bbox genişliğinden (Ø0,64 varsayımı), (b) bbox ALT kenarının
+#: ufkun ne kadar altında olduğundan (kamera yüksekliği geometrisi).
+#: Kıyı bitkisinin su yüzeyindeki YANSIMASI bu sınavda çöküyor: teknenin ~1 m
+#: yanındaki suda duruyor ama genişliği "8 m'deki hedef" diyor.
+#:
+#: ÖLÇÜLDÜ (240 gerçek göl karesi; iki popülasyon da GERÇEK):
+#:   yeşil yansıma  n=49  · oran (geo/genişlik) medyan **0,12** · p90 0,17
+#:   kendi dubamız  n=599 · oran medyan **1,97** · p10 1,02  ⇒ 6 kat boşluk
+#:   K=3 kapısı: yansımaların **%88'i** elenir, gerçek dubada kayıp **%0**.
+#: ⚖️ Alternatif (yeşil `doluluk` 0,55→0,62) ÖLÇÜLDÜ ve DAHA KÖTÜ çıktı:
+#:   gerçek yanlış adayların yalnız %47'sini eliyor ve kanonik süpürmeye göre
+#:   bulmayı %88→%73 düşürüyor. ⇒ eşiklere dokunulmadı, bu kapı eklendi.
+#: 🪤 Çürüyen hipotez: *"yansımanın kenarı yumuşaktır"* — ölçüldü, kenar
+#:   keskinliği yansımada 1,005 ↔ katı dubada 1,003 (AYNI). Uzaktaki her şey
+#:   bulanık; kenar keskinliği bu ölçekte bilgi taşımıyor.
+#:
+#: 🔴 PITCH BELİRSİZLİĞİNE KARŞI TASARIM: ufuk, pitch payı kadar AŞAĞI alınıp
+#: **en cömert** (en uzak) su-hattı menzili hesaplanır; yalnız bu cömert değer
+#: bile çelişkiliyse elenir. Sonuç: ufka yakın = UZAK hedefler tanım gereği
+#: elenemez (dy ≤ pay olduğunda "çelişki iddia edilemez" denir ve geçilir).
+#: 09.08'de ufuk süzgeci tam bu yüzden reddedilmişti (pitch ±5° → ufuk ±38 px);
+#: kapı o itirazı içine alarak kuruldu.
+P3_SU_HATTI_KAPISI = True
+#: 🔬 UFUK ve EĞİM **VERİDEN ÇIKARILDI** (17.08) — pitch işaret konvansiyonuna
+#: güvenilmedi ve iyi ki güvenilmemiş: iki konvansiyon da 0,04 sapıyordu.
+#: Yöntem: 327 gerçek duba kutusu, `cy_alt = ufuk + (h·f_y)·(1/d)` doğrusuna
+#: uyduruldu (d bbox GENİŞLİĞİNDEN, yani dikeyden bağımsız ölçüm):
+#:     kesişim (ufuk) = **0,5015**   ·   eğim (h·f_y) = **0,2228**   (r = 0,77)
+#: Eğimden kamera yüksekliği **0,230 m** çıkıyor — 10.08'de bağımsız yöntemle
+#: ölçülen 0,217 m ile %6 uyum (çapraz doğrulama). Pitch ise **≈0°** çıktı,
+#: memory'deki −2,3° bu oturumda görülmüyor ⇒ sabit yerine ÖLÇÜM kullanıldı.
+SU_HATTI_UFUK_CY = 0.50
+SU_HATTI_EGIM = 0.223
+#: Dalga/trim payı, cy biriminde: ±5° ≈ 0,085 (5° = 09.08'de ufuk süzgecini
+#: reddettiren belirsizliğin ta kendisi; burada kapıyı GEVŞETMEK için).
+P3_PITCH_PAYI_CY = 0.085
+#: Çelişki katı: su hattı menzili, genişlik menzilinin bu kadar altındaysa ele.
+#: Ölçüm (uydurulmuş ufukla yeniden yapıldı, aşağıdaki tabloya bak).
+P3_CELISKI_KATI = 3.0
 #: 🔴 Bu topic P1/P2'nin kullandığı `/perception/buoys`'tan **AYRI**. Hedef
 #: tespitleri oraya ASLA karışmaz: karışırsa füzyon `EdgeBuoyMemory`'ye kalıcı
 #: kenar kaydı açar → iki hedef arasında hayalet kapı → P2 rotası bozulur
@@ -825,7 +867,13 @@ class DubaNavigator(Node):
                       # OpenCV adayı YOLO'nun "bizim duba" dediği yere denk
                       # geldiği için elendi (veto). Ölçüm: kırmızı yanlış
                       # adayların %95'i buraya düşüyor.
-                      "p3_veto": 0}
+                      "p3_veto": 0,
+                      # Su hattı ↔ genişlik menzili ÇELİŞTİĞİ için elenen aday
+                      # (kıyı bitkisinin su yansıması). Ölçüm: yeşil yanlış
+                      # adayların %88'i buraya düşüyor, gerçek dubada %0.
+                      # 🔴 Sahada bu sayaç GERÇEK hedef bulunduğu anda artarsa
+                      # kapı fazla sıkı demektir — tek görünürlük kanalı bu.
+                      "p3_su_hatti": 0}
         # 🔴 2026-08-13: sessiz-ret alarmının ÖNCEKİ görüntüsü. Sayaçlar
         # KÜMÜLATİF (bilerek — toplamı sahada görmek istiyoruz) ama alarm
         # doğrudan onların sıfırdan büyük olmasına bakıyordu ⇒ ölçüldü:
@@ -1100,6 +1148,14 @@ class DubaNavigator(Node):
             cx_norm = a.cx / float(w)
             z = gm.mesafe_genislikten(w_norm, gm.HEDEF_CAP_M, self._f_norm)
             if not z:                      # menzil kurulamadı → sessiz atma
+                continue
+            # 🔴 SU HATTI TUTARLILIĞI — yüzen duba su üzerindedir.
+            # Kıyı bitkisinin su yansıması burada eleniyor (ölçüm: %88),
+            # gerçek dubada kayıp %0. Ayrıntı: `P3_SU_HATTI_KAPISI` bloğu.
+            if P3_SU_HATTI_KAPISI and gm.su_hatti_celiskili(
+                    (a.cy + a.h / 2.0) / float(h), z, SU_HATTI_UFUK_CY,
+                    SU_HATTI_EGIM, P3_PITCH_PAYI_CY, P3_CELISKI_KATI):
+                self._tani["p3_su_hatti"] += 1
                 continue
             out.append(_P3Aday(
                 cx=cx_norm, cy=a.cy / float(h),
