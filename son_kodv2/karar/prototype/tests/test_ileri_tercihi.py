@@ -509,3 +509,30 @@ def test_FP30_gercek_duba_yaricapini_BOZMAZ() -> None:
     dubalar = [e for e in engeller if abs(e.center_y - 8.0) < 1.0]
     assert dubalar, "dubalar kayboldu"
     assert all(e.radius <= 0.45 for e in dubalar)
+
+
+def test_FP30_saha_yuzeyine_BAGLI() -> None:
+    """🔒 F-P.30 sahada ayarlanabilir olmalı — yoksa ölçülmüş bir düzeltme
+    yeniden derlemeden denenemez (`edge_unutma_katsayisi` bu tuzağa düştü:
+    parametre node'da açılmış ama launch/yaml'a HİÇ bağlanmamıştı).
+
+    Dört yer birden bağlanır: çekirdek config · node · launch · hardware.yaml.
+    """
+    import ast
+    from pathlib import Path
+    kok = Path(__file__).resolve().parents[2]
+    pkg = kok / "ros2_ws" / "src" / "girdap_decision"
+
+    node = (pkg / "girdap_decision" / "perception_lidar_node.py").read_text()
+    assert 'declare_parameter("split_max_yaricap_m"' in node
+    assert "split_max_yaricap_m=float(" in node, "okunuyor ama CONFIG'e GEÇİRİLMİYOR"
+
+    launch = (pkg / "launch" / "hardware.launch.py").read_text()
+    assert '"split_max_yaricap_m"' in launch
+
+    hw = (pkg / "config" / "hardware.yaml").read_text()
+    assert "split_max_yaricap_m:" in hw
+
+    from prototype.perception.lidar_obstacles import LidarObstacleConfig
+    assert LidarObstacleConfig().split_max_yaricap_m == 0.0, "varsayılan KAPALI"
+    del ast

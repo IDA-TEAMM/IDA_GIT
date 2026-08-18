@@ -135,6 +135,9 @@ _LIDAR_DEFAULTS: dict[str, tuple[float | int, type]] = {
     "min_cluster_size": (5, int),
     "max_cluster_size": (500, int),
     "split_cell_m": (1.0, float),       # F5.4: büyük küme bölme ızgarası
+    # F-P.30: yayılıma göre bölme eşiği (m). 0 = kapalı (eski davranış).
+    # Ölçüm: kıyı temsili 707 → 9,6 m², nokta örtüşmesi %100 korunuyor.
+    "split_max_yaricap_m": (0.0, float),
     "max_range": (25.0, float),
     "voxel_size": (0.1, float),         # F5.3: clustering öncesi downsample
     "log_period_s": (5.0, float),
