@@ -132,6 +132,39 @@ def test_TAM_salteri_hepsini_aciyor():
         assert s in blok, f"GIRDAP_GOL_TAM {s}'i açmıyor"
 
 
+def test_sanal_gol_PARAMETRELER_okunmadan_ONCE_tanimli():
+    """🪤 rclpy parametreyi tanımlamadan okursan `ParameterNotDeclaredException`
+    fırlatır ve düğüm AÇILIŞTA ölür. Sanal göl ölünce tüm zincir "poz hiç
+    gelmedi" der ve **sebep gizlenir** — 18.08'de tam bu oldu.
+
+    Test her `self.X = ...get_parameter("ad")` okumasının, o adın
+    `declare_parameter` satırından SONRA geldiğini doğrular.
+    """
+    import re
+    kaynak = io.open(_KOK / "scripts/sanal_gol.py", encoding="utf-8").read()
+    tanim = {m.group(1): m.start()
+             for m in re.finditer(r'declare_parameter\(\s*"([^"]+)"', kaynak)}
+    for m in re.finditer(r'get_parameter\(\s*"([^"]+)"\s*\)', kaynak):
+        ad = m.group(1)
+        assert ad in tanim, f"{ad} hiç declare edilmemiş"
+        assert tanim[ad] < m.start(), (
+            f"{ad} TANIMLANMADAN okunuyor (satır sırası ters) — "
+            "düğüm açılışta ParameterNotDeclaredException ile ölür")
+
+
+def test_ariza_enjeksiyon_salterleri_VAR_ve_KAPALI():
+    """Kural motorunun DUYARLILIĞINI sınayan tetikler."""
+    kaynak = io.open(_KOK / "scripts/sanal_gol.py", encoding="utf-8").read()
+    for p in ("ariza_poz_sicramasi_m", "ariza_poz_nan_orani",
+              "ariza_damga_kaydirma_s", "ariza_kadans_bolen",
+              "ariza_kesinti_t_s", "ariza_govde_yansimasi_m"):
+        assert f'declare_parameter("{p}"' in kaynak, f"{p} yok"
+    # Hepsi varsayılan KAPALI (0 / 1)
+    import re
+    for p, v in re.findall(r'declare_parameter\("(ariza_\w+)",\s*([\d.]+)\)', kaynak):
+        assert float(v) in (0.0, 1.0), f"{p} varsayılanı {v} — kapalı değil"
+
+
 def test_betik_SOZDIZIMI_temiz():
     import subprocess
     r = subprocess.run(["bash", "-n", str(_GOL)], capture_output=True)

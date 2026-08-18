@@ -190,7 +190,63 @@ class SanalGol(Node):
         self.hayalet_n = int(self.get_parameter("hayalet_sayisi").value)
         self.poz_bayat = max(0.0, min(0.9, float(
             self.get_parameter("poz_bayat_orani").value)))
+        # ══════════════════════════════════════════════════════════════
+        # ARIZA ENJEKSİYONU (18.08.2026) — hepsi VARSAYILAN KAPALI (0)
+        #
+        # 🔑 Bunlar "gerçekçilik" değil, **kural motorunu sınayan tetikler**.
+        # Göl şartnamesinin kabul ölçütü iki yönlü: her kural ihlalde
+        # KIRMIZI yanmalı (duyarlılık) ve temiz koşumda SESSİZ kalmalı
+        # (özgüllük). Enjeksiyon olmadan yalnız ikincisi ölçülebilir.
+        #
+        # Taksonomi literatürden (sensör · iletişim · yaşam döngüsü):
+        #   sensör      → poz sıçraması, NaN, gövde yansıması
+        #   iletişim    → kadans düşürme, kesinti, damga kaydırma
+        #   yaşam döngü → (FAZ 6c: düğüm çökmesi, ARM reddi)
+        #
+        # ⚠ `algi_tohum` ile aynı RNG kullanılır ⇒ aynı tohum = aynı arıza
+        # dizisi ⇒ A/B eşleştirilmiş kıyas yapılabilir (§19.4).
+        # ══════════════════════════════════════════════════════════════
+        #: F1 sınaması — poz ANLIK sıçraması (m). KAR-06'da 25 ms'de 6,54 m.
+        self.declare_parameter("ariza_poz_sicramasi_m", 0.0)
+        #: Sıçramanın olasılığı (0-1). Her GPS karesinde bağımsız denenir.
+        self.declare_parameter("ariza_poz_sicrama_orani", 0.0)
+        #: F4 sınaması — pozu NaN yap (0-1 olasılık). KAR-05 sınıfı.
+        self.declare_parameter("ariza_poz_nan_orani", 0.0)
+        #: S1 sınaması — damgayı geriye kaydır (s). ALG-06'da 56 YIL bayattı.
+        self.declare_parameter("ariza_damga_kaydirma_s", 0.0)
+        #: C3 sınaması — GPS/state yayınını seyrelt (her N'de bir yayınla).
+        #: 1 = normal. PAR-04'te /mavros/state 2 Hz → 0,17 Hz düşmüştü.
+        self.declare_parameter("ariza_kadans_bolen", 1)
+        #: C1/C3 sınaması — t saniyesinden sonra TÜM yayını kes (0 = kapalı).
+        #: ALG-05 (LiDAR 5 saatte 39 mesaj) ve sessiz felç sınıfı.
+        self.declare_parameter("ariza_kesinti_t_s", 0.0)
+        #: F5 sınaması — engel bulutuna GÖVDE İÇİ nokta ekle (m, 0 = kapalı).
+        #: ALG-02'de en yakın "engel" 1,3 mm'deydi (LiDAR kendini görüyor).
+        self.declare_parameter("ariza_govde_yansimasi_m", 0.0)
+
         self._rng = random.Random(int(self.get_parameter("algi_tohum").value))
+
+        # Arıza enjeksiyon durumları (hepsi 0 = kapalı)
+        _p = self.get_parameter
+        self.ar_sicrama_m = float(_p("ariza_poz_sicramasi_m").value)
+        self.ar_sicrama_p = max(0.0, min(1.0, float(_p("ariza_poz_sicrama_orani").value)))
+        self.ar_nan_p = max(0.0, min(1.0, float(_p("ariza_poz_nan_orani").value)))
+        self.ar_damga_s = float(_p("ariza_damga_kaydirma_s").value)
+        self.ar_kadans = max(1, int(_p("ariza_kadans_bolen").value))
+        self.ar_kesinti_s = float(_p("ariza_kesinti_t_s").value)
+        self.ar_govde_m = float(_p("ariza_govde_yansimasi_m").value)
+        self._ar_sayac = 0
+        self._ariza_rng = random.Random(
+            int(_p("algi_tohum").value) + 9001)   # arıza dizisi algıdan AYRI
+        if any((self.ar_sicrama_p, self.ar_nan_p, self.ar_damga_s,
+                self.ar_kadans > 1, self.ar_kesinti_s, self.ar_govde_m)):
+            self.get_logger().warn(
+                "🔴 ARIZA ENJEKSİYONU AÇIK — bu koşum SAĞLIKLI DEĞİLDİR: "
+                f"sıçrama {self.ar_sicrama_m} m @{self.ar_sicrama_p} · "
+                f"NaN {self.ar_nan_p} · damga {self.ar_damga_s} s · "
+                f"kadans 1/{self.ar_kadans} · kesinti {self.ar_kesinti_s} s · "
+                f"gövde {self.ar_govde_m} m")
+
 
         self.declare_parameter("baslangic_yon_derece", 90.0)
         yon0 = float(self.get_parameter("baslangic_yon_derece").value)
@@ -268,6 +324,36 @@ class SanalGol(Node):
         self.cmd_u = float(msg.linear.x)
         self.cmd_r = float(msg.angular.z)
 
+    # ───────────────────────── arıza yardımcıları ─────────────────────────
+    def _ariza_kesildi(self) -> bool:
+        """Kesinti anı geldi mi — geldiyse yayın YAPILMAZ (topic susar)."""
+        return self.ar_kesinti_s > 0.0 and self.t >= self.ar_kesinti_s
+
+    def _ariza_kadans_atla(self) -> bool:
+        """Kadans seyreltme: her N'de bir yayınla."""
+        if self.ar_kadans <= 1:
+            return False
+        self._ar_sayac += 1
+        return (self._ar_sayac % self.ar_kadans) != 0
+
+    def _ariza_damga(self):
+        """Damgayı geriye kaydır (S1 sınaması). 0 = dokunma."""
+        t = self.get_clock().now()
+        if self.ar_damga_s:
+            from rclpy.duration import Duration
+            t = t - Duration(seconds=self.ar_damga_s)
+        return t.to_msg()
+
+    def _ariza_konum(self, x: float, y: float):
+        """Poz sıçraması / NaN enjekte et (F1 / F4 sınaması)."""
+        if self.ar_nan_p and self._ariza_rng.random() < self.ar_nan_p:
+            return float("nan"), float("nan")
+        if self.ar_sicrama_p and self._ariza_rng.random() < self.ar_sicrama_p:
+            a = self._ariza_rng.uniform(0, 2 * math.pi)
+            return (x + self.ar_sicrama_m * math.cos(a),
+                    y + self.ar_sicrama_m * math.sin(a))
+        return x, y
+
     def _fizik(self) -> None:
         dt = 0.02
         self.t += dt
@@ -305,10 +391,20 @@ class SanalGol(Node):
         tw.twist.angular.z = self.r
         self.p_vel.publish(tw)
 
+        # 🔴 ARIZA ENJEKSİYONU BURAYA DA GEREKLİ (18.08 ölçümüyle bulundu).
+        # `fusion_node` bu kipte ([MAVROS EKF geçişi (video)], use_isam2=false)
+        # GPS'i DEĞİL bu topic'i okuyor. Arıza yalnız `_gps`'e enjekte
+        # edildiğinde `/girdap/fusion/odom` TEMİZ kalıyordu ⇒ F1/F4 kuralları
+        # ihlali göremiyordu ve göl "arıza yakalanmadı" diyordu.
+        # 🔑 Ders: enjeksiyon, tüketicinin GERÇEKTEN okuduğu topic'e konur —
+        # "mantıken poz kaynağı" olana değil.
+        if self._ariza_kesildi() or self._ariza_kadans_atla():
+            return
         lp = PoseStamped()
-        lp.header.stamp = imu.header.stamp
+        lp.header.stamp = self._ariza_damga()
         lp.header.frame_id = "map"
-        lp.pose.position.x, lp.pose.position.y = self.x, self.y
+        _lx, _ly = self._ariza_konum(self.x, self.y)
+        lp.pose.position.x, lp.pose.position.y = _lx, _ly
         lp.pose.orientation = imu.orientation
         self.p_lpose.publish(lp)
 
@@ -327,14 +423,18 @@ class SanalGol(Node):
 
     # ---------------- sahte sensör/durum ----------------
     def _gps(self) -> None:
+        # ARIZA: kesinti / kadans seyreltme → topic SUSAR (C3 sınaması)
+        if self._ariza_kesildi() or self._ariza_kadans_atla():
+            return
         m = NavSatFix()
-        m.header.stamp = self.get_clock().now().to_msg()
+        m.header.stamp = self._ariza_damga()          # ARIZA: damga kaydırma
         m.header.frame_id = "base_link"
         m.status.status = NavSatStatus.STATUS_GBAS_FIX          # RTK fixed
         m.status.service = NavSatStatus.SERVICE_GPS
-        m.latitude = self.lat0 + math.degrees(self.y / R_DUNYA)
+        _ax, _ay = self._ariza_konum(self.x, self.y)  # ARIZA: sıçrama / NaN
+        m.latitude = self.lat0 + math.degrees(_ay / R_DUNYA)
         m.longitude = self.lon0 + math.degrees(
-            self.x / (R_DUNYA * math.cos(math.radians(self.lat0)))
+            _ax / (R_DUNYA * math.cos(math.radians(self.lat0)))
         )
         m.altitude = 871.0
         self.p_gps.publish(m)
@@ -404,8 +504,11 @@ class SanalGol(Node):
 
     def _algi(self) -> None:
         """Kapı direkleri (turuncu) + engeller (sarı) — LiDAR menzili 25 m."""
+        # ARIZA: kesinti → algı topic'i SUSAR (ALG-05 sınıfı, C3 sınaması)
+        if self._ariza_kesildi():
+            return
         pa = PoseArray()
-        pa.header.stamp = self.get_clock().now().to_msg()
+        pa.header.stamp = self._ariza_damga()          # ARIZA: damga kaydırma
         pa.header.frame_id = "base_link"
         da = Detection3DArray()
         da.header = pa.header
@@ -438,6 +541,16 @@ class SanalGol(Node):
             p.position.x, p.position.y = bx, by
             p.orientation.z, p.orientation.w = yaricap, 1.0   # yarıçap hack'i
             pa.poses.append(p)
+
+        # ARIZA: GÖVDE YANSIMASI — LiDAR'ın kendi teknesini görmesi (F5).
+        # ALG-02: engel bulutunun %27'si aracın ARKASINDAYDI, en yakını 1,3 mm.
+        # Gövde yarıçapından (0,393 m) yakın hiçbir "engel" gerçek olamaz.
+        if self.ar_govde_m > 0.0:
+            gp = Pose()
+            gp.position.x = self.ar_govde_m
+            gp.position.y = 0.0
+            gp.orientation.z, gp.orientation.w = 0.05, 1.0
+            pa.poses.append(gp)
 
             d = Detection3D()
             d.bbox.center.position.x, d.bbox.center.position.y = bx, by

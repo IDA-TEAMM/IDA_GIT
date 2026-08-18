@@ -63,7 +63,25 @@ if [ "${GIRDAP_GOL_ALGI:-0}" = "1" ] || [ "${GIRDAP_GOL_TAM:-0}" = "1" ]; then
     SG_REMAP="-r /perception/obstacle_map:=/gercek/obstacle_map \
               -r /perception/classified_obstacles:=/gercek/classified_obstacles"
 fi
-basla sanal_gol python3 "$S/sanal_gol.py" --ros-args $SG_REMAP \
+# ── ARIZA ENJEKSIYONU (18.08) — hepsi VARSAYILAN KAPALI ─────────────────
+# Kural motorunun DUYARLILIGINI sinar. Temiz kosumda sessiz kalmasi
+# (ozgulluk) zaten olculuyor; bunlar ihlalde KIRMIZI yandigini gosterir.
+# Ayni tohum = ayni ariza dizisi => A/B eslestirilmis kiyas yapilabilir.
+#   GIRDAP_ARIZA_SICRAMA=6.54   GIRDAP_ARIZA_SICRAMA_ORAN=0.3   (F1)
+#   GIRDAP_ARIZA_NAN=0.2                                        (F4)
+#   GIRDAP_ARIZA_DAMGA=5.0                                      (S1)
+#   GIRDAP_ARIZA_KADANS=12                                      (C3)
+#   GIRDAP_ARIZA_KESINTI=40                                     (C3/C1)
+#   GIRDAP_ARIZA_GOVDE=0.05                                     (F5)
+AR="-p ariza_poz_sicramasi_m:=${GIRDAP_ARIZA_SICRAMA:-0.0}
+    -p ariza_poz_sicrama_orani:=${GIRDAP_ARIZA_SICRAMA_ORAN:-0.0}
+    -p ariza_poz_nan_orani:=${GIRDAP_ARIZA_NAN:-0.0}
+    -p ariza_damga_kaydirma_s:=${GIRDAP_ARIZA_DAMGA:-0.0}
+    -p ariza_kadans_bolen:=${GIRDAP_ARIZA_KADANS:-1}
+    -p ariza_kesinti_t_s:=${GIRDAP_ARIZA_KESINTI:-0.0}
+    -p ariza_govde_yansimasi_m:=${GIRDAP_ARIZA_GOVDE:-0.0}"
+
+basla sanal_gol python3 "$S/sanal_gol.py" --ros-args $SG_REMAP $AR \
     -p kapi_sayisi:="$KAPI" -p kapi_acikligi_m:="$ACIK" \
     -p kapi_araligi_m:="$ARALIK" -p engel_sayisi:="$ENGEL" \
     -p dalga_genlik_mps:="$DALGA" -p dalga_yaw_rps:="$DALGA_YAW" \
