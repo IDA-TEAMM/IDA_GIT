@@ -191,6 +191,17 @@ __global__ void rollout_rk4(
 # --------------------------------------------------------------------------- #
 
 
+#: `geri_hiz_yasak` ölü bandı (m/s). Tam sıfır eşiği sayısal gürültüyü ve
+#: dalga kaynaklı milimetrik geri kaymayı "geri gidiş" sayardı; o hâlde HER
+#: rollout elenir ve MPPI çözümsüz kalır (ölçüldü: 0 eşikte kontrol çöküyor).
+_GERI_HIZ_OLU_BANT = 0.02        # m/s
+
+#: Elenen yörüngeye eklenen maliyet. `inf` DEĞİL: softmax `exp(-cost/λ)`
+#: hesabında inf → NaN üretir ve tüm çözümü zehirler. Büyük ama SONLU değer,
+#: ağırlığı fiilen sıfırlar; hepsi elenirse MPPI yine bir çözüm döndürür
+#: (hepsi eşit ağırlık) — "çözümsüz kalma" yerine "en az kötü" davranışı.
+_YASAK_MALIYET = 1.0e6
+
 @dataclass
 class MPPIConfig:
     """MPPI hiperparametreleri — saha kalibrasyonunda tune edilir."""
@@ -308,6 +319,26 @@ class MPPIConfig:
     # ⚠ SERT kısıt SAF DÖNÜŞÜ ENGELLEMEZ: pivot itkisi [−a, +a] ortak kipi
     #   sıfırdır, kısıt yalnız ortak kipin NEGATİF olmasını yasaklar.
     w_ileri: float = 0.0             # yumuşak: geri süratin zaman integrali
+    # 🔴 18.08.2026 — `geri_hiz_yasak`: HIZ uzayında sert ileri tercihi.
+    # NE: aracın gerçekten GERİ GİTTİĞİ (u < 0) yörüngeler örneklemede elenir.
+    # NEDEN AYRI BİR ŞALTER: `ileri_kisit` **İTKİ** uzayında çalışıyor ve
+    #   ortak kipi ≥ 0 yaparak FRENİ de yasaklıyor. Teknede geri itki = frendir
+    #   (ÖLÇÜLDÜ, gerçek `CatamaranDynamics`, 1,5 → 0,3 m/s):
+    #       sürüklenme (fren yok) : 7,66 s / **5,71 m**
+    #       tam geri (fren var)   : 2,84 s / **2,38 m**   ⇒ duruş yolu **2,4×**
+    #   Sonuç ölçüldü (gerçekçi P1 sahnesi, 3 tohum): `ileri_kisit` açıkken
+    #   kapı direğine **TEMAS** (2/3 tohum, −0,291 / −0,201 m), üstelik direğe
+    #   zaten AZAMİ huni payı (1,4 m) uygulanmışken. Pay büyütmek çözmez.
+    # ⚠ `ileri_kisit`in "Nav2 vx_min=0 karşılığı" etiketi YANLIŞ BENZETMEDİR:
+    #   Nav2 MPPI **hız** komutu üretir (`vx_min` birimi m/s, varsayılan
+    #   −0,35) ve orada robot yine frenleyebilir. Bizim MPPI **itki** üretiyor.
+    #   Doğru karşılık, kısıtı hız uzayına koymaktır — bu alan onu yapar.
+    # 🔑 Bu ayrım kodda ZATEN biliniyordu: `w_ileri` (yumuşak terim) bilerek
+    #   hız üzerinden ölçülüyor, *"geri itki verip ileri kayan (duruş
+    #   manevrası) cezalandırılmaz"* diye yazılmış. Sert kol o dersi kaçırmış.
+    # GERİ ALINIRSA: geri gidişi yasaklamanın tek yolu yine `ileri_kisit`
+    #   olur ve fren kaybı geri gelir (temas).
+    geri_hiz_yasak: bool = False     # sert: u < 0 yörüngeler elenir (fren SERBEST)
     ileri_kisit: bool = False        # sert: ortak kip (ileri itki) ≥ 0
 
     # Parkur-3 kamikaze modu — hedef noktasına Gaussian çekici (negatif maliyet,
@@ -1007,6 +1038,15 @@ class MPPIController:
         if cfg.w_ileri > 0.0:
             geri_surat = xp.maximum(-traj[:, :, 3], 0.0)
             cost += cfg.w_ileri * geri_surat.sum(axis=1) * cfg.dt
+
+        # 4c) İLERİ TERCİHİ (SERT, hız uzayı) — gerçek Nav2 `vx_min = 0`.
+        # Geri GİDEN yörünge elenir; geri İTKİ (fren/duruş manevrası) serbest.
+        # Yumuşak alt sınır (`_GERI_HIZ_OLU_BANT`) sayısal gürültüyü ve
+        # dalga kaynaklı milimetrik geri kaymayı yasak saymamak için: sıfır
+        # eşiği kullanılsaydı her rollout elenir, MPPI çözümsüz kalırdı.
+        if cfg.geri_hiz_yasak:
+            geri_var = (traj[:, :, 3] < -_GERI_HIZ_OLU_BANT).any(axis=1)
+            cost = cost + geri_var * _YASAK_MALIYET
 
         # 5) Parkur-3 kamikaze çekici — Gaussian, negatif maliyet katkısı.
         # Hedefe yakın yörünge → büyük negatif terim → engel/sınır maliyetlerini

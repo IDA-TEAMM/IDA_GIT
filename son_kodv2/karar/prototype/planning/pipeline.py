@@ -210,6 +210,7 @@ class PlanningPipelineConfig:
     # False / 0.0 → eski davranış BİREBİR.
     mppi_ileri_kisit: Optional[bool] = None
     mppi_w_ileri: Optional[float] = None
+    mppi_geri_hiz_yasak: Optional[bool] = None
     # F-F.27 RRT* hedef kurtarma (m). None/0.0 → eski davranış birebir
     # (hedef engel içindeyse plan REDDEDİLİR). 17.08 bandında bu yol 43 kez
     # ateşledi; literatür karşılığı Nav2 navfn/smac `tolerance`.
@@ -236,6 +237,7 @@ class PlanningPipelineConfig:
             "ref_window_enabled": self.mppi_ref_window_enabled,
             "ileri_kisit": self.mppi_ileri_kisit,
             "w_ileri": self.mppi_w_ileri,
+            "geri_hiz_yasak": self.mppi_geri_hiz_yasak,
         }
         return {k: v for k, v in adlar.items() if v is not None}
 

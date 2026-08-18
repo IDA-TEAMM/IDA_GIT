@@ -563,3 +563,88 @@ def test_FF30_rrt_pivot_saha_yuzeyi_UCTAN_UCA_BAGLI() -> None:
     assert "_RRT_DEFAULTS.items()" in launch.split("planning_params")[1], (
         "_RRT_DEFAULTS tanımlı ama planning_params'a geçirilmiyor"
     )
+
+
+# ═══════ F-F.22b — SERT kısıt HIZ uzayında (18.08.2026) ═══════════════════
+# 🔴 Doğuran bulgu: `ileri_kisit` **İTKİ** uzayında çalışıyor ve ortak kipi
+# ≥0 yaparak FRENİ de yasaklıyor. Teknede geri itki = frendir (ölçüldü,
+# gerçek dinamikle, 1,5→0,3 m/s): sürüklenme 5,71 m ↔ tam geri 2,38 m ⇒
+# duruş yolu **2,4×**. Gerçekçi P1 sahnesinde sonuç: kapı direğine TEMAS
+# (2/3 tohum), üstelik direğe AZAMİ huni payı uygulanmışken.
+# ⚠ `ileri_kisit`in "Nav2 vx_min=0 karşılığı" etiketi YANLIŞ BENZETME:
+# Nav2 MPPI **hız** üretir (vx_min birimi m/s, varsayılan −0,35) ve orada
+# robot yine frenler. Doğru karşılık kısıtı HIZ uzayına koymaktır.
+
+
+def test_geri_hiz_yasak_VARSAYILAN_KAPALI() -> None:
+    """§0.8a: yeni yetenek ölçülmeden varsayılan olmaz."""
+    assert MPPIConfig().geri_hiz_yasak is False
+
+
+def test_geri_hiz_yasak_KAPALIYKEN_cikti_BIT_BIREBIR() -> None:
+    """Kapalıyken tek bit değişmemeli — yoksa 'varsayılan kapalı' anlamsız."""
+    import numpy as np
+
+    st = np.array([0.0, 0.0, 0.0, 0.5, 0.0, 0.0])
+    a = _kontrolcu().step(st.copy())
+    b = _kontrolcu(geri_hiz_yasak=False).step(st.copy())
+    assert np.array_equal(a, b)
+
+
+def test_GERI_GIDEN_yorunge_elenir_FREN_ELENMEZ() -> None:
+    """🔑 AYRIMIN KENDİSİ — bu test iki kolu birbirinden ayırır.
+
+    · geri GİDEN (u < 0) yörünge → elenmeli
+    · geri İTKİ verip ileri kayan (fren / duruş manevrası) → ELENMEMELİ
+    `ileri_kisit` ikisini ayıramaz (itkiye bakar), bu şalter ayırır.
+    """
+    import numpy as np
+
+    from prototype.planning.mppi import _GERI_HIZ_OLU_BANT, _YASAK_MALIYET
+
+    k = _kontrolcu(geri_hiz_yasak=True)
+    T = k.cfg.T
+    # (K=2, T+1, 6): 0. yörünge geri GİDİYOR, 1. yörünge ileri (fren altında)
+    traj = np.zeros((2, T + 1, 6))
+    traj[0, :, 3] = -0.5                       # geri gidiş
+    traj[1, :, 3] = +0.5                       # ileri — itki negatif olsa da
+    U = np.zeros((2, T, 2))
+    U[1, :, :] = -1.0                          # 1. yörünge TAM GERİ İTKİ (fren)
+    maliyet = k._trajectory_cost(traj, U)
+    fark = float(maliyet[0] - maliyet[1])
+    assert fark >= _YASAK_MALIYET * 0.9, (
+        f"geri GİDEN yörünge elenmedi (maliyet farkı {fark:.1f})")
+    # Ölü bandın İÇİNDE kalan minik geri kayma elenMEmeli.
+    traj2 = traj.copy()
+    traj2[0, :, 3] = -_GERI_HIZ_OLU_BANT / 2.0
+    m2 = k._trajectory_cost(traj2, U)
+    assert float(m2[0] - m2[1]) < _YASAK_MALIYET * 0.5, (
+        "ölü bant içindeki gürültü 'geri gidiş' sayıldı")
+
+
+def test_olu_bant_MPPIyi_cozumsuz_BIRAKMAZ() -> None:
+    """Tam sıfır eşiği sayısal gürültüyü 'geri gidiş' sayar ve HER rollout
+    elenirdi. Ölü bant pozitif olmalı ve makul kalmalı."""
+    from prototype.planning.mppi import _GERI_HIZ_OLU_BANT
+
+    assert 0.0 < _GERI_HIZ_OLU_BANT <= 0.1
+
+
+def test_yasak_maliyeti_SONLU() -> None:
+    """`inf` KULLANILMAZ: softmax `exp(-cost/λ)` içinde inf → NaN üretir ve
+    tüm çözümü zehirler (λ küçükken taşma). Büyük ama sonlu değer."""
+    import math
+
+    from prototype.planning.mppi import _YASAK_MALIYET
+
+    assert math.isfinite(_YASAK_MALIYET) and _YASAK_MALIYET > 1e4
+
+
+def test_yasak_ACIKKEN_sayisal_COKME_YOK() -> None:
+    """Araç ZATEN geri giderken tüm rollout'lar elenebilir; MPPI yine sonlu
+    ve geçerli bir komut döndürmeli (NaN/inf yok)."""
+    import numpy as np
+
+    k = _kontrolcu(geri_hiz_yasak=True)
+    u = k.step(np.array([0.0, 0.0, 0.0, -0.8, 0.0, 0.0]))   # geri giderken
+    assert u.shape == (2,) and np.all(np.isfinite(u))
