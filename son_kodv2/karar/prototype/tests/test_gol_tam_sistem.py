@@ -538,3 +538,59 @@ def test_TF_degerleri_ELLE_yazilmamis_hardware_yaml_okunuyor():
     m = _kos_komutlari()
     assert "hardware.yaml" in m, "TF değerleri hardware.yaml'dan okunmuyor"
     assert "0.0415" not in m, "ölçülmüş TF değeri betiğe elle kopyalanmış"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# HAREKET ANALİZİ (18.08.2026) — "İDA sanal gölde nasıl hareket etti?"
+#
+# Eyüp: *"kendi göle gitmiş gibi İDA'mızın hareketlerini sanalda incelemek"*.
+# Araç bant kaydedip `bant_kapi_olcum.py` koşar — GERÇEK göl bantlarını ölçen
+# aracın TA KENDİSİ. Paralel bir analizci yazmak metriklerin sessizce
+# ayrışması demek olurdu; aynı kod = geçerli "sanalda böyle ↔ gölde şöyle"
+# karşılaştırması.
+# ══════════════════════════════════════════════════════════════════════════
+_HAREKET = _KOK / "scripts" / "gol_hareket.sh"
+
+
+def _kod_satirlari(yol) -> str:
+    """Yorumlar ayıklanmış kaynak — nöbetçi düzyazıyı eşlemesin."""
+    return "\n".join(
+        k for k in (l.split("#", 1)[0] for l in
+                    yol.read_text(encoding="utf-8").splitlines()) if k.strip())
+
+
+def test_hareket_araci_GERCEK_analizciyi_kosuyor():
+    """🔑 Paralel analizci YAZILMAMALI — metrik ayrışması riski."""
+    m = _HAREKET.read_text(encoding="utf-8")
+    assert "bant_kapi_olcum.py" in m, (
+        "hareket aracı gerçek göl analizcisini koşmuyor — sanal/gerçek "
+        "karşılaştırması geçersizleşir")
+
+
+def test_hareket_araci_ANALIZCININ_topiclerini_kaydediyor():
+    """Analizcinin okuduğu her topic banda girmeli; eksik olan sessizce
+    'veri yok' der ve o bölüm boş çıkar."""
+    import re
+    analizci = (_KOK / "scripts" / "bant_kapi_olcum.py").read_text(
+        encoding="utf-8")
+    istenen = set(re.findall(r'"(/[a-z_0-9/]+)"', analizci))
+    kaydedilen = set(re.findall(r'(/[a-z_0-9/]+)',
+                                _HAREKET.read_text(encoding="utf-8")))
+    eksik = {t for t in istenen if t.count("/") >= 2} - kaydedilen
+    assert not eksik, f"banda girmeyen topic'ler: {sorted(eksik)}"
+
+
+def test_hareket_araci_set_u_KULLANMIYOR():
+    """🪤 `/opt/ros/humble/setup.bash` tanımsız değişken okuyor
+    (`AMENT_TRACE_SETUP_FILES`); `set -u` betiği ilk satırda öldürür.
+    Aynı sınıf `gol_kos.sh`'ta `set -e` ile yaşandı."""
+    satirlar = [l.split("#", 1)[0].strip()
+                for l in _HAREKET.read_text(encoding="utf-8").splitlines()]
+    assert "set -u" not in satirlar and "set -eu" not in satirlar
+
+
+def test_hareket_araci_GOL_AYAKTA_MI_denetliyor():
+    """Göl düşükken bant BOŞ çıkar ve analiz sessizce anlamsızlaşır."""
+    m = _kod_satirlari(_HAREKET)
+    assert "/girdap/fusion/pose" in m and "exit 1" in m, (
+        "göl ayakta mı denetimi yok — boş bant sessizce analiz edilir")
