@@ -627,8 +627,21 @@ class PlanningNode(Node):
         self._grup_bekci = MutuallyExclusiveCallbackGroup()
 
         # --- Subscribers ---
+        # 🔬 18.08 — POZ KUYRUK DERİNLİĞİ ÖLÇÜLEBİLİR ŞALTER.
+        # Abonelik `depth=10` + RELIABLE ile açılıyordu. Poz 10 Hz akarken bu
+        # BİR SANİYELİK birikim demek: kontrol adımı bir kez gecikirse geri
+        # çağrı, sıradaki güncel pozu görmeden ÖNCE 10 eski pozu işler.
+        # `_grup_durum` açlığı bitirdi ama BİRİKİMİ bitirmez — ikisi ayrı
+        # kusur. ROS 2 QoS kılavuzunun "yalnız en sonu isteyen tüketici"
+        # deseni `Keep Last = 1`dir (derin kuyruk + RELIABLE = komut birikmesi
+        # ve gecikme). VARSAYILAN 10 = ESKİ DAVRANIŞ; 1'e çekmek ölçümle
+        # gerekçelendirilmeden yapılmaz (`test_poz_kuyruk_derinligi`).
+        self.declare_parameter("odom_qos_depth", 10)
+        self._odom_qos_depth = max(1, int(
+            self.get_parameter("odom_qos_depth").value))
         self._sub_odom = self.create_subscription(
-            Odometry, "/girdap/fusion/odom", self._on_odom, 10,
+            Odometry, "/girdap/fusion/odom", self._on_odom,
+            self._odom_qos_depth,
             callback_group=self._grup_durum,      # kontrol adımının arkasında BEKLEMEZ
         )
         self._sub_state = self.create_subscription(
@@ -669,8 +682,19 @@ class PlanningNode(Node):
             QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL),
         )
         # Video bypass (use_rrt=false): mission_manager'dan doğrudan hedef.
+        # 🔴 18.08 — VARSAYILAN GRUPTAN ALINDI (`_on_odom` ile AYNI açlık
+        # sınıfı). `_on_target` yalnız video kolunda referans kurmuyor: RRT*
+        # kolunda da `_pivot_yedek_hedef`i (F-F.23) besliyor, yani bir DURUM
+        # girdisi. Varsayılan grup MutuallyExclusive'dir ve içinde kontrol
+        # adımı (MPPI) var — 10 Hz bütçesi 100 ms, ölçülen adım ~144 ms ⇒
+        # grup sürekli dolu, bu abonelik kuyrukta yaşlanıyordu.
+        # ⚠ Bugünkü etkisi GİZLİ: `pivot_yedek_referans` varsayılanı false,
+        # yani yedek hedefi kimse OKUMUYOR. O şalter açıldığı an (ya da
+        # `use_rrt=false` video kolunda) pivot kapısı BAYAT hedefe kerteriz
+        # alırdı. Şalter açılmadan önce düzeltiliyor ki tuzak kurulmasın.
         self._sub_target = self.create_subscription(
-            PoseStamped, "/girdap/mission/current_target", self._on_target, 10
+            PoseStamped, "/girdap/mission/current_target", self._on_target, 10,
+            callback_group=self._grup_durum,
         )
 
         # --- Publishers ---

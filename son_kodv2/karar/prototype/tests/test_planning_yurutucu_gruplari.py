@@ -22,6 +22,7 @@ atamalarının yerinde kalması. Davranış testi değil, REGRESYON kilidi.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -79,12 +80,21 @@ def test_poz_aboneligi_KONTROL_GRUBUNDA_DEGIL() -> None:
 @pytest.mark.parametrize("konu", [
     "/girdap/mission/state",
     "/mavros/state",
+    "/girdap/mission/current_target",
 ])
 def test_durum_girdileri_AYRI_grupta(konu: str) -> None:
     """Mod/görev durumu da kontrolün arkasında beklememeli.
 
     `mavros/state` geç gelirse köprü arm/mod geçişini geç görür; görev
     durumu geç gelirse auto-GUIDED geçidi yanlış zamanda açılır.
+
+    🔴 18.08 — `current_target` EKLENDİ. Adı "video bypass hedefi" gibi
+    görünüyor ama `_on_target` RRT* kolunda da koşup `_pivot_yedek_hedef`i
+    (F-F.23) yazar; yani durum girdisidir. Varsayılan grupta bırakılmıştı ve
+    orada kontrol adımı (MPPI, ~144 ms > 100 ms bütçe) var — abonelik
+    kuyrukta yaşlanıyordu. Etkisi bugün gizli (`pivot_yedek_referans`
+    varsayılanı false ⇒ yedek hedefi kimse okumuyor), tuzak o şalter
+    açılınca kurulurdu. Bu test onu açmadan önce dondurur.
     """
     assert _abonelik_gruplari().get(konu) == "_grup_durum", (
         f"{konu} varsayılan gruba düşmüş — kontrol adımı boyunca sevk edilmez"
@@ -184,4 +194,27 @@ def test_kasitli_sessizlikte_bekci_SUSUYOR() -> None:
     """
     assert "self._son_cmd_vel_t = None" in _KAYNAK, (
         "geçit kapanınca `_son_cmd_vel_t` sıfırlanmıyor — bekçi yanlış tetiklenir"
+    )
+
+
+def test_poz_kuyruk_derinligi_VARSAYILAN_ESKI_DAVRANIS() -> None:
+    """Poz aboneliğinin kuyruk derinliği ölçülmeden değiştirilmesin.
+
+    `_grup_durum` AÇLIĞI bitirdi (geri çağrı artık kontrol adımının arkasında
+    sıraya bile alınmadan bekletilmiyor). BİRİKİM ayrı bir kusurdur: 10 Hz'de
+    `depth=10` bir saniyelik kuyruk demek, yani bir gecikmeden sonra geri
+    çağrı güncel pozu görmeden önce 10 eski pozu işler. ROS 2 QoS deseni
+    "yalnız en sonu isteyen tüketici → Keep Last = 1".
+
+    Bu test şalterin VARSAYILANINI dondurur: 1'e çekmek bant koşumunda
+    ölçülmüş bir kazanç göstermeden yapılamaz.
+    """
+    m = re.search(r'declare_parameter\("odom_qos_depth",\s*([0-9]+)\)', _KAYNAK)
+    assert m is not None, "odom_qos_depth şalteri kaybolmuş"
+    assert m.group(1) == "10", (
+        "odom_qos_depth varsayılanı değişmiş — eski davranış 10'du; "
+        "değiştirmeden önce bant koşumuyla ölç ve gerekçesini yaz"
+    )
+    assert "self._odom_qos_depth," in _KAYNAK, (
+        "abonelik şalteri KULLANMIYOR — sabit derinliğe geri dönmüş"
     )

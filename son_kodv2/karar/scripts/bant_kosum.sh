@@ -8,6 +8,22 @@
 # komutumuza tepki vermez) ama ALGI→PLANLAMA zinciri birebir gerçek veriyle
 # sınanır: hangi kilitler, kaç RRT-RED, komut dağılımı ne.
 #
+# 🔴 18.08 — ÜÇ SESSİZ YANLIŞ-SONUÇ KUSURU DÜZELTİLDİ (ölçüldü, aşağıda).
+# Araç önce "her şey yolunda" diyordu; üçü de sayıyı YANLIŞ yönde bozuyordu:
+#
+#  1) `use_sim_time` VERİLMİYORDU. Poz tamponu `_now()` (duvar saati) ile
+#     dolar, `_poz_damgada()` ise BANT DAMGASIYLA (dün) sorgular → her sorgu
+#     ıskalar. Ölçüm: "damgada poz bulunamadı" 899 → **4**. O 899 gerçek bir
+#     kusur sanılıyordu; koşumun kendi yapaydı.
+#  2) `/girdap/mission/state` OYNATILMIYORDU → FSM `BOOT`ta çakılı kalıyor,
+#     `SETPOINT-KAPALI` hiç açılmıyor, yani MPPI ağır işi HİÇ yapmıyordu.
+#     Ölçüm: kilitlerin %100'ü `FSM-DISI(BOOT)` → gerçek dağılım çıktı.
+#     ⚠ Bu en sinsisi: "POZ-BAYAT 0" diyordu ama MPPI zaten koşmadığı için.
+#  3) `ros2 run` LAUNCH'I ATLIYOR. Şalterlerin launch varsayılanı
+#     (`_RRT_DEFAULTS`: 3.0) ile düğüm varsayılanı (0.0) FARKLI, ve
+#     `params.yaml`da bu anahtarlar YOK → koşum düzeltmeyi KAPALI ölçüyordu.
+#     Ölçüm: `HEDEF KURTARILDI` 0 → **91**. Şalterler artık açıkça veriliyor.
+#
 # Kullanım: bant_kosum.sh <bant_dizini> [sure_s] [planning_ek_argumanlari]
 #
 # ⚠ İZOLE DOMAIN 88 — canlı yığın (42) ve sanal göl (77) etkilenmez.
@@ -27,15 +43,28 @@ basla() { local ad="$1"; shift; setsid "$@" > "$L/$ad.log" 2>&1 & echo $! >> "$L
 
 # Yalnız planlama koşar: poz ve algı BANTTAN gelir (füzyon/algı yeniden
 # koşturulmaz — amaç PLANLAMA katmanını gerçek girdiyle sınamak).
+# 🔑 Şalterler AÇIKÇA veriliyor (kusur 3): launch atlandığı için düğüm
+# varsayılanları geçerli olurdu ve düzeltme KAPALI ölçülürdü. Değerler
+# `hardware.launch.py` içindeki `_RRT_DEFAULTS` ile aynı tutulmalıdır —
+# `test_bant_kosum_salterleri.py` bunu dondurur.
 basla planning ros2 run girdap_decision planning_node --ros-args \
-    --params-file "$P" -p use_rrt:=true $EK
+    --params-file "$P" \
+    -p use_sim_time:=true \
+    -p use_rrt:=true \
+    -p rrt_hedef_kurtarma_m:=3.0 \
+    -p rrt_kismi_plan_min_m:=0.0 \
+    -p pivot_yakin_esik_m:=0.50 \
+    -p setpoint_bekci_esik_s:=0.5 \
+    $EK
 sleep 6
 
 # 🔑 cmd_vel BANTTAN OYNATILMAZ — yoksa eski komutlar yenilerine karışır.
+# 🔑 `/girdap/mission/state` OYNATILIR (kusur 2) — yoksa FSM BOOT'ta kalır.
 basla bag ros2 bag play "$BANT" --clock -r 1.0 \
     --topics /girdap/fusion/odom /perception/classified_obstacles \
              /perception/obstacle_map /girdap/mission/current_target \
-             /girdap/mission/waypoints /mavros/state /girdap/parkur/state
+             /girdap/mission/waypoints /mavros/state /girdap/parkur/state \
+             /girdap/mission/state
 
 echo "bant koşumu: $BANT · ${SURE}s · domain 88 · ek: ${EK:-yok}"
 sleep "$SURE"
@@ -49,5 +78,8 @@ echo "düz çizgi düşüşü : $(grep -c 'düz çizgi hedefine' "$L/planning.lo
 echo "HEDEF KURTARILDI : $(grep -c 'HEDEF KURTARILDI' "$L/planning.log" 2>/dev/null)"
 echo "KISMİ PLAN       : $(grep -c 'KISMİ PLAN' "$L/planning.log" 2>/dev/null)"
 echo "PIVOT-OLCEMEDI   : $(grep -c 'PIVOT-OLCEMEDI' "$L/planning.log" 2>/dev/null)"
+echo "POZ-BAYAT        : $(grep -c 'POZ-BAYAT' "$L/planning.log" 2>/dev/null)"
+echo "damga tampon dışı: $(grep -oE 'toplam [0-9]+' "$L/planning.log" 2>/dev/null | tail -1)"
+echo "kadans bekçisi   : $(grep -c 'AÇIK SIFIR' "$L/planning.log" 2>/dev/null)"
 echo "kilit dağılımı   :"
 grep -o 'kontrol kilidi degisti: .*' "$L/planning.log" 2>/dev/null | sed 's/.*degisti: //' | sort | uniq -c | sort -rn | head -8
