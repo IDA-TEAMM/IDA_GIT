@@ -478,7 +478,16 @@ KONTROL_HZ = 15.0
 # kayıt, dönüş kesilince dört pencere +0 — *"hayaletin kaynağı algı değil,
 # ZAMAN HİZALAMASI"*. Geç damga o düzeltmeye YANLIŞ ANAHTAR verir: 202 ms
 # sonrasının pozu döner. Hesaplandı — 0,60 m eşleşme bandına karşı yanal hata:
-#   30°/s dönüşte 6 m'de 0,64 m · 8 m'de 0,85 m  ⇒ AYNI duba YENİ kayıt açar.
+#   ⚠️ DÜZELTME (18.08, aynı gün): ilk yazımda "30°/s dönüşte 8 m'de 0,85 m"
+#   demiştim — o dönüş hızı FİZİKSEL OLARAK ULAŞILAMAZ. Tekne dinamiğinden
+#   türetildi: r_max = max_thrust·B / |Nr| = 1,455·0,596/3,0 = 0,289 rad/s
+#   = **16,6 °/s** (simülasyonla birebir doğrulandı). 30°/s tavanın 1,8 katı.
+#   Ulaşılabilir en kötü hâl (TAM pivot, 16,6 °/s) ve 202 ms ile yanal hata:
+#       4 m 0,23 · 6 m 0,35 · 8 m 0,47 · 10 m 0,59 · 12 m 0,70 m
+#   `edge_memory` eşleşme bandı 0,60 m ⇒ bant ancak **~10,3 m ötesinde** aşılır
+#   ve LiDAR 30 cm dubayı zaten ~8 m'de kesiyor. Yani hayalet kayıt yolu
+#   GERÇEK ama dar; düzeltmenin asıl gerekçesi bu değil, aşağıdaki füzyon
+#   eşleşmesi (202,4 ms, slop'un 2,02 katı) ve damganın nesnel yanlışlığı.
 # 🔴 Ve SESSİZ: uyarı yalnız damga poz tamponunun DIŞINDA kalırsa yanıyor;
 # 202 ms tamponun (100 örnek @10 Hz = 10 sn) tam içinde, yani geçerli görünen
 # ama yanlış bir poz dönüyor — tek satır log basılmadan.
