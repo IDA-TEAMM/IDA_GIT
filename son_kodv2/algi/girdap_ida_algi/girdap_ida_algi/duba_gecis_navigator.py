@@ -347,7 +347,11 @@ ENGEL_YEDEK = False    # saha yedeği: hiç kenar çifti yoksa kenar+engel çift
 
 # ---- Geçiş tetikleme / sayaç (iki modda ortak) ----
 PASS_TETIK_Z = 2.0     # orta nokta bu kadar yaklaşınca "geçiş" fazına gir
-PASS_KAYIP_Z = 3.2     # geçit bu mesafeden yakınken FOV'dan çıkarsa da geç say
+# 🔴 ARTIK KULLANILMIYOR (18.08.2026) — sabit metre eşiği kapı genişliğinden
+# bağımsızdı ve W > ~4,4 m'de ÖLÜ BANT yaratıyordu (bkz. gecit_mantik.
+# fov_kayip_menzili docstring'i). Yerine `gm.fov_kaybi_mi()` geçti.
+# Silinmedi: eski logları/ölçümleri okuyan biri sayıyı arayacaktır.
+PASS_KAYIP_Z = 3.2     # (tarihsel) sabit FOV-kaybı eşiği — KULLANILMIYOR
 PASS_EK_YOL = KAMERA_KIC_MESAFE + 0.5  # kıçın da geçidi temizlemesi için ek yol
 
 # ---- Görev ----
@@ -1954,9 +1958,19 @@ class DubaNavigator(Node):
             # algi_yayin: yaklaşmada çıkış yok — sürüş karar stack'inde
         else:
             sg = self.son_gecit
+            # 🔑 18.08.2026 — ÖLÜ BANT KAPATILDI. Eskiden burada sabit
+            # `sg[1] < PASS_KAYIP_Z` (3,2 m) vardı. Kapı, GENİŞLİĞİNE göre
+            # çok daha uzakta kadrajdan çıkar (b/tan(HFOV/2)); W > ~4,4 m
+            # olan her kapı bu eşiğe HİÇ inemiyordu ⇒ geçiş hiç sayılmadı.
+            # Ölçüm: 483 karede kapı 138 kez kuruldu, tetik 0 kez ateşlendi
+            # (en yakın orta menzil 3,91 m). Sahada da aynı belirti vardı.
+            # Artık ölçüt kapının KENDİ geometrisinden türüyor (ölçek-bağımsız).
+            # ⚠ `sg` None olabilir (hiç kapı görülmediyse) — eski koddaki
+            # kısa devre koruması korunmalı; ölçüt İÇERİDE hesaplanır.
             if (sg is not None
                     and (simdi - sg[2]) < 2.0 * HEDEF_KAYIP_SN
-                    and sg[1] < PASS_KAYIP_Z
+                    and gm.fov_kaybi_mi(sg[1], self.son_yari_gen)
+                    and sg[1] <= GECIT_MAX_MESAFE
                     and abs(sg[0]) < math.radians(25)):
                 # Geçide iyice yaklaşmışken dubalar FOV'dan çıktı -> geçiyoruz.
                 # Geçit çizgisini son bilinen bearing/mesafeden kur (yaklaşıkla yeter)

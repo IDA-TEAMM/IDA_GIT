@@ -245,6 +245,68 @@ def bbox_piksel(cx, cy, w, h, lb_pay, hedef_w, hedef_h):
     return (cx * hedef_w, cy_ic * hedef_h, w * hedef_w, h_ic * hedef_h)
 
 
+def fov_kayip_menzili(yari_genislik_m: float,
+                      hfov_rad: float = HFOV_RAD) -> float:
+    """Bu kapının İKİ dubası birden kadrajdan çıkacağı menzil (m).
+
+    Saf geometri: yarı genişliği `b` olan çiftin dubaları `z` menzilinde
+    ±atan(b/z) açısında görünür. İkisi birden kadrajda kalabilmesi için
+    `atan(b/z) < HFOV/2` gerekir ⇒ **z > b / tan(HFOV/2)**. Bu eşitliğin
+    sınırı, kapının kaybolacağı menzildir.
+
+    🔴 NEDEN GEREKLİ (18.08.2026, sanal gölde ölçüldü ve SAHADA da doğrulandı
+    — kaptan: *"realde de gate'den geçmiyordu"*):
+    Geçiş fazına giriş sabit bir metre eşiğine (`PASS_KAYIP_Z = 3,2 m`)
+    bağlıydı. Ama kapı, genişliğine göre ÇOK DAHA UZAKTA kaybolur:
+
+        W =  4 m → 2,91 m'de kaybolur → 3,2 m eşiği yakalar ✅
+        W =  6 m → 4,37 m'de kaybolur → eşiğe HİÇ inemez ❌
+        W = 12 m → 8,73 m'de kaybolur → eşiğe HİÇ inemez ❌
+
+    Yani **W > ~4,4 m** olan her kapı için ÖLÜ BANT vardı: kapı görünürken
+    tetik menziline (2,0 m) inemiyor, kaybolduğunda da "yakındı" sayılmıyordu
+    ⇒ geçiş HİÇ sayılmıyordu. Ölçüldü: 483 karede kapı 138 kez kuruldu,
+    geçiş tetiği **0** kez ateşlendi; en yakın orta menzil 3,91 m idi.
+
+    Şartname (s.20, s.23) kapı mesafelerinin **alana göre değişeceğini**
+    söylüyor ⇒ metre cinsinden sabit eşik zaten TAHMİNDİR. Bu fonksiyon onu
+    ölçek-bağımsız geometriyle değiştirir: kapı 2 m de olsa 40 m de olsa
+    aynı kural çalışır.
+    """
+    t = math.tan(hfov_rad / 2.0)
+    if yari_genislik_m <= 0.0 or t <= 0.0:
+        return 0.0
+    return float(yari_genislik_m) / t
+
+
+#: Kayboluş menziline tanınan pay. 1,0 = tam geometrik sınır; tespit gürültüsü
+#: ve kare gecikmesi yüzünden kapı sınırdan biraz ÖNCE kaybolabilir.
+FOV_KAYIP_PAYI = 1.25
+
+
+def fov_kaybi_mi(son_menzil_m: float, yari_genislik_m: float,
+                 hfov_rad: float = HFOV_RAD,
+                 pay: float = FOV_KAYIP_PAYI) -> bool:
+    """Kapı GEOMETRİ gereği mi kayboldu (yaklaştık), yoksa tespit mi düştü?
+
+    Ayrım kritik: geometrik kayboluş "geçiyoruz" demektir ve geçiş fazı
+    başlatılmalıdır. Tespit düşmesi ise **hiçbir şey** demek değildir —
+    orada geçiş saymak sahte puan üretir (ve odometri doğrulaması onu
+    zaten reddeder, ama boşuna faz değiştirmiş oluruz).
+
+    Ölçüt: son görülen menzil, o kapının beklenen kayboluş menzilinin
+    payıyla birlikte ALTINDAysa kayboluş geometriktir.
+
+    ⚠ Üst sınır yok denemez: çok uzakta kaybolan geniş bir kapı için de
+    beklenen menzil büyüktür; çağıran ayrıca `GECIT_MAX_MESAFE` kapısını
+    uygular (bu fonksiyon TEK BAŞINA geçiş yetkisi vermez).
+    """
+    if son_menzil_m is None or yari_genislik_m is None:
+        return False
+    sinir = fov_kayip_menzili(yari_genislik_m, hfov_rad) * pay
+    return 0.0 < float(son_menzil_m) <= sinir
+
+
 def yan_yana_mi(a_ileri, a_yanal, b_ileri, b_yanal) -> bool:
     """Bu iki duba bir KAPI mı (kursa dik), yoksa ardışık kapılara mı ait?
 

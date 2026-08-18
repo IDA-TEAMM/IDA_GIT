@@ -30,7 +30,14 @@ ESIK_S = 1800          # 30 dk: canlı yığın bundan çok daha yaşlı
 #: BURAYA da eklenmeli — yoksa `gol_dur.sh` onu öldüremez ve hayalet kalır.
 #: `test_gol_temizleyici_TUM_gol_dugumlerini_taniyor` bu listeyi göl
 #: betiğiyle bağlar; ayrışırsa CI kırmızı.
-_GOL_DESENLERI = ("girdap_decision", "sanal_gol", "sahte_ham_sensor")
+# 🔴 GÖLE YENİ DÜĞÜM EKLEYEN BUNU DA GÜNCELLESİN. Aksi hâlde düğüm
+# `gol_dur.sh`/`gol_temizle.py` sonrası HAYATTA KALIR ve bir sonraki koşumda
+# İKİNCİ bir yayıncı olarak görünür. Ölçüldü (18.08): `duba_gecis_navigator`
+# eklendi ama buraya yazılmadı ⇒ `/perception/buoys` yayıncı **2** oldu,
+# ölçülen hız 4,94 yerine **9,88 Hz** çıktı ve ms ölçümü anlamsızlaştı.
+# (Aynı sınıf 13.08'de `sahte_ham_sensor` ile de yaşandı.)
+_GOL_DESENLERI = ("girdap_decision", "sanal_gol", "sahte_ham_sensor",
+                  "girdap_ida_algi", "duba_gecis_navigator")
 
 
 def _ata_zinciri() -> set[int]:
