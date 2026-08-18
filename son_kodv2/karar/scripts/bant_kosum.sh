@@ -79,7 +79,14 @@ echo "HEDEF KURTARILDI : $(grep -c 'HEDEF KURTARILDI' "$L/planning.log" 2>/dev/n
 echo "KISMİ PLAN       : $(grep -c 'KISMİ PLAN' "$L/planning.log" 2>/dev/null)"
 echo "PIVOT-OLCEMEDI   : $(grep -c 'PIVOT-OLCEMEDI' "$L/planning.log" 2>/dev/null)"
 echo "POZ-BAYAT        : $(grep -c 'POZ-BAYAT' "$L/planning.log" 2>/dev/null)"
-echo "damga tampon dışı: $(grep -oE 'toplam [0-9]+' "$L/planning.log" 2>/dev/null | tail -1)"
-echo "kadans bekçisi   : $(grep -c 'AÇIK SIFIR' "$L/planning.log" 2>/dev/null)"
+# 🔴 18.08 — DÖRDÜNCÜ SESSİZ YANLIŞ-SONUÇ KUSURU. Eski hâl `toplam [0-9]+`
+# desenini DOSYA GENELİNDE arayıp SONUNCUYU alıyordu; oysa "toplam N" ifadesi
+# KADANS BEKÇİSİ ve SETPOINT BOŞLUK mesajlarında da geçiyor. Ölçüm: gerçek
+# değer **300** iken özet **6** yazıyordu (kadans bekçisinin sayacı) — 50×
+# İYİMSER yönde. Sayaç artık KENDİ mesajına çıpalı.
+echo "damga tampon dışı: $(grep -oE 'damgada poz bulunamadı \(tampon dışı/boş, toplam [0-9]+' "$L/planning.log" 2>/dev/null | grep -oE '[0-9]+$' | tail -1)"
+# ⚠ AYNI SINIF: uyarı satırları KISILMIŞ (throttle) basılıyor, satır saymak
+# iç sayacı OLDUĞUNDAN AZ gösterir (ölçüldü: 3 satır ↔ gerçek 6).
+echo "kadans bekçisi   : $(grep -oE 'AÇIK SIFIR basıldı \(toplam [0-9]+' "$L/planning.log" 2>/dev/null | grep -oE '[0-9]+$' | tail -1)"
 echo "kilit dağılımı   :"
 grep -o 'kontrol kilidi degisti: .*' "$L/planning.log" 2>/dev/null | sed 's/.*degisti: //' | sort | uniq -c | sort -rn | head -8
