@@ -262,6 +262,18 @@ _FUSION_DEFAULTS: dict[str, tuple[object, type]] = {
     # taşınmasında düşmüş, 09.08'de algı ekibinin raporuyla geri geldi.
     "sync_queue_size": (100, int),
     "log_period_s": (5.0, float),
+    # 🔴 KAPTAN KARARI 18.08.2026 — *"bilinmeyen engelleri füzyona sokma".*
+    # `false` → eşleşmeyen LiDAR kümesi (CLASS_UNKNOWN) çıkışa GİRMEZ.
+    # Gerekçe ölçüldü: kameranın göremediği kapı direkleri bilinmeyen olarak
+    # engel torbasında kalıyor, `obstacle_margin` halkaları kapı açıklığını
+    # kaplıyor, hedef "engel içinde" sayılıyor → RRT* her döngüde
+    # `goal engel/sınır içinde` ile başarısız → yeni yol yok → araç bayat
+    # referansla yerinde dönüyor (18.08 Gazebo: kapı 0/8, 280 sn).
+    # ⚠️ EMNİYET BEDELİ: `false` iken kameranın sınıflayamadığı GERÇEK engel
+    # (kütük, bot, ağ) maliyet haritasına hiç girmez; kamera 69°, LiDAR 360°.
+    # Varsayılan bilerek `True` — saha yüzeyinden AÇIKÇA verilmeli, sessizce
+    # sızmamalı. TEKNOFEST öncesi denetim listesinde gözden geçirilecek.
+    "bilinmeyen_engelleri_tut": (True, bool),
 }
 # planning.obstacle_timeout_s — F-P.2 ENGEL BEKÇİSİ saha yüzeyi (15.08.2026).
 #
@@ -285,8 +297,19 @@ _FUSION_DEFAULTS: dict[str, tuple[object, type]] = {
 #   (planning_node.py:555) — sessizce unutulmasın diye.
 _BEKCI_DEFAULTS: dict[str, tuple[object, type]] = {
     "obstacle_timeout_s": (2.0, float),
+    # 🔴 18.08.2026 — SAHA YÜZEYİNE ÇIKARILDI. `d31873d0` bu parametreyi
+    # `planning_node`da açtı ama launch/hardware.yaml'a HİÇ bağlamadı; yani
+    # ölçülmüş A/B tablosu varken değer sahada denenemiyordu (yalnız kodu
+    # düzenleyerek). Varsayılan 2.0 = eski davranış, BİREBİR korunur.
+    "edge_unutma_katsayisi": (2.0, float),
 }
 _BEKCI_ARG_DESC = {
+    "edge_unutma_katsayisi": "Kenar dubası hafızasında unutma menzili = "
+                             "yayım yarıçapı × BU KATSAYI. 2.0 (varsayılan) "
+                             "⇒ 50 m: ölçülen 20×35 m alanda unutma HİÇ "
+                             "devreye girmez, torba 843 kayda şişer. "
+                             "Ölçülen A/B: 1.0 ⇒ torba %30 küçülür, "
+                             "kurtarılan yalnız %0,9 düşer",
     "obstacle_timeout_s": "F-P.2 engel bekçisi zaman aşımı (s). Engel "
                           "haritası bu süreden eskiyse (ya da HİÇ gelmediyse) "
                           "itki sıfırlanır. 0 = BEKÇİ KAPALI — araç engel "
@@ -586,7 +609,15 @@ def generate_launch_description() -> LaunchDescription:
         ],
         *[
             DeclareLaunchArgument(
-                f"perception.fusion.{key}", default_value=str(hw["fusion"][key]),
+                f"perception.fusion.{key}",
+                # bool anahtarlar (`bilinmeyen_engelleri_tut`) `str(True)` ile
+                # "True" olur ve ROS onu bool'a çeviremez — kamera/mppi
+                # bloklarındaki `_bool_default` deseninin aynısı kullanılır.
+                default_value=(
+                    _bool_default(hw["fusion"][key])
+                    if isinstance(hw["fusion"][key], bool)
+                    else str(hw["fusion"][key])
+                ),
                 description=f"Kamera-LiDAR bearing füzyonu: {key}",
             )
             for key in _FUSION_DEFAULTS

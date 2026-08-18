@@ -292,6 +292,11 @@ perception_fusion_node:
     # yetmedi, 100 tuttu). Kuyruk = kamera Hz × gecikme sn.
     sync_queue_size: 100           # sync geçmiş derinliği (LiDAR gecikme marjı)
     log_period_s: 5.0              # füzyon özet INFO log periyodu
+    # 🔴 KAPTAN KARARI 18.08.2026 — "bilinmeyen engelleri füzyona sokma".
+    # false → eşleşmeyen (sınıfsız) LiDAR kümesi çıkışa GİRMEZ.
+    # ⚠️ EMNİYET BEDELİ: kameranın sınıflayamadığı GERÇEK engel de düşer
+    #    (kamera 69°, LiDAR 360°). Varsayılan bilerek true = eski davranış.
+    bilinmeyen_engelleri_tut: true
 
 telemetry_node:
   ros__parameters:

@@ -340,6 +340,12 @@ perception:
     # yetmedi, 100 tuttu). Kuyruk = kamera Hz × gecikme sn.
     sync_queue_size: 100            # sync geçmiş derinliği (LiDAR gecikme marjı)
     log_period_s: 5.0
+    # 🔴 KAPTAN KARARI 18.08.2026 — "bilinmeyen engelleri füzyona sokma".
+    # false → eşleşmeyen (sınıfsız) LiDAR kümesi çıkışa GİRMEZ.
+    # ⚠️ EMNİYET BEDELİ: kameranın sınıflayamadığı GERÇEK engel de düşer
+    #    (kamera 69°, LiDAR 360°). Varsayılan bilerek true = eski davranış;
+    #    TEKNOFEST öncesi denetim listesinde gözden geçirilecek.
+    bilinmeyen_engelleri_tut: true
 
 # --- Sensör / perception topic isimleri ---
 # gps + imu doğrudan mavros'tan gelir (karar yığını bunlara abone).

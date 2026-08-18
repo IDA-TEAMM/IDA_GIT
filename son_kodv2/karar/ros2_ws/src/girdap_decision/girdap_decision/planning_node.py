@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import functools
 import math
+from collections import deque
 import threading
 from typing import Callable, Optional
 
@@ -451,6 +452,11 @@ class PlanningNode(Node):
             f"{self._harita_yaricapi * self._edge_unutma_kat:.0f} m")
         self._edge_mem_son_acilan = 0        # log penceresi başına yeni kayıt
         self._son_cmd_vel_t: Optional[float] = None   # çıkış kadansı bekçisi
+        # Damgaya göre poz araması için kısa geçmiş: (t, x, y, psi).
+        # 2 saniye @ 50 Hz = 100 örnek; algı gecikmesi bunun çok altında.
+        self._poz_tampon: "deque[tuple[float, float, float, float]]" = deque(
+            maxlen=100)
+        self._damga_disi_sayaci = 0      # damga tampon dışında kaldı (teşhis)
         self._backend_loglandi = False       # MPPI hesap yolu bir kez yazılır
         self._gate_post_margin = float(
             self.get_parameter("gate_post_margin_m").value
@@ -557,16 +563,45 @@ class PlanningNode(Node):
         # Araştırma uyarısı (docs.ros.org Humble): gruba referans tutulmazsa
         # geri çağrılar HİÇ çağrılmaz — bu yüzden üye değişken.
         self._grup_algi = MutuallyExclusiveCallbackGroup()
+        # 🔴 FAZ 5'İN EKSİK KALAN YARISI (18.08, Gazebo'da ölçüldü).
+        # FAZ 5 ağır ALGI'yı varsayılan gruptan çıkardı ama POZ ALIMINI
+        # kontrol zamanlayıcısının arkasında bıraktı. Varsayılan grup
+        # MutuallyExclusive'dir: kontrol adımı (MPPI) koşarken `_on_odom`
+        # SEVK EDİLMEZ — kilidi beklemez, sıraya bile alınmaz. Poz 50 Hz
+        # akarken mesajlar QoS kuyruğunda (depth=10, yani 0,2 s) taşar.
+        # Ölçüm (Gazebo, numpy/float64 hesap yolu, adım ~144 ms):
+        #   poz yaşı 1,1-1,2 s → `POZ-BAYAT` → MPPI durur → thrust sıfır →
+        #   cmd_vel akışı kesilir → ArduPilot son DÖNÜŞ komutunu tutar →
+        #   tekne yerinde döner ve çıkamaz. Kontrol kilidi dağılımı bunu
+        #   birebir gösterdi: 101 × `YOK|PIVOT` ↔ 101 × `POZ-BAYAT|PIVOT`.
+        # Yani düğüm kendi bekçisini AÇLIKTAN tetikliyordu (§1.11'in aynısı).
+        # Çözüm: durum girdileri kendi grubunda sevk edilsin. Veri yarışı YOK
+        # — `_on_odom` da `_on_control_step` de aynı `_pipe_kilidiyle` sarılı;
+        # poz artık en fazla TEK adım (kilit süresi) bekler, kuyrukta yaşlanmaz.
+        self._grup_durum = MutuallyExclusiveCallbackGroup()
+        # 🛟 KADANS BEKÇİSİ grubu (18.08). Kontrol adımı YAVAŞLADIĞINDA —
+        # çökmediğinde, yalnız bütçeyi aştığında — kimse cmd_vel basmıyordu
+        # ve araç SON komutu tutuyordu. Ölçüldü (Gazebo): kontrol 1,6 Hz,
+        # setpoint akışında 48-178 sn boşluk, tekne son DÖNÜŞ komutuyla
+        # sonsuza kadar yerinde döndü. `_safe_stop` bunu yakalamıyor çünkü o
+        # yalnız kontrol adımı ÇÖKERSE çağrılıyor.
+        # Bu grup bilerek AYRI ve `_pipe_kilidiyle` KULLANMAZ: kilidi alsaydı
+        # MPPI'nin arkasında bekler, yani tam da koruması gereken durumda
+        # susardı.
+        self._grup_bekci = MutuallyExclusiveCallbackGroup()
 
         # --- Subscribers ---
         self._sub_odom = self.create_subscription(
-            Odometry, "/girdap/fusion/odom", self._on_odom, 10
+            Odometry, "/girdap/fusion/odom", self._on_odom, 10,
+            callback_group=self._grup_durum,      # kontrol adımının arkasında BEKLEMEZ
         )
         self._sub_state = self.create_subscription(
-            String, "/girdap/mission/state", self._on_mission_state, 10
+            String, "/girdap/mission/state", self._on_mission_state, 10,
+            callback_group=self._grup_durum,
         )
         self._sub_mav_state = self.create_subscription(
-            MavState, "/mavros/state", self._on_mav_state, 10
+            MavState, "/mavros/state", self._on_mav_state, 10,
+            callback_group=self._grup_durum,
         )
         self._sub_obs = self.create_subscription(
             PoseArray, "/perception/obstacle_map", self._on_obstacles, 10,
@@ -790,6 +825,27 @@ class PlanningNode(Node):
         map_rate = float(self.get_parameter("map_rate_hz").value)
         self._map_timer = self.create_timer(1.0 / map_rate, self._publish_local_map)
 
+        # --- 🛟 Kadans bekçisi (18.08) ---
+        # Kontrol adımı bütçeyi aşınca cmd_vel akışı kesiliyor ve ArduPilot
+        # SON komutu tutuyor (dönüş komutuysa araç durmadan döner). Bu bekçi
+        # sabit kadansta koşar, kontrol adımından BAĞIMSIZDIR ve akış kesilince
+        # AÇIKÇA SIFIR basar — sessizlik yerine "dur" der.
+        # ⚠ Eşik ArduPilot'un kendi setpoint zaman aşımından (3 sn) KÜÇÜK
+        #   olmalı; 18.08 gözlemi ArduPilot'un o süre dolunca aracı
+        #   durdurmadığını, dönmeye devam ettiğini gösterdi — yani bu bekçi
+        #   o davranışa GÜVENMEZ.
+        self.declare_parameter("setpoint_bekci_esik_s", 0.5)
+        self._setpoint_bekci_esik_s = float(
+            self.get_parameter("setpoint_bekci_esik_s").value
+        )
+        self._bekci_durus_sayaci = 0
+        if self._setpoint_bekci_esik_s > 0.0:
+            self._bekci_timer = self.create_timer(
+                self._setpoint_bekci_esik_s / 5.0,   # eşiğin beşte biri
+                self._setpoint_bekcisi,
+                callback_group=self._grup_bekci,
+            )
+
         planner = "RRT*+MPPI" if self._use_rrt else "düz hedef+MPPI (video)"
         self.get_logger().info(
             f"planning_node aktif [{planner}] (MPPI K={cfg.mppi_K}, "
@@ -884,6 +940,17 @@ class PlanningNode(Node):
         self._pipe.set_state(np.array([p.x, p.y, psi, v.x, v.y, w.z]))
         self._last_xy = (p.x, p.y)               # bypass absolute hedef için
         self._last_psi = psi                     # gövde→dünya dönüşümü için
+        # 🔴 POZ TAMPONU (18.08.2026) — HAYALET DUBANIN KÖKÜ.
+        # Gövde çerçevesindeki tespitler EN SON pozla dünyaya çevriliyordu;
+        # tarama anı ile işleme anı arasındaki gecikme, tekne DÖNERKEN aynı
+        # dubayı yay boyunca kaydırıyor ve kenar hafızası onu YENİ kayıt
+        # açıyor. Kontrollü ölçüm (Gazebo, 18.08): dönerken 5 sn'de +1/+5/+2
+        # yeni kayıt, dönüş kesilince ÜST ÜSTE DÖRT pencerede **+0**.
+        # Standart çözüm (ROS/tf2 deseni): tespiti KENDİ DAMGASINDAKİ poza
+        # göre çevir; tf2'de `lookupTransform(..., stamp)` bunu interpolasyonla
+        # yapar. Burada tf2 zinciri yok (poz `/girdap/fusion/odom`'dan geliyor),
+        # o yüzden kısa bir tampon tutup damgada interpolasyon yapıyoruz.
+        self._poz_tampon.append((self._last_odom_t, p.x, p.y, psi))
 
     def _poz_makul(self, x: float, y: float, psi: float) -> bool:
         """F-F.1: gelen poz sonlu ve makul menzilde mi (§0.98a).
@@ -912,7 +979,68 @@ class PlanningNode(Node):
 
     # ----- frame dönüşümü -----
 
-    def _body_to_world(self, bx: float, by: float) -> tuple[float, float]:
+    def _poz_damgada(self, stamp) -> Optional[tuple[float, float, float]]:
+        """Verilen ROS damgasındaki (x, y, ψ) — poz tamponunda interpolasyon.
+
+        🔴 NEDEN: gövde çerçevesindeki tespiti EN SON pozla çevirmek, araç
+        DÖNERKEN dubayı yay boyunca kaydırır ve aynı fiziksel duba her turda
+        YENİ kayıt olur. 18.08 kontrollü ölçümü: dönerken 5 sn'de +1/+5/+2
+        yeni kayıt · dönüş kesilince dört pencere üst üste **+0**. Yani
+        hayaletin kaynağı algı değil, ZAMAN HİZALAMASI.
+
+        Dönen platformda standart çözüm budur (tf2 `lookupTransform(..., stamp)`
+        aynı işi interpolasyonla yapar). Burada tf2 zinciri yok — poz
+        `/girdap/fusion/odom`'dan geliyor — o yüzden tamponda arıyoruz.
+
+        `None` dönerse çağıran EN SON poza düşer ama bunu SESSİZ yapmaz.
+        Damga tampon penceresinin dışındaysa (ör. yayıncı benzetim saatinde,
+        biz duvar saatindeyken) bu ayırt edilebilsin diye sayaç tutulur.
+        """
+        if not self._poz_tampon:
+            return None
+        t = float(stamp.sec) + float(stamp.nanosec) * 1e-9
+        if t <= 0.0:
+            return None                       # damga hiç doldurulmamış
+        ilk_t = self._poz_tampon[0][0]
+        son_t = self._poz_tampon[-1][0]
+        if not (ilk_t <= t <= son_t):
+            # Pencere dışı: ya çok bayat ya da BAŞKA ZAMAN TABANI.
+            self._damga_disi_sayaci += 1
+            return None
+        onceki = self._poz_tampon[0]
+        for ornek in self._poz_tampon:
+            if ornek[0] >= t:
+                t0, x0, y0, p0 = onceki
+                t1, x1, y1, p1 = ornek
+                if t1 <= t0:
+                    return (x1, y1, p1)
+                a = (t - t0) / (t1 - t0)
+                # ψ dairesel: farkı sar, sonra interpolasyon yap.
+                dpsi = math.atan2(math.sin(p1 - p0), math.cos(p1 - p0))
+                return (x0 + a * (x1 - x0), y0 + a * (y1 - y0), p0 + a * dpsi)
+            onceki = ornek
+        return (onceki[1], onceki[2], onceki[3])
+
+    def _damga_pozu_ya_da_son(self, stamp, ne: str):
+        """Damgadaki poz; yoksa EN SON poz + GÜRÜLTÜLÜ uyarı."""
+        poz = self._poz_damgada(stamp)
+        if poz is not None:
+            return poz
+        if self._last_xy is None:
+            return None
+        self.get_logger().warn(
+            f"{ne}: damgada poz bulunamadı (tampon dışı/boş, toplam "
+            f"{self._damga_disi_sayaci}) → EN SON poza düşüldü. Araç DÖNERKEN "
+            "bu, aynı dubayı yay boyunca kaydırıp HAYALET kayıt üretir "
+            "(18.08 ölçümü). Yayıncı ile bizim saat tabanımız aynı mı "
+            "(use_sim_time)?",
+            throttle_duration_sec=10.0,
+        )
+        return (self._last_xy[0], self._last_xy[1], self._last_psi)
+
+    def _body_to_world(self, bx: float, by: float,
+                       poz: Optional[tuple[float, float, float]] = None,
+                       ) -> tuple[float, float]:
         """base_link (x=ileri) → dünya ENU. Döndürme + öteleme.
 
         🔴 2026-08-03 BULGUSU — bu dönüşüm EKSİKTİ. `/perception/obstacle_map`
@@ -928,14 +1056,17 @@ class PlanningNode(Node):
         `latlon_to_enu` ile ENU-hizalı öteleme ofseti (doğu/kuzey) taşır, sadece
         xy eklemek doğrudur — iki sözleşme aynı sanıldığı için gözden kaçmış.
         """
-        if self._last_xy is None:
-            # Poz yok: döndüremeyiz. Gövde koordinatını dünya sanmak
-            # (eski davranış) sessiz bir hata olurdu — çağıran atlar.
-            raise ValueError("odom yok, gövde→dünya dönüşümü yapılamaz")
-        c, s = math.cos(self._last_psi), math.sin(self._last_psi)
+        if poz is None:
+            if self._last_xy is None:
+                # Poz yok: döndüremeyiz. Gövde koordinatını dünya sanmak
+                # (eski davranış) sessiz bir hata olurdu — çağıran atlar.
+                raise ValueError("odom yok, gövde→dünya dönüşümü yapılamaz")
+            poz = (self._last_xy[0], self._last_xy[1], self._last_psi)
+        px, py, ppsi = poz
+        c, s = math.cos(ppsi), math.sin(ppsi)
         return (
-            self._last_xy[0] + bx * c - by * s,
-            self._last_xy[1] + bx * s + by * c,
+            px + bx * c - by * s,
+            py + bx * s + by * c,
         )
 
     @_guard
@@ -975,9 +1106,14 @@ class PlanningNode(Node):
         self._last_obstacle_t = self._now()
         if self._last_xy is None:                 # poz yok → dönüştürülemez
             return
+        # Dönüşüm TARAMANIN DAMGASINDAKİ poza göre (hayalet kökü, 18.08).
+        _poz = self._damga_pozu_ya_da_son(msg.header.stamp, "engel haritası")
+        if _poz is None:
+            return
         obstacles = [
-            CircleObstacle(*self._body_to_world(pp.position.x, pp.position.y),
-                           abs(pp.orientation.z))
+            CircleObstacle(
+                *self._body_to_world(pp.position.x, pp.position.y, _poz),
+                abs(pp.orientation.z))
             for pp in msg.poses
         ]
         self._obstacles_world = [(o.cx, o.cy, o.r) for o in obstacles]
@@ -1050,6 +1186,11 @@ class PlanningNode(Node):
 
         # Tespitleri önce DÜNYA çerçevesine al (sınıf kararı ondan sonra).
         tespitler: list[tuple[float, float, float, Optional[int]]] = []
+        # Sınıflı kol da damgadaki poza göre çevrilir (aynı hayalet kökü).
+        _poz_sinifli = self._damga_pozu_ya_da_son(
+            msg.header.stamp, "sınıflı algı")
+        if _poz_sinifli is None:
+            return
         for det in msg.detections:
             cls = None
             if det.results:
@@ -1059,7 +1200,7 @@ class PlanningNode(Node):
                     cls = None            # sayısal olmayan sınıf → engel say
             c = det.bbox.center.position
             try:
-                wx, wy = self._body_to_world(c.x, c.y)
+                wx, wy = self._body_to_world(c.x, c.y, _poz_sinifli)
             except ValueError:
                 return
             # bbox.size.x = çap (perception_fusion_node sözleşmesi)
@@ -1616,6 +1757,11 @@ class PlanningNode(Node):
         Geri alınırsa aynı çökme döner (`test_planning_node.py` 71 test kırmızı).
         """
         hedefler = []
+        # P3 hedefleri de damgadaki poza göre.
+        _poz_p3 = self._damga_pozu_ya_da_son(
+            msg.header.stamp, "P3 hedefleri")
+        if _poz_p3 is None:
+            return
         for det in msg.detections:
             if not det.results:
                 continue
@@ -1624,7 +1770,7 @@ class PlanningNode(Node):
             except (ValueError, TypeError):
                 continue                       # sayısal olmayan sınıf → atla
             wx, wy = self._body_to_world(det.bbox.center.position.x,
-                                         det.bbox.center.position.y)
+                                         det.bbox.center.position.y, _poz_p3)
             hedefler.append(Hedef(wx, wy, kod, float(det.bbox.size.x),
                                   float(det.results[0].hypothesis.score)))
         self._hedefler = hedefler
@@ -1804,6 +1950,11 @@ class PlanningNode(Node):
                 # Geçit kapandı → sayaç sıfırlanır, yoksa bir sonraki arm'da
                 # kasıtlı sessizlik "kesinti" diye raporlanır.
                 self._son_setpoint_t = None
+                # 🛟 Kadans bekçisi de düşer: buradaki sessizlik KASITLIDIR
+                # (disarm / GUIDED dışı). Sıfırlanmazsa bekçi her turda
+                # "akış kesildi" sanıp gereksiz sıfır basar ve gerçek
+                # kesintiyi gürültüye boğar.
+                self._son_cmd_vel_t = None
                 # Sınırlayıcı da düşer: bir sonraki arm'da eski komuttan
                 # rampalamak, aradaki duruşu yok sayıp araca sıçrama yaptırırdı.
                 self._egim.sifirla()
@@ -2234,6 +2385,47 @@ class PlanningNode(Node):
         # Olay ZAMANI kaydedilir (yukarıdaki `SETPOINT` gerekçesi).
         self._son_cmdvel_bosluk_t = now
 
+    def _setpoint_bekcisi(self) -> None:
+        """Kontrol adımı bütçeyi aşarsa AÇIKÇA sıfır bas — sessiz kalma.
+
+        🔴 18.08.2026, Gazebo'da ölçüldü. Zincir şuydu:
+
+            MPPI adımı 625 ms (bütçe 100 ms) → kontrol 1,6 Hz →
+            `POZ-BAYAT` → MPPI durur → cmd_vel akışı KESİLİR →
+            ArduPilot son **dönüş** komutunu tutar → tekne yerinde
+            döner ve çıkamaz (kapı 0/8, 280 sn boyunca)
+
+        Kritik ayrım: bu bir ÇÖKME değildi, yalnız yavaşlamaydı — bu yüzden
+        `_safe_stop` (yalnız istisnada çağrılır) hiç devreye girmedi. Yığın
+        "thrust sıfır" diyordu ama o sıfır ARACA HİÇ ULAŞMIYORDU; sıfır
+        komutu yayınlamak ile hiç yayınlamamak ArduPilot için AYNI ŞEY DEĞİL.
+
+        ⚠ Kasıtlı sessizlik (geçit kapalı: disarm / GUIDED dışı) bekçiyi
+        tetiklemez — `_on_control_step` o durumda `_son_cmd_vel_t`'yi
+        `None`'a çeker.
+        ⚠ `_pipe_kilidiyle` YOK: kilit alınsaydı bekçi tam da koruması
+        gereken anda (MPPI kilidi tutarken) bloke olurdu.
+        """
+        try:
+            son = self._son_cmd_vel_t
+            if son is None:
+                return                       # akış kasıtlı kapalı
+            gecen = self._now() - son
+            if gecen < self._setpoint_bekci_esik_s:
+                return
+            self._pub_cmd_vel.publish(Twist())        # açık SIFIR
+            self._bekci_durus_sayaci += 1
+            self.get_logger().warn(
+                f"🛟 KADANS BEKÇİSİ: cmd_vel {gecen:.2f} sn'dir yayınlanmadı "
+                f"(eşik {self._setpoint_bekci_esik_s:.2f}) → AÇIK SIFIR basıldı "
+                f"(toplam {self._bekci_durus_sayaci}). Kontrol döngüsü bütçeyi "
+                "aşıyor; araç son komutla sürüklenmesin diye durduruldu.",
+                throttle_duration_sec=5.0,
+            )
+        except Exception as exc:                       # bekçi ASLA çökmemeli
+            self.get_logger().error(
+                f"kadans bekçisi hatası: {exc!r}", throttle_duration_sec=10.0)
+
     def _safe_stop(self) -> None:
         """Fail-safe motor durdurma: kontrol adımı çökerse sıfır thrust + sıfır
         cmd_vel yayınla (son komut kalıcı olmasın). Yayım da çökerse yapacak
@@ -2288,7 +2480,13 @@ def main(args: list[str] | None = None) -> None:
     # İki iş parçacığı yeter ve bilerek 2: varsayılan grup da algı grubu da
     # kendi içinde MutuallyExclusive — daha fazla iş parçacığı yalnız rclpy
     # yürütücü ek yükü getirir (bilinen sorun: rclpy #1223/#1452).
-    executor = MultiThreadedExecutor(num_threads=2)
+    # 18.08: ÜÇÜNCÜ iş parçacığı — durum girdileri (poz/mod/görev) artık kendi
+    # grubunda (`_grup_durum`). İki iş parçacığıyla o grup, kontrol ya da algı
+    # bitene kadar sevk sırası bulamıyordu; poz 1,1 s yaşlanıp `POZ-BAYAT`
+    # tetikliyordu. Üç grup var ⇒ üç iş parçacığı. Daha fazlası yalnız rclpy
+    # yürütücü ek yükü getirir (rclpy #1223/#1452). 18.08: DÖRT grup var
+    # (varsayılan · algı · durum · kadans bekçisi) ⇒ dört iş parçacığı.
+    executor = MultiThreadedExecutor(num_threads=4)
     try:
         rclpy.spin(node, executor=executor)
     finally:

@@ -97,6 +97,23 @@ class FusionConfig:
     #: `docs/olcum_formu.md §3b`. Varsayılan 0.0 = eski davranış birebir.
     #: Değer `hardware.yaml tf.oak_frame.yaw`'dan launch ile beslenir.
     camera_yaw_rad: float = 0.0
+    #: 🔴 KAPTAN KARARI 18.08.2026 — *"bilinmeyen engelleri füzyona sokma".*
+    #: `False` → eşleşmeyen LiDAR kümesi çıkışa HİÇ girmez (CLASS_UNKNOWN
+    #: üretilmez). Gerekçe sahadan: kameranın göremediği kapı direkleri
+    #: `CLASS_UNKNOWN` ile engel torbasında kalıyor, `obstacle_margin`
+    #: halkaları kapı açıklığının içini kaplıyor ve hedef "engel içinde"
+    #: sayılıyor → RRT* her döngüde `goal engel/sınır içinde` ile başarısız,
+    #: yeni yol üretilemiyor, araç bayat referansla yerinde dönüyor
+    #: (18.08 Gazebo koşumu: kapı 0/8, 280 sn).
+    #:
+    #: ⚠️ EMNİYET BEDELİ AÇIK YAZILIYOR: bu bayrak `False` iken kameranın
+    #: sınıflayamadığı GERÇEK bir engel (kütük, bot, sınıfsız duba, ağ)
+    #: maliyet haritasına HİÇ girmez — araç ona doğru sürebilir. Kamera
+    #: 69° görüyor, LiDAR 360°; yani yanda/arkada kalan her şey bilinmeyendir.
+    #: Varsayılan bu yüzden `True` (eski, emniyetli davranış) bırakıldı;
+    #: kararı uygulamak için `hardware.yaml`'da açıkça `false` verilir ve
+    #: TEKNOFEST öncesi denetim listesinde gözden geçirilir.
+    bilinmeyen_engelleri_tut: bool = True
 
 
 def bearing_from_lidar(det: LidarDetection) -> float:
@@ -237,7 +254,7 @@ def associate(
                     matched=True, source="fused",
                 )
             )
-        else:
+        elif cfg.bilinmeyen_engelleri_tut:
             fused.append(
                 FusedObstacle(
                     x=lidar_det.x, y=lidar_det.y, radius=lidar_det.radius,
@@ -245,6 +262,8 @@ def associate(
                     source="lidar",
                 )
             )
+        # else: kaptan kararı (18.08) — sınıflanmamış küme çıkışa girmez.
+        # Bedeli `FusionConfig.bilinmeyen_engelleri_tut` docstring'inde.
 
     # 🆕 H3 — 3. GEÇİŞ: eşleşmeyen ama KONUMU OLAN kamera tespitleri.
     #
