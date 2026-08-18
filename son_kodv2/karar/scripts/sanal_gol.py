@@ -74,21 +74,57 @@ class SanalGol(Node):
         # bandın DIŞINDAN geçilir ve puan gider).
         # Hepsi ROS parametresi: kapı sayısı/açıklığı/aralığı denemek için.
         self.declare_parameter("kapi_sayisi", 8)
-        self.declare_parameter("kapi_acikligi_m", 12.0)
+        # 📐 ŞARTNAME BANDI (Şekil 3 lejantı, 18.08.2026'da okundu):
+        #   "Karşılıklı 2 Kenar Dubası Arası Mesafe" = **8-12 m**
+        #   "Yan Yana 2 Kenar Dubası Arası Mesafe"  = X, DEĞİŞKEN
+        # Gövde metni (s.20) da mesafelerin "yarışma alanına göre değişkenlik
+        # göstereceğini" söylüyor ⇒ TEK bir genişlik gerçeği yansıtmaz.
+        # Bu yüzden her kapı banttan AYRI çekilir (tohumla tekrarlanabilir).
+        # 🔴 Göl 18.08'e kadar SABİT 6 m ile kuruluyordu = bandın ALTINDA,
+        # yani gerçekten KOLAY; o dönemin kapı ölçümleri iyimserdi.
+        self.declare_parameter("kapi_acik_min_m", 8.0)
+        self.declare_parameter("kapi_acik_max_m", 12.0)
+        #: >0 ise bandı EZER ve bütün kapılar bu genişlikte olur (A/B için).
+        self.declare_parameter("kapi_acikligi_m", 0.0)
         self.declare_parameter("kapi_araligi_m", 4.0)
         self.declare_parameter("zigzag_m", 5.0)
         self.declare_parameter("gercek_gn", True)      # §0.17b'nin kaçık GN'leri
         n = int(self.get_parameter("kapi_sayisi").value)
-        acik = float(self.get_parameter("kapi_acikligi_m").value)
+        acik_sabit = float(self.get_parameter("kapi_acikligi_m").value)
+        acik_min = float(self.get_parameter("kapi_acik_min_m").value)
+        acik_max = float(self.get_parameter("kapi_acik_max_m").value)
         aralik = float(self.get_parameter("kapi_araligi_m").value)
         zig = float(self.get_parameter("zigzag_m").value)
 
-        # Kapı ortaları: gerçek dosyadaki zigzag deseni (0, +z, 0, −z, …)
-        desen = [0.0, zig, 0.0, -zig]
+        # ── PARKUR-1 TOPOLOJİSİ (Şekil 3'ten okundu, 18.08.2026) ─────────
+        # 🔴 ESKİ DESEN GERÇEĞE UYMUYORDU: `[0, +z, 0, −z]` HER KAPIDA yön
+        # değiştiriyordu. Şekil 3'te kurs **uzun düz diyagonal kollar** ve
+        # GN köşelerinde (GN1→GN2→GN3→GN4) keskin dönüşten oluşuyor; bir
+        # kolun üzerinde ARDIŞIK BİRKAÇ KAPI var. Her kapıda kırılan bir
+        # koridor, kapı seçimini (|Δileri|<|Δyanal|) gereksiz zorlaştırıyor
+        # ve gerçekte olmayan bir sahne kuruyordu.
+        # `parkur_kollari` = köşe sayısı; kapılar kollara eşit dağıtılır.
+        self.declare_parameter("parkur_kollari", 3)
+        _kol = max(1, int(self.get_parameter("parkur_kollari").value))
+        # Köşe noktaları: yanal ±zig arasında gidip gelen kırık hat.
+        _kose = [(0.0 if j == 0 else (zig if j % 2 else -zig)) for j in range(_kol + 1)]
+        # Geometri RNG'si algı arızalarından AYRI tohumlanır: aynı parkurda
+        # farklı algı kusuru denenebilsin (değişken izolasyonu).
+        # ⚠ `algi_tohum` BURADA HENÜZ TANIMLI DEĞİL (aşağıda deklare ediliyor);
+        # ona bağlanmak `ParameterNotDeclaredException` ile düğümü öldürüyordu.
+        self.declare_parameter("parkur_tohum", 0)
+        _grng = random.Random(int(self.get_parameter("parkur_tohum").value))
         self.kapilar = []
         for i in range(n):
-            gx = desen[i % 4]
+            # Kapı, kırık hat üzerinde ilerledikçe kolları sırayla geçer;
+            # bir kolun İÇİNDE yanal konum DOĞRUSAL değişir (düz diyagonal).
+            t = i / max(1, n - 1) * _kol          # 0.._kol arası konum
+            j = min(int(t), _kol - 1)
+            f = t - j
+            gx = _kose[j] + (_kose[j + 1] - _kose[j]) * f
             gy = 6.0 + i * aralik
+            acik = (acik_sabit if acik_sabit > 0.0
+                    else _grng.uniform(acik_min, acik_max))
             self.kapilar.append((gx, gy, acik / 2.0))
 
         if bool(self.get_parameter("gercek_gn").value) and n == 8:
@@ -102,13 +138,63 @@ class SanalGol(Node):
                 for i, (gx, gy, _) in enumerate(self.kapilar)
             ]
 
-        # Sarı engeller — §0.17b: parkur_nihai.world'de y=±2 bandında
+        # ── SARI ENGELLER ────────────────────────────────────────────────
+        # 📐 ŞARTNAME Şekil 3: Parkur-2'de sarı engel dubaları koridorun
+        # **İÇİNDE**, kenar dubalarının arasına serpiştirilmiş. Göl 18.08'e
+        # kadar onları parkurun SONUNA (`son_y + 6 + i·4`) koyuyordu — yani
+        # araç engellerle koridor içinde hiç karşılaşmıyordu ve Parkur-2'nin
+        # asıl zorluğu (kapıdan geçerken engelden kaçınmak) sınanmıyordu.
+        # Eski yerleşim `engel_yerlesimi:="sonrasi"` ile geri gelir (A/B).
         self.declare_parameter("engel_sayisi", 4)
+        self.declare_parameter("engel_yerlesimi", "koridor")   # | "sonrasi"
         m = int(self.get_parameter("engel_sayisi").value)
+        yerlesim = str(self.get_parameter("engel_yerlesimi").value)
         son_y = self.kapilar[-1][1] if self.kapilar else 30.0
-        self.engeller = [
-            (2.0 if i % 2 else -2.0, son_y + 6.0 + i * 4.0) for i in range(m)
-        ]
+        if yerlesim == "sonrasi" or not self.kapilar:
+            self.engeller = [
+                (2.0 if i % 2 else -2.0, son_y + 6.0 + i * 4.0) for i in range(m)
+            ]
+        else:
+            # Kapılar ARASINA yerleştir; yanal konum o kapının kendi
+            # yarı genişliğinin içinde kalır (koridoru tıkamaz, ama geçiş
+            # hattını zorlar) — Şekil 3'teki dağılımın karşılığı.
+            # ⚠ Zikzak koridorda "kapı merkezinden yanal ofset" YETMEZ: iki kapı
+            # arasında orta hat KAYAR, engel koridorun dışına düşer (ölçüldü:
+            # 4 engelin yalnız 2'si içerideydi). Orta hat ve yarı genişlik
+            # ardışık kapılar arasında ENTERPOLE edilir.
+            self.engeller = []
+            _ara = max(1, len(self.kapilar) - 1)
+            for i in range(m):
+                t = (i + 0.5) / m * _ara            # kapı indeksi (kesirli)
+                j = min(int(t), _ara - 1)
+                f = t - j
+                (ax, ay, ar), (bx, by, br) = self.kapilar[j], self.kapilar[j + 1]
+                cx = ax + (bx - ax) * f
+                cy = ay + (by - ay) * f
+                yari = ar + (br - ar) * f
+                yan = _grng.uniform(0.35, 0.70) * yari * (1.0 if i % 2 else -1.0)
+                self.engeller.append((cx + yan, cy))
+
+        # ── PARKUR KÜNYESİ (tek kaynak) ──────────────────────────────────
+        # 🔴 `gol_pdc_olc.py` kapı geometrisini KOPYALAYARAK kuruyordu
+        # (sabit genişlik + aynı desen). Genişlik artık kapı başına banttan
+        # çekildiği için o kopya SESSİZCE ayrışırdı: PDÇ ölçümü var olmayan
+        # bir parkuru ölçerdi. Gerçek geometri buraya yazılır, ölçüm
+        # araçları BURADAN okur.
+        try:
+            import json
+            import os
+            _kunye = os.path.expanduser("~/girdap_logs/gol/parkur.json")
+            os.makedirs(os.path.dirname(_kunye), exist_ok=True)
+            with open(_kunye, "w", encoding="utf-8") as _f:
+                json.dump({
+                    "kapilar": [{"x": gx, "y": gy, "genislik_m": 2.0 * yari}
+                                for gx, gy, yari in self.kapilar],
+                    "engeller": [{"x": ex, "y": ey} for ex, ey in self.engeller],
+                    "gorev_xy": [{"x": gx, "y": gy} for gx, gy in self.gorev_xy],
+                }, _f, ensure_ascii=False, indent=1)
+        except Exception as _e:                  # künye ölçüm içindir, koşumu ÖLDÜRMEZ
+            self.get_logger().warn(f"parkur künyesi yazılamadı: {_e}")
 
         # --- Dalga bozucusu (varsayılan KAPALI) ---------------------------
         # 🔑 Genlik "Deniz Durumu-2 ölçümü" İDDİASI DEĞİL, §0.8a'nın kuralıyla

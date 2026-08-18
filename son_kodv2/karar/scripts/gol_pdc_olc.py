@@ -18,12 +18,28 @@ N = int(sys.argv[3]) if len(sys.argv) > 3 else 8
 ACIK = float(sys.argv[4]) if len(sys.argv) > 4 else 12.0
 ARALIK = float(sys.argv[5]) if len(sys.argv) > 5 else 4.0
 
-# sanal_gol.py'nin kapı üretimiyle BİREBİR (desen + gy = 6 + i·aralık)
-DESEN = [0.0, 5.0, 0.0, -5.0]
+# 🔑 GEOMETRİ TEK KAYNAKTAN: `sanal_gol.py` koşumda gerçek parkuru
+# `~/girdap_logs/gol/parkur.json` künyesine yazar. Burada YENİDEN KURMAK
+# ayrışma demektir — kapı genişliği artık şartname bandından (8-12 m)
+# kapı başına çekiliyor, sabit bir sayıyla yeniden üretilemez.
+import json                                                     # noqa: E402
+import os                                                       # noqa: E402
+_KUNYE = os.path.expanduser("~/girdap_logs/gol/parkur.json")
 kapilar = []
-for i in range(N):
-    gx, gy, h = DESEN[i % 4], 6.0 + i * ARALIK, ACIK / 2.0
-    kapilar.append(((gx - h, gy), (gx + h, gy)))
+if os.path.exists(_KUNYE):
+    with open(_KUNYE, encoding="utf-8") as _f:
+        for k in json.load(_f)["kapilar"]:
+            h = k["genislik_m"] / 2.0
+            kapilar.append(((k["x"] - h, k["y"]), (k["x"] + h, k["y"])))
+else:
+    # Künye yoksa eski yeniden-kurulum (yalnız SABİT genişlikli koşumlar için
+    # doğru). Sessizce yanlış ölçmemek için uyarır.
+    print("⚠ parkur.json YOK — geometri yeniden kuruluyor; kapı genişliği "
+          "değişkense bu ölçüm YANLIŞ olur.", file=sys.stderr)
+    DESEN = [0.0, 5.0, 0.0, -5.0]
+    for i in range(N):
+        gx, gy, h = DESEN[i % 4], 6.0 + i * ARALIK, ACIK / 2.0
+        kapilar.append(((gx - h, gy), (gx + h, gy)))
 
 sinir = ParkurSiniri.kapilardan(kapilar)
 sayac = ParkurDisiSayaci(sinir)

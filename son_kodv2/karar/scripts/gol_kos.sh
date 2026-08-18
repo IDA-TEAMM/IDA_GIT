@@ -47,7 +47,13 @@ L_KOK="${GIRDAP_GOL_LOG:-$HOME/girdap_logs/gol}"
 L="$L_KOK"
 mkdir -p "$L"; rm -f "$L"/*.log; : > "$L/gol.pgids"
 
-KAPI="${1:-8}"; ACIK="${2:-12.0}"; ARALIK="${3:-4.0}"; ENGEL="${4:-4}"
+KAPI="${1:-8}"
+# 📐 ŞARTNAME: karşılıklı kenar dubası arası **8-12 m** (Şekil 3 lejantı) ve
+# mesafeler "yarışma alanına göre değişkenlik gösterecektir" (s.20).
+# ACIK=0 → her kapı BANTTAN çekilir (gerçekçi, VARSAYILAN).
+# ACIK>0 → bütün kapılar o genişlikte (A/B / regresyon için).
+ACIK="${2:-0}"; ARALIK="${3:-4.0}"; ENGEL="${4:-4}"
+ACIK="$(printf '%.2f' "$ACIK")"
 # 5./6. argüman: dalga bozucusu (yanal sürüklenme m/s · yaw rad/s) — 0 = kapalı
 DALGA="${5:-0.0}"; DALGA_YAW="${6:-0.0}"
 # 🔴 ONDALIĞA ZORLA (18.08.2026). rclpy parametre tipi KATIDIR: `0` INTEGER
@@ -159,6 +165,10 @@ echo "  + TF: base_link → livox_frame · oak_frame · imu_link (hardware.yaml)
 
 basla sanal_gol python3 "$S/sanal_gol.py" --ros-args $SG_REMAP $AR $DYN \
     -p kapi_sayisi:="$KAPI" -p kapi_acikligi_m:="$ACIK" \
+    -p kapi_acik_min_m:="${GIRDAP_GOL_ACIK_MIN:-8.0}" \
+    -p kapi_acik_max_m:="${GIRDAP_GOL_ACIK_MAX:-12.0}" \
+    -p engel_yerlesimi:="${GIRDAP_GOL_ENGEL_YER:-koridor}" \
+    -p parkur_tohum:="${GIRDAP_GOL_PARKUR_TOHUM:-0}" \
     -p kapi_araligi_m:="$ARALIK" -p engel_sayisi:="$ENGEL" \
     -p dalga_genlik_mps:="$DALGA" -p dalga_yaw_rps:="$DALGA_YAW" \
     -p baslangic_yon_derece:="$YON0" \

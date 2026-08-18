@@ -646,3 +646,82 @@ def test_hareket_araci_GOREV_FAZINI_denetliyor():
     assert "/girdap/mission/state" in m, "görev fazı okunmuyor"
     assert "TAMAMLANDI" in m and "exit 1" in m, (
         "bitmiş görevde ölçüm reddedilmiyor")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ŞARTNAME TOPOLOJİSİ (18.08.2026 — Şekil 3'ten okundu)
+#
+# Lejant: "Karşılıklı 2 Kenar Dubası Arası Mesafe" = **8-12 m**
+#         "Yan Yana 2 Kenar Dubası Arası Mesafe"  = X, DEĞİŞKEN
+# Gövde (s.20): mesafeler "yarışma alanına göre değişkenlik gösterecektir".
+# Parkur-1 düzeni: UZUN DİYAGONAL KOLLAR + GN köşelerinde keskin dönüş
+# (GN1→GN2→GN3→GN4); bir kolun üzerinde ardışık birkaç kapı var.
+# Parkur-2: sarı engel dubaları koridorun İÇİNDE.
+#
+# 🔴 Göl 18.08'e kadar: sabit 6 m genişlik (bandın ALTINDA = kolay),
+# her kapıda kırılan zikzak, engeller parkurun SONUNDA (hiç karşılaşılmıyor).
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_kapi_genisligi_SARTNAME_bandindan():
+    """Tek sabit genişlik gerçeği yansıtmaz — band 8-12 m, kapı başına çekilir."""
+    import ast
+    sg = _SANAL_GOL.read_text(encoding="utf-8")
+    agac = ast.parse(sg)
+    varsayilan = {}
+    for n in ast.walk(agac):
+        if (isinstance(n, ast.Call)
+                and getattr(n.func, "attr", None) == "declare_parameter"
+                and n.args and isinstance(n.args[0], ast.Constant)):
+            ad = n.args[0].value
+            if ad in ("kapi_acik_min_m", "kapi_acik_max_m", "kapi_acikligi_m"):
+                varsayilan[ad] = ast.literal_eval(n.args[1])
+    assert varsayilan.get("kapi_acik_min_m") == 8.0, "alt sınır 8 m değil"
+    assert varsayilan.get("kapi_acik_max_m") == 12.0, "üst sınır 12 m değil"
+    assert varsayilan.get("kapi_acikligi_m") == 0.0, (
+        "sabit genişlik varsayılan olarak AÇIK — band ezilir, göl kolaylaşır")
+
+
+def test_gol_kos_bandi_EZMIYOR():
+    """Başlatıcı varsayılanı 0 olmalı; >0 bandı ezer."""
+    m = _kod_satirlari(_GOL)
+    assert 'ACIK="${2:-0}"' in m, (
+        "gol_kos.sh varsayılanı bandı eziyor (eski hâl: 12.0)")
+
+
+def test_engeller_KORIDOR_icinde():
+    """Şekil 3: sarı engeller Parkur-2 koridorunun İÇİNDE.
+
+    Parkurun sonuna konursa araç onlarla koridorda hiç karşılaşmaz ve
+    Parkur-2'nin asıl zorluğu (kapıdan geçerken kaçınmak) sınanmaz.
+    """
+    import ast
+    sg = _SANAL_GOL.read_text(encoding="utf-8")
+    for n in ast.walk(ast.parse(sg)):
+        if (isinstance(n, ast.Call)
+                and getattr(n.func, "attr", None) == "declare_parameter"
+                and n.args and getattr(n.args[0], "value", None) == "engel_yerlesimi"):
+            assert ast.literal_eval(n.args[1]) == "koridor", (
+                "engel yerleşimi varsayılanı 'koridor' değil")
+            return
+    raise AssertionError("engel_yerlesimi parametresi yok")
+
+
+def test_parkur_UZUN_KOLLARDAN_olusuyor():
+    """Her kapıda kırılan zikzak Şekil 3'e UYMUYOR — kurs uzun diyagonal
+    kollardan ve GN köşelerinden oluşur."""
+    sg = _SANAL_GOL.read_text(encoding="utf-8")
+    assert "parkur_kollari" in sg, "kol tabanlı topoloji yok"
+    assert "desen = [0.0, zig, 0.0, -zig]" not in sg, (
+        "her kapıda kırılan eski zikzak deseni geri gelmiş")
+
+
+def test_parkur_KUNYESI_tek_kaynak():
+    """Geometri iki yerde kurulursa ölçüm var olmayan bir parkuru ölçer.
+
+    `sanal_gol` gerçek parkuru künyeye yazar; `gol_pdc_olc.py` oradan okur.
+    """
+    assert "parkur.json" in _SANAL_GOL.read_text(encoding="utf-8"), (
+        "sanal_gol parkur künyesi yazmıyor")
+    pdc = (_KOK / "scripts" / "gol_pdc_olc.py").read_text(encoding="utf-8")
+    assert "parkur.json" in pdc, "pdc künyeden okumuyor — geometri ayrışır"
