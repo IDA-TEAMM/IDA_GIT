@@ -31,6 +31,7 @@ TOPICLER=(
   /mavros/imu/data /mavros/local_position/velocity_body
   /mavros/setpoint_velocity/cmd_vel_unstamped /mavros/state
   /perception/buoys /perception/classified_obstacles /perception/gate_count
+  /girdap/mission/state /girdap/parkur/state
 )
 
 # Göl ayakta mı — yoksa bant BOŞ çıkar ve analiz "veri yok" der (sessiz kusur).
@@ -39,6 +40,25 @@ if ! timeout 10 ros2 topic info /girdap/fusion/pose 2>/dev/null | grep -q "Publi
     echo "   Önce: GIRDAP_GOL_TAM=1 ./gol_kos.sh 8 6.0 4.0 4"
     exit 1
 fi
+
+# ── 🔴 GÖREV FAZI KAPISI (18.08.2026) ─────────────────────────────────────
+# Araç görevi bitirince DURUR ve komut sıfırlanır. Ölçüm penceresi o faza
+# düşerse "hız ortanca 0,001 m/s · SIFIR komut %100" çıkar ve bu, ARACIN
+# DAVRANIŞI SANILIR. Ölçüldü ve İKİ KEZ yaşandı:
+#   · pencere kısmen TAMAMLANDI'da → hız 0,170 m/s
+#   · pencere tamamen TAMAMLANDI'da → hız 0,001 m/s · sıfır komut %100
+# İkisi de aracın gerçek seyir hızı DEĞİLDİ. Bu kapı olmadan hareket
+# raporu sistematik olarak yanlış okunur.
+_DURUM="$(timeout 8 ros2 topic echo --once /girdap/mission/state 2>/dev/null \
+          | sed -n 's/^data: *//p' | tr -d "'\"" | head -1)"
+echo "▶ görev durumu: ${_DURUM:-bilinmiyor}"
+case "${_DURUM:-}" in
+  TAMAMLANDI|KILL)
+    echo "🔴 görev '$_DURUM' — araç DURUYOR. Bu pencerede ölçülen hız/komut"
+    echo "   aracın davranışı DEĞİL, bitmiş görevin sessizliğidir."
+    echo "   Gölü yeniden başlat:  ./gol_temizle.py && GIRDAP_GOL_TAM=1 ./gol_kos.sh 8 6.0 4.0 4"
+    exit 1;;
+esac
 
 echo "▶ $SURE s bant kaydı → $B"
 timeout "$SURE" ros2 bag record -o "$B" "${TOPICLER[@]}" >/dev/null 2>&1

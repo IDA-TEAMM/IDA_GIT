@@ -594,3 +594,55 @@ def test_hareket_araci_GOL_AYAKTA_MI_denetliyor():
     m = _kod_satirlari(_HAREKET)
     assert "/girdap/fusion/pose" in m and "exit 1" in m, (
         "göl ayakta mı denetimi yok — boş bant sessizce analiz edilir")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ÖLÇÜMÜ SESSİZCE GEÇERSİZ KILAN ÜÇ KUSUR (18.08.2026)
+# Eyüp: *"doğruluğunu kesinleştirmeden hüküm vermek yok"*. Üçü de ölçüldü;
+# üçü de belirti vermeden yanlış sonuç ürettirdi.
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_BAYAT_KURULUM_denetimi_var():
+    """🔴 `gol_derle.sh` `--symlink-install` KULLANAMIYOR ⇒ `install/` KOPYA.
+
+    Kaynak değişip derlenmezse göl ESKİ kodu koşar ve hiçbir belirti vermez.
+    Ölçüldü: hareket analizi bir kez bayat `duba_gecis_navigator.py` ile
+    koşturuldu; bulgular güncel kodu yansıtmıyordu.
+    """
+    m = _kod_satirlari(_GOL)
+    assert "cmp -s" in m and "BAYAT KURULUM" in _GOL.read_text(encoding="utf-8"), (
+        "göl bayat kurulum denetimi yapmıyor — 'bizim kodumuz koşuyor' "
+        "iddiası taşınamaz")
+
+
+def test_DALGA_argumanlari_ondaliga_zorlaniyor():
+    """🔴 rclpy tipi KATIDIR: `0` INTEGER gelir, düğüm AÇILIŞTA ÖLÜR.
+
+    Ölçüldü: `gol_kos.sh 8 6.0 4.0 4 0 0 90 1.0 20 42` ile `sanal_gol`
+    `InvalidParameterTypeException` alıp öldü; hiç engel yayınlanmadı,
+    sahte kamera boş kare bastı, algı `kenar=0` gösterdi. Belirti ALGIDA,
+    sebep BURADA — iki koşumu birden anlamsızlaştırdı.
+    Aynı koruma YON0 için zaten vardı; dalga argümanları korunmamıştı.
+    """
+    m = _kod_satirlari(_GOL)
+    for degisken in ("DALGA", "DALGA_YAW", "YON0"):
+        assert f'printf' in m and degisken in m, f"{degisken} korunmuyor"
+    import re
+    assert re.search(r'DALGA="\$\(printf', m), "DALGA ondalığa zorlanmıyor"
+    assert re.search(r'DALGA_YAW="\$\(printf', m), "DALGA_YAW zorlanmıyor"
+
+
+def test_hareket_araci_GOREV_FAZINI_denetliyor():
+    """🔴 Görev bitince araç DURUR; o pencerede ölçülen hız aracın davranışı
+    DEĞİL, bitmiş görevin sessizliğidir.
+
+    İKİ KEZ yaşandı: pencere kısmen TAMAMLANDI'da → 0,170 m/s; tamamen
+    TAMAMLANDI'da → 0,001 m/s · sıfır komut %100. İkisi de yanlış okundu.
+    Faza göre ayrıştırılmış doğru ölçüm: PARKUR1'de ortanca 0,211 m/s,
+    %95 0,910 m/s.
+    """
+    m = _kod_satirlari(_HAREKET)
+    assert "/girdap/mission/state" in m, "görev fazı okunmuyor"
+    assert "TAMAMLANDI" in m and "exit 1" in m, (
+        "bitmiş görevde ölçüm reddedilmiyor")

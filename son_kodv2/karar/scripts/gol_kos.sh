@@ -14,6 +14,34 @@ source "$HOME/ros2_ws/install/setup.bash" 2>/dev/null
 export ROS_DOMAIN_ID=77
 export PYTHONPATH="$HOME/IDA_GIT/son_kodv2/karar:$PYTHONPATH"
 P="$HOME/ros2_ws/install/girdap_decision/share/girdap_decision/config/params.yaml"
+
+# ── 🔴 BAYAT KURULUM DENETİMİ (18.08.2026) ────────────────────────────────
+# `gol_derle.sh` `--symlink-install` KULLANAMIYOR (setuptools 81 `--editable`
+# bayrağını kaldırdı) ⇒ `install/` KOPYADIR ve kaynak değişince ESKİ KALIR.
+# Ölçüldü: hareket analizi bir kez BAYAT `duba_gecis_navigator.py` ile
+# koşturuldu; bulgular güncel kodu yansıtmıyordu. Belirti YOK — düğüm
+# sorunsuz açılıyor, sadece eski davranışı gösteriyor.
+# Bu denetim olmadan göl "bizim kodumuz" iddiasını taşıyamaz.
+_bayat=0
+for _p in "$HOME/IDA_GIT/son_kodv2/algi/girdap_ida_algi/girdap_ida_algi" \
+          "$HOME/IDA_GIT/son_kodv2/karar/ros2_ws/src/girdap_decision/girdap_decision"; do
+    _paket="$(basename "$(dirname "$_p")")"
+    [ "$_paket" = "src" ] && _paket="girdap_decision"
+    for _f in "$_p"/*.py; do
+        _ad="$(basename "$_f")"
+        _kur="$(find "$HOME/ros2_ws/install/$_paket" -name "$_ad" 2>/dev/null | head -1)"
+        [ -n "$_kur" ] || continue
+        if ! cmp -s "$_f" "$_kur"; then
+            echo "🔴 BAYAT KURULUM: $_paket/$_ad kaynaktan FARKLI"
+            _bayat=1
+        fi
+    done
+done
+if [ "$_bayat" = "1" ]; then
+    echo "   Göl ESKİ kodu koşardı ve bulgular güncel kodu yansıtmazdı."
+    echo "   Çalıştır:  ./gol_derle.sh   (sonra tekrar dene)"
+    exit 1
+fi
 S="$HOME/IDA_GIT/son_kodv2/karar/scripts"
 L_KOK="${GIRDAP_GOL_LOG:-$HOME/girdap_logs/gol}"
 L="$L_KOK"
@@ -22,6 +50,14 @@ mkdir -p "$L"; rm -f "$L"/*.log; : > "$L/gol.pgids"
 KAPI="${1:-8}"; ACIK="${2:-12.0}"; ARALIK="${3:-4.0}"; ENGEL="${4:-4}"
 # 5./6. argüman: dalga bozucusu (yanal sürüklenme m/s · yaw rad/s) — 0 = kapalı
 DALGA="${5:-0.0}"; DALGA_YAW="${6:-0.0}"
+# 🔴 ONDALIĞA ZORLA (18.08.2026). rclpy parametre tipi KATIDIR: `0` INTEGER
+# gelir, düğüm `InvalidParameterTypeException` ile AÇILIŞTA ÖLÜR ve
+# `sanal_gol` hiç engel yayınlamaz ⇒ sahte kamera boş kare basar ⇒
+# `kenar=0`. Belirti algı tarafında görünür, sebep burada — ölçüldü:
+# `./gol_kos.sh 8 6.0 4.0 4 0 0 90 1.0 20 42` iki koşumu birden
+# anlamsızlaştırdı. Aynı tuzak YON0 için zaten yazılıydı; dalga
+# argümanları korunmamıştı.
+DALGA="$(printf '%.3f' "$DALGA")"; DALGA_YAW="$(printf '%.3f' "$DALGA_YAW")"
 # 7. argüman: başlangıç yönü (derece). 90 = kuzey = ESKİ DAVRANIŞ BİREBİR.
 # -90 → burun güneye, bütün görev noktaları ARKADA: F-F.22'nin (geri sürüş)
 # ölçülebildiği tek sahne. 17.08 göl bandında komutların %23,1'i geriydi ve
