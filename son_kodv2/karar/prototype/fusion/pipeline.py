@@ -91,6 +91,16 @@ class FusionPipelineConfig:
     heading_robust_enabled: bool = True
     heading_huber_k: float = 1.345
 
+    # 🌱 §1.56g — yeniden çıpalama. Burada SANİYE cinsinden durur; smoother
+    # ANAHTAR sayar (saati yok). Çeviriyi `keyframe_period_s` yapar, çünkü
+    # throttle kadansı değiştirdiğinde 30 saniyenin kaç anahtar ettiği de
+    # değişir — sabit anahtar sayısı yazmak throttle'ı sessizce ezerdi.
+    # 0.0 = KAPALI = eski davranış birebir.
+    reanchor_period_s: float = 0.0
+    # Sıfırlamada korunacak kuyruğun SÜRESİ (kaptan sorusu: "hepsini silme").
+    # 0.0 = saf çıpalama.
+    reanchor_keep_s: float = 0.0
+
     @property
     def keyframe_period_s(self) -> float:
         """Etkin key periyodu: throttle ile odom_period_s'in büyüğü.
@@ -101,6 +111,31 @@ class FusionPipelineConfig:
         if self.keyframe_rate_hz <= 0.0:
             return self.odom_period_s
         return max(self.odom_period_s, 1.0 / self.keyframe_rate_hz)
+
+    @property
+    def reanchor_period_keys(self) -> int:
+        """Çıpalama periyodunun ANAHTAR karşılığı (0 = kapalı).
+
+        Aşağı yuvarlama DEĞİL, yakına yuvarlama: 30 s / 0,2 s = 150 tam çıkar
+        ama kadans 3 Hz gibi bölmeyen bir değere çekilirse aşağı yuvarlama
+        periyodu sistematik olarak kısaltırdı. En az 1 — 0 "kapalı" anlamına
+        geldiği için periyot istenmişken oraya düşmek sessiz iptal olurdu.
+        """
+        if self.reanchor_period_s <= 0.0:
+            return 0
+        return max(1, round(self.reanchor_period_s / self.keyframe_period_s))
+
+    @property
+    def reanchor_keep_keys(self) -> int:
+        """Korunacak kuyruğun ANAHTAR karşılığı (0 = saf çıpalama).
+
+        Periyoda eşit/uzun bir kuyruk grafı hiç budamaz; smoother bunu
+        `ValueError` ile reddediyor. Burada sessizce kırpmıyoruz — yanlış
+        ayarın hata vermesi, sessizce etkisiz kalmasından iyidir.
+        """
+        if self.reanchor_keep_s <= 0.0:
+            return 0
+        return max(1, round(self.reanchor_keep_s / self.keyframe_period_s))
 
 
 class FusionPipeline:
@@ -127,6 +162,8 @@ class FusionPipeline:
                 heading_sigma_psi=self.cfg.heading_sigma_psi,
                 heading_robust_enabled=self.cfg.heading_robust_enabled,
                 heading_huber_k=self.cfg.heading_huber_k,
+                reanchor_period_keys=self.cfg.reanchor_period_keys,
+                reanchor_keep_keys=self.cfg.reanchor_keep_keys,
             )
         )
         self._sm.initialize(gtsam.Pose2(0.0, 0.0, 0.0))

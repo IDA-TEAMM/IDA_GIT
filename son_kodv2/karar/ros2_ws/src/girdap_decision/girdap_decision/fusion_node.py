@@ -134,6 +134,16 @@ class FusionNode(Node):
         # diverge ettiren kısıta çevirdi (bkz. isam2_smoother.py docstring'i).
         self.declare_parameter("heading_robust_enabled", True)
         self.declare_parameter("heading_huber_k", 1.345)
+        # 🌱 §1.56g — DÖNEMSEL YENİDEN ÇIPALAMA. iSAM2 grafı hiç budanmıyordu;
+        # çevrimdışı ölçümde `update()` 70 dk'da 21,2× yavaşlıyor ve düzleşmiyor
+        # (tekne saatlerce açık kalıyor). Periyodik olarak son ÇÖZÜLMÜŞ poz çapa
+        # alınıp graf yeniden kurulur. SANİYE cinsinden; anahtara çeviren
+        # `FusionPipelineConfig` (kadans keyframe throttle'ıyla değişir).
+        # 0.0 = KAPALI = eski davranış birebir.
+        self.declare_parameter("reanchor_period_s", 0.0)
+        # Sıfırlamada korunacak kuyruğun süresi. 0.0 = graf tek poza iner.
+        # Periyottan KÜÇÜK olmak zorunda (yoksa çıpalama hiçbir şey atmaz).
+        self.declare_parameter("reanchor_keep_s", 0.0)
         # Fix kalitesine göre ölçüm sigma'sı [m] — hardware.yaml
         # `fusion.gps_sigma_by_status` bloğu. ROS parametreleri sözlük
         # taşımadığı için düzleştirilmiş skalerler.
@@ -279,6 +289,10 @@ class FusionNode(Node):
                 self.get_parameter("heading_robust_enabled").value
             ),
             heading_huber_k=float(self.get_parameter("heading_huber_k").value),
+            reanchor_period_s=float(
+                self.get_parameter("reanchor_period_s").value
+            ),
+            reanchor_keep_s=float(self.get_parameter("reanchor_keep_s").value),
         )
         self.get_logger().info(
             f"iSAM2: keyframe≤{cfg.keyframe_rate_hz} Hz "
@@ -294,6 +308,20 @@ class FusionNode(Node):
             f"robust={'AÇIK' if cfg.heading_robust_enabled else 'KAPALI'} "
             f"Huber k={cfg.heading_huber_k})"
         )
+        # Çıpalama sessiz kalmamalı: açık mı kapalı mı, sahada günlükten
+        # görülebilmeli (§1.56g'nin dersi — ayar "açık" sanılıp etkisiz
+        # kalabiliyor).
+        if cfg.reanchor_period_keys > 0:
+            self.get_logger().info(
+                f"iSAM2 yeniden çıpalama AÇIK: her {cfg.reanchor_period_s:g} s "
+                f"({cfg.reanchor_period_keys} anahtar), korunan kuyruk "
+                f"{cfg.reanchor_keep_s:g} s ({cfg.reanchor_keep_keys} anahtar)"
+            )
+        else:
+            self.get_logger().info(
+                "iSAM2 yeniden çıpalama KAPALI — graf sınırsız büyür "
+                "(uzun koşumda update() yavaşlar, §1.56g)"
+            )
         self._source = FusionPipeline(cfg)
         self._orijini_geri_yukle()
         self._sub_imu = self.create_subscription(

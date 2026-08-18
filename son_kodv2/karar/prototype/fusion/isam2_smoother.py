@@ -103,6 +103,71 @@ class ISAM2SmootherConfig:
     relinearize_threshold: float = 0.01
     relinearize_skip: int = 1
 
+    # 🌱 §1.56g (18.08.2026) — DÖNEMSEL YENİDEN ÇIPALAMA (graf sınırlama).
+    #
+    # SORUN: bu sınıf grafı HİÇ budamıyor — ne fixed-lag, ne marjinalizasyon,
+    # ne pencere. 10 Hz girdiyle saatte ~36 000 faktör birikir ve `update()`
+    # doğrusaldan kötü büyür. Çevrimdışı ölçüldü (sentetik 70 dk @10 Hz, bu
+    # Jetson): 3,40 ms → 72,00 ms = **21,2×**, düzleşme YOK.
+    #
+    # ÇÖZÜM: periyodik olarak son ÇÖZÜLMÜŞ pozu çapa alıp grafı sıfırla.
+    # Ölçülen A/B (aynı yer gerçeği, aynı ölçümler, 70 dk):
+    #     yöntem                     ilk 10 dk   son 10 dk   sürüklenme   hata
+    #     sınırsız (mevcut)            3,40 ms     72,00 ms     21,2×     0,100 m
+    #     fixed-lag 30 s               0,74 ms      0,89 ms      1,2×     0,100 m
+    #     çıpala 30 s (kovaryanslı)    0,38 ms      0,34 ms      0,90×    0,0998 m
+    #     çıpala 30 s (SABİT σ)  ←     0,31 ms      0,31 ms      1,00×    0,0998 m
+    # Doğruluk dördünde de AYNI ⇒ hesap bedava kazanılıyor.
+    #
+    # NEDEN BEDAVA: grafta döngü kapanışı YOK — yalnız odometri + mutlak GPS
+    # prior'u + heading prior'u. Mutlak konum varken 30 sn önceki poz, şu anki
+    # poz hakkında bilgi taşımıyor; atılan şey bilgi değil, maliyet.
+    #
+    # NEDEN MARJİNALİZASYON DEĞİL: `marginalizeLeaves` GTSAM issue #1101'in üç
+    # belgelenmiş hatasını taşıyor (null pointer · `firstBlock() =` yerine `+=`
+    # olmalı, tekil matris üretiyor · anahtar sıralaması varsayımı).
+    # `IncrementalFixedLagSmoother` tam da onu çağırıyor. Yeniden çıpalama
+    # `marginalizeLeaves`'i HİÇ çağırmaz ⇒ o hatalara sıfır maruziyet.
+    #
+    # DİKİŞ SIÇRAMASI YOK (ölçüldü): sıfırlamadan sonraki 5 adımın hatası genel
+    # ortalamadan DAHA DÜŞÜK (−0,0059 m) — sıfırlama birikmiş doğrusallaştırma
+    # bayatlığını atıyor.
+    #
+    # ⚠️ SINIR — ÇÖZÜLMEDİ, DONDURULDU: sabit σ, çapanın "kendimi bu kadar iyi
+    # biliyorum" iddiasıdır. RTK kaybında GPS sigması 2,5 m'ye çıkar; o anda
+    # 0,05 m'lik bir çapa aşırı güvenlidir ve o anki hatayı KİLİTLER. Çevrimdışı
+    # A/B bunu sınamadı (sabit 0,05 m GPS ile koştu). `reanchor_sigma_xy` bu
+    # yüzden ayrı ayarlanabilir bırakıldı; GPS kalitesine bağlamak ölçülmemiş
+    # bir iştir ve ölçülmeden yapılmaz.
+    #
+    # ⚠️ GEÇMİŞ KESİLİR: çıpadan önceki anahtarlar graftan düşer. `all_poses()`
+    # / `all_xy_psi()` yalnız çıpadan itibarenini döndürür (`anchor_key`).
+    # Canlı yol etkilenmez — `fusion_node` yalnız `current_pose()` çağırır
+    # (denetlendi, 18.08); geçmişi kullanan tek üretim kodu `synthetic_demo`.
+    #
+    # 0 = KAPALI = eski davranış BİREBİR (varsayılan). Dağıtımda açılır.
+    reanchor_period_keys: int = 0
+    # Çapa prior'unun sigmaları. None → prior_sigma_xy / prior_sigma_psi
+    # (ölçülen kazanan tam olarak budur: [0,05 · 0,05 · 0,05]).
+    reanchor_sigma_xy: Optional[float] = None
+    reanchor_sigma_psi: Optional[float] = None
+
+    # 🔁 KUYRUK TUTMA (kaptan sorusu, 18.08): *"hepsini sıfırlamasak, %80'ini
+    # silsek — iSAM2 geçmiş veriyle optimize oluyor"*. Doğru sezgi; ölçüm ise
+    # doğruluğun üç yöntemde de AYNI çıktığını söylüyor (yukarıdaki tablo),
+    # çünkü grafta döngü kapanışı yok. Yine de kayan pencere ayrı bir
+    # seçenek olarak duruyor ve varsayılanı ÖLÇÜM seçsin diye buraya kondu.
+    #
+    # 0  → saf çıpalama (graf tek poza iner)
+    # K  → son K poz KORUNUR; çapa kuyruğun BAŞINA konur, aradaki bağlar
+    #      tahminlerden yeniden kurulur (`p[i-1].between(p[i])`).
+    # İkisi TEK kod yolu — 0, `k0 == son` özel durumuna kendiliğinden düşer.
+    #
+    # ⚠️ Kuyruk, tahminleri ölçüm gibi yeniden kullanır (hafif bilgi
+    # tekrarı) — çıpalamanın kendisiyle aynı sınıf yaklaşım. `marginalizeLeaves`
+    # ÇAĞRILMAZ, dolayısıyla GTSAM #1101'e maruziyet burada da SIFIR.
+    reanchor_keep_keys: int = 0
+
 
 #: GTSAM tekilleşmeyi ayrı bir istisna sınıfı olarak VERMİYOR (Python
 #: binding'inde düz `RuntimeError`), o yüzden tek ayırt edici şey mesaj metni.
@@ -159,7 +224,41 @@ class ISAM2Smoother:
                 f"heading_huber_k pozitif olmalı, geldi: {self.cfg.heading_huber_k}"
             )
 
+        # 🌱 §1.56g — yeniden çıpalama kapıları. Sessizce yanlış ayara
+        # düşmek, kapalı kalmaktan kötüdür: negatif periyot "kapalı" DEĞİL,
+        # yazım hatasıdır ve öyle bildirilir.
+        if self.cfg.reanchor_period_keys < 0:
+            raise ValueError(
+                "reanchor_period_keys negatif olamaz (0 = kapalı), geldi: "
+                f"{self.cfg.reanchor_period_keys}"
+            )
+        if self.cfg.reanchor_keep_keys < 0:
+            raise ValueError(
+                "reanchor_keep_keys negatif olamaz, geldi: "
+                f"{self.cfg.reanchor_keep_keys}"
+            )
+        # Kuyruk periyottan uzunsa çıpalama HİÇBİR ŞEY atmaz — graf yine
+        # sınırsız büyür ve ayar "açık" göründüğü için bu sessizce olur.
+        # Tam da §1.56g'nin önlemek istediği durum.
+        if (
+            self.cfg.reanchor_period_keys > 0
+            and self.cfg.reanchor_keep_keys >= self.cfg.reanchor_period_keys
+        ):
+            raise ValueError(
+                "reanchor_keep_keys periyottan KÜÇÜK olmalı, yoksa graf "
+                "budanmaz (çıpalama etkisiz kalır): "
+                f"keep={self.cfg.reanchor_keep_keys} >= "
+                f"period={self.cfg.reanchor_period_keys}"
+            )
+
         self._isam = gtsam.ISAM2(self._isam_params())
+
+        # Çıpalama sayacı ve grafın en eski anahtarı. `_anchor_key` yalnız
+        # istatistik değil: `all_poses()` bunun ALTINDAKİ anahtarları
+        # sorgulamamalı — o anahtarlar artık grafta YOK.
+        self._reanchor_count = 0
+        self._anchor_key: int = 0
+        self._keys_since_anchor: int = 0
 
         # Pending faktörler & başlangıç değerleri (her update'te boşaltılır)
         self._graph = gtsam.NonlinearFactorGraph()
@@ -208,6 +307,25 @@ class ISAM2Smoother:
         # Heading prior'u — GPS'in aynası (F-F.2): (x,y) kanalı uninformative,
         # yalnız psi ölçülür. heading_robust_enabled ise Huber ile sarılır.
         self._heading_noise = self._make_heading_noise(self.cfg.heading_sigma_psi)
+        # Çapa prior'u — SABİT σ (ölçülen kazanan). None → prior sigmaları,
+        # ki ölçülen yapılandırma tam olarak budur ([0,05 · 0,05 · 0,05]).
+        _c_xy = (
+            self.cfg.prior_sigma_xy
+            if self.cfg.reanchor_sigma_xy is None
+            else float(self.cfg.reanchor_sigma_xy)
+        )
+        _c_psi = (
+            self.cfg.prior_sigma_psi
+            if self.cfg.reanchor_sigma_psi is None
+            else float(self.cfg.reanchor_sigma_psi)
+        )
+        if not (_c_xy > 0.0 and _c_psi > 0.0):
+            raise ValueError(
+                f"reanchor sigmaları pozitif olmalı, geldi: xy={_c_xy} psi={_c_psi}"
+            )
+        self._cipa_noise = gtsam.noiseModel.Diagonal.Sigmas(
+            np.array([_c_xy, _c_xy, _c_psi])
+        )
 
         # Fix kalitesine göre override edilen (add_gps sigma_xy) ve keyframe
         # periyoduna göre ölçeklenen (add_odometry sigma_scale) modeller —
@@ -241,6 +359,21 @@ class ISAM2Smoother:
         gizlemesin diye sayaç dışarı açık.
         """
         return self._recovery_count
+
+    @property
+    def reanchor_count(self) -> int:
+        """Kaç kez planlı olarak yeniden çıpalandı (§1.56g).
+
+        `recovery_count` ile KARIŞTIRILMAMALI: o arıza sayar, bu bakım sayar.
+        Beklenen değer koşum süresi / çıpalama periyodu; sapması ayarın
+        gerçekten uygulanmadığının işaretidir.
+        """
+        return self._reanchor_count
+
+    @property
+    def anchor_key(self) -> int:
+        """Graftaki EN ESKİ anahtar. Bunun altındaki geçmiş atılmıştır."""
+        return self._anchor_key
 
     def _make_gps_noise(self, sigma_xy: float) -> Any:
         """(x, y) sigma'sından GPS prior gürültü modeli üret.
@@ -391,6 +524,10 @@ class ISAM2Smoother:
             prev_pose = self._isam.calculateEstimatePose2(prev_key)
 
         self._initial.insert(new_key, prev_pose.compose(delta))
+        # Çıpalama periyodu ANAHTAR sayar, saniye değil: bu sınıfın saati yok
+        # ve keyframe throttle'ı kadansı değiştirebiliyor. Saniyeye çeviren
+        # taraf `FusionPipeline` (keyframe_period_s'i o biliyor).
+        self._keys_since_anchor += 1
         return self._latest_key
 
     def add_gps(
@@ -492,6 +629,14 @@ class ISAM2Smoother:
                 self._latest_key,
                 self._isam.calculateEstimatePose2(X(self._latest_key)),
             )
+            # Çıpalama YALNIZ başarılı çözümden sonra. Tekilleşmiş graf zaten
+            # `_tekillesmeden_kurtar` ile sıfırlanıyor; oraya ikinci bir
+            # sıfırlama bindirmek çapayı çözülmemiş bir poza kurardı.
+            if (
+                self.cfg.reanchor_period_keys > 0
+                and self._keys_since_anchor >= self.cfg.reanchor_period_keys
+            ):
+                self._yeniden_cipala()
         except RuntimeError as exc:
             if not _is_indeterminant(exc):
                 raise
@@ -501,6 +646,61 @@ class ISAM2Smoother:
                 # veri, gürültülü çökmeden daha tehlikelidir.
                 raise
             self._tekillesmeden_kurtar()
+
+    def _yeniden_cipala(self) -> None:
+        """§1.56g — grafı sınırla: son çözülmüş pozu çapa alıp yeniden kur.
+
+        `_tekillesmeden_kurtar`'ın AKRABASI ama aynısı DEĞİL, iki fark kasıtlı:
+          · burada graf SAĞLIKLI — `_latest_key` geri sarılMAZ (kurtarmada
+            sarılmak zorunda, çünkü orada çözüm hiç gerçekleşmemiş olabilir);
+          · `recovery_count` ARTMAZ. O sayaç bir ARIZA göstergesidir; planlı
+            bakımı oraya yazmak sahada "graf sürekli tekilleşiyor" yanılgısı
+            üretirdi. Ayrı sayaç: `reanchor_count`.
+
+        KUYRUK (`reanchor_keep_keys`): son K poz korunur. Çapa kuyruğun BAŞINA
+        konur; aradaki bağlar tahminlerden yeniden kurulur
+        (`p[i-1].between(p[i])`), böylece faktör defteri tutmaya gerek kalmaz.
+        K=0'da `k0 == son` olur ve döngü hiç dönmez — saf çıpalama, özel durum
+        yazmadan.
+
+        ⚠ Kuyruktaki GPS/heading prior'ları TAŞINMAZ. Taşınmasına gerek yok:
+        korunan pozlar zaten o ölçümleri soğurmuş ÇÖZÜMLERdir. Ama bu, tahmini
+        ölçüm gibi yeniden kullanmak demektir (hafif bilgi tekrarı) — çıpanın
+        kendisiyle aynı sınıf yaklaşım, ve bu yüzden kuyruk uzunluğu
+        periyottan küçük tutulmak zorunda (`__init__` kapısı).
+        """
+        if self._son_iyi is None:                       # savunma; _flush garanti eder
+            return
+        son, _ = self._son_iyi
+
+        keep = self.cfg.reanchor_keep_keys
+        # Kuyruk grafın kendi başlangıcından geriye taşamaz.
+        k0 = max(self._anchor_key, son - keep) if keep > 0 else son
+
+        # Tek anahtar sorguları — maliyet N'den bağımsız (17.08 ölçümü).
+        pozlar = {i: self._isam.calculateEstimatePose2(X(i)) for i in range(k0, son + 1)}
+
+        self._isam = gtsam.ISAM2(self._isam_params())
+        graph = gtsam.NonlinearFactorGraph()
+        initial = gtsam.Values()
+
+        graph.add(gtsam.PriorFactorPose2(X(k0), pozlar[k0], self._cipa_noise))
+        initial.insert(X(k0), pozlar[k0])
+        for i in range(k0 + 1, son + 1):
+            graph.add(
+                gtsam.BetweenFactorPose2(
+                    X(i - 1), X(i), pozlar[i - 1].between(pozlar[i]), self._odom_noise
+                )
+            )
+            initial.insert(X(i), pozlar[i])
+
+        self._isam.update(graph, initial)
+        self._graph = gtsam.NonlinearFactorGraph()
+        self._initial = gtsam.Values()
+        self._son_iyi = (son, self._isam.calculateEstimatePose2(X(son)))
+        self._anchor_key = k0
+        self._keys_since_anchor = 0
+        self._reanchor_count += 1
 
     def _tekillesmeden_kurtar(self) -> None:
         """Son ÇÖZÜLMÜŞ pozu çapa alıp grafı yeniden kur.
@@ -531,6 +731,11 @@ class ISAM2Smoother:
         self._graph = gtsam.NonlinearFactorGraph()
         self._initial = gtsam.Values()
         self._son_iyi = (son, self._isam.calculateEstimatePose2(X(son)))
+        # Kurtarma da grafı tek poza indirir: `all_poses()` bunun altını
+        # sorgularsa GTSAM patlar. Bu kusur çıpalamadan ÖNCE de vardı ama
+        # kurtarma nadir olduğu için hiç tetiklenmemişti (§1.56g denetimi).
+        self._anchor_key = son
+        self._keys_since_anchor = 0
         self._recovery_count += 1
 
     # ----- queries -----
@@ -547,6 +752,15 @@ class ISAM2Smoother:
     def pose_at(self, key_index: int) -> gtsam.Pose2:
         if self._son_iyi is None:
             raise RuntimeError("Henüz update edilmedi")
+        # Çıpalama/kurtarma sonrası çapanın ALTINDAKİ anahtarlar graftan
+        # düşmüştür. GTSAM'in kendi hatası bunu "Requested variable ... is
+        # not in this VectorValues" diye bildirir — sahada okunması zor.
+        # Açık mesaj, sessiz yanlış poz döndürmekten de kötü hatadan da iyidir.
+        if key_index < self._anchor_key:
+            raise ValueError(
+                f"X({key_index}) çapanın altında (anchor_key="
+                f"{self._anchor_key}); yeniden çıpalama o geçmişi attı"
+            )
         return self._isam.calculateEstimatePose2(X(key_index))
 
     def all_poses(self) -> List[gtsam.Pose2]:
@@ -559,7 +773,11 @@ class ISAM2Smoother:
         if self._son_iyi is None:
             return []
         est = self._isam.calculateEstimate()
-        return [est.atPose2(X(i)) for i in range(self._latest_key + 1)]
+        # 🔴 `range(0, ...)` DEĞİL: çıpalama (ve tekilleşme kurtarması) grafın
+        # başını `_anchor_key`e taşır; altındaki anahtarlar artık YOK ve
+        # `est.atPose2` onlarda patlar. Kurtarma nadir olduğu için bu kusur
+        # bugüne kadar tetiklenmedi; çıpalama onu RUTİN hâle getirirdi.
+        return [est.atPose2(X(i)) for i in range(self._anchor_key, self._latest_key + 1)]
 
     def all_xy_psi(self) -> np.ndarray:
         """Smooth yörüngeyi (N, 3) numpy array olarak döndür: [x, y, psi]."""

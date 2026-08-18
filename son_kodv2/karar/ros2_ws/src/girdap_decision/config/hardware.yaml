@@ -292,6 +292,12 @@ fusion:
   # BetweenFactor'da biriktiği için BİLGİ KAYBI YOK — aynı senaryoda iki
   # ayarın ürettiği poz 1 cm'den az farkeder. 0 → throttle kapalı.
   keyframe_rate_hz: 5.0
+  # 🌱 §1.56g — dönemsel yeniden çıpalama (graf sınırlama). Gerçek bantta
+  # (session_20260817_180538, 80 dk) update sürüklenmesi 25,0× → 1,14×,
+  # ATE 0,060 → 0,063 m (değişmedi), RPE 1 s 0,027 m (aynı). 0 = kapalı.
+  reanchor_period_s: 30.0
+  # Korunan kuyruk — periyottan KÜÇÜK olmak zorunda, yoksa graf budanmaz.
+  reanchor_keep_s: 6.0
   # GPS outlier reddi — Huber M-estimator. Tek kötü fix (multipath, RTK
   # kaybı) saf Gauss modelinde TÜM çözümü kendine çeker.
   gps_robust_enabled: true

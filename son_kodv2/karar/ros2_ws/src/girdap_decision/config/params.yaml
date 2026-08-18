@@ -18,6 +18,21 @@ fusion_node:
                              # adımları tek BetweenFactor'da birikir (bilgi
                              # kaybı yok), odom σ'sı √Δt ile ölçeklenir.
                              # 0 → kapalı (eski davranış).
+    # 🌱 §1.56g (18.08.2026) — DÖNEMSEL YENİDEN ÇIPALAMA. iSAM2 grafı hiç
+    # budanmıyordu. ÖLÇÜLDÜ, gerçek bant (session_20260817_180538, 80 dk,
+    # 17.08 düzeltmesinden SONRAKİ kod) — tek değişken, aynı bant:
+    #     kapalı  : update ilk %10 0,121 ms → son %10 3,019 ms = 25,0× · ATE 0,060 m
+    #     30 s açık: 0,080 → 0,092 ms = 1,14×             · ATE 0,063 m
+    # Sentetik 70 dk bağımsız kolu aynı sonucu verdi: 24,60× → 1,03×,
+    # hata 0,0998 m ↔ 0,0998 m (dört hanede AYNI). RPE 1 s üç kolda da 0,027 m.
+    # ⇒ hesap bedava kazanılıyor; doğruluktan çalınmıyor.
+    reanchor_period_s: 30.0
+    # Sıfırlamada korunan kuyruk. Kaptan tercihi ("hepsini silmeyelim").
+    # ÖLÇÜM İKİSİNİ AYIRT ETMEDİ: kuyruksuz ATE 0,063 m ↔ 6 s kuyruk 0,061 m
+    # (fark 2 mm, tek koşumda gürültüden ayrılamaz), süre 0,092 ↔ 0,096 ms.
+    # Kuyruk seçildi çünkü bedeli ölçülemeyecek kadar küçük ve `all_poses()`
+    # teşhis için tek poz yerine ~30 poz döndürüyor. Periyottan KÜÇÜK olmalı.
+    reanchor_keep_s: 6.0
     gps_robust_enabled: true # Huber M-estimator ile GPS outlier reddi
     gps_huber_k: 1.345       # σ katı; Gauss verimliliğinin %95'ini korur
     # Fix kalitesine göre GPS ölçüm sigma'sı (NavSatFix.status.status).
