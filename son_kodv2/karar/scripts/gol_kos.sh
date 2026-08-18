@@ -142,7 +142,36 @@ if [ "${GIRDAP_GOL_ALGI:-0}" = "1" ]; then
     basla ham_sensor python3 "$S/sahte_ham_sensor.py"
     basla p_lidar  ros2 run girdap_decision perception_lidar_node --ros-args --params-file "$P"
     basla p_fusion ros2 run girdap_decision perception_fusion_node --ros-args --params-file "$P"
+
+    # ── BİZİM KATMANIMIZ: kamera duba tespiti (`/perception/buoys`) ──────
+    # 🔴 18.08 ÖLÇÜMÜ: bu satır yokken `/perception/buoys` YAYINCI 0 idi ve
+    # kural motoru S1 · S2 · S5 ile C3'ün bir kolunu "veri yok" diye STALE
+    # bırakıyordu. STALE, "ihlal yok" DEĞİLDİR — "hiç ölçülmedi" demektir;
+    # yani gölün, P1/P2 puanını üreten kendi katmanımızı sınamadığı bir kör
+    # noktası vardı. Bağlandıktan sonra: yayıncı 1 · abone 2 · 4,999 Hz,
+    # S1 +0,2077 s · S2 +1 · S5 +1 · C3 (+0,1765 / +0,2704) — hepsi ÖLÇÜLÜR.
+    #
+    # `GIRDAP_SIM_KAYNAK=1` OAK-D'yi açmaz; `/perception/obstacle_map`'i ters
+    # pinhole ile sahte NN kuyruğuna çevirir. Düğüm GÖVDESİ bit-birebir
+    # dağıtım kodudur (bkz. §SİM KAYNAK KİPİ, algı deposunda).
+    #
+    # ✅ Güvenlik (kod okunarak doğrulandı, VARSAYILMADI):
+    #   MOD="algi_yayin"          → cmd_vel YOK, /goal_pose YOK; karar
+    #                               hattının kontrol yoluna HİÇ dokunmaz.
+    #   GATE_PASSED_YAYINLA=False → gate_passed BASILMAZ. Basılsaydı FSM
+    #                               İLK geçitte PARKUR2→PARKUR3'e atlardı
+    #                               (P2 gider, ~40 puan) — o tuzak kapalı.
+    #
+    # ⚠ TEZGÂH SINIRI (dürüstlük): tespitler LiDAR engel haritasından
+    # türetiliyor. Bu kip bbox→metre dönüşümünü, menzil çözümünü, geçit
+    # kurmayı ve yayın sözleşmesini SINAR; YOLO'yu, VPU'yu ve blob'u
+    # SINAMAZ. Füzyonun kamera↔LiDAR eşleştirmesi de burada tanım gereği
+    # tutarlıdır (aynı kaynaktan türüyor) — onun gerçek sınavı bant
+    # koşumudur (KONTROL 3 `--bant`), göl değil.
+    basla algi_navigator env GIRDAP_SIM_KAYNAK=1 \
+        ros2 run girdap_ida_algi duba_gecis_navigator
     echo "  + ALGI zinciri: sahte_ham_sensor → perception_lidar → perception_fusion"
+    echo "  + BİZİM KATMAN: duba_gecis_navigator (SİM KAYNAK) → /perception/buoys"
 fi
 
 # ── TESLİM DOSYALARI (md 4.2) ─────────────────────────────────────────────

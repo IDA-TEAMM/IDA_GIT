@@ -201,3 +201,121 @@ def test_betik_SOZDIZIMI_temiz():
 def test_sahtelenen_dugumler_GEREKCELI():
     """Muafiyet listesi keyfi büyümemeli — her biri donanım/kapsam gerekçeli."""
     assert len(_SAHTELENEN) <= 8, "muafiyet listesi şişiyor, gerekçeleri gözden geçir"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# BİZİM KATMANIMIZ GÖLDE (18.08.2026) — `/perception/buoys` üreticisi
+#
+# 🔴 ÖLÇÜLDÜ: bu bağlantı yokken göl koşumunda `/perception/buoys` YAYINCI 0
+# idi; kural motoru S1 · S2 · S5 ve C3'ün bir kolunu "veri yok" diye STALE
+# bırakıyordu. STALE = "ihlal yok" DEĞİL, "hiç ölçülmedi". Yani P1/P2 puanını
+# üreten kendi katmanımız gölde sınanmıyordu.
+#
+# Bağlandıktan sonra ölçüldü: yayıncı 1 · abone 2 · 4,999 Hz; S1 +0,2077 s,
+# S2 +1, S5 +1, C3 iki kolu da (+0,1765 / +0,2704) — hepsi YEŞİL ve ÖLÇÜLÜR.
+# ══════════════════════════════════════════════════════════════════════════
+_KOS = _GOL                                   # scripts/gol_kos.sh
+_DERLE = _KOK / "scripts" / "gol_derle.sh"
+#: algı paketi KARAR ağacının DIŞINDA (son_kodv2/algi) — `_KOK` karar/
+_NAV = (_KOK.parent / "algi" / "girdap_ida_algi" / "girdap_ida_algi"
+        / "duba_gecis_navigator.py")
+
+
+def _kos_komutlari() -> str:
+    """🔑 YALNIZ ÇALIŞTIRILABİLİR satırlar — yorumlar ATILIR.
+
+    ⚠ Bunu doğuran kusur: ilk hâli ham metinde arıyordu ve yukarıdaki
+    açıklama bloğunda `duba_gecis_navigator` geçtiği için, `basla` satırı
+    SİLİNDİĞİNDE bile test YEŞİL kalıyordu (mutasyonla ölçüldü: 22/22
+    geçti). Yorumu ölçen nöbetçi, nöbetçi değildir.
+    """
+    satirlar, biriken = [], ""
+    for ham in _KOS.read_text(encoding="utf-8").splitlines():
+        kod = ham.split("#", 1)[0]
+        if not kod.strip() and not biriken:
+            continue
+        if kod.rstrip().endswith("\\"):        # ters bölü = satır devam ediyor
+            biriken += kod.rstrip()[:-1]
+            continue
+        satirlar.append((biriken + kod) if biriken else kod)
+        biriken = ""
+    if biriken:
+        satirlar.append(biriken)
+    return "\n".join(satirlar)
+
+
+def test_algi_katmani_BIZIM_dugumu_baslatiyor():
+    """`/perception/buoys` üreticisi göl algı katmanında olmalı."""
+    m = _kos_komutlari()
+    assert "duba_gecis_navigator" in m, (
+        "gol_kos.sh bizim algı düğümümüzü başlatmıyor → /perception/buoys "
+        "yayıncı 0 → S1/S2/S5/C3 STALE (ölçülmemiş)")
+    assert "GIRDAP_SIM_KAYNAK=1" in m, (
+        "sim kaynak kipi verilmemiş → düğüm OAK-D arar, gölde asla açılmaz")
+
+
+def test_navigator_ALGI_katmanina_bagli():
+    """Düğüm ALGI bloğunun İÇİNDE olmalı — koşulsuz başlarsa katman
+    bayrakları anlamını yitirir (algısız koşum artık mümkün olmaz)."""
+    ic, bulundu = False, False
+    for kod in _kos_komutlari().splitlines():
+        if kod.startswith('if [ "${GIRDAP_GOL_ALGI:-0}" = "1" ]; then'):
+            ic = True
+        elif ic and kod.rstrip() == "fi":     # bloğu KAPATAN fi (girintisiz)
+            ic = False
+        elif ic and kod.strip().startswith("basla ") \
+                and "duba_gecis_navigator" in kod:
+            # ⚠ "satırda adı geçiyor" YETMEZ: aynı blokta düğümü ADIYLA anan
+            # bir `echo` var ve mutasyonla ölçüldü — `basla` bloğu dışarı
+            # taşındığı hâlde test YEŞİL kalıyordu. Aranan şey KOMUTUN
+            # KENDİSİ; bu yüzden mantıksal satırlar birleştirilip (ters bölü
+            # devamı) `basla` ile başlaması şart koşulur.
+            bulundu = True
+    assert bulundu, (
+        "navigator ALGI bloğunun dışında başlatılıyor — katman bayrakları "
+        "anlamını yitirir (algısız koşum imkânsızlaşır)")
+
+
+def test_gol_derleme_ALGI_paketini_de_kuruyor():
+    """`ros2 run girdap_ida_algi ...` paket kurulu değilse ÇALIŞMAZ.
+
+    18.08'de tam bu yüzden sessizdi: ~/ros2_ws/install altında yalnız
+    girdap_decision vardı.
+    """
+    d = _DERLE.read_text(encoding="utf-8")
+    assert "girdap_ida_algi" in d, "gol_derle.sh algı paketini kurmuyor"
+    assert "duba_gecis_navigator" in d, (
+        "kurulum doğrulanmıyor — colcon sessizce atlarsa fark edilmez")
+
+
+def test_navigator_KONTROL_yoluna_dokunmuyor():
+    """🔑 Güvenlik: göle eklenen düğüm tekneyi SÜRMEMELİ.
+
+    `MOD="dogrudan_surus"` cmd_vel basar, `"mppi_hedef"` /goal_pose basar —
+    ikisi de karar hattıyla çakışır ve gölü sessizce anlamsızlaştırır.
+    Dağıtım varsayılanı `algi_yayin`; bu test onu dondurur.
+    """
+    # ⚠ Ham metin araması BURADA YETMEZ: aynı dize modül docstring'inde de
+    # geçiyor (satır 35, mod tablosu) ve mutasyonla ölçüldü — atama
+    # değiştirildiği hâlde test YEŞİL kalıyordu. Bu yüzden AST'ten okunur.
+    import ast
+    agac = ast.parse(_NAV.read_text(encoding="utf-8"))
+    mod = next(
+        (n.value.value for n in agac.body
+         if isinstance(n, ast.Assign)
+         and any(getattr(t, "id", None) == "MOD" for t in n.targets)),
+        None)
+    assert mod == "algi_yayin", (
+        f"MOD={mod!r} — göle eklenen düğüm kontrol yoluna yayın yapar "
+        "(dogrudan_surus→cmd_vel, mppi_hedef→/goal_pose)")
+
+
+def test_gate_passed_TUZAGI_kapali_kalıyor():
+    """`/perception/gate_passed` True basılırsa `fsm_node._on_gate_passed`
+    İLK geçitte PARKUR2→PARKUR3'e atlar: P2 tamamlanmaz (md 5.5.2.4),
+    (G2/KD2)×40 puan ve ödül sıralaması gider. Gölde bu düğüm artık
+    koştuğu için bayrağın kapalılığı ARTIK GÖL İÇİN DE kritik.
+    """
+    nav = _NAV.read_text(encoding="utf-8")
+    assert "GATE_PASSED_YAYINLA = False" in nav, (
+        "gate_passed açılmış — FSM'i erken PARKUR3'e atlatır")
