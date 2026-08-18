@@ -158,3 +158,71 @@ def test_sahte_kare_getCvFrame_SOZLESMESI():
     k = _kare([(100, 100, 8, _TURUNCU)])
     sk = nav._SahteKare(k)
     assert sk.getCvFrame() is k
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# SAAT SIÇRAMASI — `girdap-saat` / `girdap-saat-gec` duvar saatini ADIMLAR
+#
+# 13.08 canlı arızası (§0.61): saat +1497,6 s adımlandı ⇒ heartbeat "kaybı"
+# ⇒ KILL. Hat kopmamıştı. Kural: "ne kadar GEÇTİ" → monotonic, "hangi AN" →
+# duvar saati. `girdap-saat-gec` `After=girdap-karar` + 1800 s zaman aşımıyla
+# koşar ⇒ saati GÖREV SÜRERKEN değiştirebilir.
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_gercek_yol_yasi_MONOTONIC_ile_olcer():
+    """`_mesaj_yasi` duvar saatine dokunmamalı — saat adımına bağışık."""
+    import ast
+    import inspect
+    import textwrap
+
+    nav = _nav("2")
+    src = textwrap.dedent(inspect.getsource(nav.DubaNavigator._mesaj_yasi))
+    assert "monotonic" in src, "gerçek yol yaşı duvar saatiyle ölçüyor"
+    assert "get_clock" not in ast.unparse(ast.parse(src)), (
+        "gerçek yola duvar saati sızmış — saat adımında damga sıçrar")
+
+
+def test_sim_yolu_yasi_KIRPMIYOR_karari_damgaya_birakiyor():
+    """🔴 `max(0.0, ...)` geri sıçramayı MASKELİYORDU.
+
+    Sim kipinde kare ROS'tan gelir; yaş ancak DUVAR damgasından çıkarılabilir.
+    Saat GERİ adımlanırsa yaş negatif olur — `_damga` bunu yakalayacak
+    (`0.0 <= yas`) ve yayın anına düşüp `damga_yedek` sayacını artıracaktır.
+    Ham farkı kırpmak o korumayı devre dışı bırakıp kareyi "taze" gösteriyordu.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    nav = _nav("2")
+    agac = ast.parse(textwrap.dedent(
+        inspect.getsource(nav.DubaNavigator._sim_kare_geldi)))
+    # ⚠ `max(...)` çağrısının İÇİNDE "yas" geçmez (o, atamanın SOL tarafında)
+    # — ilk sürüm buna bakıyordu ve mutasyon testten KAÇTI (ölçüldü).
+    # Doğru ölçüt: `yas` ATAMASININ sağ tarafında kırpma var mı.
+    for n in ast.walk(agac):
+        if not (isinstance(n, ast.Assign)
+                and any(getattr(t, "id", None) == "yas" for t in n.targets)):
+            continue
+        sag = ast.unparse(n.value)
+        assert "max(" not in sag and "min(" not in sag, (
+            f"yaş kırpılıyor ({sag[:60]}…) — geri saat sıçraması `_damga` "
+            "korumasını atlar ve `damga_yedek` sayacı sessiz kalır")
+
+
+def test_damga_NEGATIF_yasta_yedege_duser():
+    """Korumanın kendisi: negatif yaş = saat geri gitti ⇒ yayın anı + sayaç."""
+    nav = _nav("2")
+    sahte = type("N", (), {})()
+    sahte._tani = {"damga_yedek": 0}
+    sinif = nav.DubaNavigator
+    import types
+    sahte.get_clock = types.MethodType(
+        lambda s: type("C", (), {"now": staticmethod(
+            lambda: nav.RclTime(nanoseconds=10_000_000_000))})(), sahte)
+    for yas, bekle_yedek in ((-3.0, 1), (99.0, 2), (0.5, 2)):
+        sinif._damga(sahte, yas)
+        assert sahte._tani["damga_yedek"] == bekle_yedek, (
+            f"yaş={yas} için yedek sayacı {sahte._tani['damga_yedek']}, "
+            f"beklenen {bekle_yedek}")

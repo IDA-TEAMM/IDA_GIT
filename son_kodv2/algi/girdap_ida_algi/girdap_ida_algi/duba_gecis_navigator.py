@@ -1251,8 +1251,21 @@ class DubaNavigator(Node):
             self.get_logger().warn(f"sim kare işlenemedi: {e}")
             return
         # Kare yaşı GERÇEK damgadan — kamera↔LiDAR ms farkı ancak böyle ölçülür.
-        yas = max(0.0, (self.get_clock().now()
-                        - RclTime.from_msg(msg.header.stamp)).nanoseconds / 1e9)
+        #
+        # 🔴 `max(0.0, ...)` YOK, BİLEREK (18.08.2026'da eklenip kaldırıldı).
+        # Gerçek yol (`_mesaj_yasi`) yaşı `time.monotonic` ile ölçer ve duvar
+        # saati adımından etkilenmez. Sim yolunda kare ROS'tan geldiği için
+        # yaş ancak DUVAR damgasından çıkarılabilir ⇒ saat adımına AÇIK:
+        #   · ileri sıçrama → yaş şişer → `_damga` tavanı (2,0 s) aşar →
+        #     yayın anına düşer, `damga_yedek` sayacı artar. GÖRÜNÜR.
+        #   · geri sıçrama → yaş NEGATİF olur. `_damga` bunu da yakalar
+        #     (`0.0 <= yas` koşulu). Ama `max(0.0, ...)` onu 0'a çevirip
+        #     kareyi "tertemiz taze" gösteriyordu ⇒ koruma devre dışı,
+        #     sayaç sessiz. 13.08 canlı arızasının (saat +1497,6 s adımı,
+        #     sahte heartbeat kaybı → KILL) tam sınıfı.
+        # Ham fark verilir; kararı TEK YERDE `_damga` verir.
+        yas = ((self.get_clock().now()
+                - RclTime.from_msg(msg.header.stamp)).nanoseconds / 1e9)
         self.det_q.koy(_SahteMesaj(dets, yas_s=yas))
         # Dosya-1 zinciri de GERÇEKTEN koşsun: `_kare_tazele` → mp4 segment
         # → `kayit_kapat`. Kayıt kendi kopyasına çizdiği için ham kare verilir.
