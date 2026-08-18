@@ -168,3 +168,32 @@ def test_MONOTONIC_damga_pencere_DISI_kalir(ros_context) -> None:  # noqa: ANN00
         assert n._damga_disi_sayaci == 1
     finally:
         n.destroy_node()
+
+
+# ═══════════════ TAMPON BOYUTU: 2 s (100 örnek) → 6 s (300 örnek) ═══════════
+def test_TAMPON_6_SANIYEYI_KAPSAR(ros_context) -> None:  # noqa: ANN001
+    """🔴 18.08.2026 — `perception_lidar_node`'un kendi ölçümü (09.07 tezgah,
+    yoğun bulut) clustering'in 1-3,3 s'ye çıkabildiğini gösteriyor. Eski
+    tampon (100 örnek @ 50 Hz = 2 s) bu gecikmeyle ÇAKIŞIR: en eski örnek
+    silinir, sorgu pencere dışına düşer, saat-tabanı düzeltmesi (bu dosyanın
+    geri kalanı) yine işe yaramaz hâle gelir. 300 örnek (6 s) bu en kötü
+    durumu marjla kapsar.
+
+    Regresyon: `maxlen` 100'e geri dönerse bu test kırmızı olmalı — 300.
+    odom mesajı 50 Hz'de yollanınca ilk örnek silinmiş olur, 6 s öncesine
+    yapılan sorgu `None` döner.
+    """
+    n = _node()
+    try:
+        dt = 1.0 / 50.0                     # 50 Hz — dosya başı gerekçesiyle aynı
+        for i in range(300):                # tam 6.0 s'lik akış
+            n._on_odom(_odom(DUVAR + i * dt, x=i * 1.0))
+        # En eski örneğe YAKIN bir sorgu — tampon 300 tutuyorsa hâlâ İÇERİDE.
+        poz = n._poz_damgada(_Stamp(DUVAR + 0.01))
+        assert poz is not None, (
+            "6 saniyelik akıştan sonra en eski örneğe yakın sorgu None döndü "
+            "— tampon hâlâ 2 s'de (100 örnek) kalmış olabilir"
+        )
+        assert poz[0] == pytest.approx(0.0, abs=0.5)
+    finally:
+        n.destroy_node()
