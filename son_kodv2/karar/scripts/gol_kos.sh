@@ -52,7 +52,18 @@ basla() {
     echo $! >> "$L/gol.pgids"
 }
 
-basla sanal_gol python3 "$S/sanal_gol.py" --ros-args \
+# 🔴 ALGI ZINCIRI ACIKSA sanal golun IDEAL algi ciktisi /gercek/* altina
+# alinir. Sebep: `sahte_ham_sensor` onu ham LiDAR/kameraya cevirecek ve
+# GERCEK algi dugumleri /perception/* uretecek. Remap olmazsa IKI URETICI
+# ayni topic'e basar; fuzyon hangisini aldigini bilemez ve olcum anlamsizlasir.
+# (Remap `sanal_gol`e konur — `sahte_ham_sensor`e DEGIL: o zaten /gercek/*
+#  dinliyor. Ters kurulum sessizce hicbir sey degistirmezdi.)
+SG_REMAP=""
+if [ "${GIRDAP_GOL_ALGI:-0}" = "1" ] || [ "${GIRDAP_GOL_TAM:-0}" = "1" ]; then
+    SG_REMAP="-r /perception/obstacle_map:=/gercek/obstacle_map \
+              -r /perception/classified_obstacles:=/gercek/classified_obstacles"
+fi
+basla sanal_gol python3 "$S/sanal_gol.py" --ros-args $SG_REMAP \
     -p kapi_sayisi:="$KAPI" -p kapi_acikligi_m:="$ACIK" \
     -p kapi_araligi_m:="$ARALIK" -p engel_sayisi:="$ENGEL" \
     -p dalga_genlik_mps:="$DALGA" -p dalga_yaw_rps:="$DALGA_YAW" \
@@ -65,5 +76,73 @@ basla mission  ros2 run girdap_decision mission_manager_node --ros-args --params
 basla fsm      ros2 run girdap_decision fsm_node --ros-args --params-file "$P"
 basla bridge   ros2 run girdap_decision mavros_bridge_node --ros-args --params-file "$P"
 basla planning ros2 run girdap_decision planning_node --ros-args --params-file "$P" -p use_rrt:=true $GOL_PLANNING_EK
+
+# ══════════════════════════════════════════════════════════════════════════
+# TAM SİSTEM KATMANLARI (18.08.2026) — varsayılan KAPALI, davranış bit birebir
+#
+# 🔴 NEDEN GEREKLİ: yukarıdaki beş düğüm dağıtımda koşan **17** düğümün
+# yalnız bir bölümü. Bugüne kadar gölde HİÇ koşmayan yedi gerçek düğüm var
+# ve ikisi doğrudan **teslim dosyası** üretiyor (md 4.2 — eksik dosya başına
+# 5 CEZA PUANI). Yani teslim zinciri uçtan uca hiç sınanmamıştı.
+#
+# Katmanlar ayrı şalterlerde: biri patlarsa diğerleri koşmaya devam eder ve
+# hangi katmanın soruna yol açtığı belli olur (tek "hepsi açık" şalteri,
+# arıza ayrıştırmayı imkânsız kılardı).
+#
+#   GIRDAP_GOL_ALGI=1     ham sensör → GERÇEK algı zinciri
+#   GIRDAP_GOL_TESLIM=1   Dosya-1/2/3 üreticileri
+#   GIRDAP_GOL_P3=1       Parkur-3 hedef rengi kapısı
+#   GIRDAP_GOL_IZLEYICI=1 doğrulama izleyicisi (kural motoru)
+#   GIRDAP_GOL_TAM=1      hepsi birden
+# ══════════════════════════════════════════════════════════════════════════
+[ "${GIRDAP_GOL_TAM:-0}" = "1" ] && {
+    GIRDAP_GOL_ALGI=1; GIRDAP_GOL_TESLIM=1
+    GIRDAP_GOL_P3=1; GIRDAP_GOL_IZLEYICI=1
+}
+
+# ── ALGI ZİNCİRİ ──────────────────────────────────────────────────────────
+# `sanal_gol` /perception/obstacle_map + classified_obstacles'ı DOĞRUDAN
+# yayınlıyor ⇒ gerçek algı düğümleri baypas ediliyor. `sahte_ham_sensor`
+# o ideal çıktıyı HAM LiDAR bulutu + kamera karesine geri çevirir; böylece
+# kümeleme, bearing füzyonu ve sınıflandırma GERÇEKTEN koşar.
+# ⚠ Sanal gölün kendi algı yayını `/gercek/...` altına alınır — iki üretici
+# aynı topic'e basarsa füzyon hangisini aldığını bilemez.
+if [ "${GIRDAP_GOL_ALGI:-0}" = "1" ]; then
+    # Remap YOK: bu dugum zaten /gercek/* dinliyor (remap sanal_gol'de).
+    basla ham_sensor python3 "$S/sahte_ham_sensor.py"
+    basla p_lidar  ros2 run girdap_decision perception_lidar_node --ros-args --params-file "$P"
+    basla p_fusion ros2 run girdap_decision perception_fusion_node --ros-args --params-file "$P"
+    echo "  + ALGI zinciri: sahte_ham_sensor → perception_lidar → perception_fusion"
+fi
+
+# ── TESLİM DOSYALARI (md 4.2) ─────────────────────────────────────────────
+# Her eksik/oynatılamaz dosya 5 ceza puanı. PAR-10: 14 bag'in 13'ü
+# sonlandırılmamıştı — aynı sınıf Dosya-1 mp4'ünün moov atomunu da vurur.
+# Bu katman olmadan C5 (temiz kapanış) kuralı gölde HİÇ sınanamaz.
+if [ "${GIRDAP_GOL_TESLIM:-0}" = "1" ]; then
+    basla telemetri ros2 run girdap_decision telemetry_node --ros-args --params-file "$P"
+    basla yerel_harita ros2 run girdap_decision local_map_node --ros-args --params-file "$P"
+    basla lidar_kayit ros2 run girdap_decision lidar_kayit_node --ros-args --params-file "$P"
+    echo "  + TESLIM: telemetry (Dosya-2) · local_map (Dosya-3) · lidar_kayit"
+fi
+
+# ── PARKUR-3 renk kapısı ──────────────────────────────────────────────────
+# `kamikaze_param_node` olmadan `/girdap/mission/hedef_rengi` HİÇ yayınlanmaz
+# ⇒ `p3_bekleniyor` hep False ⇒ FSM PARKUR3'e hiç geçmez. Yani P3 zinciri
+# gölde tanım gereği sınanamıyordu.
+if [ "${GIRDAP_GOL_P3:-0}" = "1" ]; then
+    basla p3_renk ros2 run girdap_decision kamikaze_param_node --ros-args \
+        --params-file "$P" -p kamikaze_target_color:="${GIRDAP_GOL_RENK:-kirmizi}"
+    echo "  + PARKUR-3: kamikaze_param_node (renk ${GIRDAP_GOL_RENK:-kirmizi})"
+fi
+
+# ── DOĞRULAMA İZLEYİCİSİ (kural motoru) ───────────────────────────────────
+# Salt-okur; hiçbir sistem topic'ine yazmaz. İhlalleri /girdap/dogrulama'ya
+# ve kural başına /girdap/dogrulama/<KURAL>'a basar.
+if [ "${GIRDAP_GOL_IZLEYICI:-0}" = "1" ]; then
+    basla dogrulama ros2 run girdap_decision dogrulama_node --ros-args --params-file "$P"
+    echo "  + IZLEYICI: dogrulama_node (kural motoru, salt-okur)"
+fi
+
 echo "sanal göl: $KAPI kapı · açıklık $ACIK m · aralık $ARALIK m · $ENGEL engel · dalga ${DALGA} m/s yanal + ${DALGA_YAW} rad/s yaw · başlangıç yönü ${YON0}° · algı gerçekçilik ${GERCEKCILIK} · hayalet ${HAYALET}"
 [ -n "$GOL_PLANNING_EK" ] && echo "planning ek şalter: $GOL_PLANNING_EK"
