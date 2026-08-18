@@ -501,7 +501,23 @@ class MPPIController:
         self.bounds = bounds
         self.cfg = cfg or MPPIConfig()
         self.xp, self._dtype = _resolve_backend(self.cfg.backend)
-        self._rng = self.xp.random.default_rng(self.cfg.seed)
+        # 🔴 19.08.2026 (§1.24 devamı, takımın kırılganlık bulgusu) — RNG
+        # HER ZAMAN numpy, `self.xp.random` DEĞİL. `numpy.random.default_rng`
+        # ve `cupy.random.default_rng` AYNI tohumla TAMAMEN FARKLI diziler
+        # üretiyor (ölçüldü: numpy [1.1176,−1.3871,…] · cupy [−2.5974,
+        # 0.3704,…]) — bu bir kurulum arızası değil, iki kütüphanenin FARKLI
+        # PRNG algoritması kullanmasının doğal sonucu. Sonuç: sıkışma
+        # kurtarması (F-P.11) CPU'da 5/5 tohumda çalışırken GPU/CuPy yolunda
+        # 6/6 tohumda çöküyordu (ESS 15,2 → 5,2, softmax dejenere) —
+        # `test_sikisma_kurtarmasi_kirilganligi.py`'de tekrarlanabilir
+        # kaydedildi. Jetson `backend="auto"` ile GPU'yu seçtiği için SAHADA
+        # KOŞAN TAM O YOLDU.
+        # Çözüm: gürültü HER ZAMAN numpy RNG'siyle üretilir, `_sample_noise`
+        # zaten sonucu `self.xp.asarray(...)` ile aktif backend'e taşıyor —
+        # yani CPU ve GPU artık AYNI tohumda BİREBİR AYNI gürültü dizisini
+        # kullanır (yalnız dtype farklı kalır: numpy float64, cupy float32 —
+        # bu FARK modülün kendi tasarım kararı, dokunulmadı).
+        self._rng = np.random.default_rng(self.cfg.seed)
 
         # Engel dizilerini önceden hazırla (her step'te yeniden alokasyon yok)
         self._load_obstacles(obstacles)
