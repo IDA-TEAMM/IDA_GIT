@@ -73,6 +73,18 @@ fi
 #   GIRDAP_ARIZA_KADANS=12                                      (C3)
 #   GIRDAP_ARIZA_KESINTI=40                                     (C3/C1)
 #   GIRDAP_ARIZA_GOVDE=0.05                                     (F5)
+# GERCEK TEKNE DINAMIGI (18.08) — varsayilan KAPALI.
+# Basit model olculdu: ivme 4,2x fazla · zaman sabiti 5,9x cevik · donus 2,8x
+# hizli. GIRDAP_GERCEK_DINAMIK=1 ile MPPI'nin kullandigi CatamaranDynamics
+# tesis olarak kosar. GIRDAP_DINAMIK_BOZUCU=0.2 ile tesis plandan %20 saptirilir
+# (model uyusmazligi sinifi da sinanabilsin).
+# ⚠ rclpy parametre tipi KATIDIR: `1` INTEGER gelir ve dugum
+# InvalidParameterTypeException ile OLUR (betigin YON0 icin verdigi dersin
+# aynisi). Kabuk tarafinda bool'a normalize edilir.
+case "${GIRDAP_GERCEK_DINAMIK:-0}" in 1|true|TRUE|yes) _GD=true;; *) _GD=false;; esac
+DYN="-p gercek_dinamik:=${_GD}
+     -p gercek_dinamik_bozucu:=${GIRDAP_DINAMIK_BOZUCU:-0.0}"
+
 AR="-p ariza_poz_sicramasi_m:=${GIRDAP_ARIZA_SICRAMA:-0.0}
     -p ariza_poz_sicrama_orani:=${GIRDAP_ARIZA_SICRAMA_ORAN:-0.0}
     -p ariza_poz_nan_orani:=${GIRDAP_ARIZA_NAN:-0.0}
@@ -81,7 +93,7 @@ AR="-p ariza_poz_sicramasi_m:=${GIRDAP_ARIZA_SICRAMA:-0.0}
     -p ariza_kesinti_t_s:=${GIRDAP_ARIZA_KESINTI:-0.0}
     -p ariza_govde_yansimasi_m:=${GIRDAP_ARIZA_GOVDE:-0.0}"
 
-basla sanal_gol python3 "$S/sanal_gol.py" --ros-args $SG_REMAP $AR \
+basla sanal_gol python3 "$S/sanal_gol.py" --ros-args $SG_REMAP $AR $DYN \
     -p kapi_sayisi:="$KAPI" -p kapi_acikligi_m:="$ACIK" \
     -p kapi_araligi_m:="$ARALIK" -p engel_sayisi:="$ENGEL" \
     -p dalga_genlik_mps:="$DALGA" -p dalga_yaw_rps:="$DALGA_YAW" \

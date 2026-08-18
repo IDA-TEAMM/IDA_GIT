@@ -31,6 +31,8 @@ from __future__ import annotations
 
 import math
 import random
+
+import numpy as np
 import sys
 
 import rclpy
@@ -220,6 +222,21 @@ class SanalGol(Node):
         #: C1/C3 sınaması — t saniyesinden sonra TÜM yayını kes (0 = kapalı).
         #: ALG-05 (LiDAR 5 saatte 39 mesaj) ve sessiz felç sınıfı.
         self.declare_parameter("ariza_kesinti_t_s", 0.0)
+        #: 🔴 GERÇEK TEKNE DİNAMİĞİ (18.08) — varsayılan KAPALI.
+        #: Aşağıdaki basit model (birinci mertebe, HIZ entegrasyonu) gerçek
+        #: `CatamaranDynamics`ten SAPIYOR ve sapma ÖLÇÜLDÜ:
+        #:     ivme        : 0,234 ↔ 0,985 m/s²   → sanal göl **4,2× fazla**
+        #:     zaman sabiti: 4,76 ↔ 0,80 s        → sanal göl **5,9× çevik**
+        #:     dönüş tavanı: 0,289 ↔ 0,800 rad/s  → sanal göl **2,8× hızlı**
+        #: Literatürün adı: "zayıf plant modeli" — kararsız kontrolü kararlı
+        #: gösterebilir. Açıkken `prototype.dynamics.CatamaranDynamics` koşar,
+        #: yani MPPI'nin plan yaparken kullandığı modelin TA KENDİSİ.
+        #: ⚠ SINIR: aynı modeli hem planlayıcı hem tesis kullanınca "model
+        #: uyuşmazlığı" sınıfı sınanamaz (gerçekte tekne modelden sapar).
+        #: O yüzden `gercek_dinamik_bozucu` ile parametre sapması eklenebilir.
+        self.declare_parameter("gercek_dinamik", False)
+        self.declare_parameter("gercek_dinamik_bozucu", 0.0)   # ±oran (0,2 = %20)
+
         #: F5 sınaması — engel bulutuna GÖVDE İÇİ nokta ekle (m, 0 = kapalı).
         #: ALG-02'de en yakın "engel" 1,3 mm'deydi (LiDAR kendini görüyor).
         self.declare_parameter("ariza_govde_yansimasi_m", 0.0)
@@ -236,6 +253,32 @@ class SanalGol(Node):
         self.ar_kesinti_s = float(_p("ariza_kesinti_t_s").value)
         self.ar_govde_m = float(_p("ariza_govde_yansimasi_m").value)
         self._ar_sayac = 0
+        # Gerçek dinamik kipi
+        self.gercek_dinamik = bool(_p("gercek_dinamik").value)
+        self._dyn = None
+        if self.gercek_dinamik:
+            from dataclasses import replace as _rep
+
+            from prototype.dynamics.catamaran import CatamaranDynamics
+            self._dyn = CatamaranDynamics()
+            boz = float(_p("gercek_dinamik_bozucu").value)
+            if boz:
+                # Tesis ≠ plan: MPPI'nin modelinden bilerek sapılır ki
+                # "model uyuşmazlığı" sınıfı da sınanabilsin.
+                rg = random.Random(int(_p("algi_tohum").value) + 7)
+                self._dyn.p = _rep(
+                    self._dyn.p,
+                    mass=self._dyn.p.mass * (1 + rg.uniform(-boz, boz)),
+                    Xu=self._dyn.p.Xu * (1 + rg.uniform(-boz, boz)),
+                    Nr=self._dyn.p.Nr * (1 + rg.uniform(-boz, boz)))
+            # ⚠ `_durum` ADI SERBEST DEĞİL: sınıfın `_durum()` METODU var (MAVROS
+            # state yayıncısı). Aynı adı alan dizi metodu gölgeliyordu ⇒ timer
+            # çağrısı `'numpy.ndarray' object is not callable` ile ölüyor ve
+            # TÜM zincir sessizce duruyordu (18.08, ölçümle bulundu).
+            self._dyn_durum = np.zeros(6)
+            self.get_logger().warn(
+                f"🔵 GERÇEK DİNAMİK AÇIK (CatamaranDynamics, bozucu ±{boz:.0%}) — "
+                f"u_max {-2*self._dyn.p.max_thrust/self._dyn.p.Xu:.2f} m/s")
         self._ariza_rng = random.Random(
             int(_p("algi_tohum").value) + 9001)   # arıza dizisi algıdan AYRI
         if any((self.ar_sicrama_p, self.ar_nan_p, self.ar_damga_s,
@@ -357,12 +400,31 @@ class SanalGol(Node):
     def _fizik(self) -> None:
         dt = 0.02
         self.t += dt
-        # Birinci mertebe gecikme (tekne ataleti) — ölçülen seyir 1,05 m/s
-        self.u += (max(-0.5, min(1.05, self.cmd_u)) - self.u) * dt / 0.8
-        self.r += (max(-0.8, min(0.8, self.cmd_r)) - self.r) * dt / 0.5
-        self.psi += self.r * dt
-        self.x += self.u * math.cos(self.psi) * dt
-        self.y += self.u * math.sin(self.psi) * dt
+        if self._dyn is not None:
+            # GERÇEK MODEL: cmd_vel (hız setpoint'i) → itki. `planning_node`
+            # tersini yapıyor (`hedef_u = 2T/|Xu|`), burada onu geri çeviriyoruz
+            # ki tesis GERÇEK ikinci mertebe dinamiği koşsun.
+            p = self._dyn.p
+            T_ort = self.cmd_u * abs(p.Xu) / 2.0
+            T_fark = self.cmd_r * abs(p.Nr) / max(1e-6, p.thruster_spacing)
+            u_vec = np.clip(
+                np.array([T_ort - T_fark, T_ort + T_fark]),
+                -p.max_thrust, p.max_thrust)
+            self._dyn_durum[0], self._dyn_durum[1] = self.x, self.y
+            self._dyn_durum[2] = self.psi
+            self._dyn_durum[3], self._dyn_durum[5] = self.u, self.r
+            self._dyn_durum = self._dyn.step_rk4(self._dyn_durum, u_vec, dt)
+            self.x, self.y = float(self._dyn_durum[0]), float(self._dyn_durum[1])
+            self.psi = float(self._dyn_durum[2])
+            self.u, self.r = float(self._dyn_durum[3]), float(self._dyn_durum[5])
+        else:
+            # Basit model (eski davranış, VARSAYILAN) — bkz. `gercek_dinamik`
+            # parametresindeki ölçülmüş sapma tablosu.
+            self.u += (max(-0.5, min(1.05, self.cmd_u)) - self.u) * dt / 0.8
+            self.r += (max(-0.8, min(0.8, self.cmd_r)) - self.r) * dt / 0.5
+            self.psi += self.r * dt
+            self.x += self.u * math.cos(self.psi) * dt
+            self.y += self.u * math.sin(self.psi) * dt
 
         # Dalga: kontrolcünün YENEMEDİĞİ dış sürüklenme. Kuvvet değil doğrudan
         # konum/yön bozucusu olarak eklenir — bu model itki değil hız
