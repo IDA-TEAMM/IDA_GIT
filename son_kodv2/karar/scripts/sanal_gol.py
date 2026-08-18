@@ -30,6 +30,7 @@ karışır.
 from __future__ import annotations
 
 import math
+import random
 import sys
 
 import rclpy
@@ -127,8 +128,75 @@ class SanalGol(Node):
         self.dalga_yaw_frekans = float(
             self.get_parameter("dalga_yaw_frekans_hz").value)
 
+        # --- Başlangıç yönü (F-F.22 ölçüm kapısı) -------------------------
+        # 🔴 NEDEN VAR: 17.08 göl bandında GUIDED komutlarının %23,1'i GERİYDİ
+        # ve o anların %83,4'ünde hedef aracın ARKASINDAYDI. Sanal göl bu
+        # sınıfı **yapısal olarak** göremiyordu: tekne 90° (kuzey) ile
+        # başlıyor, görev noktaları da hep kuzeyde ⇒ "hedef arkada" durumu
+        # HİÇ oluşmuyor. Yani sim yalan söylemedi — o soruyu hiç sormadı.
+        #
+        # 90.0 = ESKİ DAVRANIŞ BİREBİR. `-90` → burun GÜNEYE, yani bütün
+        # görev noktaları arkada: MPPI'nin "dönmek yerine geri gitme"
+        # seçimi ilk saniyeden itibaren ölçülebilir hâle gelir.
+        #
+        # ⚠ Bu bir "bozucu" değil, ölçüm sahnesi: gerçek koşumda tekne bu
+        # duruma waypoint'i aşarak, kapı kilidi atlayarak ya da operatör
+        # devrettikten sonra düşüyor — üçü de simde üretilemiyor.
+        # --- 🔴 F-S.18 GERÇEKÇİ ALGI (17.08 göl bandından ÖLÇÜLDÜ) --------
+        # NEDEN VAR: bu sim bugüne kadar KUSURSUZ algı yayınlıyordu —
+        # menzildeki her cismi tam konumuyla, kaçırmasız, hayaletsiz.
+        # O yüzden her koşum "temiz" bitiyordu ve kodun GERÇEK göldeki
+        # kusurlu veriyle çalışıp çalışmadığı hiç sınanmıyordu.
+        #
+        # Aşağıdaki üç tablo `session_20260817_193312` (12,5 dk, 5965 algı
+        # karesi, 5696 kenar tespiti) bandından ölçüldü — uydurma DEĞİL:
+        #
+        #  ① GÖRÜLME OLASILIĞI ↔ menzil (gerçek dubanın 1 m'sinde tespit var mı)
+        #      0-3 m %30,7 · 3-5 %41,3 · 5-8 %47,2 · 8-12 %36,3
+        #      12-18 %16,8 · 18-25 %1,7
+        #     🔑 En iyi kovada bile duba karelerin YARISINDA GÖRÜNMÜYOR.
+        #  ② KONUM HATASI ↔ menzil (ortanca, m)
+        #      0-3 1,02 · 3-5 1,53 · 5-8 1,47 · 8-12 1,83 · 12-25 3,09
+        #  ③ HAYALET: tespitlerin %42,9'u en yoğun 4 gerçek duba ile
+        #     açıklanamıyor; engel torbasının %98,6'sı CLASS_UNKNOWN ve
+        #     kare başına ~95 adet (kıyı), yarıçap ortanca 0,56 maks 17,2 m.
+        #
+        # DOZ: 0.0 = ESKİ DAVRANIŞ BİREBİR (kusursuz). 1.0 = 17.08'de
+        # ÖLÇÜLEN şiddet. Ara değerler oranlı (§0.8a: genlik iddia değil,
+        # ölçülenin oranı olarak verilir).
+        # ⚠ Kendi RNG'si var → aynı tohum aynı kusur dizisi; A/B tekrarlanabilir.
+        self.declare_parameter("algi_gercekcilik", 0.0)
+        self.declare_parameter("algi_tohum", 0)
+        self.declare_parameter("hayalet_sayisi", 0)      # kare başına ek UNKNOWN
+        # F-P.30 ölçüm kolu: kimliksiz kümenin TEMSİLİ.
+        #   0.0 = ölçülen ham dağılım (çevrel daire; ortanca 0,56 maks 17,2 m)
+        #   >0  = daire ZİNCİRİ temsili — aynı cismi bu yarıçapla sınırlı
+        #         birden çok daireyle kaplar (F-P.30'un ürettiği hâl).
+        # Böylece "kıyıyı tek dev diskle modellemek" ile "zincirle modellemek"
+        # planlayıcı çıktısında DOĞRUDAN kıyaslanabilir.
+        self.declare_parameter("hayalet_maks_yaricap", 0.0)
+        self.hayalet_maks_r = float(
+            self.get_parameter("hayalet_maks_yaricap").value)
+        # 🔴 KALICI hayaletler — DÜNYA çerçevesinde bir kez üretilir.
+        # İlk sürüm her karede yeniden üretiyordu; ölçüm bunun SADIK
+        # OLMADIĞINI gösterdi: gerçek bantta kimliksiz izler 2,5 m kapıyla
+        # ortanca **187 kare (~19 sn)** yaşıyor, tek isabetli iz yalnız %0,9.
+        # Kare kare zıplayan gürültü, planlayıcıyı gerçekte olduğu gibi
+        # sınamaz (RRT* her karede farklı bir haritaya plan yapar).
+        self._hayaletler = []          # (dünya_x, dünya_y, yarıçap)
+        self.declare_parameter("poz_bayat_orani", 0.0)   # ölçülen %3,9+%1,9
+        self.gercekcilik = max(0.0, min(1.0, float(
+            self.get_parameter("algi_gercekcilik").value)))
+        self.hayalet_n = int(self.get_parameter("hayalet_sayisi").value)
+        self.poz_bayat = max(0.0, min(0.9, float(
+            self.get_parameter("poz_bayat_orani").value)))
+        self._rng = random.Random(int(self.get_parameter("algi_tohum").value))
+
+        self.declare_parameter("baslangic_yon_derece", 90.0)
+        yon0 = float(self.get_parameter("baslangic_yon_derece").value)
+
         # --- Tekne durumu (ENU, göl orijinine göre) -----------------------
-        self.x, self.y, self.psi = 0.0, 0.0, math.radians(90.0)   # burun kuzeye
+        self.x, self.y, self.psi = 0.0, 0.0, math.radians(yon0)
         self.u, self.r = 0.0, 0.0
         self.cmd_u, self.cmd_r = 0.0, 0.0
         self.son_cmd_t = None
@@ -320,6 +388,20 @@ class SanalGol(Node):
         c, s = math.cos(-self.psi), math.sin(-self.psi)
         return c * dx - s * dy, s * dx + c * dy
 
+    #: ① ÖLÇÜLEN görülme olasılığı — (azami menzil, olasılık)
+    GORULME = ((3.0, 0.307), (5.0, 0.413), (8.0, 0.472),
+               (12.0, 0.363), (18.0, 0.168), (25.0, 0.017))
+    #: ② ÖLÇÜLEN konum hatası ortancası — (azami menzil, metre)
+    KONUM_HATASI = ((3.0, 1.02), (5.0, 1.53), (8.0, 1.47),
+                    (12.0, 1.83), (25.0, 3.09))
+
+    @staticmethod
+    def _tablodan(tablo, menzil: float) -> float:
+        for ust, deger in tablo:
+            if menzil <= ust:
+                return deger
+        return tablo[-1][1]
+
     def _algi(self) -> None:
         """Kapı direkleri (turuncu) + engeller (sarı) — LiDAR menzili 25 m."""
         pa = PoseArray()
@@ -337,8 +419,21 @@ class SanalGol(Node):
 
         for (wx, wy, yaricap, sinif) in cisimler:
             bx, by = self._dunya_to_govde(wx, wy)
-            if math.hypot(bx, by) > 25.0 or bx < -2.0:      # LiDAR menzili
+            menzil = math.hypot(bx, by)
+            if menzil > 25.0 or bx < -2.0:                  # LiDAR menzili
                 continue
+            if self.gercekcilik > 0.0:
+                # ① KAÇIRMA — doz oranlı: 0'da hep görülür, 1'de ölçülen.
+                p_gor = self._tablodan(self.GORULME, menzil)
+                p_eff = 1.0 - self.gercekcilik * (1.0 - p_gor)
+                if self._rng.random() > p_eff:
+                    continue
+                # ② KONUM HATASI — ortanca ≈ 1,177σ (yarıçap dağılımı)
+                sigma = (self._tablodan(self.KONUM_HATASI, menzil)
+                         / 1.177 * self.gercekcilik)
+                bx += self._rng.gauss(0.0, sigma)
+                by += self._rng.gauss(0.0, sigma)
+                menzil = math.hypot(bx, by)
             p = Pose()
             p.position.x, p.position.y = bx, by
             p.orientation.z, p.orientation.w = yaricap, 1.0   # yarıçap hack'i
@@ -354,6 +449,60 @@ class SanalGol(Node):
             gorunur = aci < math.radians(34.5) and math.hypot(bx, by) < 15.0
             h.hypothesis.class_id = sinif if gorunur else BILINMEYEN
             h.hypothesis.score = 0.9
+            d.results.append(h)
+            da.detections.append(d)
+
+        # ③ HAYALET / KIYI — kimliksiz (UNKNOWN) ek tespitler.
+        # Gerçek bantta bunlar HAYALET DEĞİL, kalıcı kıyı yapılarıydı
+        # (2,5 m kapıyla izlendiğinde ortanca ömür 187 kare) — ama
+        # planlayıcı açısından etkisi aynı: hedef bunlardan birinin içine
+        # düşerse RRT* reddediyor (17.08'de 43 kez).
+        # Kalıcı torbayı bir kez kur (dünya çerçevesinde, parkur boyunca).
+        if self.hayalet_n and not self._hayaletler:
+            son_y = self.kapilar[-1][1] if self.kapilar else 30.0
+            for _ in range(self.hayalet_n * 3):        # menzil dışı olanlar da
+                wx = self._rng.uniform(-25.0, 25.0)
+                wy = self._rng.uniform(-5.0, son_y + 15.0)
+                wr = min(17.2, abs(self._rng.lognormvariate(math.log(0.56), 0.9)))
+                self._hayaletler.append((wx, wy, wr))
+        for (gwx, gwy, hr0) in self._hayaletler:
+            hx, hy = self._dunya_to_govde(gwx, gwy)
+            if math.hypot(hx, hy) > 25.0 or hx < -2.0:
+                continue
+            a = math.atan2(hy, hx)
+            hr = hr0
+            # Yarıçap dağılımı ölçülen: ortanca 0,56 · %90 1,00 · maks 17,2
+            if self.hayalet_maks_r > 0.0 and hr > self.hayalet_maks_r:
+                # F-P.30: aynı yayılımı daire ZİNCİRİYLE kapla — kapsanan
+                # gerçek cisim aynı, kaplanan BOŞ SU çok daha az.
+                n_par = max(2, int(math.ceil(hr / self.hayalet_maks_r)))
+                for k in range(n_par):
+                    t = -hr + (2.0 * hr) * (k + 0.5) / n_par
+                    px, py = hx + t * math.cos(a), hy + t * math.sin(a)
+                    pp = Pose()
+                    pp.position.x, pp.position.y = px, py
+                    pp.orientation.z, pp.orientation.w = self.hayalet_maks_r, 1.0
+                    pa.poses.append(pp)
+                    dd = Detection3D()
+                    dd.bbox.center.position.x = px
+                    dd.bbox.center.position.y = py
+                    dd.bbox.size.x = 2.0 * self.hayalet_maks_r
+                    hh = ObjectHypothesisWithPose()
+                    hh.hypothesis.class_id = BILINMEYEN
+                    hh.hypothesis.score = 0.5
+                    dd.results.append(hh)
+                    da.detections.append(dd)
+                continue
+            p = Pose()
+            p.position.x, p.position.y = hx, hy
+            p.orientation.z, p.orientation.w = hr, 1.0
+            pa.poses.append(p)
+            d = Detection3D()
+            d.bbox.center.position.x, d.bbox.center.position.y = hx, hy
+            d.bbox.size.x = 2.0 * hr
+            h = ObjectHypothesisWithPose()
+            h.hypothesis.class_id = BILINMEYEN
+            h.hypothesis.score = 0.5
             d.results.append(h)
             da.detections.append(d)
 

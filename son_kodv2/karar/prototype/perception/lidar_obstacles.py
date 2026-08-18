@@ -55,6 +55,37 @@ class LidarObstacleConfig:
                                     # bölünür (F5.4)
     split_cell_m: float = 1.0       # F5.4: bölme ızgarası XY hücre kenarı (m);
                                     # engel dairesi ≤ hücre yarı çaprazı ~0.71 m
+    # 🔴 F-P.30 — YAYILIMA GÖRE BÖLME. 0.0 = ESKİ DAVRANIŞ BİREBİR.
+    #
+    # ÖLÇÜLEN ARIZA (17.08 göl, `session_20260817_193312`, 5965 algı karesi):
+    # engel torbasının %98,6'sı `CLASS_UNKNOWN` ve kare başına **~95 adet**.
+    # Bunlar hayalet DEĞİL — 2,5 m eşleştirme kapısıyla izlendiğinde ortanca
+    # ömür **187 kare (~19 sn)**, tek isabetli iz yalnız %0,9 ⇒ gerçek kıyı.
+    # Sorun varlıkları değil, **TEMSİLLERİ**: yarıçap ortanca 0,56 m,
+    # %90 1,00 m, **maks 17,2 m** — oysa duba 0,15 m.
+    #
+    # 🔑 KÖK NEDEN: `cluster_to_obstacle` uzamış bir cismi ÇEVREL DAİREYLE
+    # temsil ediyor. Kıyı bir DOĞRU parçasıdır; onu 17 m yarıçaplı diskle
+    # modellemek, aslında BOŞ olan yüzlerce m²'lik suyu "dolu" ilan eder.
+    # F5.4 bölmesi bunu yakalamıyor çünkü tetiği **nokta sayısı** (>500);
+    # uzaktaki seyrek kıyı parçası az noktayla 17 m'ye yayılır ve bölünmez.
+    #
+    # SONUCU ÖLÇÜLDÜ (ayırt edici test, 5 tohum): 95 engelli sahnede RRT*
+    # 3/5 başarı ve bütçeyi 4 katına çıkarmak HİÇ değiştirmiyor (3/5 ↔ 3/5)
+    # ⇒ uzay gerçekten tıkalı. Tıkanınca boru hattı düz çizgi basıyor,
+    # MPPI'ye imkânsız referans gidiyor ve **geri gitmek en ucuz seçenek**
+    # oluyor — 17.08'de ölçülen %23,1 geri komutun zemini bu.
+    #
+    # 🌐 ARAŞTIRMA: uzamış cisim (extended object) literatüründe tek daire
+    # temsili bilinen bir aşırı-kapsama hatasıdır; standart çözüm cismi
+    # kendi yayılımı boyunca **daire zinciriyle** temsil etmektir. Bölme
+    # GÜVENLİDİR: her ölçülen nokta hâlâ bir dairenin içinde kalır, yalnız
+    # ölçülmemiş boş su artık kapsanmaz.
+    #
+    # Değer = bir engelin izinli AZAMİ çevrel yarıçapı (m). Aşan cluster
+    # `split_cell_m` ızgarasıyla bölünür — F5.4'ün TAM AYNI mekanizması,
+    # yalnız tetiği nokta sayısı değil YAYILIM.
+    split_max_yaricap_m: float = 0.0
     max_range: float = 25.0         # LiDAR yatay menzil filtresi (m)
     voxel_size: float = 0.0         # m; >0 → clustering öncesi downsample
                                     # (F5.3). 0 = kapalı. Duba r=0.15 için
@@ -192,12 +223,19 @@ def cluster_points(
     for member_idx in np.split(order, boundaries):
         if len(member_idx) < cfg.min_cluster_size:
             continue                                   # noise
-        if len(member_idx) <= cfg.max_cluster_size:
-            clusters.append(points[member_idx])
-        else:                                          # F5.4: böl, atma
-            clusters.extend(
-                _split_oversized(points[member_idx], cfg.split_cell_m)
-            )
+        uyeler = points[member_idx]
+        # F-P.30: YAYILIM tetiği — nokta sayısı azken bile geometrik olarak
+        # büyük cluster bölünür (uzak/seyrek kıyı parçası tam bu hâldedir).
+        yayilim_buyuk = False
+        if cfg.split_max_yaricap_m > 0.0:
+            xy = uyeler[:, :2]
+            merkez = xy.mean(axis=0)
+            cevrel = float(np.sqrt(((xy - merkez) ** 2).sum(axis=1)).max())
+            yayilim_buyuk = cevrel > cfg.split_max_yaricap_m
+        if len(member_idx) <= cfg.max_cluster_size and not yayilim_buyuk:
+            clusters.append(uyeler)
+        else:                                          # F5.4 / F-P.30: böl, atma
+            clusters.extend(_split_oversized(uyeler, cfg.split_cell_m))
     return clusters
 
 

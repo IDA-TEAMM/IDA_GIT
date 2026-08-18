@@ -75,6 +75,29 @@ class PivotKapisiConfig:
     tetik_derece: float = 60.0
     #: ArduPilot: "başı hedefe 10 derece yaklaşınca yola devam eder".
     birak_derece: float = 10.0
+    #: 🔴 F-F.24 — YAKIN ALAN KÖRLÜĞÜ: bu yarıçapın içindeki referans noktasına
+    #: kerteriz ölçülmez, kapı AÇILMAZ. `atan2` bu mesafede gürültüye döner.
+    #:
+    #: ÖLÇÜLEN ARIZA (17.08, `session_20260817_193312`, 1. GUIDED penceresi):
+    #: tekne hedefe **0,71 m** yaklaştı ve saniye saniye şu oldu —
+    #:     t=73,3  mesafe 1,04 m  |yön| 35°   komut ux=0,000 wz=+0,289
+    #:     t=75,1  mesafe 0,71 m  |yön| 98°   (aynı saf dönüş komutu)
+    #:     t=77,5  mesafe 1,25 m  |yön| 178°  ← kerteriz SÜPÜRDÜ, tekne yetişemedi
+    #:     t=80,8  mesafe 2,64 m  |yön| 165°  komut ux=+0,905 ← ARKASINA tam gaz
+    #: Tekne 0,17 m/s'lik artık süratiyle kayarken hedefin kerterizi teknenin
+    #: dönebileceğinden hızlı döndü; kapı bir daha asla bırakma eşiğine (10°)
+    #: inemedi. Bu bir ayar sorunu değil, **geometrik singülarite**.
+    #:
+    #: 🌐 ARAŞTIRMA: denizcilik güdüm literatüründe (LOS — line-of-sight)
+    #: standart karşılığı "circle of acceptance"; pratik değer **iki gemi
+    #: boyu**. Gövdemiz 0,785 m ⇒ 1,57 m. Eski sabit 0,50 m bunun üçte biri.
+    #: Kaynak: Lekkas & Fossen, "Line-of-Sight Guidance for Path Following of
+    #: Marine Vehicles"; Esso Osaka model çalışması (kabul yarıçapı = 2 L).
+    #:
+    #: ⚠ VARSAYILAN 0,50 = ESKİ DAVRANIŞ BİREBİR. Ölçülen değer 1,57'dir ama
+    #: bunu varsayılan yapmak, kapının yakın alanda hiç açılmaması demek —
+    #: sahada A/B ile ölçülmeden açılmaz (§0.8a).
+    yakin_esik_m: float = 0.50
     #: Yön hatası, referansın bu kadar İLERİSİNDEKİ noktaya bakılarak ölçülür.
     #: Hemen yanı başındaki nokta gürültülüdür; çok uzağı ise virajı görmez.
     #: Varsayılan `terminal_lookahead_m` ile aynı (3,0 m) — bilinçli.
@@ -84,9 +107,28 @@ class PivotKapisiConfig:
 class PivotKapisi:
     """Yön hatası büyükken "yalnız dön" kararı üreten histerezisli kapı."""
 
+    #: 🔴 F-F.25 — KAPININ SESSİZLİĞİ. 17.08 göl bandında yön hatası ortanca
+    #: 130° olan geri komutların **%91'inde bu kapı KAPALIYDI** ve neden
+    #: kapalı olduğu hiçbir yerde yazmıyordu: `guncelle` üç ayrı sebepten
+    #: `(False, None)` dönüyor ve üçü de aynı görünüyor. Aynı bantta nöbetçi
+    #: 43 kez `RRT-RED global plan uretilemedi` bastı — yani "referans yoktu"
+    #: kuvvetli bir aday, ama `global_path` banda kaydedilmediği için
+    #: **ne doğrulanabildi ne çürütülebildi.**
+    #:
+    #: Bu deponun en sık tekrarlayan deseni: *arıza vardı, kod onu biliyordu,
+    #: kimseye söylemiyordu.* Sebep artık dışarı açılıyor; mekanizma
+    #: DEĞİŞMİYOR, yalnız sessizlik kalkıyor.
+    SEBEP_KAPALI = "KAPI-KAPALI"        # tetik_derece <= 0 (kapı devre dışı)
+    SEBEP_REFERANS_YOK = "REFERANS-YOK"  # plan boş/None → RRT-RED adayı
+    SEBEP_COK_YAKIN = "COK-YAKIN"        # yakın alan singülaritesi (F-F.24)
+    SEBEP_HATA_KUCUK = "HATA-KUCUK"      # ölçüldü, tetik eşiğinin altında
+    SEBEP_AKTIF = "AKTIF"                # kapı açık, pivot uygulanıyor
+
     def __init__(self, config: Optional[PivotKapisiConfig] = None) -> None:
         self._cfg = config or PivotKapisiConfig()
         self._aktif = False
+        self._son_sebep: str = self.SEBEP_REFERANS_YOK
+        self._son_hata_derece: Optional[float] = None
 
     @property
     def config(self) -> PivotKapisiConfig:
@@ -111,23 +153,46 @@ class PivotKapisi:
         `referans` yoksa/boşsa kapı **kapanır** ve `None` hata döner: neye
         döneceğini bilmeden dönmek, kör sürmenin dönen hâli olurdu.
         """
+        self._son_hata_derece = None
         if self._cfg.tetik_derece <= 0.0:
             self._aktif = False
+            self._son_sebep = self.SEBEP_KAPALI
+            return False, None
+
+        # F-F.25: iki "hedef yok" hâli AYRI raporlanır — biri plan eksikliği
+        # (RRT-RED), diğeri yakın alan singülaritesi (F-F.24). Aynı görünen
+        # iki arızanın çaresi farklı; ayırmayan log teşhis ettirmez.
+        if not referans:
+            self._aktif = False
+            self._son_sebep = self.SEBEP_REFERANS_YOK
             return False, None
 
         hedef = self._ufuk_noktasi(x, y, referans)
         if hedef is None:
             self._aktif = False
+            self._son_sebep = self.SEBEP_COK_YAKIN
             return False, None
 
         hata = _sar(math.atan2(hedef[1] - y, hedef[0] - x) - psi)
         mutlak = abs(math.degrees(hata))
+        self._son_hata_derece = mutlak
         if self._aktif:
             if mutlak <= self._cfg.birak_derece:
                 self._aktif = False
         elif mutlak > self._cfg.tetik_derece:
             self._aktif = True
+        self._son_sebep = self.SEBEP_AKTIF if self._aktif else self.SEBEP_HATA_KUCUK
         return self._aktif, hata
+
+    @property
+    def son_sebep(self) -> str:
+        """F-F.25: son `guncelle` çağrısında kapının NEDEN o durumda olduğu."""
+        return self._son_sebep
+
+    @property
+    def son_hata_derece(self) -> Optional[float]:
+        """Ölçülebildiyse son yön hatası (derece); ölçülemediyse None."""
+        return self._son_hata_derece
 
     def _ufuk_noktasi(
         self, x: float, y: float,
@@ -144,8 +209,8 @@ class PivotKapisi:
             if math.hypot(px - x, py - y) >= self._cfg.ufuk_m:
                 return (px, py)
         sx, sy = referans[-1]
-        # Çok yakın nokta → atan2 gürültüye döner; kapıyı açma.
-        return (sx, sy) if math.hypot(sx - x, sy - y) >= 0.5 else None
+        # Çok yakın nokta → atan2 gürültüye döner; kapıyı açma (F-F.24).
+        return (sx, sy) if math.hypot(sx - x, sy - y) >= self._cfg.yakin_esik_m else None
 
 
 def pivot_itkisi(

@@ -8,7 +8,11 @@
 # zaten oradan çıkmıştı).
 #
 # KOŞUM:  bash ~/reboot_sonrasi_teyit.sh 2>&1 | tee ~/reboot_sonrasi.txt
-set -uo pipefail
+# ⚠️ `set -u` KULLANMA: ROS'un setup.bash'i tanımsız değişkene dokunuyor
+# (AMENT_TRACE_SETUP_FILES) ve SOURCE edildiği için hatası TÜM betiği öldürür —
+# 5/7'de sessizce çıkıyordu, son üç bölüm ve özet banner'ı hiç koşmuyordu.
+# Aynı tuzak gol_hazir_mi.sh:28'de zaten yazılıydı. (17.08 boot teyidinde bulundu)
+set -o pipefail
 KIRMIZI=0
 b()  { printf "\n\e[1;44m %s \e[0m\n" "$*"; }
 ok() { printf "  \e[32m✓\e[0m %s\n" "$*"; }

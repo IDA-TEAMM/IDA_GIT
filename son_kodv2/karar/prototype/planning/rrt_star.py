@@ -95,6 +95,57 @@ class RRTStarConfig:
     # MPPI obstacle_margin'i (1.0, SOFT ceza) ile EŞİT DEĞİL; sıralı:
     # RRT*(hard) ≤ MPPI(soft) ≤ geçit yarı açıklığı sınırı.
     safety_margin: float = 0.5
+    # 🔴 F-F.27 — HEDEF KURTARMA (goal recovery). 0.0 = ESKİ DAVRANIŞ BİREBİR.
+    #
+    # ÖLÇÜLEN ARIZA (17.08 göl, `session_20260817_193312`): nöbetçinin FC'ye
+    # bastığı mesajlar arasında **43 kez** `RRT-RED global plan uretilemedi`
+    # var. `plan()` hedef engel/sınır içindeyse ValueError fırlatıyor, boru
+    # hattı da düz çizgiye düşüyor — yani global plan YOK. Aynı bantta engel
+    # torbasının %98,6'sı `CLASS_UNKNOWN` ve bunlar HAYALET DEĞİL: 2,5 m
+    # eşleştirme kapısıyla izlendiğinde ortanca ömür **187 kare (~19 sn)**,
+    # tek isabetli iz yalnız %0,9 ⇒ gerçek kıyı yapıları. Yarıçapları da
+    # şişkin (ortanca 0,56 m, maks 17,2 m). Kıyıya yakın çalışırken hakemin
+    # verdiği noktanın böyle bir dairenin içine düşmesi olağan.
+    #
+    # 🌐 ARAŞTIRMA — literatürün cevabı "reddet" DEĞİL, "ulaşılabilir en yakın
+    # noktaya planla": Nav2 `navfn`/`smac` planlayıcılarının `tolerance`
+    # parametresi tam bunu yapar; hedef işgal altındaysa plan iptal edilmez,
+    # hedefe en yakın SERBEST hücreye planlanır. Nav2 BT'sindeki
+    # `GoalUpdater` de aynı gerekçeyle var: *"muhtemelen işgal altındaki bir
+    # noktaya planlamaya çalışmanın yol dışı davranışını yumuşatır."*
+    #
+    # ⚠ ENGEL SİLİNMEZ. Bu, algıya dokunmayan bir PLANLAYICI kurtarmasıdır:
+    # engel olduğu yerde durur, yalnız hedef onun dışına taşınır. "Kimliksiz
+    # engelleri atmak" ölçümle ELENDİ — gerçek kıyıyı silerdi.
+    #
+    # Değer = hedefin taşınabileceği AZAMİ mesafe. Bundan uzağa taşımak
+    # görevi değiştirmek olur; o hâlde eski davranış (düz çizgi) sürer.
+    hedef_kurtarma_m: float = 0.0
+    # 🔴 F-F.28 — KISMİ PLAN (best-effort). 0.0 = ESKİ DAVRANIŞ BİREBİR.
+    #
+    # ÖLÇÜLEN ARIZA: 17.08 göl bandında `RRT-RED` 43 kez ateşledi. F-F.26 ile
+    # sebep ayrıştırıldı (sanal göl, ölçülmüş algı kusurlarıyla): **11/12'si
+    # "çözüm bulamadı"**, yalnız 1'i "goal engel içinde". Ve bu bir BÜTÇE
+    # sorunu DEĞİL — ayırt edici test (aynı sahne, bütçe 1500 ↔ 6000):
+    #     8 engel : 5/5 ↔ 5/5     95 engel : 3/5 ↔ 3/5
+    # Bütçe 4 katına çıkınca başarı HİÇ değişmiyor ⇒ **uzay gerçekten tıkalı**
+    # (95 engelde düz çizgi 5/5 sahnede kapalı). RRT* doğru söylüyor.
+    #
+    # 🔴 ASIL KUSUR TEPKİMİZDE: plan yoksa boru hattı DÜZ ÇİZGİ referansı
+    # basıyor — yani tıkalı alanın tam içinden. Kodun kendi logu bunu itiraf
+    # ediyor: *"Araç hareket eder; engelden kaçınma yalnız MPPI'de."*
+    # MPPI'ye imkânsız referans verilince geri gitmek gerçekten en ucuz
+    # seçenek oluyor — 17.08'de ölçülen %23,1 geri komutun zemini bu.
+    #
+    # 🌐 ARAŞTIRMA: Nav2 `navfn`/`smac` `tolerance` parametresi tam bunu
+    # çözer — hedefe varılamıyorsa plan iptal edilmez, **ulaşılabilen en
+    # yakın noktaya** planlanır. RRT* zaten bir AĞAÇ kuruyor; hedefe en
+    # yakın düğüme kadarki yol GEÇERLİ ve ENGELSİZDİR. Onu atıp düz çizgi
+    # basmak, elimizdeki tek güvenli bilgiyi çöpe atmaktır.
+    #
+    # Değer = kısmi planın kabul edileceği ASGARİ ilerleme (m). Ağaç hedefe
+    # doğru bu kadar bile yaklaşamadıysa kısmi plan üretilmez (eski davranış).
+    kismi_plan_min_ilerleme_m: float = 0.0
     rewire_gamma: float = 50.0        # rewire yarıçap katsayısı (Karaman 2011)
     collision_step: float = 0.2       # m, segment çarpışma örnekleme adımı
     seed: int = 0
@@ -225,6 +276,19 @@ class RRTStar:
         # arıza vardı, kod biliyordu, söylemiyordu.
         bas_dolu = not self._point_free(*start)
         hedef_dolu = not self._point_free(*goal)
+        # F-F.27: hedef kurtarma — engelin İÇİNDEKİ hedefi dışarı taşı.
+        # Yalnız HEDEF için; başlangıç engel içindeyse sorun pozdadır ve
+        # onu "kurtarmak" aracın gerçekte nerede olduğunu gizlemek olurdu.
+        self.hedef_kurtarildi = None
+        self.kismi_plan = None          # F-F.28: (ilerleme_m, kalan_mesafe_m)
+        if hedef_dolu and not bas_dolu and self.cfg.hedef_kurtarma_m > 0.0:
+            yeni = self._hedef_kurtar(goal)
+            if yeni is not None:
+                self.hedef_kurtarildi = (goal, yeni,
+                                         math.hypot(yeni[0]-goal[0],
+                                                    yeni[1]-goal[1]))
+                goal = yeni
+                hedef_dolu = False
         if bas_dolu or hedef_dolu:
             hangi = ("start" if bas_dolu and not hedef_dolu else
                      "goal" if hedef_dolu and not bas_dolu else "start+goal")
@@ -314,7 +378,29 @@ class RRTStar:
                     son_iyilesme = i
 
         if self._best_goal is None:
-            return None
+            # F-F.28: hedefe varan düğüm yok — ama AĞAÇ VAR ve içindeki her
+            # yol engelsizdir. Hedefe en çok yaklaşan düğüme kadar KISMİ plan
+            # döndürülür; düz çizgiyle tıkalı alana dalmaktan her koşulda iyi.
+            asgari = float(self.cfg.kismi_plan_min_ilerleme_m)
+            if asgari <= 0.0 or len(self.nodes) < 2:
+                return None
+            bas_uzak = math.hypot(goal[0] - start[0], goal[1] - start[1])
+            en_iyi, en_uzak = None, math.inf
+            for dugum in self.nodes:
+                d = math.hypot(goal[0] - dugum.x, goal[1] - dugum.y)
+                if d < en_uzak:
+                    en_uzak, en_iyi = d, dugum
+            ilerleme = bas_uzak - en_uzak
+            if en_iyi is None or ilerleme < asgari:
+                return None
+            self.kismi_plan = (ilerleme, en_uzak)
+            yol = []
+            dugum = en_iyi
+            while dugum is not None:
+                yol.append((dugum.x, dugum.y))
+                dugum = dugum.parent
+            yol.reverse()
+            return yol
         return self._extract_path(goal)
 
     # -------- sampling --------
@@ -431,6 +517,34 @@ class RRTStar:
             return True
         d2 = (self._obs_xy[:, 0] - x) ** 2 + (self._obs_xy[:, 1] - y) ** 2
         return bool(np.all(d2 > self._obs_r2))
+
+    def _hedef_kurtar(
+        self, goal: Tuple[float, float]
+    ) -> Optional[Tuple[float, float]]:
+        """F-F.27: hedefe EN YAKIN serbest noktayı bul (halka taraması).
+
+        Nav2 `navfn`'in `tolerance` davranışının karşılığı. Halka halka
+        dışarı taranır; ilk serbest nokta kazanır, yani sonuç hedefe **en
+        yakın** serbest noktadır. Açısal çözünürlük yarıçapla ölçeklenir ki
+        büyük halkada da ~0,25 m'lik boşluklar atlanmasın.
+
+        ⚠ Deterministik: rastgelelik yok, aynı girdi aynı çıktı. Plan
+        tekrarlanabilir olmalı (§0.31: "ölçüm aracı doğrulanmadan
+        sonucu raporlanmaz").
+        """
+        azami = float(self.cfg.hedef_kurtarma_m)
+        adim = max(0.25, float(self.cfg.collision_step))
+        r = adim
+        while r <= azami + 1e-9:
+            n = max(8, int(2.0 * math.pi * r / adim))
+            for i in range(n):
+                a = 2.0 * math.pi * i / n
+                x = goal[0] + r * math.cos(a)
+                y = goal[1] + r * math.sin(a)
+                if self._point_free(x, y):
+                    return (x, y)
+            r += adim
+        return None
 
     def _segment_free(
         self, x1: float, y1: float, x2: float, y2: float

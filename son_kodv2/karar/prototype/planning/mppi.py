@@ -53,6 +53,12 @@ from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
+#: Koridor terimi için gövde yarı genişliği (m) — ÖLÇÜLMÜŞ tekne boyu,
+#: ayar değil: gövde 0,785 m (09.08 ölçümü, CLAUDE.md kapı takibi bölümü).
+#: MPPI aracı nokta sayar; koridorda kalması gereken şey gövdedir.
+_GOVDE_YARI_GENISLIK_M = 0.3925
+Point = Tuple[float, float]
+
 # NOT: matplotlib yalnızca KTR görselleştirmesi (_draw_demo) içindir; runtime
 # ROS node'u çekmesin diye modül seviyesinde import EDİLMEZ, fonksiyon içinde
 # tembel import edilir. (Sistem matplotlib'i NumPy 1.x ABI'sine bağlı.)
@@ -222,6 +228,22 @@ class MPPIConfig:
     w_boundary: float = 1000.0       # sınır dışı adım sayısı
     w_terminal: float = 5.0          # terminal goal yakınlığı (m²)
 
+    # 🔴 F-S.16 / GIRDAP_DURUM §1.51 — PARKUR KORİDORU (parkur dışına çıkma).
+    # 0.0 = KAPALI, eski davranış BİREBİR. Neden ayrı bir terim gerekti:
+    # `w_boundary`'nin kutusu `pipeline._etkin_sinir()` ile "tekne/hedef ± 30 m"
+    # olarak kuruluyor (F-S.17, doğru iş) — yani 12 m'lik kenar duba
+    # koridorunda **hiç ateşlenemez**. Sanal gölde ölçüldü (§1.50): dört
+    # koşumun DÖRDÜ de koridordan çıktı (dalgasız dahil), koşum başına
+    # ortalama 9 puan. Şartname s.24-25: her çıkış 6 puan, toplam 54 puan.
+    #
+    # ⚠ BU TERİM KUTU DEĞİL, ORTA ÇİZGİ BORUSU: geçilen + kilitli kapıların
+    # orta noktaları omurga, her kapının kendi yarı genişliği yarıçap. Ölçüm
+    # tarafındaki `ParkurSiniri` (kenar zinciri çokgeni) hâlâ TEK YETKİLİ
+    # ölçü; bu terim onun **kuvvet** karşılığı ve bilerek daha GEVŞEK
+    # (borular birleşimi ⊇ çokgen değil, yaklaşık) — sıkı olan taraf kapıyı
+    # kapatma riski taşır, gevşek olan taraf yalnız daha az iter.
+    w_koridor: float = 0.0           # koridor dışı taşma (m²)
+
     # Engel emniyet payı — quadratic barrier'ın başladığı yarıçap (r + margin).
     # 0.5 → 1.0 (2026-08-02, F9.2 kapatma): MPPI aracı NOKTA sayar, tekne
     # genişliği (0.75 m → yarı genişlik 0.375 m) maliyete girmez; tek pay bu.
@@ -250,6 +272,43 @@ class MPPIConfig:
     # payını `planning_node._huni_payi`'den alır (`gate_post_margin_m`), o da
     # model YOKKEN hiç devreye girmez → iki kol birbirini bozmuyor.
     obstacle_margin: float = 1.0     # m
+
+    # 🔴 F-F.22 — İLERİ TERCİHİ ("hedef arkadayken geri geri gitme").
+    # ÖLÇÜLEN ARIZA (17.08 göl, `session_20260817_193312`, 12,5 dk):
+    #   GUIDED+ARMED komutlarının %23,1'i GERİ (ortanca −0,744 m/s, en geri
+    #   −1,173 = yazılım tavanının tamamı ters yönde). O anların %83,4'ünde
+    #   hedef, %88,6'sında KAPI da aracın ARKASINDA (|kerteriz| ortanca 130°)
+    #   ve kapı ile hedef yalnız %7,3 ihtimalle zıt yarımkürede — yani
+    #   referans çatışması YOK, MPPI 130°'lik dönüş yerine geri gitmeyi
+    #   "ucuz" buluyor. F-F.20 pivot kapısı bu anların %91'inde KAPALIYDI
+    #   (`global_path` boşken sessizce devre dışı kalıyor → F-F.23).
+    #   14.08'de aynı ölçü %36,7'ydi: pivot kapısı yarısını kapatmış, yarısı
+    #   duruyor.
+    #
+    # 🌐 ARAŞTIRMA — Nav2 MPPI'de bu bilinen bir sınıf ve çözümü İKİ KATMANLI:
+    #   * SERT kısıt: `vx_min = 0.0` → örnekleyici negatif ileri hızı HİÇ
+    #     üretmez. Bakımcıların açık uyarısı: yumuşak terimin ağırlığını
+    #     artırmak ileriyi "çok daha olası" yapar ama **her ileri örnek daha
+    #     kötüyse** (hedef arkada / yol kapalı) MPPI yine geri seçebilir —
+    #     "sert kısıtta bu mümkün değil".
+    #   * YUMUŞAK terim: `PreferForwardCritic`, maliyeti
+    #     `Σ_t max(−u_t, 0) · dt · ağırlık` (varsayılan ağırlık 5,0, üs 1).
+    #   Kaynak: docs.nav2.org/configuration/packages/configuring-mppic.html ·
+    #   ros-navigation/navigation2 #4425 (Ackermann geri hareket) ve #4049
+    #   (dar koridorda hedef arkada) · nav2_mppi_controller/src/critics/
+    #   prefer_forward_critic.cpp
+    #
+    # 🎛️ NEDEN İKİSİ DE VAR AMA SERT OLAN TERCİH EDİLİR: bu depodaki softmax
+    # dejenere olma geçmişine sahip (λ bölümü: ESS 2,6/1000) ve `w_heading`'in
+    # ölçülmüş ayırt edicilik payı %0,1 — yani yumuşak terim burada Nav2'deki
+    # kadar bile güvenilir değil. Aynı gerekçe F-F.20'nin sert kapı olarak
+    # yazılmasının da sebebiydi.
+    #
+    # ⚠ SIFIR/False = ESKİ DAVRANIŞ BİREBİR (bit-birebir doğrulandı).
+    # ⚠ SERT kısıt SAF DÖNÜŞÜ ENGELLEMEZ: pivot itkisi [−a, +a] ortak kipi
+    #   sıfırdır, kısıt yalnız ortak kipin NEGATİF olmasını yasaklar.
+    w_ileri: float = 0.0             # yumuşak: geri süratin zaman integrali
+    ileri_kisit: bool = False        # sert: ortak kip (ileri itki) ≥ 0
 
     # Parkur-3 kamikaze modu — hedef noktasına Gaussian çekici (negatif maliyet,
     # engel maliyetini ezer). Kapalı: tamamen geriye uyumlu.
@@ -418,6 +477,10 @@ class MPPIController:
 
         # Warm-start: nominal kontrol dizisi (T, 2)
         self.U_nominal = self.xp.zeros((self.cfg.T, 2), dtype=self._dtype)
+        # F-S.16 koridoru: kurulmadan terim susar (eski davranış birebir).
+        self._kor_a = None
+        self._kor_b = None
+        self._kor_h = None
 
         # Yoğunlaştırılmış RRT* referansı
         self._ref_xy: Optional[np.ndarray] = None      # (n_ref, 2)
@@ -536,6 +599,41 @@ class MPPIController:
         soğuk başlangıç → zikzak). __init__ ile aynı ön-hesaplama.
         """
         self._load_obstacles(obstacles)
+
+    def set_koridor(self, omurga: Sequence[Tuple[Point, float]]) -> None:
+        """Parkur koridorunu yerinde güncelle (F-S.16 kuvvet ayağı).
+
+        `omurga`: sırayla `((orta_x, orta_y), yarı_genişlik_m)` — geçilen ve
+        kilitli kapıların orta noktaları. **En az iki kapı** gerekir: tek
+        noktadan koridor tanımlanamaz (yönü yoktur) → o hâlde terim susar ve
+        davranış eski hâline döner.
+
+        🔑 Yarı genişlikten **gövde yarı genişliği düşülür**: MPPI aracı NOKTA
+        sayar (`obstacle_margin` yorumunun aynı gerekçesi), oysa koridorun
+        içinde kalması gereken şey gövdedir. Bu bir ayar değil **ölçülmüş
+        tekne boyu** (gövde 0,785 m → yarı 0,3925 m, 09.08 ölçümü).
+        ⚠ Yarı genişlik gövdeden küçükse (dar/bozuk kapı) o segment ATILIR —
+        aksi hâlde negatif yarıçaplı bir boru her yeri "dışarı" ilan eder.
+        """
+        xp = self.xp
+        a: list = []
+        b: list = []
+        h: list = []
+        for (p1, y1), (p2, y2) in zip(omurga, list(omurga)[1:]):
+            yari = min(y1, y2) - _GOVDE_YARI_GENISLIK_M
+            if yari <= 0.0:
+                continue
+            a.append([p1[0], p1[1]])
+            b.append([p2[0], p2[1]])
+            h.append(yari)
+        if not a:
+            self._kor_a = None
+            self._kor_b = None
+            self._kor_h = None
+            return
+        self._kor_a = xp.asarray(a, dtype=self._dtype)
+        self._kor_b = xp.asarray(b, dtype=self._dtype)
+        self._kor_h = xp.asarray(h, dtype=self._dtype)
 
     def _bellek_havuzunu_serbest_birak(self) -> None:
         """F-F.21: cupy havuzundaki KULLANILMAYAN blokları işletim sistemine ver.
@@ -868,6 +966,27 @@ class MPPIController:
             penalty = xp.maximum(0.0, r[None, None, :] - d_obs) ** 2
             cost += cfg.w_obstacle * penalty.sum(axis=(1, 2))
 
+        # 2b) KORİDOR — parkur dışına çıkma (F-S.16, §1.51). Tek yönlü yumuşak
+        # kısıt: içeride bedel SIFIR, dışarıda taşmanın karesi. Segment başına
+        # kapsül (uçları yuvarlatılmış boru) uzaklığı; **en yakın** segmentin
+        # taşması alınır (min), çünkü herhangi bir borunun içinde olmak
+        # koridorun içinde olmaktır — zigzag kapıda bu birleşim doğru davranır.
+        if self._kor_a is not None and cfg.w_koridor > 0.0:
+            ax, ay = self._kor_a[:, 0], self._kor_a[:, 1]
+            ex = self._kor_b[:, 0] - ax
+            ey = self._kor_b[:, 1] - ay
+            L2 = xp.maximum(ex * ex + ey * ey, 1e-9)
+            px = xs[:, :, None] - ax[None, None, :]
+            py = ys[:, :, None] - ay[None, None, :]
+            # Segmente izdüşüm parametresi [0,1]'e kırpılır → uçlarda yuvarlak
+            t = xp.clip((px * ex[None, None, :] + py * ey[None, None, :])
+                        / L2[None, None, :], 0.0, 1.0)
+            qx = px - t * ex[None, None, :]
+            qy = py - t * ey[None, None, :]
+            d_kor = xp.sqrt(qx * qx + qy * qy)
+            tasma = xp.maximum(0.0, d_kor - self._kor_h[None, None, :])
+            cost += cfg.w_koridor * (tasma.min(axis=2) ** 2).sum(axis=1)
+
         # 3) Sınır ihlali (binary, ağır)
         b = self.bounds
         out = (
@@ -878,6 +997,16 @@ class MPPIController:
 
         # 4) Kontrol efor
         cost += cfg.w_control * (U ** 2).sum(axis=(1, 2))
+
+        # 4b) İLERİ TERCİHİ (yumuşak) — Nav2 `PreferForwardCritic` karşılığı.
+        # Yalnız NEGATİF sürat cezalandırılır: `Σ_t max(−u_t, 0) · dt`.
+        # Durum vektörü (x, y, ψ, u, v, r) → sütun 3 = sürat (surge).
+        # Hız üzerinden ölçülür, itki üzerinden DEĞİL: ceza aracın gerçekten
+        # geri GİTTİĞİ yörüngeye yazılır, geri itki verip ileri kayan
+        # (duruş manevrası) yörüngeye yazılmaz.
+        if cfg.w_ileri > 0.0:
+            geri_surat = xp.maximum(-traj[:, :, 3], 0.0)
+            cost += cfg.w_ileri * geri_surat.sum(axis=1) * cfg.dt
 
         # 5) Parkur-3 kamikaze çekici — Gaussian, negatif maliyet katkısı.
         # Hedefe yakın yörünge → büyük negatif terim → engel/sınır maliyetlerini
@@ -904,6 +1033,34 @@ class MPPIController:
         ) * self.cfg.sigma_u
         return self.xp.asarray(eps, dtype=self._dtype)
 
+    def _ileri_kisitla(self, U: np.ndarray) -> np.ndarray:
+        """F-F.22 SERT kısıt: ortak kip (ileri itki) negatif olamaz.
+
+        İtki çifti iki kipe ayrılır — bu ayrışma `_batch_derivatives`'in
+        kendi denklemleriyle birebir aynıdır:
+
+            ortak = (T_l + T_r)/2   →  Fx  (ileri kuvvet)
+            fark  = (T_l − T_r)/2   →  Mz  (dönme momenti)
+
+        Yalnız `ortak` tabana kırpılır; `fark` **dokunulmadan** kalır. Yani:
+          * saf dönüş (pivot itkisi [−a, +a], ortak = 0) **etkilenmez**,
+          * ileri + dönüş serbesttir,
+          * net GERİ sürüş yasaklanır (Nav2'nin `vx_min = 0` karşılığı).
+
+        ⚠ Kırpma sonrası `±max_thrust` tavanı yeniden uygulanır: ortak sıfıra
+        çekilirken fark tavana dayanmışsa çift yeniden ölçeklenmez, KIRPILIR —
+        `_batch_derivatives` da girdiyi aynen böyle doyuruyor, ikisi tutarlı.
+        """
+        xp = self.xp
+        max_T = self.p.max_thrust
+        ortak = 0.5 * (U[..., 0] + U[..., 1])
+        fark = 0.5 * (U[..., 0] - U[..., 1])
+        ortak = xp.maximum(ortak, 0.0)
+        out = xp.empty_like(U)
+        out[..., 0] = ortak + fark
+        out[..., 1] = ortak - fark
+        return xp.clip(out, -max_T, max_T)
+
     def step(self, state: np.ndarray) -> np.ndarray:
         """Tek MPPI iterasyonu. state: (6,) host. Dönüş: (2,) host float64
         [T_l, T_r] (N) — cihaz dizisi çağırana sızmaz (sınır sözleşmesi)."""
@@ -915,6 +1072,13 @@ class MPPIController:
         # Gürültü → aday kontrol dizileri (kırpma sonrası etkin gürültüyü kullan)
         eps = self._sample_noise()
         V = xp.clip(self.U_nominal[None, :, :] + eps, -max_T, max_T)
+        # F-F.22: kısıt ÖRNEKLEME anında uygulanır (Nav2 `vx_min`), çıkışta
+        # değil. Sebep: çıkışta kırpmak, MPPI'nin PLANLADIĞI yörünge ile
+        # UYGULANAN komutu ayırır — warm-start bir sonraki adıma geri giden
+        # bir nominal taşır ve salınım üretir. Burada kırpılınca rollout,
+        # maliyet ve ağırlık hepsi aynı (kısıtlı) küme üzerinde hesaplanır.
+        if cfg.ileri_kisit:
+            V = self._ileri_kisitla(V)
         eps_eff = V - self.U_nominal[None, :, :]
 
         # Rollout & maliyet
@@ -940,6 +1104,11 @@ class MPPIController:
         # Ağırlıklı güncelleme
         delta = (w[:, None, None] * eps_eff).sum(axis=0)        # (T, 2)
         U_new = xp.clip(self.U_nominal + delta, -max_T, max_T)
+        # F-F.22: ağırlıklı ortalama, kısıtlı örneklerin DIŞINA çıkabilir
+        # (ortalama alma kısıtı korumaz) → sonuç da kısıtlanır. Aksi hâlde
+        # warm-start negatif ortak kipi bir sonraki adıma taşırdı.
+        if cfg.ileri_kisit:
+            U_new = self._ileri_kisitla(U_new)
         u0 = U_new[0].copy()
 
         # Warm-start (cfg.warm_start_enabled): U_new'i bir adım kaydır + sıfır.

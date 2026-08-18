@@ -41,6 +41,8 @@ _ESLEME = {
     "mppi_terminal_lookahead_m": "terminal_lookahead_m",
     "mppi_ref_window_size": "ref_window_size",
     "mppi_ref_window_enabled": "ref_window_enabled",
+    "mppi_ileri_kisit": "ileri_kisit",
+    "mppi_w_ileri": "w_ileri",
 }
 
 

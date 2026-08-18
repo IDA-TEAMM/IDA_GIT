@@ -65,7 +65,7 @@ import functools
 import math
 from collections import deque
 import threading
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 import numpy as np
 import rclpy
@@ -245,6 +245,20 @@ class PlanningNode(Node):
         )
         self.declare_parameter("mppi_ref_window_size", _mppi.ref_window_size)
         self.declare_parameter("mppi_ref_window_enabled", _mppi.ref_window_enabled)
+        # F-F.22 İLERİ TERCİHİ — saha yüzeyi. İkisi de KAPALI varsayılan;
+        # `ileri_kisit` SERT (Nav2 vx_min=0 karşılığı, garantili),
+        # `w_ileri` YUMUŞAK (PreferForwardCritic karşılığı, garanti YOK).
+        self.declare_parameter("mppi_ileri_kisit", _mppi.ileri_kisit)
+        self.declare_parameter("mppi_w_ileri", _mppi.w_ileri)
+        # F-F.27 — hedef engel içindeyse plan reddedilmesin, hedefe EN YAKIN
+        # serbest noktaya planlansın (Nav2 navfn `tolerance` karşılığı).
+        # 0.0 = ESKİ DAVRANIŞ. 17.08 bandında `RRT-RED` 43 kez ateşledi.
+        self.declare_parameter("rrt_hedef_kurtarma_m", 0.0)
+        # F-F.28 — hedefe varan yol yoksa AĞACIN ulaştığı en yakın düğüme
+        # kadar KISMİ plan üret. 0.0 = ESKİ DAVRANIŞ (düz çizgiye düş).
+        # Ölçüm: 95 engelde uzay 2/5 sahnede gerçekten tıkalı ve bütçe
+        # artırmak hiç işe yaramıyor (1500 ↔ 6000: 3/5 ↔ 3/5).
+        self.declare_parameter("rrt_kismi_plan_min_m", 0.0)
 
         # --- Kapı takibi (gate following, 2026-08-03) ---
         # Şartname md 5.5.2.2: Parkur-1/2 puanı GPS noktasına basmaktan DEĞİL,
@@ -379,6 +393,16 @@ class PlanningNode(Node):
             ),
             mppi_ref_window_enabled=bool(
                 self.get_parameter("mppi_ref_window_enabled").value
+            ),
+            mppi_ileri_kisit=bool(
+                self.get_parameter("mppi_ileri_kisit").value
+            ),
+            mppi_w_ileri=float(self.get_parameter("mppi_w_ileri").value),
+            rrt_hedef_kurtarma_m=float(
+                self.get_parameter("rrt_hedef_kurtarma_m").value
+            ),
+            rrt_kismi_plan_min_m=float(
+                self.get_parameter("rrt_kismi_plan_min_m").value
             ),
         )
         # F-P.9: fren "ne kadar zaman geçti" sorar → düğümün F-S.14 saati
@@ -710,13 +734,25 @@ class PlanningNode(Node):
         self.declare_parameter("pivot_tetik_derece", 60.0)
         self.declare_parameter("pivot_birak_derece", 10.0)
         self.declare_parameter("pivot_ufuk_m", 3.0)
+        # F-F.24 — yakın alan körlüğü. 0,50 = ESKİ davranış. Ölçülen/literatür
+        # değeri 1,57 m (2 × gövde 0,785; LOS "circle of acceptance" = 2 gemi
+        # boyu). Sahada A/B: `planning.pivot_yakin_esik_m:=1.57`.
+        self.declare_parameter("pivot_yakin_esik_m", 0.50)
+        # F-F.23 — plan boşken yedek referans. False = ESKİ davranış birebir.
+        self.declare_parameter("pivot_yedek_referans", False)
         self._pivot = PivotKapisi(
             PivotKapisiConfig(
                 tetik_derece=float(self.get_parameter("pivot_tetik_derece").value),
                 birak_derece=float(self.get_parameter("pivot_birak_derece").value),
                 ufuk_m=float(self.get_parameter("pivot_ufuk_m").value),
+                yakin_esik_m=float(
+                    self.get_parameter("pivot_yakin_esik_m").value),
             )
         )
+        self._pivot_yedek_referans = bool(
+            self.get_parameter("pivot_yedek_referans").value)
+        self._pivot_yedek_hedef: Optional[Tuple[float, float]] = None
+        self._pivot_yedek_sayaci = 0
         self._pivot_sayaci = 0
         self._isci_uyarildi = False
         # 🔴 14.08: bekçiyi kapatmak SESSİZ olmamalı. LiDAR yokken bilerek
@@ -1467,6 +1503,34 @@ class PlanningNode(Node):
         # ⚠ Arıza kodu BURADAN basılmaz (yukarıdaki `SINIF-YOK` gerekçesi):
         # bu dal mandallı, telsize giden kod durum yükleminden kurulur.
 
+    def _koridoru_besle(self, result) -> None:
+        """F-S.16 (§1.51): parkur koridorunu MPPI'ye ver — PARKUR DIŞI kuvveti.
+
+        🔴 **Neden gerekli:** `w_boundary` duvarının kutusu `_etkin_sinir()` ile
+        "tekne/hedef ± 30 m" kuruluyor (F-S.17), yani 12 m'lik kenar duba
+        koridorunda **hiç ateşlenemiyor**. Sanal gölde ölçüldü (§1.50): dört
+        koşumun DÖRDÜ de koridordan çıktı — dalgasız koşumda bile — koşum
+        başına ortalama **9 puan** (şartname s.24-25: her çıkış 6 puan).
+
+        🔑 **Omurga neden `gecilen_kapilar` + kilitli kapı:** koridor en az iki
+        kapı ister ve o iki kapının GERÇEK olması gerekir. `select_gate`'in
+        kabul ettiği bütün çiftler kullanılamaz — çapraz çiftler bilerek
+        serbest (F-K.3 notu: bu parkurda yumuşatıcı görev görüyorlar) ve
+        onların orta noktası iki kapının ARASINDA duruyor; koridor omurgası
+        olarak alınsalar sahte bir eksen çıkardı. Kilitlenmiş/geçilmiş kapılar
+        ise nişanın kendisi — yani zaten doğrulanmış geometri.
+
+        Terim tek yönlüdür (içeride bedel sıfır) ve yarı genişlikten gövde
+        yarısı düşülür; iki kapı toplanmadan MPPI'de kendiliğinden susar.
+        """
+        omurga: list = [
+            ((gx, gy), yari) for gx, gy, yari in self._gate.gecilen_kapilar
+        ]
+        kilitli = getattr(result, "gate", None)
+        if kilitli is not None:
+            omurga.append((kilitli.midpoint, 0.5 * kilitli.width))
+        self._pipe.set_koridor(omurga)
+
     def _refine_target(self, coarse: tuple[float, float]) -> tuple[float, float]:
         """Ham görev noktasını (GN) algılanan kapının NİŞAN NOKTASIYLA değiştir.
 
@@ -1505,6 +1569,7 @@ class PlanningNode(Node):
             self._last_xy, coarse, self._edge_buoys, self._obstacles_world,
             gozlem_no=self._algi_no,
         )
+        self._koridoru_besle(result)
         # Kapı bulundu/kaybedildi geçişini bir kez logla (10 Hz'te spam yok).
         if result.used_fallback != self._last_gate_used_fallback:
             self._last_gate_used_fallback = result.used_fallback
@@ -1718,10 +1783,24 @@ class PlanningNode(Node):
         için son odom pozuna eklenir (RRT* atlanır), sonra kapı ortasıyla
         rafine edilir.
         """
-        if self._use_rrt or self._last_xy is None:
+        if self._last_xy is None:
             return
         tx = self._last_xy[0] + msg.pose.position.x
         ty = self._last_xy[1] + msg.pose.position.y
+        # 🔴 F-F.23 — PİVOT KAPISININ YEDEK REFERANSI.
+        # Bu geri çağırma RRT* kolunda hemen aşağıda ERKEN DÖNER; o kolda
+        # `global_path`ı RRT* kurar ve plan boşsa/bayatsa pivot kapısı
+        # `referans yok` deyip SESSİZCE kapanır (`pivot_kapisi.guncelle`).
+        # 17.08 ölçümü: yön hatası ortanca 130° olan GERİ komutların **%91'inde
+        # pivot kapalıydı** — kapı çalışsaydı o komutlar hiç çıkmayacaktı.
+        # Hedef bu yüzden İKİ KOLDA DA saklanır; yalnız pivot kapısı okur,
+        # MPPI referansı bundan ETKİLENMEZ.
+        # ⚠ Ham hedef saklanır (`_refine_target` UYGULANMADAN): rafine yalnız
+        # kapı ortasına kaydırır, pivotun sorduğu soru ise "hangi yöne
+        # döneyim" — ham hedef o soru için yeterli ve her iki kolda tanımlı.
+        self._pivot_yedek_hedef = (tx, ty)
+        if self._use_rrt:
+            return
         tx, ty = self._refine_target((tx, ty))
         self._pipe.set_reference_direct(tx, ty)
         path = self._pipe.global_path
@@ -2029,6 +2108,17 @@ class PlanningNode(Node):
         # "takıldı mı?" ile "dönüyor" birbirinden ayırt edilemedi.
         if self._pivot.aktif:
             metin += "|PIVOT"
+        # 🔴 F-F.25: pivot KAPALIYKEN NEDEN kapalı olduğu da yazılır.
+        # 17.08 göl bandında yön hatası ortanca 130° olan geri komutların
+        # %91'inde kapı kapalıydı ve sebebi hiçbir yerde yoktu — üç ayrı
+        # sebep (`REFERANS-YOK` / `COK-YAKIN` / `HATA-KUCUK`) aynı görünüyordu.
+        # `HATA-KUCUK` beklenen ve sık hâl, o yüzden YAZILMAZ (§7: "bir alarm
+        # her zaman yanıyorsa alarm değildir"); yalnız kapının **ölçüm
+        # yapamadığı** iki hâl rapor edilir, çünkü onlar sessiz arızadır.
+        elif self._pivot.son_sebep in (
+            self._pivot.SEBEP_REFERANS_YOK, self._pivot.SEBEP_COK_YAKIN
+        ):
+            metin += "|PIVOT-OLCEMEDI:" + self._pivot.son_sebep
         if metin == self._son_inhibit:
             return
         self._son_inhibit = metin
@@ -2048,9 +2138,27 @@ class PlanningNode(Node):
             self._ariza.ayarla(tanim, aktif=tanim.kod in aktif)
 
     def _ariza_rrt_denetle(self) -> None:
-        """RRT* bu saniyede düz çizgiye düştü mü (kaptanın 'RRT reddetti')."""
+        """RRT* bu saniyede düz çizgiye düştü mü (kaptanın 'RRT reddetti').
+
+        🔴 F-F.26: SEBEP de loglanır. 17.08 göl bandında bu arıza **43 kez**
+        ateşledi ve telsize giden metin yalnız *"global plan uretilemedi"*
+        diyordu — hangi ucun suçlu olduğu (hedef engel içinde mi, başlangıç
+        mı, yoksa iterasyon bütçesi mi) hiçbir kayıtta yoktu. Üçünün çaresi
+        farklı; ayırmayan alarm teşhis ettirmez. Telsiz metni KISA kalmak
+        zorunda (statustext 50 bayt), o yüzden sebep loga yazılır.
+        """
         sayac = self._pipe.duz_cizgiye_dusuldu
-        self._ariza.ayarla(RRT_RED, aktif=sayac > self._son_duz_cizgi_sayaci)
+        yeni = sayac > self._son_duz_cizgi_sayaci
+        self._ariza.ayarla(RRT_RED, aktif=yeni)
+        if yeni:
+            self.get_logger().error(
+                f"RRT-RED #{sayac}: {self._pipe.son_rrt_sebep or 'sebep yok'} "
+                "— düz çizgi referansına düşüldü. 'goal engel/sınır içinde' "
+                "ise suçlu ENGEL TORBASI (17.08: torbanın %98,6'sı "
+                "CLASS_UNKNOWN, yarıçaplar 7,75 m'ye kadar), 'çözüm bulamadı' "
+                "ise iterasyon bütçesi.",
+                throttle_duration_sec=5.0,
+            )
         self._son_duz_cizgi_sayaci = sayac
 
     def _ariza_durumlardan_guncelle(self) -> None:
@@ -2234,9 +2342,26 @@ class PlanningNode(Node):
         küçükse `u` **dokunulmadan** döner — yani eski davranış birebir korunur.
         """
         durum = self._pipe._state
+        referans = self._pipe.global_path
+        # F-F.23: plan yoksa/boşsa yedek referans (yalnız şalter açıkken).
+        # `global_path` numpy dizisi olabilir → uzunluk AÇIKÇA sorulur,
+        # `not referans` belirsizlik hatası verir.
+        if self._pivot_yedek_referans and self._pivot_yedek_hedef is not None:
+            if referans is None or len(referans) == 0:
+                referans = [self._pivot_yedek_hedef]
+                self._pivot_yedek_sayaci += 1
+                if self._pivot_yedek_sayaci in (1, 10) or \
+                        self._pivot_yedek_sayaci % 100 == 0:
+                    self.get_logger().warn(
+                        "PIVOT yedek referans kullanıldı (plan BOŞ) — "
+                        f"{self._pivot_yedek_sayaci}. kez. Kapı bu durumda "
+                        "eskiden sessizce kapanıyordu (F-F.23). Sürekli "
+                        "tekrarlıyorsa asıl sorun RRT* planının boş olması.",
+                        throttle_duration_sec=5.0,
+                    )
         aktif, hata = self._pivot.guncelle(
             float(durum[0]), float(durum[1]), float(durum[2]),
-            self._pipe.global_path,
+            referans,
         )
         if not aktif or hata is None:
             return u

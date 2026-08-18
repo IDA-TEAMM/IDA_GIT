@@ -197,6 +197,8 @@ _MPPI_DEFAULTS: dict[str, tuple[object, type]] = {
     "mppi_terminal_lookahead_m": (3.0, float),   # 08.08 ölçümü (bkz. MPPIConfig)
     "mppi_ref_window_size": (100, int),
     "mppi_ref_window_enabled": (True, bool),
+    "mppi_ileri_kisit": (False, bool),      # F-F.22 (bkz. MPPIConfig)
+    "mppi_w_ileri": (0.0, float),
 }
 # --show-args çıktısında operatörün göreceği açıklamalar (sınırlar dahil).
 _MPPI_ARG_DESC = {
@@ -213,6 +215,14 @@ _MPPI_ARG_DESC = {
                                  "≥ seyir_hızı × horizon olmalı",
     "mppi_ref_window_size": "Kayan referans penceresi ileri derinliği (nokta)",
     "mppi_ref_window_enabled": "false → eski tam tarama (16× yavaş, A/B için)",
+    "mppi_ileri_kisit": "SERT ileri tercihi: net ileri itki (ortak kip) "
+                        "negatif olamaz — Nav2 vx_min=0 karşılığı. 17.08 göl "
+                        "bandında komutların %23,1'i GERİYDİ. Saf pivot "
+                        "([-a,+a], ortak kip 0) ETKİLENMEZ",
+    "mppi_w_ileri": "YUMUŞAK ileri tercihi (Nav2 PreferForwardCritic): geri "
+                    "süratin zaman integrali × bu ağırlık. 0 = kapalı. "
+                    "⚠ Garanti DEĞİL — her ileri örnek daha kötüyse MPPI yine "
+                    "geri seçebilir; garanti isteniyorsa mppi_ileri_kisit",
 }
 # planning.gate_* — kapı takibi saha yüzeyi (2026-08-03). Sayısal değerler
 # prototype/mission/gate_follower.py GateFollowerConfig ile AYNI olmalı;

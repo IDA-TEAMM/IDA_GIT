@@ -1865,3 +1865,116 @@ def test_FAZ5_main_cok_is_parcacikli_yurutucu() -> None:
     assert "MultiThreadedExecutor" in kaynak, (
         "main() tek iş parçacıklı spin'e dönmüş — FAZ 5 geri alınmış (§1.17a)"
     )
+
+
+# --------------------------------------------------------------------------- #
+# F-F.23 — PİVOT KAPISININ YEDEK REFERANSI (17.08 göl ölçümü)
+# --------------------------------------------------------------------------- #
+# Ölçülen arıza: `session_20260817_193312`de yön hatası ortanca 130° olan
+# GERİ komutların %91'inde pivot kapısı KAPALIYDI. Sebep: RRT* kolunda
+# `_on_target` erken dönüyor, plan boş kalabiliyor ve kapı "referans yok"
+# deyip sessizce devre dışı kalıyor — elde hedef VARKEN.
+
+
+def _hedef(x: float, y: float = 0.0) -> PoseStamped:
+    msg = PoseStamped()
+    msg.pose.position.x = x
+    msg.pose.position.y = y
+    msg.pose.orientation.w = 1.0
+    return msg
+
+
+def test_FF23_yedek_hedef_RRT_kolunda_DA_saklanir(ros_context) -> None:  # noqa: ANN001
+    """RRT* kolu `_on_target`tan erken döner ama hedefi KAYDETMİŞ olmalı."""
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("use_rrt", Parameter.Type.BOOL, True),
+            Parameter("pivot_yedek_referans", Parameter.Type.BOOL, True),
+        ]
+    )
+    try:
+        node._on_odom(_odom(x=5.0))
+        node._on_target(_hedef(-10.0))          # 10 m ARKADA (gövde ofseti)
+        assert node._pivot_yedek_hedef is not None
+        assert node._pivot_yedek_hedef[0] == pytest.approx(-5.0)
+    finally:
+        node.destroy_node()
+
+
+def test_FF23_plan_BOSKEN_pivot_yedekle_ACILIR(ros_context) -> None:  # noqa: ANN001
+    """🔑 Asıl kapı: plan yokken bile hedef arkadaysa pivot devreye girmeli."""
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("use_rrt", Parameter.Type.BOOL, True),
+            Parameter("pivot_yedek_referans", Parameter.Type.BOOL, True),
+        ]
+    )
+    try:
+        node._on_odom(_odom(x=0.0))
+        node._on_target(_hedef(-20.0))                  # tam arkada
+        node._pipe._state[:3] = [0.0, 0.0, 0.0]         # ψ=0, +x'e bakıyor
+        u = np.array([1.0, 1.0])                        # MPPI "ileri git" diyor
+        cikti = node._pivot_uygula(u)
+        # Pivot açıldıysa itki SAF DÖNÜŞE çevrilir: ortak kip sıfır.
+        assert cikti[0] + cikti[1] == pytest.approx(0.0, abs=1e-9)
+        assert node._pivot_yedek_sayaci >= 1
+    finally:
+        node.destroy_node()
+
+
+def test_FF23_SALTER_KAPALIYKEN_eski_davranis_BIREBIR(ros_context) -> None:  # noqa: ANN001
+    """🔒 MUTASYON KAPISI: varsayılan kapalıyken kapı yine sessizce kapanır.
+
+    Bu testin YEŞİL kalması, düzeltmenin varsayılan davranışa sızmadığının
+    kanıtı. Kırmızıya dönerse `pivot_yedek_referans` varsayılanı açılmış
+    demektir — sahaya ölçülmemiş davranış girer.
+    """
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("use_rrt", Parameter.Type.BOOL, True),
+        ]
+    )
+    try:
+        assert node._pivot_yedek_referans is False
+        node._on_odom(_odom(x=0.0))
+        node._on_target(_hedef(-20.0))
+        node._pipe._state[:3] = [0.0, 0.0, 0.0]
+        u = np.array([1.0, 1.0])
+        cikti = node._pivot_uygula(u)
+        assert np.array_equal(cikti, u), "şalter kapalıyken itki DEĞİŞMEMELİ"
+        assert node._pivot_yedek_sayaci == 0
+    finally:
+        node.destroy_node()
+
+
+def test_FF22_ros_parametresi_MPPI_CONFIGE_ULASIYOR(ros_context) -> None:  # noqa: ANN001
+    """🔑 BAĞLANTI TESTİ: `mppi_ileri_kisit` gerçekten MPPIConfig'e varıyor mu?
+
+    §0.31 dersi: "bir fonksiyonun doğru çalışması, ÇAĞRILDIĞI anlamına
+    gelmez" (F-A.4 yazılmış ama hiç çağrılmıyordu). Şalter yaml'da görünüp
+    boru hattına ulaşmazsa sahada "değiştirdim ama değişmedi" olurdu — ROS
+    bilinmeyen anahtarı SESSİZCE atar.
+    """
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("mppi_ileri_kisit", Parameter.Type.BOOL, True),
+            Parameter("mppi_w_ileri", Parameter.Type.DOUBLE, 7.0),
+        ]
+    )
+    try:
+        cfg = node._pipe._base_mppi_cfg
+        assert cfg.ileri_kisit is True
+        assert cfg.w_ileri == pytest.approx(7.0)
+    finally:
+        node.destroy_node()
+
+
+def test_FF22_VARSAYILAN_bos_birakilinca_KAPALI(ros_context) -> None:  # noqa: ANN001
+    """🔒 MUTASYON KAPISI: parametre verilmezse şalter kapalı kalmalı."""
+    node = pn.PlanningNode()
+    try:
+        cfg = node._pipe._base_mppi_cfg
+        assert cfg.ileri_kisit is False
+        assert cfg.w_ileri == 0.0
+    finally:
+        node.destroy_node()

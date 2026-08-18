@@ -202,6 +202,20 @@ class PlanningPipelineConfig:
     mppi_terminal_lookahead_m: Optional[float] = None
     mppi_ref_window_size: Optional[int] = None
     mppi_ref_window_enabled: Optional[bool] = None
+    # F-S.16 koridor ağırlığı: None → parkur profilinin w_obstacle'ı,
+    # 0.0 → terim KAPALI (parkur dışı kuvveti yok, 17.08 öncesi davranış).
+    mppi_w_koridor: Optional[float] = None
+    # F-F.22 İLERİ TERCİHİ — 17.08 göl bandı: komutların %23,1'i GERİ,
+    # o anların %83,4'ünde hedef ARKADA (bkz. MPPIConfig gerekçesi).
+    # False / 0.0 → eski davranış BİREBİR.
+    mppi_ileri_kisit: Optional[bool] = None
+    mppi_w_ileri: Optional[float] = None
+    # F-F.27 RRT* hedef kurtarma (m). None/0.0 → eski davranış birebir
+    # (hedef engel içindeyse plan REDDEDİLİR). 17.08 bandında bu yol 43 kez
+    # ateşledi; literatür karşılığı Nav2 navfn/smac `tolerance`.
+    rrt_hedef_kurtarma_m: Optional[float] = None
+    # F-F.28 kısmi plan asgari ilerlemesi (m). None/0.0 → eski davranış.
+    rrt_kismi_plan_min_m: Optional[float] = None
 
     def __post_init__(self) -> None:
         if self.pid_cfg is None:
@@ -220,6 +234,8 @@ class PlanningPipelineConfig:
             "terminal_lookahead_m": self.mppi_terminal_lookahead_m,
             "ref_window_size": self.mppi_ref_window_size,
             "ref_window_enabled": self.mppi_ref_window_enabled,
+            "ileri_kisit": self.mppi_ileri_kisit,
+            "w_ileri": self.mppi_w_ileri,
         }
         return {k: v for k, v in adlar.items() if v is not None}
 
@@ -255,9 +271,22 @@ class PlanningPipeline:
         # ve sim, kendi saatini enjekte edebilsin diye çağrılabilir alınıyor.
         self._saat: Callable[[], float] = saat or time.monotonic
         self._bounds = bounds
+        # F-S.16: parkur koridoru omurgası — ((orta_x, orta_y), yarı_genişlik).
+        # Boş = koridor bilinmiyor → MPPI terimi susar (eski davranış birebir).
+        self._koridor: list = []
         self.cfg = cfg or PlanningPipelineConfig()
         self._dyn = dynamics or CatamaranDynamics()
         self._rrt_cfg = rrt_cfg or RRTStarConfig(use_informed=True)
+        if self.cfg.rrt_hedef_kurtarma_m is not None:
+            self._rrt_cfg = replace(
+                self._rrt_cfg,
+                hedef_kurtarma_m=float(self.cfg.rrt_hedef_kurtarma_m),
+            )
+        if self.cfg.rrt_kismi_plan_min_m is not None:
+            self._rrt_cfg = replace(
+                self._rrt_cfg,
+                kismi_plan_min_ilerleme_m=float(self.cfg.rrt_kismi_plan_min_m),
+            )
 
         # Temel MPPI konfigürasyonu — parkur profili bunun üzerine biner.
         # Saha override'ları (verilmişse) burada uygulanır; λ profilden gelir.
@@ -285,6 +314,9 @@ class PlanningPipeline:
         # A3 — gereksiz RRT* koşumunu kesen durum (bkz. set_waypoints/set_obstacles)
         self._planlanan_goal: Optional[Tuple[float, float]] = None
         self._engel_imzasi_son: Optional[Tuple] = None
+        self._son_rrt_sebep: Optional[str] = None   # F-F.26 teşhis
+        self._kismi_plan_sayaci = 0                # F-F.28 teşhis
+        self._hedef_kurtarma_sayaci = 0            # F-F.27 teşhis
         self._replan_sayisi = 0          # fiilen koşan RRT* sayısı
         self._replan_atlandi = 0         # gereksiz olduğu için atlanan çağrı
         # F-P.9 fren durumu: son RRT* koşumunun ANI ve SÜRESİ (ikisi de tek
@@ -514,6 +546,20 @@ class PlanningPipeline:
             return False
         self._replan_ertelendi += 1
         return True
+
+    def set_koridor(self, omurga) -> None:
+        """Parkur koridorunu güncelle (F-S.16 kuvvet ayağı, §1.51).
+
+        `omurga`: sırayla `((orta_x, orta_y), yarı_genişlik_m)` — geçilen ve
+        kilitli kapıların orta noktaları (`planning_node` `GateFollower`'dan
+        üretir). Kaynak ALGI'dır: şartname önceden haritalamayı yasakladığı
+        için sınır sabit bir çit olamaz (§0.80c).
+
+        En az iki kapı gerekir; azsa MPPI terimi kendiliğinden susar.
+        """
+        self._koridor = list(omurga)
+        if self._mppi is not None:
+            self._mppi.set_koridor(self._koridor)
 
     def _etkin_sinir(self) -> Bounds:
         """İKİ PLANLAYICININ ORTAK sınır kutusu = statik kutu ∪ (start/goal ± pay).
@@ -748,6 +794,14 @@ class PlanningPipeline:
         self._plan_suresini_kaydet(_t0)
         if path is None:
             return self._rrt_basarisiz("çözüm bulamadı", goal)
+        # F-F.28: kısmi plan SESSİZ OLAMAZ — operatör "plan var" ile
+        # "hedefe varan plan var"ı ayırt edebilmeli. Aksi hâlde araç
+        # hedefe hiç varamayan bir yolu sonsuza kadar izleyebilir ve
+        # dışarıdan sağlıklı görünür (bu deponun en pahalı hata sınıfı).
+        self._teshisi_raporla({
+            "hedef_kurtarildi": getattr(rrt, "hedef_kurtarildi", None),
+            "kismi_plan": getattr(rrt, "kismi_plan", None),
+        })
         self._ref_path = path
         self._planlanan_goal = (float(goal[0]), float(goal[1]))   # A3 ölçütü
         self._rebuild_mppi()
@@ -813,6 +867,7 @@ class PlanningPipeline:
         self._gonderim_t = None
         if yol is None:
             return self._rrt_basarisiz(hata or "çözüm bulamadı", goal)
+        self._teshisi_raporla(getattr(self._isci, "son_teshis", None))
         self._ref_path = yol
         self._planlanan_goal = (float(goal[0]), float(goal[1]))   # A3 ölçütü
         self._rebuild_mppi()
@@ -828,6 +883,38 @@ class PlanningPipeline:
         simdi = self._saat()
         self._son_replan_t = simdi
         self._son_plan_suresi_s = max(0.0, simdi - t0)
+
+    def _teshisi_raporla(self, teshis: Optional[dict]) -> None:
+        """F-F.27/F-F.28/F-F.29 — planın teşhis bayraklarını SESSİZ BIRAKMA.
+
+        İki kol (senkron + asenkron işçi) aynı yerden raporlasın diye ayrı
+        metot: 17.08 gecesinde kurtarma **37 vakayı kapattığı hâlde sayaç 0
+        okunuyordu**, çünkü plan ayrı süreçte koşuyordu ve bayrak çocukta
+        kalıyordu. Düzeltmenin çalıştığını gösteren tek şey log satırıdır.
+        """
+        if not teshis:
+            return
+        kurtarma = teshis.get("hedef_kurtarildi")
+        if kurtarma is not None:
+            self._hedef_kurtarma_sayaci += 1
+            _log.warning(
+                "RRT* HEDEF KURTARILDI #%d — istenen hedef (%.1f, %.1f) engel "
+                "içindeydi, en yakın SERBEST noktaya (%.1f, %.1f) taşındı "
+                "(%.2f m). Plan üretildi; düz çizgi geri düşüşü ÖNLENDİ. "
+                "Sık tekrarlıyorsa engel yarıçapları şişkin olabilir.",
+                self._hedef_kurtarma_sayaci, kurtarma[0][0], kurtarma[0][1],
+                kurtarma[1][0], kurtarma[1][1], kurtarma[2],
+            )
+        kismi = teshis.get("kismi_plan")
+        if kismi is not None:
+            self._kismi_plan_sayaci += 1
+            _log.warning(
+                "RRT* KISMİ PLAN #%d — hedefe varan yol YOK, ağacın ulaştığı "
+                "en yakın düğüme planlandı: %.1f m ilerleme, hedefe %.1f m "
+                "kaldı. Yol ENGELSİZ (düz çizgi geri düşüşünün aksine). Sık "
+                "tekrarlıyorsa uzay gerçekten tıkalı.",
+                self._kismi_plan_sayaci, kismi[0], kismi[1],
+            )
 
     def _rrt_basarisiz(self, sebep: str, goal: Tuple[float, float]) -> bool:
         """RRT* bir plan üretemedi — referans İSTENEN hedefe gidiyorsa koru,
@@ -855,6 +942,14 @@ class PlanningPipeline:
             _log.warning("RRT* %s — eski referans korunuyor", sebep)
             return False
         self._duz_cizgiye_dusuldu += 1
+        # 🔴 F-F.26: SEBEP DIŞARI AÇILIR. 17.08 göl bandında nöbetçi 43 kez
+        # `RRT-RED global plan uretilemedi` bastı ama telsize giden metin
+        # yalnız SAYACA bakıyordu — "başlangıç engel içinde" mi, "hedef engel
+        # içinde" mi, yoksa "çözüm bulunamadı" mı, hiçbir yerde yoktu.
+        # Üçünün çaresi farklı: hedef engel içindeyse suçlu füzyonun ürettiği
+        # engel (aynı bantta torbanın %98,6'sı CLASS_UNKNOWN, yarıçaplar
+        # 7,75 m'ye kadar); çözüm bulunamadıysa suçlu iterasyon bütçesi.
+        self._son_rrt_sebep = sebep
         _log.error(
             "RRT* %s ve REFERANS YOK → düz çizgi hedefine düşülüyor "
             "(%.1f, %.1f). Araç hareket eder; engelden kaçınma yalnız MPPI'de. "
@@ -880,6 +975,15 @@ class PlanningPipeline:
             w_track=profile.w_track,
             w_obstacle=profile.w_obstacle,
             w_terminal=profile.w_terminal,
+            # F-S.16 (§1.51): koridor ağırlığı için YENİ SAYI İCAT EDİLMEDİ —
+            # aynı sınıf kısıt (tek yönlü quadratic bariyer, birim m²) olduğu
+            # için profilin `w_obstacle`'ı kullanılır. `mppi_w_koridor` verilirse
+            # o ezer; 0.0 → terim tamamen kapalı (eski davranış birebir).
+            w_koridor=(
+                self.cfg.mppi_w_koridor
+                if self.cfg.mppi_w_koridor is not None
+                else profile.w_obstacle
+            ),
             kamikaze_mode=profile.kamikaze_mode,
             kamikaze_target=kamikaze_target,
             w_kamikaze=profile.w_kamikaze,
@@ -915,6 +1019,7 @@ class PlanningPipeline:
             # kutuyla kalır ve F-S.17 yalnız parkur geçişlerinde düzelir —
             # yani hatanın en sinsi hâli geri gelir.
             self._mppi.bounds = sinir
+            self._mppi.set_koridor(self._koridor)     # F-S.16: sınır gibi ELDE
             self._mppi.set_obstacles(self._obstacles)
             self._mppi.set_reference(self._ref_path, spacing=self.cfg.ref_spacing)
             return
@@ -923,6 +1028,7 @@ class PlanningPipeline:
             self._dyn, sinir, self._obstacles, new_cfg
         )
         self._mppi.set_reference(self._ref_path, spacing=self.cfg.ref_spacing)
+        self._mppi.set_koridor(self._koridor)         # yeni kontrolcüye de ver
         if onceki is not None:
             self._mppi.carry_state_from(onceki)      # sıralama: referanstan SONRA
 
@@ -996,6 +1102,27 @@ class PlanningPipeline:
         araç yine de sürülür ama kaçınma yalnız MPPI cezasına kalır.
         """
         return self._duz_cizgiye_dusuldu
+
+    @property
+    def hedef_kurtarma_sayaci(self) -> int:
+        """F-F.27: kaç kez hedef engel içinden dışarı taşındı."""
+        return self._hedef_kurtarma_sayaci
+
+    @property
+    def kismi_plan_sayaci(self) -> int:
+        """F-F.28: kaç kez hedefe VARMAYAN (ama engelsiz) plan üretildi."""
+        return self._kismi_plan_sayaci
+
+    @property
+    def son_rrt_sebep(self) -> Optional[str]:
+        """F-F.26: RRT*'ın son BAŞARISIZLIK sebebi (yoksa None).
+
+        Üç değer üretilebilir ve üçünün çaresi ayrıdır:
+          * `plan reddedildi (goal engel/sınır içinde)`  → suçlu ENGEL TORBASI
+          * `plan reddedildi (start engel/sınır içinde)` → suçlu POZ ya da torba
+          * `çözüm bulamadı`                             → suçlu İTERASYON BÜTÇESİ
+        """
+        return self._son_rrt_sebep
 
     @property
     def replan_sayaclari(self) -> Tuple[int, int]:

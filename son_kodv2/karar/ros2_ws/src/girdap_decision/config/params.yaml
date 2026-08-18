@@ -117,6 +117,12 @@ planning_node:
     mppi_ref_window_size: 100   # nokta, kayan referans penceresi ileri derinliği
                              # (0.5 m aralıkta 50 m ileri + 12.5 m geri).
     mppi_ref_window_enabled: true  # false → eski tam tarama (regresyon/A-B).
+    # 🔴 F-F.22 İLERİ TERCİHİ (17.08 göl bandı `session_20260817_193312`):
+    # GUIDED+ARMED komutlarının %23,1'i GERİYDİ (ortanca -0,744 m/s) ve o
+    # anların %83,4'ünde hedef, %88,6'sında kapı da aracın ARKASINDAYDI.
+    # İKİSİ DE KAPALI = eski davranış birebir; sahada A/B ile açılır.
+    mppi_ileri_kisit: false   # SERT (Nav2 vx_min=0): ortak kip >= 0, GARANTİ
+    mppi_w_ileri: 0.0         # YUMUŞAK (PreferForwardCritic): garanti YOK
                              # Ölçüm: 736 → 58 ms/iter, d2 tensörü 16× küçük.
     # --- Kapı takibi (gate following, 2026-08-03) ---
     # Şartname md 5.5.2.2: Parkur-1/2 puanı GPS noktasına basmaktan DEĞİL,
