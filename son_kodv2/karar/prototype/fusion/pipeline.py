@@ -55,6 +55,13 @@ _log = logging.getLogger(__name__)
 _EARTH_R = 6378137.0
 
 
+# GPS prior'unu mevcut key'e bagladigimizda olusan konum hatasi, olcumun
+# kendi sigma'sinin bu kesrini asiyorsa YENI KEY acilir. 0,2 = "hatanin
+# katkisi olcumun gurultusunun besde birinden kucukse ihmal edilebilir".
+# Sabit bir mesafe DEGIL, olcumun belirsizligine gore olceklenen bir oran.
+GPS_KEY_BAYATLIK_PAYI = 0.2
+
+
 @dataclass
 class FusionPipelineConfig:
     """Boru hattı ayarları. ROS 2 parametre arayüzünden aynı isimle gelir."""
@@ -79,6 +86,21 @@ class FusionPipelineConfig:
     heading_correction_enabled: bool = True
     heading_sigma_psi: float = 0.05       # rad, bkz. ISAM2SmootherConfig
 
+    # Heading outlier reddi — GPS'in aynası (F-F.2, bkz. ISAM2SmootherConfig
+    # docstring'i, 17.08 akşam saha olayı). False → eski saf Gauss davranışı.
+    heading_robust_enabled: bool = True
+    heading_huber_k: float = 1.345
+
+    # 🌱 §1.56g — yeniden çıpalama. Burada SANİYE cinsinden durur; smoother
+    # ANAHTAR sayar (saati yok). Çeviriyi `keyframe_period_s` yapar, çünkü
+    # throttle kadansı değiştirdiğinde 30 saniyenin kaç anahtar ettiği de
+    # değişir — sabit anahtar sayısı yazmak throttle'ı sessizce ezerdi.
+    # 0.0 = KAPALI = eski davranış birebir.
+    reanchor_period_s: float = 0.0
+    # Sıfırlamada korunacak kuyruğun SÜRESİ (kaptan sorusu: "hepsini silme").
+    # 0.0 = saf çıpalama.
+    reanchor_keep_s: float = 0.0
+
     @property
     def keyframe_period_s(self) -> float:
         """Etkin key periyodu: throttle ile odom_period_s'in büyüğü.
@@ -89,6 +111,31 @@ class FusionPipelineConfig:
         if self.keyframe_rate_hz <= 0.0:
             return self.odom_period_s
         return max(self.odom_period_s, 1.0 / self.keyframe_rate_hz)
+
+    @property
+    def reanchor_period_keys(self) -> int:
+        """Çıpalama periyodunun ANAHTAR karşılığı (0 = kapalı).
+
+        Aşağı yuvarlama DEĞİL, yakına yuvarlama: 30 s / 0,2 s = 150 tam çıkar
+        ama kadans 3 Hz gibi bölmeyen bir değere çekilirse aşağı yuvarlama
+        periyodu sistematik olarak kısaltırdı. En az 1 — 0 "kapalı" anlamına
+        geldiği için periyot istenmişken oraya düşmek sessiz iptal olurdu.
+        """
+        if self.reanchor_period_s <= 0.0:
+            return 0
+        return max(1, round(self.reanchor_period_s / self.keyframe_period_s))
+
+    @property
+    def reanchor_keep_keys(self) -> int:
+        """Korunacak kuyruğun ANAHTAR karşılığı (0 = saf çıpalama).
+
+        Periyoda eşit/uzun bir kuyruk grafı hiç budamaz; smoother bunu
+        `ValueError` ile reddediyor. Burada sessizce kırpmıyoruz — yanlış
+        ayarın hata vermesi, sessizce etkisiz kalmasından iyidir.
+        """
+        if self.reanchor_keep_s <= 0.0:
+            return 0
+        return max(1, round(self.reanchor_keep_s / self.keyframe_period_s))
 
 
 class FusionPipeline:
@@ -113,6 +160,10 @@ class FusionPipeline:
                 gps_robust_enabled=self.cfg.gps_robust_enabled,
                 gps_huber_k=self.cfg.gps_huber_k,
                 heading_sigma_psi=self.cfg.heading_sigma_psi,
+                heading_robust_enabled=self.cfg.heading_robust_enabled,
+                heading_huber_k=self.cfg.heading_huber_k,
+                reanchor_period_keys=self.cfg.reanchor_period_keys,
+                reanchor_keep_keys=self.cfg.reanchor_keep_keys,
             )
         )
         self._sm.initialize(gtsam.Pose2(0.0, 0.0, 0.0))
@@ -121,6 +172,13 @@ class FusionPipeline:
         self._vx_body: float = 0.0
         self._vy_body: float = 0.0
         self._last_imu_t: Optional[float] = None
+        # 🕰️ §1.57 — SON ANAHTARIN ÖLÇÜM ZAMANI. `current_pose()` son anahtarın
+        # tahminini döndürür; o anahtar bu ANDA kapandı. Yayın anı DEĞİL:
+        # ROS sözleşmesi damganın ölçüm anını göstermesini ister
+        # ("timestamps must represent measurement time, not the time the
+        # message hit the CPU"). Bunu taşımazsak `fusion_node` yayın anını
+        # basmak zorunda kalır ve ölçülen ~63 ms'lik kayma oradan doğar.
+        self._son_anahtar_t: Optional[float] = None
         self._t_since_flush: float = 0.0
         # En son görülen mutlak yön örneği (FC AHRS) — her keyframe flush'ında
         # heading prior'u olarak eklenir. None = hiç örnek gelmedi (heading
@@ -244,9 +302,39 @@ class FusionPipeline:
             self._cos_lat0 = math.cos(math.radians(lat))
             return
 
-        # Bekleyen IMU integrasyonu varsa önce flush et — latest_key güncel olsun
-        if self._t_since_flush > 1e-6:
-            self._flush(force=True)
+        # 🔴 17.08.2026 — KEYFRAME THROTTLE'INI GPS EZİYORDU.
+        #
+        # Eskiden burada koşulsuz `_flush(force=True)` vardı ve `force=True`
+        # `keyframe_period_s` kapısını ATLAR. Tasarım GPS'i **1 Hz** varsaymış
+        # (CLAUDE.md: "IMU 50 Hz + GPS 1 Hz" → 11.416 key'i 6.000'e indirdi).
+        # Cihazda MAVROS GPS'i **9,9 Hz** veriyor (ölçüldü: gps=50/5 sn) ⇒ her
+        # fix yeni key açıyordu ve throttle'ın kazancı sahada TAMAMEN geri
+        # veriliyordu — hata basılmadan.
+        #
+        # ÖLÇÜLDÜ (gerçek boru hattı, 8 dk görev, IMU 10 Hz):
+        #     GPS  1,0 Hz →  2.016 key ·  36,6 s hesap  (%7,6 çekirdek)
+        #     GPS  9,9 Hz →  4.799 key · 112,9 s hesap  (%23,5 çekirdek)
+        #   throttle'ın vaat ettiği: 2.400 key ⇒ gerçekte 2× fazla, 3,1× pahalı
+        # Cihazda karşılığı: fusion_node %16 → %40 (11 dk), 1,5 saatte %85-96.
+        #
+        # ÇÖZÜM — eşik SABİT YAZILMIYOR, ölçümün KENDİ belirsizliğinden
+        # türetiliyor (§"koruma, koruduğu değerden TÜRETİLİR"):
+        # Prior'u mevcut key'e bağlamak, key'in bayatlığı kadar konum hatası
+        # katar. O hata ölçümün kendi σ'sının yanında ihmal edilebilirse yeni
+        # key AÇMAYA DEĞMEZ; değilse açılır. Böylece:
+        #   * tek-nokta fix (σ=2,5 m) → eşik 50 cm; 0,6 m/s'de 0,83 s ⇒
+        #     throttle yönetir, key sayısı tasarımdaki gibi kalır
+        #   * RTK (σ=5 cm)           → eşik 1 cm; neredeyse her fix'te flush ⇒
+        #     ESKİ DAVRANIŞ birebir korunur, hassasiyet kaybı YOK
+        # Yani düzeltme fix kalitesine göre kendini ayarlıyor; RTK gelirse
+        # hiçbir şey değişmiyor.
+        kaymis = self._acc_delta.translation()
+        mesafe = float(math.hypot(float(kaymis[0]), float(kaymis[1])))
+        sigma = self.cfg.gps_sigma_xy if sigma_xy is None else float(sigma_xy)
+        if mesafe > GPS_KEY_BAYATLIK_PAYI * max(sigma, 1e-9):
+            self._flush(force=True)      # bayatlık ölçümün yanında ANLAMLI
+        else:
+            self._flush()                # vakti geldiyse açar, gelmediyse AÇMAZ
 
         x, y = self._latlon_to_enu(lat, lon)
         self._sm.add_gps(self._sm.latest_key, x, y, sigma_xy=sigma_xy)
@@ -278,6 +366,9 @@ class FusionPipeline:
         self._sm.update()
         self._acc_delta = gtsam.Pose2()
         self._t_since_flush = 0.0
+        # Anahtar ŞİMDİ kapandı; taşıdığı bilgi `_last_imu_t`'ye kadarki
+        # ölçümlerdir. Damga olarak kullanılacak değer budur.
+        self._son_anahtar_t = self._last_imu_t
         return True
 
     def set_origin(self, lat: float, lon: float) -> None:
@@ -333,6 +424,17 @@ class FusionPipeline:
         return lat, lon
 
     # ----- sorgu -----
+
+    @property
+    def son_olcum_zamani(self) -> Optional[float]:
+        """`current_pose()`'un dayandığı ÖLÇÜMÜN zamanı (saniye), yoksa None.
+
+        `fusion_node` bunu `header.stamp` olarak kullanır. Anahtar kare
+        kovalaması nedeniyle bu değer yayın anından bir kova kadar (≤
+        `keyframe_period_s`) geride olabilir — ki DOĞRUSU da budur: poz
+        gerçekten o ana aittir.
+        """
+        return self._son_anahtar_t
 
     def current_pose(self) -> Tuple[float, float, float]:
         """En son smooth tahmini (x, y, psi) olarak döndür."""

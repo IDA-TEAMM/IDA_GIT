@@ -822,7 +822,7 @@ fsm_node: ParkurTransitionLogic.current_waypoint_reached(index)
 
 ```
 /oak/rgb/image_raw (Image) → image_codec (cv_bridge YOK) → CLAHE (LAB-L)
-  → HSV segmentasyon: turuncu→0, sarı→1, kırmızı→3, yeşil→4, kahverengi→5
+  → HSV segmentasyon: turuncu→0, sarı→1, kırmızı→3, yeşil→4, siyah→5
   → kontur → bbox (+ opsiyonel YOLO katmanı → class 2 hedef)
   → /perception/buoys (vision_msgs/Detection2DArray)
 ```
@@ -831,10 +831,12 @@ fsm_node: ParkurTransitionLogic.current_waypoint_reached(index)
   `perception_camera_node` (kaynak-bağımsız, yalnız topic adına bağlı).
 - **Sınıflar:** `class_id` (string): `"0"`=parkur_kenari (turuncu, RAL 2003),
   `"1"`=engel (sarı, RAL 1026), `"2"`=hedef (Parkur-3, YOLO katmanı),
-  `"3"`=kırmızı, `"4"`=yeşil, `"5"`=kahverengi (2026-07-17 eklendi — parkurda
-  bu renklerin de bulunduğu bulundu).
+  `"3"`=kırmızı, `"4"`=yeşil, `"5"`=**siyah** (RAL 9005). 2026-07-17'de
+  eklendiğinde 5 "kahverengi" idi; 18.08.2026'da siyaha çevrildi —
+  şartname s.18 hedef renkleri RAL 3026/6037/9005 ve "kahverengi" hiçbir
+  maddede geçmiyor (bkz. `kamikaze_hedef.py` üst notu).
   (Şartname md 5.5.2.1 — eski "RAL 2008/1003" etiketi YANLIŞTI; F17.1.)
-  ⚠ Kırmızı/yeşil/kahverengi eşikleri turuncu/sarı gibi SAHADA henüz
+  ⚠ Kırmızı/yeşil/siyah eşikleri turuncu/sarı gibi SAHADA henüz
   doğrulanmadı — ilk tahmin, kör güvenilmemeli (bkz. camera_buoys.py
   docstring).
 - **F-P.21 — ışık koşulu dayanıklılığı (2026-07-16/17 gerçek donanım

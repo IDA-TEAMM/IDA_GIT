@@ -119,19 +119,80 @@ def dayanikli_ac(acici, deneme=4, kaydet=None, bekleme=1.0):
         if kaydet:
             kaydet(m)
 
+    # 🔴 F-A.4 (15.08.2026) — CİHAZ YOKKEN ÇÖKMEK ÇÖZÜM DEĞİL, BEKLEMEK ÇÖZÜM.
+    #
+    # Ölçüldü (göl günü): kamera USB'den düşünce bu fonksiyon 4 denemeyi
+    # tüketip `raise` ediyordu → düğüm ölüyor → ROS launch `respawn` ediyor →
+    # ~30 saniyede bir yeniden çöküyor. Bir saat boyunca ONLARCA kez
+    # döndü (`process has died [exit code 1]` günlüğü dolu). Her tur depthai'yi
+    # sıfırdan kuruyor; yığın zaten işlemci bütçesini aşmışken (§1.11c,
+    # load 9,31/6 çekirdek) bu **boşuna yakılan işlemci**.
+    #
+    # 🔑 AYRIM: "cihaz USB'de YOK" bir ARIZA değil, beklenecek bir DURUMDUR
+    # (kaptan kabloyu henüz takmamıştır). "Cihaz VAR ama açılmıyor" ise gerçek
+    # arızadır — X_LINK kilidi; orada eski davranış (USB reset + 4 deneme +
+    # `raise`) aynen korunur, çünkü sessizce beklemek arızayı GİZLERDİ.
+    #
+    # Kaptan: *"kamera nodu otomatik başlamıyor galiba çıkarıp atınca…
+    # otomatik her şey başlamalı."* Bu düzeltmeden sonra düğüm ölmez: cihaz
+    # takıldığı anda kendi yakalar.
+    # 🔴 F-A.4 BAĞLANTISI (2026-08-16) — 15.08'de EKSİK KALAN SATIR BUYDU.
+    # `cihazi_bekle()` yazıldı, iki testle sözleşmesi kilitlendi, commit
+    # mesajına "çökme döngüsü kaldırıldı" yazıldı — ama HİÇBİR YERDEN
+    # ÇAĞRILMADI. Davranış hiç değişmedi: 16.08 22:44-22:45 journal'ında eski
+    # döngü aynen dönüyor (üç tur, `respawn_delay=3.0`).
+    # Yukarıdaki iki F-A.4 testi bunu yakalayamadı çünkü VAKUMDU: `acici`
+    # hiç fırlatmıyordu, `usb_dugum_yolu` hiç yoklanmıyordu (ölçüldü 16.08:
+    # AST'de `usb_dugum_yolu` çağrısı yok, testler yine yeşil).
     son_hata = None
-    for i in range(deneme):
+    i = 0
+    while i < deneme:
+        # Denemeden ÖNCE bekle: cihaz USB'de yokken geçen süre deneme hakkı
+        # YEMEZ (test_FA4_bekleme_DENEME_HAKKI_YEMEZ). Cihaz zaten takılıysa
+        # anında döner, tek saniye kaybettirmez.
+        cihazi_bekle(kaydet=kaydet)
         try:
             return acici()
         except Exception as e:                       # RuntimeError + X_LINK türevleri
             son_hata = e
-            _log(f"OAK açılamadı ({i + 1}/{deneme}): {type(e).__name__}: {e}")
-            if i < deneme - 1:
+            i += 1
+            _log(f"OAK açılamadı ({i}/{deneme}): {type(e).__name__}: {e}")
+            if i < deneme:
                 ok = usb_reset()
                 _log("USB reset gönderildi, tekrar deneniyor"
                      if ok else "USB reset BAŞARISIZ (cihaz USB'de yok?)")
                 time.sleep(bekleme)
     raise son_hata
+
+
+def cihazi_bekle(kaydet=None, aralik=2.0, bildirim_araligi=30.0):
+    """OAK USB'de görünene kadar BEKLE (süresiz). Çökmeden, sessiz kalmadan.
+
+    Neden süresiz: teknede kameraya fiziksel erişim koşum sırasında yok; bir
+    zaman aşımı koyup çökmek, kaptanın kabloyu takmasını beklemekten daha
+    kötüdür (§F-A.4). Yığın ayakta kalır, kamera gelince kendi devam eder.
+
+    Neden `aralik=2.0`: yoklama ucuz (`/sys` okuması) ama boşuna sık dönmenin
+    anlamı yok — cihaz insan eliyle takılıyor. `bildirim_araligi` ile 30
+    saniyede bir tek satır basılır; **sessizlik başarı değildir** kuralı
+    (canlı nöbetçi tasarımıyla aynı ilke) burada da geçerli.
+    """
+    def _log(m):
+        if kaydet:
+            kaydet(m)
+
+    t0 = time.monotonic()
+    son_bildirim = -bildirim_araligi
+    while usb_dugum_yolu() is None:
+        gecen = time.monotonic() - t0
+        if gecen - son_bildirim >= bildirim_araligi:
+            son_bildirim = gecen
+            _log(f"OAK kamera USB'de YOK — bekleniyor ({gecen:.0f} s). "
+                 "Düğüm ayakta, cihaz takılınca kendi devam edecek "
+                 "(F-A.4: çökme döngüsü yok)")
+        time.sleep(aralik)
+    if time.monotonic() - t0 > aralik:
+        _log(f"OAK kamera USB'de göründü ({time.monotonic() - t0:.0f} s bekledi)")
 
 
 # ───────────────────────────────── termal denetim ─────────────────────────

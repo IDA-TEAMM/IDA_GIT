@@ -1,6 +1,10 @@
 # algi — GİRDAP görüntü işleme katmanı (son_kodv2'nin algı ayağı)
 
-**Kaynak repo:** github.com/EyupEker1/girdap-ida-algi — commit `605d713`
+**Kaynak repo:** github.com/EyupEker1/girdap-ida-algi — commit `5b24862`
+(17.08.2026 senkronu. ⚠️ 16-17.08 gecesi iş **bu aynaya** yapılmıştı ve kaynak
+`b3b3fea`'da donmuştu — 23 dosya ayrışmıştı; kaynağa geri alındı
+[`girdap-ida-algi@61f507f`], sonra normal yön yeniden kuruldu. Kural 7 iki
+yönlüdür: ayna güncel varsayılmaz, **kaynak da** güncel varsayılmaz.)
 **Kopya tarihi:** 2026-08-07 (bu klasör kaynağın **birebir aynası**; burada
 düzenleme yapılmaz, kaynak repoda yapılıp buraya yeniden kopyalanır)
 **Sorumlu:** Eyüp (görüntü işleme)
@@ -98,24 +102,40 @@ ve passthrough 1:1 sınıf ayrımı testi (**turuncu↔sarı çökmesi** riski �
 sıkıştırmasından kaynaklanır, sessizdir).
 Tarif: `docs/hubai_model_rehberi.md` (uçtan uca kuru provadan geçti, 06.08).
 
-## Veri seti toplama (deniz oturumu — PC/EKRAN YOK)
-Model dosyası henüz yok; veri seti denizde toplanacak, dosyalar sonradan
-alınacak. Toplayıcı ekransız çalışır ve **açılışta kendi başına başlar**
-(reboot testi 05.08'de geçti):
+## 🗑️ Veri seti toplama — 2026-08-16'da REPODAN KALDIRILDI
+**NE:** Toplayıcı (`scripts/oak_veriseti_topla.py`), systemd unit'i
+(`scripts/girdap-veriseti.service`), kıyı kontrol listesi
+(`docs/veriseti_deniz_oturumu.md`), Jetson kartı, açılış modu belgesi, planı ve
+manifest testleri silindi (Eyüp kararı).
 
-```bash
-scripts/oak_veriseti_topla.py      # 1352×1014 4:3 (deploy FOV'u ile AYNI), manifest.csv'li
-scripts/girdap-veriseti.service    # systemd; boot'ta kalkar
-docs/veriseti_deniz_oturumu.md     # kıyı kontrol listesi (ATLANMAZ)
-```
-⚠️ Toplayıcı ile algı node'u **aynı anda çalışamaz** (tek OAK).
-🔴 **Yarışma günü `sudo systemctl disable girdap-veriseti`** — yoksa boot'ta
-kamerayı kapar ve algı node'u açılamaz (md 4.1: WiFi/BT kapalı, görüntü karaya
-aktarılmaz).
+**NEDEN:** Veri seti toplandı ve model eğitildi; iş bitti. Kalan tek işlevi
+riskti: **tek OAK var**, toplayıcı boot'ta kamerayı önce kaparsa algı node'u
+**hiç açılamaz** ⇒ P1+P2 = 0, belirti vermeden (md 4.1). Yarışmaya günler kala
+repoda duran `--veriseti-servis` kolu, yanlışlıkla koşulduğunda algıyı
+**devre dışı bırakıyordu**.
+
+**GERİ ALINIRSA NE KIRILIR:** Yeni bir göl/deniz oturumu gerekirse toplayıcı
+git geçmişinden (bu commit'ten önceki hâl) geri alınır. Birlikte dönmesi
+gerekenler: `jetson_kur.sh --veriseti-servis` kolu, `girdap-algi.service`
+içindeki `Conflicts=girdap-veriseti.service` satırı ve `test_saat.py`'deki
+`test_manifest_*` blokları — bunlar tek başlarına anlamsız, hep birlikte
+anlamlılar.
+
+🔴 **KALINTI:** Eski kurulumlarda `/etc/systemd/system/girdap-veriseti.service`
+hâlâ duruyor olabilir. Denetim `bash scripts/jetson_kontrol.sh` içinde;
+temizlik: `sudo rm /etc/systemd/system/girdap-veriseti.service && sudo systemctl daemon-reload`.
 
 ## Testler (donanım GEREKMEZ)
 ```bash
-cd son_kodv2/algi && python3 -m pytest -q          # 116 passed (kokten de calisir)
+cd son_kodv2/algi && PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q   # 196 passed
+```
+⚠️ Jetson'da `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` **şart**: ROS Humble'ın
+`launch_testing` eklentisi buradaki pytest sürümüyle uyumsuz ve süiti
+`INTERNALERROR` ile düşürüyor (tek bir test bile koşmadan). Bayrak olmadan
+"testler kırık" sanılır — kırık olan eklenti.
+```bash
+# 236 -> 196: 16.08'de veri seti toplayıcısıyla birlikte 40 test kaldırıldı
+# (test_oak_veriseti.py'nin 37'si + test_saat.py'deki 3 `test_manifest_*`).
 ```
 
 ## 🔴 ÇALIŞTIRMA — bu node'u KİMSE otomatik başlatmıyor, farkında olun

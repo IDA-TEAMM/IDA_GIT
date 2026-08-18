@@ -15,17 +15,40 @@ from prototype.teslim.toplayici import (
 )
 
 
+def _kutu(tip: bytes, govde: bytes = b"") -> bytes:
+    """Tek bir üst düzey mp4 kutusu: [4 bayt boyut][4 bayt tip][gövde]."""
+    return (8 + len(govde)).to_bytes(4, "big") + tip + govde
+
+
+def _mp4_saglam(yol: Path, dolgu: int = 64) -> None:
+    """YAPISAL OLARAK GEÇERLİ mp4: `moov` atomu VAR.
+
+    🔴 17.08: bu kurgu eskiden `b"K" * 2048` gibi **sahte bayt** yazıyordu.
+    Teslim modülüne mp4 oynatılabilirlik denetimi eklenince 7 test birden
+    kırıldı — çünkü kurgunun ürettiği hiçbir dosya gerçek mp4 değildi ve
+    testler yine de "teslime hazır" iddia ediyordu. Kurgu artık en azından
+    kutu zinciri geçerli dosyalar üretiyor.
+    """
+    yol.write_bytes(_kutu(b"ftyp", b"isom") + _kutu(b"mdat", b"x" * dolgu)
+                    + _kutu(b"moov", b"y" * 32))
+
+
+def _mp4_bozuk(yol: Path) -> None:
+    """Gerçek arıza: kayıt yarıda kesilmiş, `moov` hiç yazılmamış."""
+    yol.write_bytes(_kutu(b"ftyp", b"isom") + _kutu(b"mdat", b"x" * 256))
+
+
 def _kur(kok: Path, *, kamera=True, lidar=True, telemetri=True, harita=True,
          oturum="oturum_20260807_143000") -> Path:
     """Sahte ~/girdap_logs ağacı."""
     if kamera:
         d = kok / "kamera" / oturum
         d.mkdir(parents=True)
-        (d / "seg_0000.mp4").write_bytes(b"K" * 2048)
+        _mp4_saglam(d / "seg_0000.mp4", 2048)
     if lidar:
         d = kok / "lidar" / oturum
         d.mkdir(parents=True)
-        (d / "lidar_kumeleme.mp4").write_bytes(b"L" * 4096)
+        _mp4_saglam(d / "lidar_kumeleme.mp4", 4096)
     if telemetri:
         d = kok / "telemetry"
         d.mkdir(parents=True)
@@ -33,7 +56,7 @@ def _kur(kok: Path, *, kamera=True, lidar=True, telemetri=True, harita=True,
     if harita:
         d = kok / "local_map" / oturum
         d.mkdir(parents=True)
-        (d / "Dosya3_lokal_harita.mp4").write_bytes(b"H" * 1024)
+        _mp4_saglam(d / "Dosya3_lokal_harita.mp4", 1024)
         (d / "png_yedek").mkdir()
         (d / "png_yedek" / "frame_00000.png").write_bytes(b"P" * 128)
     return kok
@@ -276,3 +299,192 @@ def test_YABANCI_dosyalar_teslime_GIRMEZ(tmp_path):
     assert ".pgm" not in kopyalanan, "yabancı .pgm teslime girdi"
     assert ".yaml" not in kopyalanan, "yabancı .yaml teslime girdi"
     assert rapor.basarili
+
+
+# --------------------------------------------------------------------------- #
+# 16.08.2026 — DÜZ YERLEŞİMLİ TEK-DOSYA KALEMİ: "en yeni oturum" sızıntısı
+# --------------------------------------------------------------------------- #
+
+
+def _cok_telemetri(kok: Path, adlar: list[str]) -> None:
+    """`telemetry/` altına DÜZ (oturum alt dizini olmadan) birden çok CSV."""
+    d = kok / "telemetry"
+    d.mkdir(parents=True, exist_ok=True)
+    for ad in adlar:
+        (d / ad).write_text(f"zaman,lat\n# {ad}\n")
+
+
+def test_DOSYA2_hakem_EN_YENIYI_gorur_en_eskisini_DEGIL(tmp_path):
+    """🔴 CANLI HATA (16.08, bu Jetson'da ölçüldü): hakem EN ESKİ dosyayı görüyordu.
+
+    `_en_yeni_oturum` yalnız `oturum_*`/`session_*` ALT DİZİNİ arar. `local_map`
+    öyle yazıyor (çalışıyordu), ama `telemetry` dosyaları dizine **DÜZ** yazılır
+    (`telemetri_<UTC>.csv`) ⇒ alt dizin yok ⇒ kök dönüyor ⇒ "yalnız en yeni
+    oturum" kuralı Dosya-2'ye HİÇ uygulanmıyordu.
+
+    Cihazdaki gerçek durum: **127 CSV** toplandı ve `dosyalar[0]` (ada göre EN
+    ESKİ) şartname adını (`Dosya2_Arac_Telemetri_Verisi.csv`) aldı ⇒ hakem resmî
+    ad altında AYLAR ÖNCEKİ geliştirme koşusunu görürdü. Rapor "elle seç" diyordu
+    ama 20 dakikalık teslim penceresinde (md 4.2, geç dosya **5 ceza**) atlanacak
+    ilk adım tam olarak odur.
+
+    ⛔ GERİ ALINIRSA: teslim yine ada göre ilk (en eski) dosyayı hakeme verir.
+    """
+    logs = _kur(tmp_path / "logs", telemetri=False)
+    _cok_telemetri(logs, [
+        "telemetri_20260601T090000Z.csv",     # aylar önceki geliştirme koşusu
+        "telemetri_20260807T100000Z.csv",
+        "telemetri_20260820T120000Z.csv",     # YARIŞMA koşusu — hakem BUNU görmeli
+    ])
+    usb = tmp_path / "usb"
+    usb.mkdir()
+
+    rapor, _ = topla_ve_yaz(logs, usb)
+
+    hakemin_gordugu = (usb / "Dosya2_Arac_Telemetri_Verisi.csv").read_text()
+    assert "20260820T120000Z" in hakemin_gordugu, (
+        "şartname adını EN ESKİ dosya aldı — hakem yanlış koşuyu görür"
+    )
+    assert rapor.basarili
+
+
+def test_DOSYA2_elenenler_USBye_KOPYALANMAZ_ama_RAPORA_yazilir(tmp_path):
+    """Sessiz seçim yok: ne seçildiği ve kaçının elendiği raporda GÖRÜNMELİ.
+
+    Elenenleri de kopyalamak eski davranıştı; 127 dosyalık USB kökü hakemi
+    yanıltır ve teslim süresini yer. Ama seçimin kendisi de sessiz olmamalı —
+    operatör yanlış koşunun gittiğini yalnız rapordan anlayabilir.
+    """
+    logs = _kur(tmp_path / "logs", telemetri=False)
+    _cok_telemetri(logs, [
+        "telemetri_20260601T090000Z.csv",
+        "telemetri_20260820T120000Z.csv",
+    ])
+    usb = tmp_path / "usb"
+    usb.mkdir()
+
+    rapor, _ = topla_ve_yaz(logs, usb)
+
+    csvler = sorted(p.name for p in usb.glob("Dosya2*"))
+    assert csvler == ["Dosya2_Arac_Telemetri_Verisi.csv"], (
+        f"elenen dosya da USB'ye gitmiş: {csvler}"
+    )
+    metin = " ".join(rapor.uyarilar)
+    assert "EN YENİSİ seçildi" in metin, "seçim sessiz yapıldı — rapor susuyor"
+    assert "20260820T120000Z" in metin, "hangi dosyanın seçildiği yazılmamış"
+
+
+def test_DOSYA2_SAAT_GUVENILMEZ_secimi_ayrica_bagirir(tmp_path):
+    """Sıralama ADA (zaman damgasına) dayanıyor — saat şüpheliyse seçim de şüpheli.
+
+    `telemetry_node` saat güvenilmezken dosyayı `_SAAT-GUVENILMEZ` ekiyle
+    yazıyor. O dosya seçilirse "en yeni ad" ile "en son koşu" aynı olmayabilir;
+    bu, sessizce doğru sanılacak bir seçim olurdu.
+    """
+    logs = _kur(tmp_path / "logs", telemetri=False)
+    _cok_telemetri(logs, [
+        "telemetri_20260820T120000Z.csv",
+        "telemetri_20260820T130000Z_SAAT-GUVENILMEZ.csv",
+    ])
+    usb = tmp_path / "usb"
+    usb.mkdir()
+
+    rapor, _ = topla_ve_yaz(logs, usb)
+
+    metin = " ".join(rapor.uyarilar)
+    assert "SAAT-GUVENILMEZ damgalı" in metin, (
+        "şüpheli zaman damgasıyla seçim yapıldı ama rapor uyarmadı"
+    )
+
+
+def test_DOSYA3_oturum_dizinli_yerlesim_BOZULMADI(tmp_path):
+    """Regresyon: `local_map` oturum ALT DİZİNİ kullanıyor, o yol aynen çalışmalı.
+
+    Düzeltme yalnız DÜZ yerleşimi hedefliyor; oturum dizinli kalemde davranış
+    bit-birebir eski kalmalı (en yeni oturum seçilir, içindeki tek mp4 gider).
+    """
+    logs = _kur(tmp_path / "logs", harita=False)
+    for otr in ("oturum_20260807_100000", "oturum_20260820_120000"):
+        d = logs / "local_map" / otr
+        d.mkdir(parents=True)
+        (d / f"Dosya3_{otr}.mp4").write_bytes(b"H" * 1024)
+    usb = tmp_path / "usb"
+    usb.mkdir()
+
+    topla_ve_yaz(logs, usb)
+
+    icerik = (usb / "Dosya3_Lokal_Harita_Cost_Map_Engel_Haritasi.mp4")
+    assert icerik.exists()
+    assert not list(usb.glob("Dosya3_Lokal_Harita_*_1.mp4")), (
+        "eski oturum da kopyalanmış — en yeni oturum seçimi bozulmuş"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 17.08.2026 — mp4 OYNATILABİLİRLİK: `moov` atomu yoksa dosya teslim değildir
+# --------------------------------------------------------------------------- #
+
+
+def test_mp4_dogrulayici_saglam_ve_bozugu_AYIRIYOR(tmp_path):
+    """🔬 Aracın kendi doğrulaması — ayırt edemiyorsa sonucu raporlanamaz."""
+    from prototype.teslim.toplayici import mp4_oynatilabilir_mi
+    iyi, kotu = tmp_path / "iyi.mp4", tmp_path / "kotu.mp4"
+    _mp4_saglam(iyi)
+    _mp4_bozuk(kotu)
+    assert mp4_oynatilabilir_mi(iyi) is True, "sağlam mp4 bozuk sayıldı"
+    assert mp4_oynatilabilir_mi(kotu) is False, "moov'suz dosya sağlam sayıldı"
+    assert mp4_oynatilabilir_mi(tmp_path / "yok.mp4") is False, "olmayan dosya"
+    bos = tmp_path / "bos.mp4"
+    bos.write_bytes(b"")
+    assert mp4_oynatilabilir_mi(bos) is False, "boş dosya sağlam sayıldı"
+
+
+def test_TEK_dosyalik_kalem_ACILMIYORSA_rapor_HAZIR_DEMEZ(tmp_path):
+    """🔴 CANLI HATA (17.08): rapor açılmayan kalemleri görmeden ✅ diyordu.
+
+    Kuru teslim provasında ölçüldü: Dosya-3'ün TEK mp4'ü ve Dosya-1b'nin
+    (lidar) TEK mp4'ü **açılmıyordu** (moov atomu yok), buna rağmen rapor
+    *"TÜM ZORUNLU KALEMLER TESLİME HAZIR"* yazıyordu. Operatör USB'yi öyle
+    teslim ederdi. md 4.2/5.5.4.3.5: teslim edilmeyen her dosya **5 ceza**.
+
+    ⛔ GERİ ALINIRSA: rapor yine yanlış yeşil verir.
+    """
+    logs = _kur(tmp_path / "logs", harita=False)
+    otr = logs / "local_map" / "oturum_20260817_010000"
+    otr.mkdir(parents=True)
+    _mp4_bozuk(otr / "Dosya3_lokal_harita.mp4")     # TEK dosya ve BOZUK
+    usb = tmp_path / "usb"
+    usb.mkdir()
+
+    rapor, _ = topla_ve_yaz(logs, usb)
+
+    assert not rapor.basarili, (
+        "tek mp4'ü açılmayan zorunlu kalem varken rapor HAZIR dedi"
+    )
+    metin = " ".join(rapor.bozuk)
+    assert "HEPSİ açılmıyor" in metin, f"bozuk listesine girmedi: {rapor.bozuk}"
+
+
+def test_COK_segmentli_kalemde_TEK_bozuk_HAZIR_olmayi_BOZMAZ(tmp_path):
+    """Aşırı tepki vermesin: 36 segmentin 1'i bozuksa kayıt hâlâ teslim edilebilir.
+
+    Ölçülen gerçek desen bu — bozulan hep SON segment (37 oturumun 28'inde),
+    öncekiler sağlam. O durumda rapor uyarmalı ama "teslim edilemez" DEMEMELİ.
+    """
+    logs = _kur(tmp_path / "logs", kamera=False)
+    otr = logs / "kamera" / "oturum_20260817_010000"
+    otr.mkdir(parents=True)
+    for i in range(3):
+        _mp4_saglam(otr / f"seg_{i:04d}.mp4")
+    _mp4_bozuk(otr / "seg_0003.mp4")                # yalnız SONUNCU bozuk
+    usb = tmp_path / "usb"
+    usb.mkdir()
+
+    rapor, _ = topla_ve_yaz(logs, usb)
+
+    assert rapor.basarili, (
+        "tek bozuk segment yüzünden teslim 'başarısız' sayıldı — aşırı tepki"
+    )
+    metin = " ".join(rapor.uyarilar)
+    assert "seg_0003.mp4" in metin, "bozuk segment raporda ADIYLA anılmadı"
+    assert "1/4 mp4 AÇILMIYOR" in metin, f"sayı yanlış: {metin[:200]}"

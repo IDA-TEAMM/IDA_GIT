@@ -88,9 +88,20 @@ def _isci_dongusu(istek_q, sonuc_q) -> None:  # noqa: ANN001
                 cfg,
             )
             yol = rrt.plan(start, goal)
-            sonuc_q.put((no, yol, None))
+            # 🔴 F-F.29: TEŞHİS DE DÖNER. Plan ayrı süreçte koştuğu için
+            # `hedef_kurtarildi` / `kismi_plan` bayrakları ÇOCUKTA kalıyordu;
+            # ebeveyn onları hiç göremiyor, sayaç 0 okunuyordu. Ölçüldü
+            # (17.08 gecesi): kurtarma 37 vakayı kapattığı hâlde sayaç 0
+            # görünüyordu — yani düzeltme çalışıyor ama KANITI yoktu.
+            # Bu, deponun en pahalı hata sınıfının (arıza vardı, kod
+            # biliyordu, söylemiyordu) planlayıcı süreç sınırındaki hâli.
+            teshis = {
+                "hedef_kurtarildi": getattr(rrt, "hedef_kurtarildi", None),
+                "kismi_plan": getattr(rrt, "kismi_plan", None),
+            }
+            sonuc_q.put((no, yol, None, teshis))
         except Exception as exc:             # ValueError (pay içinde) dahil
-            sonuc_q.put((no, None, repr(exc)))
+            sonuc_q.put((no, None, repr(exc), {}))
 
 
 class PlanIscisi:
@@ -116,6 +127,8 @@ class PlanIscisi:
         self.gonderilen = 0
         self.tamamlanan = 0
         self.zaman_asimi = 0
+        #: F-F.29 — son planın teşhis bayrakları (hedef kurtarma / kısmi plan)
+        self.son_teshis: dict = {}
 
     # ----- yaşam döngüsü -----
 
@@ -230,7 +243,14 @@ class PlanIscisi:
         if self._bekleyen_no is None:
             return None
         try:
-            no, yol, hata = self._sonuc_q.get_nowait()
+            # F-F.29: çocuk artık 4. eleman (teşhis) yolluyor. Eski 3'lü
+            # biçim de kabul edilir — sürüm karışırsa düğüm ÖLMESİN.
+            paket = self._sonuc_q.get_nowait()
+            if len(paket) == 4:
+                no, yol, hata, teshis = paket
+            else:
+                no, yol, hata = paket
+                teshis = {}
         except (queue.Empty, AttributeError, OSError):
             an = time.monotonic() if simdi is None else simdi
             if (an - self._gonderim_t) > self._zaman_asimi_s:
@@ -246,4 +266,5 @@ class PlanIscisi:
             return None
         self._bekleyen_no = None
         self.tamamlanan += 1
+        self.son_teshis = teshis            # F-F.29
         return (yol, hata)

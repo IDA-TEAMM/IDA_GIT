@@ -98,6 +98,19 @@ algorithm:
 #       (lat/lon'ları doldurmak şart değil: mission_source=fc iken konumlar
 #       FC'den gelir, dosyadan yalnız `parkur` etiketleri okunur.)
 #
+#    c) 🔴🔴 PARKUR-3 NOKTASINI HEDEFİN **ÖTESİNE** KOY (17.08 bulgusu).
+#       FC'ye yüklediğin son nokta hedef dubanın ÜSTÜNDEYSE tekne hedefin
+#       **~2 m ÖNÜNDE DURUR** ve P3'ün 145 puanı gider:
+#         nokta 2,0 m kala "varıldı" sayılır → tüm wp'ler biter →
+#         `mission_complete` (LATCH) → MissionFSM bunu parkur kurallarından
+#         ÖNCE değerlendirir → TAMAMLANDI → thrust SIFIR.
+#       P3 şartı **fiziksel temas**; 2 m önce durmak angajman değildir.
+#       ⇒ Noktayı yaklaşma yönünde **3-4 m ÖTEYE** koy: tekne varış yarıçapına
+#         ancak hedefi GEÇEREK girer ⇒ önce TEMAS, sonra temiz duruş.
+#       ⚠️ Şoka güvenilemez: ölçülen temas hızları 0,134-0,604 m/s,
+#         `shock_threshold_g = 3,0` bu hızlarda ateşlenmez. Görev sonu bilerek
+#         waypoint'e bağlı — ayrıntı `competition_mission.yaml` içindeki not.
+#
 # 2) FC PARAMETRELERİ (docs/fc_parametre_onerileri.md):
 #    - ARMING_CHECK = 1        (bench'te 0; suda TÜM pre-arm kontrolleri AÇIK)
 #    - FS_THR_ENABLE = 0       ⚠️ RC alıcısı sökülüyse ŞART — açık kalırsa FC

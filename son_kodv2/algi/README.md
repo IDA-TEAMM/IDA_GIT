@@ -14,7 +14,7 @@ sayar ve seçilen moda göre çıkış üretir.
   YOLO 512×512 + stereo birlikte, VPU sınırı). 8 = tavanın %19 altı
 - API: **DepthAI v2 (2.30.0.0)** — 05.08.2026'da v3'ten taşındı, çünkü v3
   firmware'i bu cihazda mono/stereo'yu açamıyor (stereo %0; v2'de 29,7 FPS).
-  ⚠️ v3'e dönmek hem algı node'unu hem veri seti toplayıcısını kırar
+  ⚠️ v3'e dönmek algı node'unu kırar (toplayıcıyı da kırardı; o 16.08'de kaldırıldı)
 - Node çalışırken ölçülen FPS loglanır, 8'in altında uyarı basılır
 
 ## Mimari

@@ -55,6 +55,39 @@ def kare_sayisi(yol):
     return n if ok and n > 0 else None
 
 
+def en_son_oturum(oturumlar):
+    """Gerçekten EN SON yazılan oturum dizini (isim sırasına GÜVENMEZ).
+
+    🔴 NEDEN (2026-08-13, ölçüldü): oturum dizini adı `session_%Y%m%d_%H%M%S`
+    ile ALGI NODE'U AÇILIRKEN üretiliyor. Jetson'ın RTC pili yok ve BAYAT
+    saatle açıldığı **iki kez ölçüldü**; saati `girdap-saat-gec.service` ancak
+    GPS fix geldikten sonra (boot+~171 s, penceresi 30 dk) kuruyor — yani
+    gerçek koşunun dizini geçmiş bir tarihle isimlenebiliyor. Eski kod
+    `sorted(...)[-1]` ile İSİM sırasına bakıyordu:
+
+        session_20260820_120000   ← prova (saat doğruyken açılmış)
+        session_20260813_010000   ← GERÇEK KOŞU (bayat saatle açılmış)
+
+    `sorted()[-1]` **provayı** seçiyordu ⇒ teslim edilen Dosya-1 yanlış koşunun
+    videosu olurdu (md 4.2; geçersiz/eksik dosya başına **5 ceza puanı**,
+    md 5.5.4.3.5) — üstelik teslimin 20 dakikalık penceresinde, fark edilmeden.
+
+    Diskteki değişiklik zamanı (`mtime`) saat adımlarından ETKİLENMEZ mi?
+    Etkilenir — ama son segment yazıldığı AN damgalandığı için sıralamada
+    doğru tarafta kalır; isim ise açılış anına donmuştur ve bir daha güncellenmez.
+    İkisi çelişirse SUSMUYORUZ: aşağıda açıkça uyarılır (§ tanı kodu susmaz).
+    """
+    en_yeni = max(oturumlar, key=os.path.getmtime)
+    isimden = sorted(oturumlar)[-1]
+    if isimden != en_yeni:
+        print("🔴 UYARI: oturum adları saat sırasıyla ÇELİŞİYOR — Jetson bayat "
+              "saatle açılmış olabilir.")
+        print(f"    isim sırasına göre son : {os.path.basename(isimden)}")
+        print(f"    diske göre GERÇEK son  : {os.path.basename(en_yeni)}  ← seçildi")
+        print("    Yanlışsa --oturum ile elle seç.")
+    return en_yeni
+
+
 def main():
     ap = argparse.ArgumentParser(description="Dosya-1 segmentlerini tek mp4'e birleştir")
     ap.add_argument("--kayit-dizin", default=KAYIT_DIZIN)
@@ -71,11 +104,11 @@ def main():
     if a.oturum:
         oturum = os.path.join(a.kayit_dizin, a.oturum)
     else:
-        oturumlar = sorted(glob.glob(os.path.join(a.kayit_dizin, "session_*")))
+        oturumlar = glob.glob(os.path.join(a.kayit_dizin, "session_*"))
         if not oturumlar:
             print(f"🔴 hiç oturum yok: {a.kayit_dizin}/session_*")
             return 1
-        oturum = oturumlar[-1]
+        oturum = en_son_oturum(oturumlar)
         print(f"[i] en son oturum seçildi: {os.path.basename(oturum)}")
         if len(oturumlar) > 1:
             print(f"    (toplam {len(oturumlar)} oturum var — yanlışsa --oturum ile seç)")

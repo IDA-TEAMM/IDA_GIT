@@ -81,7 +81,28 @@ Katman akışı:
 
 ## Kritik teknik detaylar
 
-- **MAVROS QoS:** MAVROS topic'leri (`/mavros/*`) BEST_EFFORT yayınlar. rclpy varsayılanı RELIABLE'dır ve uyumsuzluk sessizce veri kaybına yol açar (hata fırlatmaz). Yeni bir `/mavros/*` subscriber'ı eklerken mutlaka `QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT)` kullan (örnek: `decision_node.py`).
+- **MAVROS QoS — ⚠️ DÜZELTİLDİ (18.08.2026):** eski metin *"MAVROS topic'leri
+  (`/mavros/*`) BEST_EFFORT yayınlar"* diyordu. **Bu genelleme YANLIŞ.** MAVROS 2
+  kaynağından doğrulandı (`mavros/include/mavros/qos.hpp` ve ilgili eklentiler):
+
+  | topic | MAVROS'un yayın QoS'u | kaynak |
+  |---|---|---|
+  | `/mavros/state` | **RELIABLE + TRANSIENT_LOCAL** | `StateQoS() = rclcpp::QoS(10).transient_local()` |
+  | `/mavros/rc/in`, `/mavros/rc/out` | **RELIABLE** (VOLATILE) | `create_publisher(..., 10)` — düz derinlik |
+  | sensör akışları (`imu/data`, `global_position/*`) | **BEST_EFFORT** | `SensorDataQoS` |
+
+  **Doğru kural (DDS):** abone yayıncıdan **daha katı olamaz**.
+  RELIABLE abone + BEST_EFFORT yayıncı ⇒ bağlantı hiç kurulmaz, **hata basılmaz**.
+  Ters yön (BEST_EFFORT abone + RELIABLE yayıncı) uyumludur ama mesaj **düşebilir**.
+
+  ⇒ Sensör topic'lerinde `BEST_EFFORT` kullan (`sensor_data_qos()`), ama
+  **`/mavros/state`'i BEST_EFFORT'a çevirme**: uyumsuzluk yaratmaz, yalnız
+  heartbeat mesajı sessizce düşebilir ve `heartbeat_timeout_s` yanlış yere yanar.
+  Kod hâlihazırda doğru (`mavros_bridge_node` state'i RELIABLE dinliyor).
+
+  🔎 Denetim: `ros2 topic info <topic> -v` yayıncının gerçek QoS'unu gösterir —
+  tahmin etmek yerine ona bak. Statik denetim: tüm yayıncı/abone çiftlerini
+  `ast` ile tarayan bir betikle kod içi uyumsuzluk **bulunamadı** (18.08).
 - **`mavros_msgs.msg.VfrHud`** doğru sınıf adıdır, `VFR_HUD` değil — yanlış yazarsan import hatası alırsın.
 - **`decision_node.py`'de `cmd.angular.z = -angular`** kasıtlı işaret düzeltmesidir (ArduPilot yaw yönü uyumu için), bug değildir — kaldırma.
 - **`livox_driver_node.py`'de `host_ip` parametresi `'0.0.0.0'` olmalı** — belirli bir arayüz IP'si UDP socket bağlama hatası verir.

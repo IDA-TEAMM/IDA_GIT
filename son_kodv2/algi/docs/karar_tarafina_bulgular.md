@@ -114,8 +114,9 @@ mutlak anlar duvar saatinde bırakıldı. İki incelik:
 Regresyon testi: `test/test_saat_kaynagi.py` (AST; ROS/kamera gerektirmez) —
 süre ölçümünde duvar saati kullanılırsa **ve** Dosya-1 etiketi yanlışlıkla
 monotonic'e çevrilirse testler kırmızıya döner. 129 → **133 test**.
-📌 Not: toplayıcımız (`scripts/oak_veriseti_topla.py`) bu ayrımı **zaten doğru**
-yapıyordu; hata yalnız deploy node'undaydı.
+📌 Not: toplayıcımız (`scripts/oak_veriseti_topla.py` — 16.08'de repodan
+kaldırıldı, git geçmişinde) bu ayrımı **zaten doğru** yapıyordu; hata yalnız
+deploy node'undaydı.
 ⇒ **Sizden bir şey gerekmiyor**, yalnız haberiniz olsun.
 
 ---

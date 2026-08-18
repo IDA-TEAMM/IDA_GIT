@@ -71,6 +71,9 @@ _AIM_MAX_ADIM = 64
 # arızayı kapatır. (Kilitlendikten sonraki oklüzyon koruması aynen sürer.)
 ONAY_TICK = 2
 
+#: F-K.5 bayat kilit bırakma katsayısı (float('inf') → kapalı; A/B için).
+_BAYAT_KILIT_KATSAYI = 2.0
+
 
 @dataclass(frozen=True)
 class GateFollowerConfig:
@@ -120,6 +123,11 @@ class GateFollowerConfig:
     hull_width_m: float = 0.785
     # Boy: dubanın "önümüzde" sayılması için burnun ötesinde olması gerekir.
     hull_length_m: float = 1.04
+    # ⚠️ Buraya yeni alan EKLEME: `test_kapi_seciminde_ayarlanabilir_esik_
+    # KALMADI` bu sınıfın YALNIZ bu iki ölçülmüş boyutu taşımasını dondurur
+    # (§0.0d). Deneysel/A-B şalterleri (kurs ekseni, arada duba kontrolü)
+    # `select_gate`e `kurs` deseniyle AYRI KEYWORD PARAMETRE olarak geçer —
+    # bkz. o fonksiyonun imzası — config'e değil.
 
     @property
     def min_forward(self) -> float:
@@ -385,6 +393,9 @@ class GateDiagnostics:
     # 0'dan büyük olması NORMALDİR (arkada bıraktığımız kapıları görmeye devam
     # ederiz); asıl anlamı, K1 salınımının kapalı olduğunun kanıtı olmasıdır.
     reddedilen_gecilmis: int = 0
+    # Arada üçüncü bir kenar dubası olduğu için elenen çift sayısı (18.08,
+    # `arada_duba_kontrolu` — bkz. GateFollowerConfig).
+    reddedilen_arada_duba: int = 0
     secilen_genislik: Optional[float] = None
     # Nişan noktasının geometrik ortadan kayması (m). 0.0 → engel kirişe
     # dokunmuyor, tam ortadan geçiliyor. Büyük değer sahada "kapının içinde/
@@ -442,6 +453,67 @@ def _forward_left_axes(
     fx, fy = dx / norm, dy / norm      # ileri birim
     lx, ly = -fy, fx                   # sol dik birim (90° CCW)
     return fx, fy, lx, ly
+
+
+def _arada_duba_cezasi(
+    a: Point, b: Point,
+    digerleri: Sequence[Point], esik: float,
+) -> float:
+    """(a,b) adayının ARASINDAKİ doğru parçasına üçüncü bir kenar dubası ne
+    kadar yakın — SÜREKLİ bir ceza (m), 0..`esik`. 0 = arada hiçbir şey yok
+    (temiz); `esik`'e yaklaşırken ceza büyür (bir duba tam ÜZERİNDE ise ceza
+    ≈ `esik`).
+
+    ⚠️ `esik` VARSAYILANSIZ, ZORUNLU: bu modülün donmuş kuralı (§0.0d,
+    `test_kapi_seciminde_ayarlanabilir_esik_KALMADI`) hiçbir sabit/tahmine
+    dayalı mesafe bırakmıyor. Çağıran taraf `esik`i ADAYIN KENDİ genişliğinden
+    türetmeli (bkz. `select_gate` çağrı yeri: `0.5 * sep`) — öz-ölçekli,
+    `match_radius`in "kapının kendi genişliğinin yarısı" desenininin aynısı.
+
+    🔬 18.08.2026 — algı'nın `gecit_mantik.arada_duba_var`'ından ilham alındı,
+    ama İKİLİ (True/False) DEĞİL. TARİHÇE (aynı gün, üç ayrı ikili deneme —
+    hem SERT RET hem SIRALAMA'da 0/1 bayrak olarak): hepsi kapalı döngüde
+    KARARSIZLIK üretti. Kök neden `ONAY_TICK=2`: aynı aday yalnız 2 ardışık
+    karede AYNI kalırsa kilitlenir (`_aday_sayaci`). İkili bir sinyal, aracın
+    yumuşak hareketiyle SÜREKLİ değişen bir geometride (bearing/derinlik eşiği
+    etrafında) kare kare TİTREŞİR — "en iyi aday" her karede sıçrar,
+    `_aday_sayaci` asla 2'ye ulaşmaz, kilitlenme TAMAMEN durur (ölçüldü: bazı
+    koşumlarda 0/8 kapı, tekne donmuş). SÜREKLİ ceza bu titreşimi önler: girdi
+    yumuşak değiştikçe çıktı da yumuşak değişir, "en iyi aday" ancak GERÇEK bir
+    geometrik üstünlük varken el değiştirir.
+
+    Segment-mesafesi (bearing bandı değil) kullanılır: yalnız gerçekten
+    ARADAN GEÇERKEN rastlanacak bir dubayı sayar (t∈[0.15,0.85], uçlara
+    yakın değil).
+
+    🔬 SONUÇ (18.08 A/B, iki `esik` kaynağı karşılaştırıldı):
+      · SABİT `esik=8.0` (yasak — §0.0d): NORMAL %79,2→**%97,9**. Ama bu
+        kazanç SAHTE — bu spesifik parkurun ölçeğine rastlayan bir sayı,
+        genel bir geometrik gerçek değil.
+      · ÖZ-ÖLÇEKLİ `esik=0.5×sep` (bkz. çağrı yeri, kurallı): NORMAL %80,2,
+        ZOR %47,9 — **taban ile aynı**, gerçek bir kazanç YOK.
+    ⇒ İlk sonuç bir ARTEFAKT'tı. Kurallı (öz-ölçekli) hâliyle bu mekanizma
+    şu an ÖLÇÜLEBİLİR bir fayda sağlamıyor — `arada_duba_kontrolu=True`
+    çağıranlar bunu bilerek yapmalı, "kanıtlanmış düzeltme" değil.
+    """
+    ax, ay = a
+    bx, by = b
+    dx, dy = bx - ax, by - ay
+    uzunluk_kare = dx * dx + dy * dy
+    if uzunluk_kare < 1e-9:
+        return 0.0
+    en_yakin = math.inf
+    for cx, cy in digerleri:
+        t = ((cx - ax) * dx + (cy - ay) * dy) / uzunluk_kare
+        if not (0.15 <= t <= 0.85):
+            continue
+        px, py = ax + t * dx, ay + t * dy
+        d = math.hypot(cx - px, cy - py)
+        if d < en_yakin:
+            en_yakin = d
+    if en_yakin >= esik:
+        return 0.0
+    return esik - en_yakin
 
 
 def _gate_normal(
@@ -560,6 +632,7 @@ def select_gate(  # noqa: PLR0913
     obstacles: Sequence[Circle] = (),
     gecilmis: Sequence[Circle] = (),
     kurs: Optional[Point] = None,
+    arada_duba_kontrolu: bool = False,
 ) -> Optional[Gate]:
     """Öndeki en yakın geçerli kapıyı seç (durumsuz, saf fonksiyon).
 
@@ -723,6 +796,23 @@ def select_gate(  # noqa: PLR0913
                 if diag is not None:
                     diag.reddedilen_derinlik += 1
                 continue
+            # (c) ARADA ÜÇÜNCÜ BİR DUBA VAR MI — bkz. `_arada_duba_cezasi`
+            # docstring'i (algı'dan ilham, 18.08). SÜREKLİ ceza (m), İKİLİ
+            # DEĞİL — ikili (ret/sıralama) üç ayrı denemede de `ONAY_TICK=2`
+            # onay penceresiyle çakışıp kilitlenmeyi tamamen durdurdu (tarihçe
+            # orada). Ceza `menzil`e eklenir: temiz bir alternatif varsa onu
+            # kaybeder, yoksa (ceza küçük bir dezavantajsa) yine kazanabilir.
+            ceza = (
+                _arada_duba_cezasi(
+                    pi, pj,
+                    [op for k, (op, _, _) in enumerate(projected)
+                     if k != i and k != j],
+                    esik=0.5 * sep,      # öz-ölçekli — sabit sayı YOK (§0.0d)
+                )
+                if arada_duba_kontrolu else 0.0
+            )
+            if ceza > 0.0 and diag is not None:
+                diag.reddedilen_arada_duba += 1
             # +lateral = sol; Δyanal'ın işareti hangi dubanın solda olduğunu
             # doğrudan verir (yaklaşma yönüne göre, kurs eksenine göre değil).
             left, right = (pi, pj) if d_lat >= 0.0 else (pj, pi)
@@ -730,7 +820,7 @@ def select_gate(  # noqa: PLR0913
             # F-K.3 sıralaması (yukarıdaki blokta gerekçesi):
             #   kurs EKSENİ VARSA → (kurs boyunca ayrım, menzil)
             #   yoksa (ilk kapı)  → (menzil, |kurs çizgisine uzaklık|) — eski.
-            menzil = math.hypot(midpoint[0] - vx, midpoint[1] - vy)
+            menzil = math.hypot(midpoint[0] - vx, midpoint[1] - vy) + ceza
             mid_lat = 0.5 * (li + lj)
             if kurs is not None:
                 kx, ky = kurs
@@ -810,11 +900,27 @@ class GateFollower:
     MPPI'nin warm-start'ı + FSM güvenlik çatısı zaten üstte — aşırı mühendislik yok.
     """
 
-    def __init__(self, cfg: Optional[GateFollowerConfig] = None) -> None:
+    def __init__(
+        self, cfg: Optional[GateFollowerConfig] = None, *,
+        kurs_ekseni_kullan: bool = False,
+        arada_duba_kontrolu: bool = False,
+    ) -> None:
+        # ⚠️ Bu iki şalter BİLEREK `GateFollowerConfig`'te DEĞİL — o sınıf
+        # yalnız ÖLÇÜLMÜŞ tekne boyutlarını taşır (§0.0d,
+        # `test_kapi_seciminde_ayarlanabilir_esik_KALMADI` bunu dondurur).
+        # Deneysel/A-B şalterleri `select_gate`e `kurs` deseniyle KEYWORD
+        # PARAMETRE olarak geçer, config alanı olarak değil.
+        self._kurs_ekseni_kullan = kurs_ekseni_kullan
+        self._arada_duba_kontrolu = arada_duba_kontrolu
         self._cfg = cfg or GateFollowerConfig()
         self._committed: Optional[Gate] = None
         # B5 — kilitlenme ÖNCESİ onay penceresi: aday kapı + üst üste görülme
         # sayısı. `ONAY_TICK`'e ulaşmadan kilitlenilmez (bkz. sabit).
+        # F-K.5: bayat kilit bırakma durumu — kilitlendiği andaki mesafe (d0),
+        # o gün bu yana katedilen yol ve son araç konumu.
+        self._kilit_d0: Optional[float] = None
+        self._kilit_yolu: float = 0.0
+        self._son_arac: Optional[Point] = None
         self._aday: Optional[Gate] = None
         self._aday_sayaci: int = 0
         # Onayı en son ilerleten algı karesinin kimliği (bkz. update/gozlem_no).
@@ -853,6 +959,9 @@ class GateFollower:
         self._aday = None
         self._aday_sayaci = 0
         self._son_onay_gozlemi = None
+        self._kilit_d0 = None
+        self._kilit_yolu = 0.0
+        self._son_arac = None
 
     def reset_passed_gates(self) -> None:
         """Geçiş sayacını sıfırla — YALNIZ yeniden başlamada.
@@ -952,27 +1061,20 @@ class GateFollower:
         gözlem sayılır (çekirdeği doğrudan çağıran testler/simülasyon için).
         """
         self.last_diagnostics = GateDiagnostics()
+        # F-K.5: kilitten bu yana KATEDİLEN YOL — bayat kilit bırakma ölçütü.
+        if self._son_arac is not None and self._committed is not None:
+            self._kilit_yolu += _dist(self._son_arac, vehicle)
+        self._son_arac = vehicle
         fresh = select_gate(
             vehicle, coarse_target, edge_buoys, self._cfg,
             self.last_diagnostics, obstacles,
             gecilmis=self._gecilen_kapilar,          # K1: arkadakiler aday değil
-            # 🔴 F-K.3 BAĞLI DEĞİL — KÖK NEDEN BULUNDU (13.08, ölçümle).
-            # Varsayım "çapraz çift = zararlı" idi; BU PARKURDA YANLIŞ:
-            # kapılar 4 m aralıklı ama ±5 m ZİGZAG, yani ardışık gerçek kapı
-            # merkezleri 5 m YANAL atlıyor. Çapraz çiftlerin ortası ise tam
-            # iki kapının ARASINDA — koridor ORTA ÇİZGİSİ, her kapıya yalnız
-            # 2,5 m. Gerçek merkeze nişan almak tekneyi bir sonraki kapıya
-            # ERKEN çekip mevcut kapıyı daha kaçık geçirtiyor.
-            # Ölçüldü (P1 kapalı döngü, geçiş sapması ortalaması):
-            #     mevcut (çapraz çiftler serbest) → 1,91 m · 7 kapı
-            #     F-K.3 sıralama                  → 2,60 m · 5 kapı
-            #     F-K.3 red                       → 2,73 m · 5 kapı
-            # ⇒ Çapraz çift burada YUMUŞATICI görev görüyor. Ayrıca F-K.3'ü
-            # tetikleyen sanal göl kilitlenmesi zaten F-K.1b (havuç) ile
-            # kapandı ("yalnız havuç" koşumu PARKUR TAMAMLANDI).
-            # Mekanizma + ölçüm testleri duruyor; SEYREK kapılı bir parkurda
-            # (aralık ≫ zigzag genliği) yeniden değerlendirilmeli.
-            kurs=None,
+            # 🔬 18.08.2026 — A/B şalterleri (bkz. `__init__`). `kurs=None`
+            # varsayılan: 13.08'de bu parkurda (12 m açıklık, 4 m aralık,
+            # ±5 m zigzag) çapraz çift yumuşatıcı görev görüyordu ölçülmüştü
+            # (1,91 m · 7 kapı > 2,60 m · 5 kapı; kapi_orani.py A/B'si).
+            kurs=self._kurs_ekseni if self._kurs_ekseni_kullan else None,
+            arada_duba_kontrolu=self._arada_duba_kontrolu,
         )
 
         if self._committed is not None:
@@ -1009,6 +1111,28 @@ class GateFollower:
                     fresh.midpoint, self._committed.midpoint
                 ) <= self._committed.width / 2.0:
                     self._committed = fresh
+                    self._kilit_yolu = 0.0     # taze görüldü → yol sayacı sıfır
+                # 🔴 F-K.5 (16.08, §1.22) — BAYAT KİLİT BIRAKILIR.
+                # Oklüzyon koruması kilidi taze algı olmadan da tutuyordu ve
+                # bırakma YALNIZ düzlem geçilince oluyordu; sahada bunun sonucu
+                # 12:02'de kurulan 10,8 m'lik hayalet kapının **30 dakika**
+                # kilitli kalması ve o süre boyunca hiçbir gerçek kapının
+                # seçilememesi oldu (geçilen kapı: 0).
+                # Ölçüt AYARLANABİLİR BİR SÜRE DEĞİL, geometrik: kilitlendiği
+                # anda kapı `d0` uzaktaydı; manevrayla birlikte en fazla ~2·d0
+                # yol yeter. Bu yolu katettiğimiz hâlde kapı ne geçildi ne de
+                # tazelendiyse, o kapı orada değildir.
+                if (
+                    self._kilit_d0 is not None
+                    and self._kilit_yolu > _BAYAT_KILIT_KATSAYI * self._kilit_d0 + self._committed.width
+                ):
+                    self._committed = None     # geçilmiş SAYILMAZ, yalnız bırakılır
+                    self._kilit_d0 = None
+                    self._kilit_yolu = 0.0
+                    return GateResult(
+                        target=coarse_target, gate=None, used_fallback=True,
+                        surus_hedefi=coarse_target,
+                    )
                 return GateResult(
                     target=self._committed.drive_target,
                     gate=self._committed,
@@ -1058,6 +1182,8 @@ class GateFollower:
             )
 
         self._committed = fresh
+        self._kilit_d0 = _dist(vehicle, fresh.midpoint)   # F-K.5 referans mesafe
+        self._kilit_yolu = 0.0
         self._aday = None
         self._aday_sayaci = 0
         return GateResult(

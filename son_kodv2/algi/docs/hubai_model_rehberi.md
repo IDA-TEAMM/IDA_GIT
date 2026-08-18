@@ -36,7 +36,9 @@ yavaşlatır* (Luxonis: optimal ≈ mevcudun yarısı).
 ---
 
 ## 1. Sınıf isimleri — değiştirme
-Veri seti `data.yaml`'ı şunu yazıyor (`scripts/oak_veriseti_topla.py:77`):
+Veri seti `data.yaml`'ı şunu yazıyor (kaynak: `scripts/oak_veriseti_topla.py:77`
+— **dosya 16.08'de repodan kaldırıldı**, git geçmişinde duruyor; aşağıdaki
+isim listesi bağlayıcı olan taraftır):
 ```yaml
 names:
   0: kenar_dubasi     # turuncu RAL 2003 — parkur kenarı

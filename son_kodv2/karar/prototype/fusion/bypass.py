@@ -11,7 +11,7 @@ Yarışma modu (use_isam2=true) prototype.fusion.pipeline.FusionPipeline kullan�
 from __future__ import annotations
 
 import math
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 def quat_to_yaw(qx: float, qy: float, qz: float, qw: float) -> float:
@@ -29,13 +29,22 @@ class PosePassthrough:
         self._y = 0.0
         self._psi = 0.0
         self._has_pose = False
+        # 🕰️ §1.57 — besleyen mesajın ÖLÇÜM zamanı (saniye). `FusionPipeline`
+        # ile AYNI sözleşme: iki kol da `son_olcum_zamani` sunar, böylece
+        # `fusion_node` hangi kolda olduğunu bilmek zorunda kalmaz.
+        self._son_t: Optional[float] = None
 
-    def update(self, x: float, y: float, psi: float) -> None:
+    def update(self, x: float, y: float, psi: float,
+               t: Optional[float] = None) -> None:
         """Yeni EKF pozunu kaydet (ENU x, y, yaw)."""
         self._x = float(x)
         self._y = float(y)
         self._psi = float(psi)
         self._has_pose = True
+        # `t=None` → eski çağrı biçimi; damga taşınmaz, `fusion_node` yayın
+        # anına düşer (bilinen ve loglanan hâl).
+        if t is not None:
+            self._son_t = float(t)
 
     def current_pose(self) -> Tuple[float, float, float]:
         """(x, y, ψ) döndür. Henüz poz gelmediyse RuntimeError.
@@ -46,6 +55,11 @@ class PosePassthrough:
         if not self._has_pose:
             raise RuntimeError("henüz poz yok (bypass)")
         return self._x, self._y, self._psi
+
+    @property
+    def son_olcum_zamani(self) -> Optional[float]:
+        """Besleyen pozun ölçüm zamanı (saniye), yoksa None."""
+        return self._son_t
 
     @property
     def has_pose(self) -> bool:

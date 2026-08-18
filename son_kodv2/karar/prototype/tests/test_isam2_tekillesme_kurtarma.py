@@ -48,6 +48,11 @@ class _TekillesenISAM:
     def calculateEstimate(self):
         return self._gercek.calculateEstimate()
 
+    # 17.08: sicak yol tam Values yerine TEK ANAHTAR soruyor (O(N) kaldirildi).
+    # Sahte, gercek nesnenin ayni cagrisina devrediyor — okuma yolu degismedi.
+    def calculateEstimatePose2(self, key):
+        return self._gercek.calculateEstimatePose2(key)
+
 
 def _dolu_smoother(n: int = 5) -> ISAM2Smoother:
     sm = ISAM2Smoother()
@@ -105,13 +110,19 @@ def test_alakasiz_RuntimeError_YUTULMAZ():
     """Yalnız tekilleşme kurtarılır; başka hata sessizce yutulursa arıza gizlenir."""
 
     class _BaskaHata:
+        def __init__(self, gercek) -> None:
+            self._gercek = gercek
+
         def update(self, *args):
             raise RuntimeError("tamamen baska bir hata")
+
+        def calculateEstimatePose2(self, key):
+            return self._gercek.calculateEstimatePose2(key)
 
     sm = ISAM2Smoother()
     sm.initialize(gtsam.Pose2(0.0, 0.0, 0.0))
     sm.update()
-    sm._isam = _BaskaHata()
+    sm._isam = _BaskaHata(sm._isam)
     sm.add_odometry(gtsam.Pose2(1.0, 0.0, 0.0))
 
     with pytest.raises(RuntimeError, match="tamamen baska"):

@@ -33,8 +33,50 @@ def _duba(cls, x, z, cx, cy, w=None, h=0.07, conf=0.9):
     return dgn.Duba(cls=cls, x=x, z=z, conf=conf, cx=cx, cy=cy, w=w, h=h)
 
 
-def _yayinla(dubalar, kenar_cls=0, engel_cls=1, lb_pay=0.0):
-    """`tespit_yayinla`'yı sahte yayıncılarla koştur, yayınlanan mesajları döndür."""
+@pytest.fixture
+def p3_acik(monkeypatch):
+    """P3 ANA ŞALTERİNİ aç — mono hedef yolu (OpenCV/HSV) yalnız o zaman koşar.
+
+    🔴 16.08 akşamı: şalter (`P3_HEDEF_YAYINI`) artık `_mono_hedef_mi`'yi de
+    kapatıyor. Eyüp: *"P3'ü şimdilik kapatalım, OpenCV'ye geçmesin."* Yani
+    P1/P2 ölçüm koşusunda kare başına `cv2.cvtColor`/HSV analizi HİÇ koşmaz.
+    Aşağıdaki testler o yolun **açıkken doğru çalıştığını** sınar; kapalıyken
+    hiç koşmadığını `test_p3_kapali.py` + `test_mono_hedef_yolu_SALTERE_BAGLI`
+    sınar. İkisi birlikte şalterin iki yönünü de donduruyor.
+    """
+    monkeypatch.setattr(dgn, "P3_HEDEF_YAYINI", True)
+
+
+SAHTE_SIMDI_NS = 1_800_000_000 * 10**9      # sabit, gercekci bir ROS ani
+
+
+def _stamp(ns_toplam):
+    from builtin_interfaces.msg import Time as _T
+    t = _T()
+    t.sec = int(ns_toplam // 10**9)
+    t.nanosec = int(ns_toplam % 10**9)
+    return t
+
+
+def _sahte_saat():
+    """`_damga` hem `.to_msg()` hem `.nanoseconds` ister (RclTime aritmetigi).
+
+    Sabit bir an dondurur ki damga testleri deterministik olsun.
+    """
+    return types.SimpleNamespace(
+        now=lambda: types.SimpleNamespace(
+            nanoseconds=SAHTE_SIMDI_NS,
+            to_msg=lambda: _stamp(SAHTE_SIMDI_NS)))
+
+
+def _yayinla(dubalar, kenar_cls=0, engel_cls=1, lb_pay=0.0, kare=None,
+             tespit_yasi_s=None):
+    """`tespit_yayinla`'yı sahte yayıncılarla koştur, yayınlanan mesajları döndür.
+
+    `kare`: mono yolunun renk kapısı için sahte görüntü (None = kare yok ⇒
+    kapı kapalı kalır, kör kabul YOK). `_mono_hedef_mi` GERÇEK metottur —
+    sahteye bağlanır ki yeni yol da gerçekten sınansın.
+    """
     kutu = {}
 
     class _Pub:
@@ -49,15 +91,22 @@ def _yayinla(dubalar, kenar_cls=0, engel_cls=1, lb_pay=0.0):
         sinif_esleme={kenar_cls: "0", engel_cls: "1"},
         buoys_pub=_Pub("2d"), buoys3d_pub=_Pub("3d"),
         _f_norm=gm.odak_px(1.0),
-        _tani={"buyuk_cisim": 0},
+        _son_kare=kare,
+        _tani={"buyuk_cisim": 0, "mono_hedef": 0},
         get_logger=lambda: types.SimpleNamespace(
             warn=lambda *a, **k: None, info=lambda *a, **k: None,
             error=lambda *a, **k: None),
-        get_clock=lambda: types.SimpleNamespace(
-            now=lambda: types.SimpleNamespace(
-                to_msg=lambda: dgn.Detection2DArray().header.stamp)),
+        get_clock=lambda: _sahte_saat(),
     )
+    ns._tani["damga_yedek"] = 0
+    ns._tespit_yasi_s = tespit_yasi_s
+    # GERÇEK metotlar, sahte self — damga yolu da gerçekten sınansın.
+    ns._mono_hedef_mi = types.MethodType(
+        dgn.DubaNavigator._mono_hedef_mi, ns)
+    ns._damga = types.MethodType(dgn.DubaNavigator._damga, ns)
+    ns._mesaj_yasi = dgn.DubaNavigator._mesaj_yasi
     dgn.DubaNavigator.tespit_yayinla(ns)
+    _yayinla.son_ns = ns          # sahte self'i sonraki denetim için sakla
     return kutu["2d"], kutu["3d"]
 
 
@@ -212,9 +261,10 @@ def test_suzulen_tespit_SAYACA_islenir():
         get_logger=lambda: types.SimpleNamespace(
             warn=lambda *a, **k: None, info=lambda *a, **k: None,
             error=lambda *a, **k: None),
-        get_clock=lambda: types.SimpleNamespace(
-            now=lambda: types.SimpleNamespace(
-                to_msg=lambda: dgn.Detection2DArray().header.stamp)))
+        get_clock=lambda: _sahte_saat())
+    ns._tani["damga_yedek"] = 0
+    ns._tespit_yasi_s = None
+    ns._damga = types.MethodType(dgn.DubaNavigator._damga, ns)
     dgn.DubaNavigator.tespit_yayinla(ns)
     assert tani["buyuk_cisim"] == 1
 
@@ -235,3 +285,117 @@ def test_sigterm_isleyicisi_kuruluyor():
         assert callable(h)
     finally:
         signal.signal(signal.SIGTERM, onceki)
+
+
+# ── STEREO YOKKEN P3 HEDEFİ (16.08.2026) ──────────────────────────────────
+# Ölçüm: 6.042 gerçek kenar/engel kutusunda 0,45 kapsama eşiğiyle yeşil
+# %0,000 · siyah %0,000 yanlış pozitif; kırmızı 0,65'te bile %0,53.
+def _kare_renkli(hsv, boyut=(240, 320)):
+    """Tamamı tek HSV rengi olan sahte kare (bbox nereye düşerse düşsün dolu)."""
+    cv2 = pytest.importorskip("cv2")
+    np = pytest.importorskip("numpy")
+    im = np.zeros((boyut[0], boyut[1], 3), np.uint8)
+    im[:, :] = hsv
+    return cv2.cvtColor(im, cv2.COLOR_HSV2BGR)
+
+
+_YESIL = (73, 200, 150)      # h 62-85 · s>=80 · v>=50
+_SIYAH = (0, 20, 30)         # s<=70 · v<=60
+_KIRMIZI = (3, 220, 200)     # h 0-7 · s>=130 · v>=90
+_TURUNCU = (12, 200, 200)    # bizim kenar dubamız — hiçbir hedef eşiğine girmemeli
+
+
+def _mono(z=14.0):
+    d = _duba(0, 0.0, z, 0.5, 0.5, w=_tutarli_w(0.64, z))
+    d.kaynak = "mono"
+    return d
+
+
+@pytest.mark.parametrize("hsv,ad", [(_YESIL, "yesil"), (_SIYAH, "siyah")])
+def test_mono_hedef_rengi_SUZULUR(hsv, ad, p3_acik):
+    """Stereo yokken yeşil/siyah = P3 hedefi ⇒ /perception/buoys'a GİRMEZ.
+
+    Girerse EdgeBuoyMemory'de KALICI kenar kaydı açar (unutma yok) ⇒ hayalet
+    kapı + MPPI hedeften kaçar.
+    """
+    arr, _ = _yayinla([_mono()], kare=_kare_renkli(hsv))
+    assert arr.detections == [], f"{ad} hedef yayınlandı — hayalet engel olur"
+
+
+@pytest.mark.parametrize("hsv,ad", [(_KIRMIZI, "kirmizi"), (_TURUNCU, "turuncu")])
+def test_mono_KIRMIZI_bu_yoldan_gecmez(hsv, ad):
+    """Kırmızı hiçbir eşikte temizlenmiyor (RAL 3026 ↔ RAL 2003 komşu) ⇒
+    kırmızı hedef stereo İSTER; turuncu zaten bizim kenar dubamız."""
+    arr, _ = _yayinla([_mono()], kare=_kare_renkli(hsv))
+    assert len(arr.detections) == 1, f"{ad} süzüldü — gerçek duba kaybolur"
+
+
+def test_mono_hedef_yolu_SALTERE_BAGLI():
+    """🔴 P3 KAPALIYKEN mono/OpenCV yolu HİÇ koşmaz (16.08 akşamı, Eyüp).
+
+    Şalterin ikinci yönü. Yukarıdaki testler `p3_acik` fixture'ıyla yolun
+    AÇIKKEN doğru çalıştığını sınıyor; bu test KAPALIYKEN hiç çalışmadığını
+    sınıyor — fixture'sız, yani üretimdeki varsayılanla.
+
+    Neden önemli: `_mono_hedef_mi` bbox kırpıp `cv2.cvtColor` + HSV kapsama
+    hesabı yapıyor. Eskiden şalter yalnız `/perception/targets` YAYININI
+    kapatıyordu, bu analiz her mono tespitte yine koşuyordu ⇒ "P3 kapalı"
+    denen durumda P3 kodu sıcak yolda kalıyordu (CPU + log gürültüsü).
+
+    ⚖️ Kapalıyken tespit `/perception/buoys`'a NORMAL duba olarak girer —
+    bilinçli takas: P1/P2 ölçüm koşusunda suda P3 hedef dubası YOK.
+    """
+    arr, _ = _yayinla([_mono()], kare=_kare_renkli(_YESIL))
+    assert len(arr.detections) == 1, (
+        "P3 kapalıyken mono tespit yine süzüldü — şalter mono yolunu "
+        "kapatmıyor, OpenCV analizi sıcak yolda"
+    )
+    assert _yayinla.son_ns._tani["mono_hedef"] == 0, "sayaç işledi = yol koştu"
+    assert _yayinla.son_ns._hedef_adaylari == [], "kapalıyken aday üretildi"
+
+
+def test_mono_hedef_SAYACA_islenir(p3_acik):
+    """Sahada SSH yok; sessiz süzme görünmez arıza olur (06.08 dersi)."""
+    _yayinla([_mono()], kare=_kare_renkli(_YESIL))
+    assert _yayinla.son_ns._tani["mono_hedef"] == 1
+
+
+def test_mono_hedef_adayina_eklenir(p3_acik):
+    """Süzülen tespit ATILMIYOR — /perception/targets'a gidecek listede."""
+    _yayinla([_mono()], kare=_kare_renkli(_YESIL))
+    assert len(_yayinla.son_ns._hedef_adaylari) == 1
+
+
+def test_mono_hedefin_MENZILI_064_ile_yeniden_kurulur(p3_acik):
+    """Mono yedek Ø0,30 varsayar; hedef kabul edildiyse menzil Ø0,64 ile
+    yeniden kurulmalı — yoksa (a) yayınlanan çap hep 0,30 çıkar ve tüketicinin
+    `cap_makul_mu` bandı (0,40-1,00) hedefi ELER, (b) menzil 2,13 kat KISA olur.
+    """
+    z_mono = 5.0
+    d = _duba(0, 0.0, z_mono, 0.5, 0.5, w=_tutarli_w(0.30, z_mono))
+    d.kaynak = "mono"
+    _yayinla([d], kare=_kare_renkli(_YESIL))
+    aday = _yayinla.son_ns._hedef_adaylari[0]
+    beklenen = gm.mesafe_genislikten(d.w, gm.HEDEF_CAP_M, gm.odak_px(1.0))
+    assert abs(aday.z - beklenen) < 1e-6, "menzil hedef capiyla kurulmadi"
+    assert aday.z > z_mono * 2.0, "menzil hala 0,30 varsayimindan geliyor"
+
+
+def test_mono_hedefin_capi_kabul_bandina_dusuyor(p3_acik):
+    """Tüketici çapı `w·z/f` ile hesaplıyor; 0,40-1,00 bandına düşmeli."""
+    z_mono = 8.0
+    d = _duba(0, 0.0, z_mono, 0.5, 0.5, w=_tutarli_w(0.30, z_mono))
+    d.kaynak = "mono"
+    _yayinla([d], kare=_kare_renkli(_SIYAH))
+    aday = _yayinla.son_ns._hedef_adaylari[0]
+    cap = aday.w * aday.z / gm.odak_px(1.0)
+    assert 0.40 <= cap <= 1.00, f"cap {cap:.2f} bandin disinda -> hedef_sec eler"
+
+
+def test_stereo_hedefin_menziline_DOKUNULMAZ():
+    """Stereo varsa ölçüm gerçektir; hipotezle ezilmemeli."""
+    z_stereo = 9.0
+    d = _duba(0, 0.0, z_stereo, 0.5, 0.5, w=_tutarli_w(0.64, z_stereo))
+    _yayinla([d])                      # kaynak stereo (varsayilan)
+    aday = _yayinla.son_ns._hedef_adaylari[0]
+    assert aday.z == z_stereo

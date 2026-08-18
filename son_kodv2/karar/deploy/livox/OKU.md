@@ -57,3 +57,73 @@ ros2 topic hz /perception/obstacle_map
 🔑 `systemctl is-active girdap-livox` **sağlık kanıtı DEĞİLDİR** — kaptan
 §0.40'ta ölçtü: sürücü açılışta `bind failed` ile ölmüştü, servis yine
 `active` görünüyordu ve `NRestarts=0` idi. Tek kanıt `topic hz`.
+
+---
+
+## 3 · 🔴 `src/` C++ YAMASI — IMU dağıtıcısı boş kuyruğu SPIN ediyordu
+
+> **17.08.2026.** Yukarıdaki iki düzeltmeden farklı: bu bir **config değil,
+> KAYNAK KODU** yaması. Bu yüzden yanında `.patch` dosyası duruyor.
+
+**Yama:** `0001-imu-semafor-spin-duzeltmesi.patch` (28 ekleme, 1 silme,
+3 dosya: `src/lds.h`, `src/lds.cpp`, `src/lddc.cpp`)
+
+### Ne bulundu
+
+`Lddc::DistributeImuData` **semaforsuz** `while(true)` dönüyordu. Nokta
+bulutu yolunda `lds_->semaphore_.Wait()` var, IMU yolunda **yoktu**:
+kuyruk boş → anında dön → tekrar sor.
+
+Ölçüm (Jetson Orin Nano, MAXN_SUPER, `gdb` yığın izi):
+```
+tek thread durum 'R', wchan=0, %97 ÇEKİRDEK KESİNTİSİZ
+yığın: PollingLidarImuData -> LidarImuDataQueue::Empty() -> mutex spin
+/livox/imu abone sayısı: 0        ← IMU'muz MAVROS'tan geliyor
+```
+
+🔑 **Bu yukarı akışın ZATEN DÜZELTTİĞİ bir hata** — bizim vendored kopyamız
+düzeltmeden önceki sürüm. Upstream `master`'da `lds_->imu_semaphore_.Wait();`
+satırı var. Yama o çözümün birebir geri portu.
+
+### Neden CPU değil PUAN meselesi
+
+Makine doyunca `planning_node`'un odom callback'i **aç kalıyor**, F-P.1
+bekçisi *"poz 1,0 s'dir gelmiyor"* deyip **thrust'ı SIFIRLIYOR** — poz
+kaynağı 8 Hz akarken, EKF sağlıklıyken, eşik 1,0 s iken. Bekçinin mesajı
+operatörü **sağlıklı olan** poz kaynağına yönlendiriyor.
+
+| | önce | sonra |
+|---|---|---|
+| GIRDAP CPU | %74,3 (446%/600%) | **%55,6** (333%) |
+| yük ortalaması | 8,4 | **4,9** |
+| POZ-BAYAT | 34 / 60 sn | **7 / 60 sn** |
+| `/livox/lidar` · `/livox/imu` | 10 Hz · 200 Hz | **10 Hz · 200 Hz** (bozulmadı) |
+
+### Ek: kapanma asılması da kapatıldı
+
+`Lds::RequestExit()` yalnız bayrak koyuyordu. Tüketici thread'ler artık
+semaforda **BLOKE** beklediği için, LiDAR susmuşsa (kablo çıktı, cihaz
+kapandı) sinyal hiç gelmez ve `join()` **sonsuza kadar asılır** — servis
+durdurulamaz. `RequestExit()` artık iki semaforu da uyandırıyor.
+**Upstream bunu yapmıyor**, bizim eklememiz.
+
+### Yeniden kurulumda NE YAPILACAK (pazarlıksız)
+
+```bash
+cd ~/livox_ws/src/livox_ros_driver2
+git am < ~/IDA_GIT/son_kodv2/karar/deploy/livox/0001-imu-semafor-spin-duzeltmesi.patch
+#   (git am tutmazsa:  git apply --3way <aynı dosya>)
+cd ~/livox_ws && colcon build --packages-select livox_ros_driver2 \
+    --cmake-args -DROS_EDITION=ROS2 -DHUMBLE_ROS=humble
+sudo systemctl restart girdap-livox
+```
+
+**Yamanın uygulandığını DOĞRULA** (tek satır — "kurdum sanmak" yetmez):
+```bash
+PID=$(pgrep -f livox_ros_driver2_node | head -1)
+for t in /proc/$PID/task/*; do awk '{print $3}' $t/stat; done | grep -c R
+#   0 dönmeli.  1 dönüyorsa yama YOK: bir çekirdek boş döngüde.
+```
+
+⚠️ `src/lds.cpp` ve `src/lddc.cpp` **CRLF** satır sonlu; düzenlerken
+koruyun, yoksa diff 1800 satır görünür ve gerçek değişiklik kaybolur.

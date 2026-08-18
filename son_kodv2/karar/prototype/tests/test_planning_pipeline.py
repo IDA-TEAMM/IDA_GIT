@@ -181,8 +181,13 @@ def test_parkur_profili_lambdayi_mppi_configine_gecirir(bounds: Bounds) -> None:
         pipe.set_mission_state("PARKUR2")
         assert pipe._active_mppi_cfg().lambda_ == 7.5
     finally:
+        # 🔴 18.08 bulgusu: burası GERÇEK varsayılanı (1.0, 06.08 ölçümü) değil
+        # eski 10.0'a geri yüklüyordu — modül seviyesi `_PARKUR_PROFILES` dict'i
+        # mutable olduğu için bu, aynı pytest oturumunda SONRA çalışan başka
+        # dosyaları (ör. test_planning_config_drift.py) kirletiyordu (izole
+        # çalıştırılınca yeşil, tam takımla kırmızı — test sırasına bağlı arıza).
         _PARKUR_PROFILES["PARKUR2"] = replace(
-            _PARKUR_PROFILES["PARKUR2"], lambda_=10.0
+            _PARKUR_PROFILES["PARKUR2"], lambda_=1.0
         )
 
 

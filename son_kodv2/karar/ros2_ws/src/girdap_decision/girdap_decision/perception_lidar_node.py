@@ -60,6 +60,8 @@ class PerceptionLidarNode(Node):
         self.declare_parameter("min_cluster_size", 5)
         self.declare_parameter("max_cluster_size", 500)
         self.declare_parameter("split_cell_m", 1.0)  # F5.4: büyük küme bölme
+        # F-P.30: yayılıma göre bölme (m). 0 = kapalı, eski davranış birebir.
+        self.declare_parameter("split_max_yaricap_m", 0.0)
         self.declare_parameter("max_range", 25.0)
         self.declare_parameter("voxel_size", 0.1)   # F5.3; 0 = kapalı
         self.declare_parameter("log_period_s", 5.0)
@@ -103,6 +105,7 @@ class PerceptionLidarNode(Node):
             min_cluster_size=int(p("min_cluster_size").value),
             max_cluster_size=int(p("max_cluster_size").value),
             split_cell_m=float(p("split_cell_m").value),
+            split_max_yaricap_m=float(p("split_max_yaricap_m").value),
             max_range=float(p("max_range").value),
             voxel_size=float(p("voxel_size").value),
             mount_x=float(p("mount_x").value),

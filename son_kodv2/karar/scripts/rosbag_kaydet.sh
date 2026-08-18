@@ -203,6 +203,14 @@ EK_TAM=(
     /girdap/planning/gate
     /girdap/planning/gate_count
     /girdap/planning/edge_buoys
+    # 🔴 17.08 EKLENDİ — MPPI'nin GERÇEK REFERANSI. Bu satır olmadığı için
+    # 17.08 göl bandı (`session_20260817_193312`) çözümlenemedi: nöbetçi
+    # **43 kez** `RRT-RED global plan uretilemedi` bastı ve pivot kapısı
+    # geri komutların %91'inde kapalıydı — ama kapının okuduğu referansın
+    # o anda ne olduğu **hiçbir yerde kayıtlı değildi**, yani "plan boştu"
+    # hipotezi ne doğrulanabildi ne çürütülebildi. Bandın tamamı 340 MB;
+    # bu konu 10 Hz'te birkaç yüz nokta, maliyeti ihmal edilebilir.
+    /girdap/planning/global_path
     /girdap/mission/state
     /girdap/mission/current_target
     /girdap/mission/waypoints

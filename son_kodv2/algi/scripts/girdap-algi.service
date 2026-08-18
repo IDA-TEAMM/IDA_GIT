@@ -9,14 +9,14 @@
 [Unit]
 Description=GIRDAP IDA algi node (OAK-D Lite YOLO + gecit)
 After=network.target
-# Emniyet kemeri: tek OAK var, iki surec acamaz. systemd'de Conflicts= CIFT
-# YONLUDUR (man systemd.unit: "starting the former will stop the latter and
-# vice versa"), yani veriseti unit'indeki satir teknik olarak yeter — ama o
-# ancak IKI unit de KURULUYSA isler. Burada da acikca yaziyoruz ki bu dosya
-# tek basina okundugunda kisit gorunur olsun.
-# 🔴 YARISMA GUNU: `sudo systemctl disable --now girdap-veriseti` (md 4.1).
-#   Ikisi de enabled kalirsa boot'ta yaris olur, hangisinin kazandigi belirsiz.
-Conflicts=girdap-veriseti.service
+# 🗑️ 2026-08-16: `Conflicts=girdap-veriseti.service` KALDIRILDI — veri seti
+#   toplayicisi repodan silindi (Eyup karari), yani cakisacak ikinci bir OAK
+#   tuketicisi artik YOK. Askida kalan bir Conflicts= satiri, olmayan bir
+#   unit'e isaret ederek "koruma var" izlenimi verirdi.
+# 🔴 KALINTI UYARISI: eski kurulumlardan `girdap-veriseti.service` HALA kurulu
+#   olabilir. Kuruluysa ve enabled ise boot'ta tek OAK'i kapar, ALGI ACILAMAZ.
+#   Denetim: `systemctl list-unit-files | grep veriseti` -> BOS donmeli.
+#   Temizlik: `sudo rm /etc/systemd/system/girdap-veriseti.service && sudo systemctl daemon-reload`
 
 [Service]
 Type=simple

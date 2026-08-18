@@ -90,6 +90,14 @@ class Observation:
     kill_switch_active: bool = False
 
     dist_to_last_wp_p1: float = math.inf
+    #: 🔴 P3 EMNİYET KAPISI (16.08) — hedef rengi YÜKLÜ mü?
+    #: False iken FSM PARKUR3'e HİÇ geçmez ve davranış bugünküyle bit birebir
+    #: aynı kalır. Kaynağı: `kamikaze_param_node` → latched
+    #: `/girdap/mission/hedef_rengi` → `fsm_node._on_hedef_rengi`.
+    #: Varsayılan False bilinçli: renk gelmemişse/İHA başarısızsa saldırmamak,
+    #: rastgele saldırmaktan puanlı olarak daha iyi (md s.25: 1 yanlış temas
+    #: 100→50, 2 yanlış 100→5).
+    p3_bekleniyor: bool = False
     p2_waypoints_done: bool = False
     last_gate_passed_p2: bool = False
     shock_detected_p3: bool = False
@@ -283,7 +291,21 @@ class MissionFSM:
         #     yanlış POZİTİF 145 puanı götürüyordu; artık götüremez.
         # `last_gate_passed_p2` KANIT olarak duruyor (telemetri/geçiş gerekçesi),
         # geçişi TEK BAŞINA yaptırmaz.
-        if s is MissionState.PARKUR2 and obs.p2_waypoints_done:
+        # 🔴 16.08 EKLENEN İKİNCİ ŞART — `p3_bekleniyor` (hedef rengi YÜKLÜ).
+        # Tetiğin ZAMANLAMASI 14.08'deki gibi (waypoint ilerlemesi) kalıyor;
+        # eklenen şey **emniyet kapısı**: renk yoksa P3 hiç açılmaz.
+        # Gerekçe iki katlı:
+        #   · Şartname s.25 — yanlış hedefe temas 100 → **50**, iki yanlış
+        #     100 → **5**. İHA rengi bulamadıysa saldırmamak, rastgele
+        #     saldırmaktan puanlı olarak DAHA İYİ. Renk yokken tekne son
+        #     waypoint'te temiz durur ve P1+P2 puanı korunur.
+        #   · Eyüp kararı (16.08): *"Parkur 3'ü şimdilik aktif etme, testte
+        #     bozar; P1 ve P2'yi ölçüyoruz."* — `kamikaze_target_color`
+        #     varsayılanı "" olduğu için bu kapı P3'ü KAPALI tutuyor.
+        # `p3_bekleniyor` kaynağı: `kamikaze_param_node` → latched
+        # `/girdap/mission/hedef_rengi` → `fsm_node._on_hedef_rengi`.
+        if (s is MissionState.PARKUR2 and obs.p2_waypoints_done
+                and obs.p3_bekleniyor):
             gerekce = (
                 "Parkur-2 son waypoint'i (kapı geçişi de doğrulandı)"
                 if obs.last_gate_passed_p2

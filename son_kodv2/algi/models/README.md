@@ -1,5 +1,67 @@
 # Modeller
 
+> ## 🔴🔴 2026-08-17 — BLOB YENİDEN DERLENDİ (`6df2d644…` → `c4d69ec7…`)
+> **Model değişmedi** (aynı `.pt`, aynı ONNX, aynı epoch 135) — **derleme**
+> düzeltildi. 16.08 blob'u `optimizer_params` olarak **yalnız
+> `--reverse_input_channels`** ile derlenmiş; **`--scale_values=[255,255,255]`
+> ve `--mean_values=[0,0,0]` düşmüştü** ⇒ ağa 0..1 yerine **0..255** giriyordu.
+>
+> **Ölçüldü** (ep135 `.pt`, 120 valid karesi): doğru girişte 226 tespit /
+> 88 karede; 0..255'te **36.000 tespit / 120 karede** (= `max_det` doyumu),
+> medyan güven 0,906. Yani belirti *kaçırma* değil, **her karede yüzlerce
+> uydurma kutu** ⇒ `/perception/buoys` çöp ⇒ **P1+P2 = 0**.
+>
+> **Nasıl bulundu:** `blobconverter` cache hash'i (`params + config + ONNX`)
+> yeniden üretildi — yöntem 4 eski blob'da doğrulandı, hepsi beklenen
+> parametreleri verdi. İkinci kanıt: doğru parametrelerle yeniden derleme
+> **5.697.816 B** = ep87 blob'uyla **birebir aynı boyut** (bozuk olan 14.976 B eksik).
+>
+> 🔴 **`setColorOrder(RGB)` saha kurtarmasını UYGULAMA** — takas zaten blob'un
+> içinde; çift çevirme recall'ü **%43**'e düşürür.
+> Ayrıntı: `OKU_ONCE_BLOB_SUPHESI.md` · tam kayıt: **`PROVENANS.json`**.
+> Yeni kapı: `3_kabul_testi.py` **KONTROL 0** — blob sha256'sı `PROVENANS.json`
+> ile tutmuyorsa test **DÜŞER** (kaynağı belirsiz blob sahaya çıkamaz).
+
+> ## 🔴 2026-08-16 — MODEL YENİLENDİ (`6df2d644…`)
+> Önceki blob (`31fb0348…`, 11.08 ep87) **değiştirildi**. Gerekçe ÖLÇÜLDÜ —
+> `veri_NIHAI/valid`, 241 kare / 838 nesne, kendi metriğimizle:
+>
+> | | eski (teknedeki) | **yeni** |
+> |---|---|---|
+> | kenar recall | %33,5 | **%81,0** |
+> | engel recall | %35,7 | **%76,6** |
+> | uzak recall | %31,6 | **%78,7** |
+> | yanlış pozitif | 521 | **184** |
+>
+> Yani sahadaki model dubaların **üçte ikisini kaçırıyordu**.
+>
+> **TEKNOFEST videosunda (OOD, modelin hiç görmediği dünya)** gözle
+> doğrulandı: eski model **insan eline** 0,82 güvenle "duba" diyor ve suda
+> olmayan bir sahnede 2 uydurma üretiyor; yeni model aynı karede **0 tespit**.
+> Gerçek dubalarda ikisi eşit (0,83↔0,83 · 0,88↔0,88) — fark tamamen
+> **uydurmalarda**.
+>
+> Kaynak: `girdap_NIHAI_0816_1543/weights/best.pt` (epoch **135**,
+> mAP50 0,810 · mAP50-95 0,4428). Eğitim epoch 165'te laptop uykusu CUDA
+> bağlamını kırdığı için durdu; sabır 50'de 30 kullanılmıştı ve son 30 epoch
+> düşüş eğilimindeydi ⇒ **kayıp yok**.
+>
+> Export: `luxonis/tools` → ONNX → `blobconverter` FP16, **shaves=4**,
+> **`--reverse_input_channels`** (pazarlıksız).
+> `config.json` yapısı önceki sürümle **birebir aynı** (giriş 512×512,
+> ön işleme mean 0 / scale 255, çıkış `output{1,2,3}_yolov6r2` 7 kanal).
+>
+> ### 🔴 KONTROL 3 HÂLÂ YAPILMADI — cihazda yapılacak
+> Kanal sırası ters giderse recall **%96,8 → %43** ve **hiçbir hata basılmaz**.
+> Cihazda: passthrough'dan kare al → aynı kareyi PC'de `.pt` ile koştur →
+> **tespit sayısı yarı yarıya düşüyorsa kanal sırası TERS**.
+> (PC'de ONNX üzerinden doğrulamaya çalışıldı, çıktı düzeni yolov6r2 başlığı
+> olduğu için **sonuçsuz kaldı** — cihaz testinin yerini tutmaz.)
+>
+> ⚠ Dağıtımda birlikte gitmeli: `NN_GIRIS=512` + `FPS=8` (512@9 güneşte
+> ~90 °C, uyarı eşiği 85).
+
+
 > ## ✅ 2026-08-10 — YARIŞMA MODELİ BURADA, REPODA
 > `yolo11n_duba_rvc2.blob` + `config.json` **git'e dâhil edildi** (`.gitignore`'da
 > istisna). Gerekçe: yarışma alanında **internet YOK** (md 4.1) ve `blobconverter`
@@ -10,6 +72,32 @@
 > (`MODEL_BLOB` oraya bakıyor, `config.json` blob'un **yanında** olmalı).
 
 ## Bu blob nereden geldi (provenance)
+
+🔴 **Makine-okunur ve DENETLENEN kayıt: `PROVENANS.json`** (17.08'den beri).
+Aşağıdaki blok insan içindir; **çelişirlerse `PROVENANS.json` geçerlidir** —
+kabul testi onu okur.
+
+```
+DAGITIMDAKI (17.08.2026)
+kaynak .pt : girdap_NIHAI_0816_1543/weights/best.pt  (epoch 135)
+             sha256 9fc271798a5fdb88645de8244bb6e10040aafe0305ecbb25c27ff825d9877cf2
+             (best ↔ last e165 KENDI metrigimizle olculdu: recall/sinif hatasi
+              BIREBIR ayni, yanlis pozitif 184 ↔ 192 ⇒ best secildi)
+ONNX       : girdap_NIHAI_512.onnx
+             sha256 2e74123d8bf851327abc67070a3dca15915ffc8630d2ad0f7be81eff3f9c6775
+export     : tools --imgsz 512 --use-rvc2 -> ONNX
+             blobconverter FP16 · shaves=4 · OpenVINO 2022.1
+             optimizer_params: --scale_values=[255,255,255]   <-- 🔴 UCU DE
+                               --mean_values=[0,0,0]              ZORUNLU
+                               --reverse_input_channels
+sha256 blob  : c4d69ec75132854a51d7388ab3f922bd3e415cd0446ed16b3706c75c984fceb2
+boyut        : 5.697.816 B  (ep87 blob'uyla ayni — olcek katmani yerinde)
+sha256 config: 06b5477b27c1e3fe83dfd7f8f33f412445445c74a15e51a237479169628ba3b8
+GERI CEKILEN : 6df2d644a0de42a22d50d5b3ae9179ebb9531b8282920cf0b7a8d5ad66874abc
+               (ayni model, OLCEK BAYRAGI EKSIK derlenmis — kullanma)
+```
+
+<details><summary>ESKİ (ep87, 11.08 — kayıt için)</summary>
 
 ```
 kaynak .pt : girdap_MODEL_512/girdap_512_ep87.pt
@@ -29,6 +117,7 @@ sha256 config: e16c31458dcf1874dac1ae45a40b2bf294c8a854e07b936fe83214b75d658927
 onceki (416) : 5726819a101eb4f62dd8ad65cdd302f980b349c0fa448190264d412031871b9c
                (git gecmisinde duruyor — geri donus icin `git revert`)
 ```
+</details>
 
 ### 🔴 `--reverse_input_channels` NEDEN ZORUNLU
 Ultralytics modeli **RGB** bekler (`augment.py Format._format_img -> img[::-1]`),

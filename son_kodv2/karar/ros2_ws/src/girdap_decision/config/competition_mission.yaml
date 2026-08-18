@@ -23,7 +23,29 @@ waypoints:
   - {lat: 0.0, lon: 0.0, parkur: 2, name: "P2_WP1"}
   - {lat: 0.0, lon: 0.0, parkur: 2, name: "P2_WP2"}
   # --- Parkur-3: Kamikaze (hedef duba) ---
-  - {lat: 0.0, lon: 0.0, parkur: 3, name: "P3_target"}
+  # 🔴🔴 BU NOKTAYI HEDEFİN **ÖTESİNE** KOY — 17.08.2026'da bulunan tuzak.
+  #
+  # NEDEN: `mission_manager` bu waypoint'e `arrival_radius_m` (2,0 m) kadar
+  # yaklaşınca "varıldı" sayar → tüm waypoint'ler biter → `mission_complete`
+  # (LATCH) → `MissionFSM` bunu parkur kurallarından ÖNCE değerlendirir →
+  # **TAMAMLANDI** → `compute_control` None → **thrust SIFIR**.
+  # Nokta hedefin ÜSTÜNE konursa tekne hedefin **~2 m ÖNÜNDE DURUR**; P3
+  # tamamlama şartı **fiziksel temas** olduğu için angajman sayılmaz ve
+  # **145 puan** (toplamın %48'i) gider — hiçbir hata basılmadan.
+  #
+  # ⚠️ ŞOKA GÜVENİLEMEZ: görev sonu bilerek waypoint'e bağlı, IMU şokuna değil.
+  # Ölçülen temas hızları 0,134-0,604 m/s; `shock_threshold_g = 3,0` bu hızlarda
+  # ATEŞLENMEZ (`prototype/planning/pipeline.py` §λ notu). Şok kanalı yalnız
+  # sert-çarpışma dedektörü. Bu yüzden terminali P3'te kapatmak ÇÖZÜM DEĞİL —
+  # aracın çalışan tek durma yolu kalkar.
+  #
+  # NASIL: hedef dubanın konumunu al, YAKLAŞMA YÖNÜNDE **3-4 m ÖTESİNE** bir
+  # nokta koy. Böylece tekne "varış" yarıçapına ancak hedefin konumunu GEÇEREK
+  # girer ⇒ önce TEMAS olur, sonra görev tamamlanır ve araç temiz durur.
+  #   d ≥ arrival_radius_m (2,0) + temas payı  ⇒ pratikte 3-4 m
+  # ⚠️ MPPI zaten ALGILANAN hedefe nişan alır (`_parkur3_nisani`); bu waypoint
+  # görev sonu saati ve algı susarsa yedek hedef olarak durur.
+  - {lat: 0.0, lon: 0.0, parkur: 3, name: "P3_hedef_OTESI"}
 
 arrival_radius_m: 2.0          # bu yarıçapa girince waypoint'e "varıldı"
 dwell_time_s: 2.0              # her waypoint'te bekleme

@@ -1,0 +1,102 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# GIRDAP IDA — AYAR DEFTERI (salt okur — "su ayardayken ne yapti")
+#
+# NE: Her acilista `ayar_defteri.py` kosar. TAMAMEN PASIF:
+#     kaptan zaten surerken izler, hicbir komut vermez.
+#     YAZDIGI  : ATC_ACCEL_MAX · ATC_DECEL_MAX (dogrudan olculen fiziksel sinir)
+#     RAPORLADIGI: MOT_THST_EXPO (turetmesi guvenilir degil — YAZMAZ)
+#
+# 🔑 EGRI YALNIZ **MANUAL** KESITLERDEN CIKAR: GUIDED'da gaz kapali cevrimde,
+#    oradan acik cevrim plant egrisi CIKARILAMAZ. Olcum bunu dogruladi:
+#    GUIDED'da iki oturum 0,46 ↔ 0,92 CELISTI; MANUAL'de 0,41 ↔ 0,40 UYUSTU.
+#    Yani kaptanin MANUAL surusu bu aracin VERI KAYNAGIDIR — bosa gitmez.
+#
+# NEDEN SERVIS (Eyup karari, 17.08.2026): sahada SSH YOK (md 4.1 WiFi/BT
+#     kapali) ⇒ betigi elle baslatmak fiilen imkansiz. Autostart tek yol.
+#     Ayni gerekce girdap-algi'yi de servis yapan gerekce.
+#
+# ✅ YARISMA GUNU ACIK KALABILIR — bu birim SALT OKURDUR.
+#     Hicbir parametre yazmaz, hicbir konuya yayin yapmaz, hicbir servisi
+#     tetiklemez. Araci hareket ettirmesi IMKANSIZ. (Ayar araclarindan farki
+#     bu; onlar FC'ye YAZAR ve yarisma gunu KAPATILMALIDIR.)
+#     Kapatmak istenirse: sudo systemctl disable --now girdap-ayar-defteri
+#
+
+# GERI ALINIRSA NE KIRILIR: hicbir sey. Ayar elle kosturulabilir:
+#     ROS_DOMAIN_ID=42 ROS_LOCALHOST_ONLY=1 \
+#       python3 ~/IDA_GIT/son_kodv2/karar/scripts/ayar_defteri.py
+#
+# GUVENLIK (betigin kendi sozlesmesi — ayrintisi betigin basliginda):
+#   · TEKNEYI HAREKET ETTIRMEZ. Hicbir hiz/yon komutu yayinlamaz.
+#   · PASIF UYARIM: gorevin ZATEN verdigi donus komutlarini izler.
+#   · Yalniz ATC_STR_RAT_FF/_P/_I yazar. FF sert siniri [0.10 … 1.00].
+#   · Ozgun degerler once DOSYAYA yazilir: ~/girdap_logs/ff_ayar/ozgun_*.json
+#   · Disarm / acil durdurma (RC10 HIGH) / baglanti kopmasi / veri kesilmesi
+#     ⇒ ozgun degerler ANINDA geri yuklenir.
+#   · Olcum YALNIZ GUIDED'da isler; baska modda DURAKLAR (iptal etmez —
+#     16.08 gol oturumunda 12:06-12:19 arasi ALTI kez GUIDED↔AUTO gecisi
+#     olculdu; her geciste iptal etmek araci kullanilamaz kilardi).
+#
+# KURULUM:
+#   sudo cp girdap-ayar-defteri.service /etc/systemd/system/
+#   sudo sed -i "s|__USER__|$USER|g; s|__WS__|$HOME/ros2_ws|g; \
+#                s|__KARAR__|$HOME/IDA_GIT/son_kodv2/karar|g" \
+#       /etc/systemd/system/girdap-ayar-defteri.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now girdap-ayar-defteri
+#   journalctl -fu girdap-ayar-defteri        # canli izle
+# ═══════════════════════════════════════════════════════════════════════════
+
+[Unit]
+Description=GIRDAP IDA ayar defteri (salt okur)
+After=network.target
+# Karar yigini MAVROS'u acar; o olmadan ne parametre okunur ne veri akar.
+After=girdap-karar.service
+Wants=girdap-karar.service
+# Saat: gunluk dosyasi zaman damgali; bayat saatte dosyalar yanlis siralanir.
+After=girdap-saat.service
+# StartLimit* [Unit] bolumune AITTIR — [Service]'te yazilirsa systemd
+# "Unknown key name" deyip SESSIZCE YOK SAYAR (17.08'de olculdu).
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+[Service]
+Type=simple
+User=__USER__
+
+# 🔴 ROS_LOCALHOST_ONLY — ATLANMASI OLUMCUL (17.08.2026'da cihazda yasandi):
+#   Servisler bu degiskenle kosuyor (girdap-yarisma-localhost.conf). Farkli
+#   degerdeki bir surec AYRI kesif dunyasinda kalir: `ros2 topic list` 44
+#   mavros konusunu GOSTERIR, `topic info` yayinciyi GOSTERIR, ama HICBIR VERI
+#   AKMAZ ve hicbir servis bulunamaz. Belirti tam olarak "MAVROS bagli degil"
+#   gibi gorunur — DEGILDIR. Buradaki iki satir onun icin acikca yaziliyor.
+Environment=ROS_DOMAIN_ID=42
+Environment=ROS_LOCALHOST_ONLY=1
+Environment=PYTHONPATH=__KARAR__
+
+# WorkingDirectory: systemd verilmezse cwd'yi `/` yapar. Betik gunlugunu
+# mutlak yola yaziyor ama bu satir yine de aciktan duruyor — ayni tuzak
+# girdap-algi'da bir kez boot'ta dugumu hic actirmamisti.
+WorkingDirectory=/home/__USER__
+
+# MAVROS'un ayaga kalkip parametre servisini acmasi icin pay. Betik zaten
+# 20 sn servis bekliyor, bu ek pay boot yarisini rahatlatir.
+ExecStartPre=/bin/sleep 25
+
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source __WS__/install/setup.bash && exec python3 __KARAR__/scripts/ayar_defteri.py'
+
+# Restart=always: defter SALT OKUR ve surekli kosmali; cokerse geri gelsin.
+# 🔑 Betik zaten kendi icinde "yarida kalirsa geri yukle + yeniden bekle"
+#    yapiyor; systemd restart'i yalnizca gercek cokme icin.
+Restart=always
+RestartSec=15
+
+# SIGINT: betik KeyboardInterrupt yakalayip OZGUN DEGERLERI GERI YUKLUYOR.
+# Duz SIGTERM'de Python varsayilani sureci aninda oldurur ve geri yukleme
+# CALISMAZ ⇒ FC yarim ayarla kalir. (Ayni ders girdap-algi'da SIGTERM/moov
+# vakasinda olculmustu.)
+KillSignal=SIGINT
+TimeoutStopSec=30
+SendSIGKILL=yes
+
+[Install]
+WantedBy=multi-user.target

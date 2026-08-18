@@ -107,6 +107,11 @@ class PerceptionFusionNode(Node):
         # Kamera yaw'i (rad). hardware.yaml tf.oak_frame.yaw'dan launch besler.
         # 0.0 = eski davranis. Olculdu 2026-08-11: +0.0415 (docs/olcum_formu §3b).
         self.declare_parameter("camera_yaw_rad", 0.0)
+        # 🔴 Kaptan kararı 18.08: "bilinmeyen engelleri füzyona sokma".
+        #    `false` → eşleşmeyen LiDAR kümesi çıkışa girmez. EMNİYET
+        #    BEDELİ `FusionConfig.bilinmeyen_engelleri_tut` docstring'inde;
+        #    varsayılan bilerek `true` (eski davranış) bırakıldı.
+        self.declare_parameter("bilinmeyen_engelleri_tut", True)
         self.declare_parameter("camera_hfov_rad", 1.2)
         # 2026-07-17: oakd_driver_node 1280x720'e çıkarıldı (config-drift
         # riski — bu node'un kod varsayılanı params.yaml/hardware.yaml'daki
@@ -127,6 +132,8 @@ class PerceptionFusionNode(Node):
         self._cfg = FusionConfig(
             bearing_tolerance_rad=float(p("bearing_tolerance_rad").value),
             camera_yaw_rad=float(p("camera_yaw_rad").value),
+            bilinmeyen_engelleri_tut=bool(
+                p("bilinmeyen_engelleri_tut").value),
             camera_hfov_rad=float(p("camera_hfov_rad").value),
         )
         self._image_w = int(p("camera_image_width_px").value)

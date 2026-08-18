@@ -2,8 +2,8 @@
     "config_version": "1.0",
     "model": {
         "metadata": {
-            "name": "girdap_512",
-            "path": "girdap_512.onnx",
+            "name": "girdap_NIHAI_512",
+            "path": "girdap_NIHAI_512.onnx",
             "precision": "float32"
         },
         "inputs": [

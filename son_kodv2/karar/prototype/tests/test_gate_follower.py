@@ -22,6 +22,7 @@ from prototype.mission.gate_follower import (
     GateDiagnostics,
     GateFollower,
     GateFollowerConfig,
+    _arada_duba_cezasi,
     select_gate,
 )
 
@@ -1009,6 +1010,61 @@ def test_FK3_COK_KONUMLU_tarama_HEPSINDE_gercek() -> None:
     assert gercek / denenen > 0.9, "sahte kapı ayıklama ölçülen seviyenin altında"
 
 
+def _arac_8_dubalar():
+    """§0.17b zigzag parkurunda (0.0, 8.0) — KAPALI iken 17,46 m'lik sahte
+    kapıya kilitlenen, ölçülerek bulunmuş somut bir konum (bkz. bu testin
+    yazıldığı 18.08 A/B taraması)."""
+    _, dubalar = _gercek_parkur()
+    return (0.0, 8.0), (0.0, 16.0), dubalar
+
+
+def test_arada_duba_cezasi_SUREKLI_ve_segment_mesafesine_dayanir() -> None:
+    """🔬 18.08.2026 — `_arada_duba_cezasi` saf geometri: İKİLİ DEĞİL, sürekli.
+
+    Aday çift dünya konumunda (0,0)-(10,0). Üçüncü duba segmentin TAM
+    ÜZERİNDEYSE ceza ≈ eşik (büyük); segmentten uzaksa 0; ara mesafede
+    ARADA DEĞER — bu süreklilik, `ONAY_TICK` ile çakışan ikili
+    titreşimi önlemek için var (bkz. fonksiyon docstring'i)."""
+    a, b = (0.0, 0.0), (10.0, 0.0)
+    tam_ustunde = _arada_duba_cezasi(a, b, [(5.0, 0.0)], esik=3.0)
+    yakin = _arada_duba_cezasi(a, b, [(5.0, 1.0)], esik=3.0)
+    uzak = _arada_duba_cezasi(a, b, [(5.0, 5.0)], esik=3.0)
+    ucun_yakininda = _arada_duba_cezasi(a, b, [(0.5, 0.0)], esik=3.0)
+    assert tam_ustunde == pytest.approx(3.0), "segment üzerindeki duba tavan cezayı almalı"
+    assert 0.0 < yakin < tam_ustunde, "ara mesafede ceza ARA bir değer olmalı (süreklilik)"
+    assert uzak == 0.0, "segmentten çok uzak (5 m) bir duba ceza almamalı"
+    # Uçlara (dubaların KENDİSİNE) yakın üçüncü nokta sayılmamalı (t sınırı).
+    assert ucun_yakininda == 0.0, "adayın kendi ucuna yakın nokta yanlışlıkla cezalandı"
+
+
+def test_ARADA_DUBA_KONTROLU_diagnostik_sayaci_gercek_parkurda_artar() -> None:
+    """§0.17b zigzag parkurunda (0.0, 8.0) konumu — kapalı döngü A/B'nin
+    kendisinde kullanılan somut konum: en az bir çift, arada gerçek bir duba
+    olduğu için reddedilmeli (mekanizmanın gerçekten tetiklendiğinin kanıtı;
+    hangi kapının KAZANDIĞI ayrı bir soru — bkz. kapi_orani.py A/B)."""
+    diag = GateDiagnostics()
+    arac, gn, dubalar = _arac_8_dubalar()
+    select_gate(arac, gn, dubalar, cfg=GateFollowerConfig(), diag=diag,
+               arada_duba_kontrolu=True)
+    assert diag.reddedilen_arada_duba >= 1
+
+
+def test_ARADA_DUBA_KONTROLU_KAPALIYKEN_davranis_degismez() -> None:
+    """Varsayılan (False) = geri uyumlu, davranış birebir korunur.
+
+    🔬 18.08.2026 tarihçesi (bkz. `_arada_duba_cezasi` docstring'i): SABİT
+    (yasak) bir `esik` ile kapalı döngüde büyük görünen bir kazanç (%79,2→
+    %97,9) ölçüldü, ama bu SAHTE çıktı — parkurun ölçeğine rastlayan bir
+    sayıydı. Kurallı öz-ölçekli hâliyle (`esik=0.5×sep`) kazanç YOK, taban
+    ile aynı. Ayrıca sabit-eşikli sürüm bile `test_koridordaki_ucuncu_duba_
+    nisani_iter`'ı kırıyordu: kapı açıklığının içine sarkan bir KENAR
+    dubası, "başka bir kapıya ait" ile "bu kapının içinde nişanı iten bir
+    şey" arasında ayırt edilemiyor. Varsayılan bu yüzden False kalıyor."""
+    arac, gn, dubalar = _arac_8_dubalar()
+    g = select_gate(arac, gn, dubalar, cfg=GateFollowerConfig())
+    assert g is not None and abs(g.width - 12.0) > 1.0
+
+
 def test_FK3_kurs_ekseni_GECILEN_KAPIDAN_ogrenilir() -> None:
     """Eksen kendini besler: ilk kapı geçilince eksen hazır olur.
 
@@ -1024,3 +1080,62 @@ def test_FK3_kurs_ekseni_GECILEN_KAPIDAN_ogrenilir() -> None:
     takip.update((0.0, 8.0), (0.0, 20.0), dubalar, [], gozlem_no=99)  # düzlem geçildi
     assert takip._kurs_ekseni is not None, "kurs ekseni öğrenilmedi"
     assert takip._kurs_ekseni[1] > 0.9, "eksen kurs yönünde değil"
+
+
+def test_FK5_BAYAT_KILIT_BIRAKILIR_ve_GECILMIS_SAYILMAZ() -> None:
+    """F-K.5 (16.08 göl testi, §1.22): görülmeyen kilit sonsuza kadar tutulmaz.
+
+    🔴 **Ölçülen arıza.** Oklüzyon koruması kilidi taze algı olmadan da
+    tutuyordu ve bırakma YALNIZ düzlem geçilince oluyordu. Sahada 12:02'de
+    10,8 m'lik bir hayalet kapıya kilitlenildi; kapı bir daha hiç görülmedi,
+    hiç geçilmedi ve kilit koşumun sonuna kadar üstünde kaldı — o süre boyunca
+    GERÇEK hiçbir kapı seçilemedi (günlükte geçilen kapı: 0).
+
+    📏 **Düzeltmenin ölçüsü ayarlanabilir bir SÜRE değil, geometri:** kapı
+    kilitlendiği anda `d0` uzaktaydı; manevrayla birlikte ~2·d0 yol yeter.
+    Bu yol katedildiği hâlde kapı ne tazelendi ne geçildiyse orada değildir.
+
+    ✅ **Aynı bantta A/B (14 363 algı karesi, 16.08 kaydı):**
+        eski hâl → GEÇİLEN 2, kilit genişliği medyan 3,4 m
+        F-K.5    → GEÇİLEN 7, kilit genişliği medyan 2,3 m
+    ⚠ Bırakma "geçildi" SAYILMAZ: `gecilen_kapilar` büyümemeli, yoksa
+    hayalet kapı md 5.5.2.4 kanıtını şişirirdi.
+    """
+    takip = GateFollower()
+    dubalar = [(-1.5, 10.0), (1.5, 10.0)]
+    for i in range(ONAY_TICK + 1):
+        takip.update((0.0, 0.0), (0.0, 20.0), dubalar, [], gozlem_no=i)
+    assert takip.committed_gate is not None, "kapı kilitlenmedi (ön koşul)"
+    onceki_gecis = len(takip.gecilen_kapilar)
+
+    # Kapı bir daha GÖRÜLMÜYOR (algı sustu) ve araç kapıya gitmiyor: yana
+    # doğru 2·d0'dan fazla yol alıyor. d0 = 10 m ⇒ 25 m yeter.
+    komsu = None
+    for adim in range(1, 26):
+        sonuc = takip.update((float(adim), 0.0), (0.0, 20.0), [], [], gozlem_no=100 + adim)
+        if sonuc.gate is None:
+            komsu = adim
+            break
+    assert komsu is not None, "bayat kilit hiç bırakılmadı (F-K.5 çalışmıyor)"
+    assert takip.committed_gate is None
+    assert len(takip.gecilen_kapilar) == onceki_gecis, (
+        "bayat kilit GEÇİLMİŞ sayıldı — md 5.5.2.4 kanıtı şişer"
+    )
+
+
+def test_FK5_kapiya_GIDERKEN_kilit_birakilmaz() -> None:
+    """F-K.5 yanlış alarm vermemeli: kapıya doğru ilerlerken kilit korunur.
+
+    Bayatlık sayacı taze görüşte SIFIRLANIR; kapı görünmese bile araç ona
+    doğru gittiği sürece 2·d0 yolu dolmaz. Yoksa düzeltme, oklüzyon korumasını
+    (H1/§0.21: direkler kapı ağzında kadrajdan çıkar) geri kırardı.
+    """
+    takip = GateFollower()
+    dubalar = [(-1.5, 10.0), (1.5, 10.0)]
+    for i in range(ONAY_TICK + 1):
+        takip.update((0.0, 0.0), (0.0, 20.0), dubalar, [], gozlem_no=i)
+    assert takip.committed_gate is not None
+    # Kapıya doğru 9 m ilerle, kapı görünmüyor (oklüzyon) — kilit DURMALI.
+    for adim in range(1, 10):
+        sonuc = takip.update((0.0, float(adim)), (0.0, 20.0), [], [], gozlem_no=200 + adim)
+        assert sonuc.gate is not None, f"{adim} m'de kilit haksız yere bırakıldı"

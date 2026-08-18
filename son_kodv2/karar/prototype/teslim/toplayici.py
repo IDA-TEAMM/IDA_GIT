@@ -152,6 +152,9 @@ class Bulgu:
 
     tanim: KalemTanimi
     dosyalar: List[Path] = field(default_factory=list)
+    #: Tek-dosya kaleminde EN YENİ seçilince dışarıda kalanlar (yalnız rapor
+    #: için; USB'ye kopyalanmazlar). Boş liste = eleme yapılmadı.
+    elenen: List[Path] = field(default_factory=list)
 
     @property
     def bulundu(self) -> bool:
@@ -286,6 +289,63 @@ def _en_yeni_oturum(kok: Path) -> Optional[Path]:
     return adaylar[-1] if adaylar else kok
 
 
+def mp4_oynatilabilir_mi(yol: Path) -> bool:
+    """mp4 dosyasında `moov` kutusu var mı? (bağımlılıksız üst düzey tarama)
+
+    🔴 NEDEN — 17.08.2026'da ÖLÇÜLDÜ, sistematik: kamera kaydedicisi
+    segmentler yazıyor ve süreç temiz kapanmadan ölürse **son segmentin `moov`
+    atomu yazılmaz** ⇒ o dosya HİÇBİR oynatıcıda açılmaz. Bu makinedeki
+    kayıtlarda **37 oturumun 28'inde (%76) son segment bozuk** çıktı.
+    Yarışmada son segment koşunun SONUNU taşır (son kapılar, P3 teması) ve
+    md 4.2'ye göre teslim edilmeyen her dosya **5 ceza puanı**.
+
+    `dosya1_birlestir.py` bozuk segmenti zaten doğrulayıp atlıyor — **ama o
+    betik teslim yolunda ÇAĞRILMIYOR** (17.08'de doğrulandı): `teslim_topla.py`
+    ham segmentleri kopyalıyor, bozuk olan da USB'ye gidiyor. Bu yüzden
+    doğrulama teslim tarafına da kondu.
+
+    ⚠️ Bu fonksiyon **kopyalamayı ENGELLEMEZ** — bozuk dosya yine USB'ye gider
+    (silmek/atlamak bilgi kaybıdır, üstelik hakem isterse ham veriyi görmeli).
+    Yaptığı tek şey **rapora yazmak**: modülün kendi felsefesi (*"en değerli
+    özellik kopyalama değil, EKSİK RAPORU"*) burada da geçerli — operatör
+    USB'yi teslim etmeden ÖNCE görsün.
+
+    Yöntem: cv2/ffprobe yok (bağımlılık + hız). mp4 üst düzey kutu zinciri
+    yürünür (`[4 bayt boyut][4 bayt tip]`), `moov` tipi aranır. Bozuk/kesik
+    dosyada zincir erken biter ve `moov` hiç görünmez.
+    """
+    try:
+        boyut = yol.stat().st_size
+        if boyut < 16:
+            return False
+        with open(yol, "rb") as f:
+            konum = 0
+            for _ in range(64):              # üst düzeyde 64 kutu fazlasıyla yeter
+                f.seek(konum)
+                bas = f.read(8)
+                if len(bas) < 8:
+                    return False
+                kutu = int.from_bytes(bas[:4], "big")
+                tip = bas[4:8]
+                if tip == b"moov":
+                    return True
+                if kutu == 1:                # 64-bit genişletilmiş boyut
+                    genis = f.read(8)
+                    if len(genis) < 8:
+                        return False
+                    kutu = int.from_bytes(genis, "big")
+                elif kutu == 0:              # "dosya sonuna kadar" — moov gelmedi
+                    return False
+                if kutu < 8:
+                    return False
+                konum += kutu
+                if konum >= boyut:
+                    return False
+        return False
+    except OSError:
+        return False
+
+
 def kalemleri_bul(
     log_koku: Path, hepsi: bool = False
 ) -> List[Bulgu]:
@@ -305,6 +365,21 @@ def kalemleri_bul(
             b.dosyalar = sorted(
                 p for p in arama_koku.glob(t.desen) if p.is_file()
             )
+            # 🔴 16.08.2026 — DÜZ YERLEŞİMLİ TEK-DOSYA KALEMİ (Dosya-2) SIZIYORDU.
+            # `_en_yeni_oturum` yalnız `oturum_*`/`session_*` ALT DİZİNİ arar.
+            # `local_map` öyle yazıyor (çalışıyor), ama `telemetry` dosyaları
+            # dizine DÜZ yazılıyor (`telemetri_<UTC>.csv`) ⇒ alt dizin yok ⇒
+            # `_en_yeni_oturum` kök'ü döndürüyor ⇒ "yalnız en yeni oturum"
+            # kuralı Dosya-2'ye HİÇ uygulanmıyordu. Bu cihazda ölçüldü:
+            # **127 CSV** toplandı ve `dosyalar[0]` (ada göre EN ESKİ) şartname
+            # adını (`Dosya2_Arac_Telemetri_Verisi.csv`) aldı ⇒ hakem resmî ad
+            # altında AYLAR ÖNCEKİ geliştirme koşusunu görürdü. Rapor "elle
+            # seç" diyordu ama 20 dakikalık teslim penceresinde (md 4.2, geç
+            # dosya 5 ceza) o el hareketi tam da atlanacak adımdır.
+            # Aynı sınıf: `dosya1_birlestir` isim sırası → PROVA oturumu teslimi.
+            if not hepsi and not t.klasor and len(b.dosyalar) > 1:
+                b.elenen = b.dosyalar[:-1]
+                b.dosyalar = b.dosyalar[-1:]     # ada göre EN YENİ
         out.append(b)
     # 🔑 mp4 varsa PNG yedeğini teslime KOYMA: dönüşüm başarılıysa (ya da
     # codec zaten çalışıyorsa) o klasör yalnız kayıpsız kaynaktır ve USB
@@ -411,6 +486,24 @@ def kopyala(
                     "beklenen 1 — hepsi kopyalandı, hakeme HANGİSİ verilecek "
                     "elle seçilmeli"
                 )
+            if b.elenen:
+                # Sessiz seçim YAPMIYORUZ: hangi dosyanın şartname adını aldığı
+                # ve kaçının elendiği rapora YAZILIR. Operatör yanlış koşunun
+                # teslim edildiğini ancak burada fark edebilir.
+                rapor.uyarilar.append(
+                    f"{t.ad}: {len(b.elenen) + 1} aday vardı, EN YENİSİ seçildi "
+                    f"→ {b.dosyalar[0].name} (elenen {len(b.elenen)} dosya USB'ye "
+                    "KOPYALANMADI, Jetson'da duruyor). Yanlışsa: --hepsi ile "
+                    "tekrar topla ve doğru dosyayı elle adlandır."
+                )
+                if "SAAT-GUVENILMEZ" in b.dosyalar[0].name:
+                    # Seçim ADA göre; ad zaman damgası taşıyor. Saat güvenilmezse
+                    # "en yeni ad" ≠ "en son koşu" olabilir (§ saat kaynağı).
+                    rapor.uyarilar.append(
+                        f"🔴 {t.ad}: seçilen dosya SAAT-GUVENILMEZ damgalı — "
+                        "sıralama ada (zaman damgasına) dayandığı için seçim de "
+                        "şüpheli. Teslimden önce dosyanın içeriğini GÖZLE doğrula."
+                    )
         for src, dst in ciftler:
             n = 1
             while dst.exists():                # ÜZERİNE YAZMA
@@ -517,6 +610,40 @@ def topla_ve_yaz(
     bulgular = kalemleri_bul(log_koku, hepsi=hepsi)
     rapor = kopyala(bulgular, usb_koku, zaman_damgasi=zaman_damgasi)
     rapor.uyarilar[:0] = cevrim_mesajlari      # dönüşüm notları en üstte
+
+    # 🔴 17.08 — TESLİM EDİLEN mp4'ler GERÇEKTEN AÇILIYOR MU (bkz.
+    # `mp4_oynatilabilir_mi`). Bu makinedeki kayıtlarda 37 oturumun 28'inde
+    # (%76) SON segmentin `moov` atomu yoktu ⇒ o dosya hiçbir oynatıcıda
+    # açılmıyor. Kopyalamayı ENGELLEMİYORUZ (ham veri hakemde kalsın), yalnız
+    # rapora yazıyoruz — operatör USB'yi teslim etmeden önce görsün.
+    for b in bulgular:
+        bozuk = [x for x in b.dosyalar
+                 if x.suffix.lower() == ".mp4" and not mp4_oynatilabilir_mi(x)]
+        if not bozuk:
+            continue
+        adlar = ", ".join(x.name for x in bozuk[:4])
+        if len(bozuk) > 4:
+            adlar += f" … (+{len(bozuk) - 4})"
+        mp4ler = [x for x in b.dosyalar if x.suffix.lower() == ".mp4"]
+        hepsi_bozuk = len(bozuk) == len(mp4ler)
+        rapor.uyarilar.append(
+            f"🔴 {b.tanim.ad}: {len(bozuk)}/{len(mp4ler)} mp4 AÇILMIYOR "
+            f"(moov atomu yok — sürec temiz kapanmadan olmus): {adlar}. "
+            "USB'ye yine de kopyalandi. Genelde SON segment bozulur; kaydin "
+            "geri kalani saglamdir. Birlestirilmis tek dosya isteniyorsa "
+            "`algi/scripts/dosya1_birlestir.py` bozuk segmenti ATLAYIP birlestirir."
+        )
+        # 🔴 AYRIM: bir kalemin mp4'lerinin HEPSİ açılmıyorsa o kalem fiilen
+        # TESLİM EDİLMEMİŞTİR (md 4.2: teslim edilmeyen her dosya 5 ceza).
+        # 36 segmentin 1'i bozuksa kayıt duruyor — uyarı yeter. Ama tek dosyalık
+        # bir kalemin o tek dosyası açılmıyorsa rapor "HAZIR" DEMEMELİ.
+        # 17.08'de bu ayrım olmadan rapor ✅ diyordu, oysa Dosya-3'ün ve
+        # Dosya-1b'nin (lidar) TEK mp4'ü de açılmıyordu — yanlış yeşil.
+        if hepsi_bozuk and b.tanim.zorunlu:
+            rapor.bozuk.append(
+                f"{b.tanim.ad}: mp4'lerin HEPSİ açılmıyor ({len(bozuk)}/"
+                f"{len(mp4ler)}) — bu kalem fiilen TESLİM EDİLMEMİŞ sayılır"
+            )
     kok = Path(usb_koku)
     if kok.is_dir():
         (kok / RAPOR_ADI).write_text(

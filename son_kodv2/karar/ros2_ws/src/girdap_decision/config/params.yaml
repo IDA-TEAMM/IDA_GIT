@@ -18,6 +18,21 @@ fusion_node:
                              # adımları tek BetweenFactor'da birikir (bilgi
                              # kaybı yok), odom σ'sı √Δt ile ölçeklenir.
                              # 0 → kapalı (eski davranış).
+    # 🌱 §1.56g (18.08.2026) — DÖNEMSEL YENİDEN ÇIPALAMA. iSAM2 grafı hiç
+    # budanmıyordu. ÖLÇÜLDÜ, gerçek bant (session_20260817_180538, 80 dk,
+    # 17.08 düzeltmesinden SONRAKİ kod) — tek değişken, aynı bant:
+    #     kapalı  : update ilk %10 0,121 ms → son %10 3,019 ms = 25,0× · ATE 0,060 m
+    #     30 s açık: 0,080 → 0,092 ms = 1,14×             · ATE 0,063 m
+    # Sentetik 70 dk bağımsız kolu aynı sonucu verdi: 24,60× → 1,03×,
+    # hata 0,0998 m ↔ 0,0998 m (dört hanede AYNI). RPE 1 s üç kolda da 0,027 m.
+    # ⇒ hesap bedava kazanılıyor; doğruluktan çalınmıyor.
+    reanchor_period_s: 30.0
+    # Sıfırlamada korunan kuyruk. Kaptan tercihi ("hepsini silmeyelim").
+    # ÖLÇÜM İKİSİNİ AYIRT ETMEDİ: kuyruksuz ATE 0,063 m ↔ 6 s kuyruk 0,061 m
+    # (fark 2 mm, tek koşumda gürültüden ayrılamaz), süre 0,092 ↔ 0,096 ms.
+    # Kuyruk seçildi çünkü bedeli ölçülemeyecek kadar küçük ve `all_poses()`
+    # teşhis için tek poz yerine ~30 poz döndürüyor. Periyottan KÜÇÜK olmalı.
+    reanchor_keep_s: 6.0
     gps_robust_enabled: true # Huber M-estimator ile GPS outlier reddi
     gps_huber_k: 1.345       # σ katı; Gauss verimliliğinin %95'ini korur
     # Fix kalitesine göre GPS ölçüm sigma'sı (NavSatFix.status.status).
@@ -117,6 +132,12 @@ planning_node:
     mppi_ref_window_size: 100   # nokta, kayan referans penceresi ileri derinliği
                              # (0.5 m aralıkta 50 m ileri + 12.5 m geri).
     mppi_ref_window_enabled: true  # false → eski tam tarama (regresyon/A-B).
+    # 🔴 F-F.22 İLERİ TERCİHİ (17.08 göl bandı `session_20260817_193312`):
+    # GUIDED+ARMED komutlarının %23,1'i GERİYDİ (ortanca -0,744 m/s) ve o
+    # anların %83,4'ünde hedef, %88,6'sında kapı da aracın ARKASINDAYDI.
+    # İKİSİ DE KAPALI = eski davranış birebir; sahada A/B ile açılır.
+    mppi_ileri_kisit: false   # SERT (Nav2 vx_min=0): ortak kip >= 0, GARANTİ
+    mppi_w_ileri: 0.0         # YUMUŞAK (PreferForwardCritic): garanti YOK
                              # Ölçüm: 736 → 58 ms/iter, d2 tensörü 16× küçük.
     # --- Kapı takibi (gate following, 2026-08-03) ---
     # Şartname md 5.5.2.2: Parkur-1/2 puanı GPS noktasına basmaktan DEĞİL,
@@ -292,6 +313,11 @@ perception_fusion_node:
     # yetmedi, 100 tuttu). Kuyruk = kamera Hz × gecikme sn.
     sync_queue_size: 100           # sync geçmiş derinliği (LiDAR gecikme marjı)
     log_period_s: 5.0              # füzyon özet INFO log periyodu
+    # 🔴 KAPTAN KARARI 18.08.2026 — "bilinmeyen engelleri füzyona sokma".
+    # false → eşleşmeyen (sınıfsız) LiDAR kümesi çıkışa GİRMEZ.
+    # ⚠️ EMNİYET BEDELİ: kameranın sınıflayamadığı GERÇEK engel de düşer
+    #    (kamera 69°, LiDAR 360°). Varsayılan bilerek true = eski davranış.
+    bilinmeyen_engelleri_tut: true
 
 telemetry_node:
   ros__parameters:

@@ -178,6 +178,27 @@ planning:
   mppi_terminal_lookahead_m: 3.0   # m, terminal hedef yay uzaklığı
   mppi_ref_window_size: 100        # nokta, kayan referans penceresi
   mppi_ref_window_enabled: true    # false → tam tarama (16× yavaş, A/B için)
+  # 🔴 F-F.22 İLERİ TERCİHİ — 17.08 göl ölçümü: komutların %23,1'i GERİ,
+  # %83,4'ünde hedef ARKADA. İkisi de KAPALI = eski davranış birebir.
+  mppi_ileri_kisit: false     # SERT kısıt (Nav2 vx_min=0 karşılığı) — GARANTİ
+  mppi_w_ileri: 0.0           # YUMUŞAK terim (PreferForwardCritic) — garanti yok
+
+  # 🔴 F-F.27/F-F.28 — RRT* GERİ DÜŞÜŞÜ. 17.08 göl bandı GÜNCEL KODLA
+  # koşturuldu (`scripts/bant_kosum.sh`, 180 s, izole domain 88):
+  #                             taban    kurtarma 3,0 m
+  #   goal engel/sınır içinde     322          10     (−%97)
+  #   düz çizgi geri düşüşü        43           7     (−%84)
+  # ⚠ Bütçe 6,0 m DENENDİ, DAHA KÖTÜ (7 → 12). 3,0 ölçülmüş değerdir.
+  # ⚠ SİM YANILTMIŞTI: sanal gölde başarısızlıkların 11/12'si "çözüm
+  #   bulamadı" görünüyordu; gerçek veride tam tersi. Karar GERÇEK BANTLA.
+  rrt_hedef_kurtarma_m: 3.0   # ✅ AÇIK
+  rrt_kismi_plan_min_m: 0.0   # ⛔ KAPALI — aynı bantta yardımcı olmadı (7 → 14)
+
+  # 🔴 F-F.23/F-F.24 — pivot kapısının iki kör noktası. İKİSİ DE KAPALI:
+  # tek başlarına HİÇ ölçülmediler. 1,57 m = 2 × gövde (0,785) = LOS
+  # literatürünün "circle of acceptance" değeri.
+  pivot_yakin_esik_m: 0.50    # ⛔ eski davranış (ölçülen aday: 1.57)
+  pivot_yedek_referans: false # ⛔ eski davranış
   # --- Kapı takibi (2026-08-03) — md 5.5.2.2, puan kapıdan geçmekten gelir.
   # 🔑 AYARLANABİLİR EŞİK YOK. Kapı geometrisi önceden bilinemez (şartname:
   # mesafeler yarışma alanına göre değişir + dubalar deniz şartlarıyla yer
@@ -231,7 +252,10 @@ mission:
   #     ros2 param set /perception_camera_node kamikaze_target_color kirmizi
   #
   # Kabul edilenler: kirmizi/kırmızı/red · yesil/yeşil/green ·
-  #                  kahverengi/kahve/brown
+  #                  siyah/black   (18.08: kahverengi KALDIRILDI — sartname
+  #                  s.18 hedef renkleri RAL 3026/6037/**9005 siyah**;
+  #                  kahverengi hicbir maddede gecmiyor ve asagi akista
+  #                  RENK_KOD'a cevrilemiyordu = olu yoldu)
   # 🔴 turuncu ve sarı REDDEDİLİR (kod düzeyinde): turuncu = parkur KENAR
   #    dubası — `gate_follower` kapıları tam o sınıftan buluyor, hedefe
   #    taşınırsa kapılar görünmez olur VE tekne kapı dubalarına sürer;
@@ -240,7 +264,7 @@ mission:
   #    zorluyor — FSM `PARKUR1/2/3` durumundayken `ros2 param set` reddedilir.
   #    Yeniden vermek gerekirse önce `/girdap/mission/reset` (madde #11).
   # 🔴 11.08 UYARISI — BU PARAMETRE TEK BASINA YETMEZ: YOLO yesil/kirmizi/
-  # kahverengi icin EGITILMEDI. Yani akista class_id 3/4/5 HIC YOKSA burada
+  # siyah icin EGITILMEDI. Yani akista class_id 3/4/5 HIC YOKSA burada
   # renk vermek hicbir seyi hedefe tasimaz (sessizce 0 tespit). Cozum yeniden
   # egitim DEGIL: camera_buoys.py'deki BuoyLocalizer + classify_roi_color()
   # deseni (YOLO sinifsiz duba bulur, rengi bbox ici HSV karar verir).
@@ -268,6 +292,12 @@ fusion:
   # BetweenFactor'da biriktiği için BİLGİ KAYBI YOK — aynı senaryoda iki
   # ayarın ürettiği poz 1 cm'den az farkeder. 0 → throttle kapalı.
   keyframe_rate_hz: 5.0
+  # 🌱 §1.56g — dönemsel yeniden çıpalama (graf sınırlama). Gerçek bantta
+  # (session_20260817_180538, 80 dk) update sürüklenmesi 25,0× → 1,14×,
+  # ATE 0,060 → 0,063 m (değişmedi), RPE 1 s 0,027 m (aynı). 0 = kapalı.
+  reanchor_period_s: 30.0
+  # Korunan kuyruk — periyottan KÜÇÜK olmak zorunda, yoksa graf budanmaz.
+  reanchor_keep_s: 6.0
   # GPS outlier reddi — Huber M-estimator. Tek kötü fix (multipath, RTK
   # kaybı) saf Gauss modelinde TÜM çözümü kendine çeker.
   gps_robust_enabled: true
@@ -295,6 +325,22 @@ perception:
     min_cluster_size: 5     # bu altı noise
     max_cluster_size: 500   # bu üstü tek engel değil büyük yapı → bölünür (F5.4)
     split_cell_m: 1.0       # büyük küme bölme ızgarası XY hücre kenarı (m)
+    # 🔴 F-P.30 — YAYILIMA GÖRE BÖLME. 0.0 = ESKİ DAVRANIŞ BİREBİR.
+    # 17.08 göl bandı: engel torbasının %98,6'sı CLASS_UNKNOWN, yarıçap
+    # ortanca 0,56 m MAKS 17,2 m (duba 0,15 m olmalı). Kıyı bir DOĞRU
+    # parçası; onu çevrel daireyle temsil etmek yüzlerce m² boş suyu "dolu"
+    # ilan ediyor. `split_cell_m` bölmesi bunu kaçırıyordu çünkü tetiği
+    # NOKTA SAYISI (>500); uzak/seyrek kıyı az noktayla 17 m'ye yayılıyor.
+    # Ölçüldü (kıyı doğrusu + 2 duba): kapsanan alan 707,0 → 9,6 m² (73×),
+    # ölçülen nokta örtüşmesi %100 → HİÇBİR gerçek engel kaybolmuyor.
+    # ⚠ Bandın gerçek koşumunda `goal engel/sınır içinde` hatası 322 kez
+    # ateşledi; bu şişme onun en güçlü adayı.
+    # ✅ AÇILDI 18.08 — ölçüm gerekçesi yukarıda. Kapsanan alan 707 → 9,6 m²,
+    # ölçülen nokta örtüşmesi %100 (hiçbir gerçek engel kaybolmuyor).
+    # ⚠ Gerçek LiDAR bulutuyla uçtan uca DOĞRULANMADI (ham bulut banda
+    # kaydedilmiyor — bilerek, 14 GB/8-12 sn donma). Gölde 2 dk'lık
+    # `rosbag_kaydet.sh --lidar` çekimiyle doğrulanacak.
+    split_max_yaricap_m: 2.0
     max_range: 25.0         # yatay menzil filtresi (m)
     voxel_size: 0.1         # m, clustering öncesi downsample (F5.3; 0=kapalı)
     log_period_s: 5.0       # "K engel" INFO log periyodu
@@ -340,6 +386,12 @@ perception:
     # yetmedi, 100 tuttu). Kuyruk = kamera Hz × gecikme sn.
     sync_queue_size: 100            # sync geçmiş derinliği (LiDAR gecikme marjı)
     log_period_s: 5.0
+    # 🔴 KAPTAN KARARI 18.08.2026 — "bilinmeyen engelleri füzyona sokma".
+    # false → eşleşmeyen (sınıfsız) LiDAR kümesi çıkışa GİRMEZ.
+    # ⚠️ EMNİYET BEDELİ: kameranın sınıflayamadığı GERÇEK engel de düşer
+    #    (kamera 69°, LiDAR 360°). Varsayılan bilerek true = eski davranış;
+    #    TEKNOFEST öncesi denetim listesinde gözden geçirilecek.
+    bilinmeyen_engelleri_tut: true
 
 # --- Sensör / perception topic isimleri ---
 # gps + imu doğrudan mavros'tan gelir (karar yığını bunlara abone).

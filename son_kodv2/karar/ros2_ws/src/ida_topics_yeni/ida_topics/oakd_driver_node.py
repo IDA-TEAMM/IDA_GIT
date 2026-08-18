@@ -31,6 +31,9 @@ import time
 
 
 class OakdDriverNode(Node):
+    # Kamera bağlı değilken yeniden bağlanma denemesi arası bekleme (s).
+    _RECONNECT_PERIOD_S = 5.0
+
     def __init__(self):
         super().__init__('oakd_driver_node')
 
@@ -106,11 +109,32 @@ class OakdDriverNode(Node):
         tryGet() (bloklamayan) kullanılır - depthai'nin bloklayan get()'i
         USB kopmasi/donmasinda thread'i sonsuza kadar askida birakabilirdi,
         hicbir log/yeniden-baglanma olmadan (F-S.7).
+
+        🔴 18.08.2026 — YENİDEN BAĞLANMA EKLENDİ. Eskiden `self.queue is None`
+        (ilk bağlantı başarısız — soğuk açılışta USB enumeration yarışı çok
+        yaygın — ya da aşağıdaki except'te cihaz koptuğu tespit edilip
+        `queue=None` yapıldıktan sonra) hiçbir zaman `_init_depthai()`'a
+        TEKRAR gidilmiyordu: düğüm sonsuza dek "1s uyu, tekrar kontrol et"
+        döngüsünde kilitli kalıyordu — kamera bir daha asla geri gelmiyordu,
+        görevin geri kalanında körlük demekti. Şimdi boş kuyrukta periyodik
+        (`_RECONNECT_PERIOD_S`) yeniden deneme var; `_init_depthai()` zaten
+        kendi hata yakalamasını yapıyor (bağlanamazsa sessizce queue=None
+        bırakır), o yüzden burada ekstra try/except gerekmiyor.
         """
         last_frame_time = time.monotonic()
+        last_reconnect_attempt = time.monotonic()
         while self.running:
             if self.queue is None:
-                time.sleep(1.0)
+                now = time.monotonic()
+                if now - last_reconnect_attempt >= self._RECONNECT_PERIOD_S:
+                    last_reconnect_attempt = now
+                    self.get_logger().warn(
+                        'OAK-D bağlı değil — yeniden bağlanma deneniyor...')
+                    self._init_depthai()
+                    if self.queue is not None:
+                        last_frame_time = time.monotonic()
+                        self.get_logger().info('OAK-D yeniden bağlandı.')
+                time.sleep(0.2)
                 continue
 
             try:
@@ -137,9 +161,20 @@ class OakdDriverNode(Node):
                 self.img_pub.publish(msg)
 
             except Exception as e:
+                # Bu noktada tryGet()/getCvFrame() patladıysa cihaz bağlantısı
+                # muhtemelen koptu (XLink hatası vb.) — aynı bozuk queue'yu
+                # sonsuza dek yeniden denemek yerine kapat + queue=None yap ki
+                # yukarıdaki dal yeniden bağlanmayı denesin.
                 self.get_logger().error(
                     f'Kare yakalama hatası: {e}',
                     throttle_duration_sec=5.0)
+                if self.device:
+                    try:
+                        self.device.close()
+                    except Exception:
+                        pass
+                self.device = None
+                self.queue = None
 
     def destroy_node(self):
         self.running = False

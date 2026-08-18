@@ -210,6 +210,7 @@ def test_last_gate_passed_output_derivation() -> None:
     assert fsm.last_gate_passed is False
     fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
                          p2_waypoints_done=True,
+                         p3_bekleniyor=True,   # 16.08: P3 emniyet kapisi
                          last_gate_passed_p2=True))                 # PARKUR3
     assert fsm.state is MissionState.PARKUR3
     assert fsm.last_gate_passed is True
@@ -230,7 +231,7 @@ def test_full_mission_sequence() -> None:
     fsm.request_start()
     fsm.tick(Observation(**on))                        # PARKUR1
     fsm.tick(Observation(**on, dist_to_last_wp_p1=1.0))  # PARKUR2
-    fsm.tick(Observation(**on, p2_waypoints_done=True))    # PARKUR3
+    fsm.tick(Observation(**on, p2_waypoints_done=True, p3_bekleniyor=True))    # PARKUR3
     fsm.tick(Observation(**on, shock_detected_p3=True))    # TAMAMLANDI
 
     assert fsm.state is MissionState.TAMAMLANDI
@@ -283,7 +284,7 @@ def test_P2_P3_gecisini_WAYPOINT_ILERLEMESI_yapar() -> None:
     fsm = _parkur2_ye_getir()
     on = dict(boot_ok=True, kill_switch_off=True)
 
-    fsm.tick(Observation(**on, p2_waypoints_done=True))
+    fsm.tick(Observation(**on, p2_waypoints_done=True, p3_bekleniyor=True))
 
     assert fsm.state is MissionState.PARKUR3
     _, _, gerekce = fsm.history[-1]
@@ -295,8 +296,72 @@ def test_kapi_kaniti_gecis_GEREKCESINE_yaziliyor() -> None:
     fsm = _parkur2_ye_getir()
     on = dict(boot_ok=True, kill_switch_off=True)
 
-    fsm.tick(Observation(**on, p2_waypoints_done=True, last_gate_passed_p2=True))
+    fsm.tick(Observation(**on, p2_waypoints_done=True,
+                         p3_bekleniyor=True,   # 16.08: P3 emniyet kapisi
+                         last_gate_passed_p2=True))
 
     assert fsm.state is MissionState.PARKUR3
     _, _, gerekce = fsm.history[-1]
     assert "kapı geçişi de doğrulandı" in gerekce
+
+
+def test_TUZAK_PARKUR3te_mission_complete_KAMIKAZEYI_KESIYOR() -> None:
+    """🔴 AÇIK TUZAK (17.08'de bulundu) — bu test mevcut davranışı DONDURUYOR,
+    onaylamıyor. Değiştirmek isteyen bilerek değiştirsin diye buraya yazıldı.
+
+    ZİNCİR (yarışma yerleşimiyle birebir):
+      `competition_mission.yaml` 5 waypoint · etiketler [1,1,2,2,3] ·
+      SON waypoint `P3_target` (parkur 3) · `arrival_radius_m: 2.0`.
+      1. Tekne P2'nin son wp'sine varır  → PARKUR3'e geçer (renk yüklüyse)
+      2. `P3_target`'a **2 m** kala varılmış sayılır, 2 sn dwell
+      3. `mission_manager` COMPLETE → `mission_complete=True` (LATCH, geri dönüş yok)
+      4. `MissionFSM` bu bayrağı **parkur kurallarından ÖNCE** değerlendirir
+         (kod yorumu: *"görev bitince spurious PARKUR2 geçişi kazanmasın"*)
+         → **TAMAMLANDI**
+      5. TAMAMLANDI'da `compute_control` None → **thrust sıfır**
+      ⇒ Tekne hedefin **~2 m önünde durur.** P3 tamamlama şartı **FİZİKSEL
+        TEMAS** olduğu için angajman sayılmaz: **145 puan (toplamın %48'i) gider.**
+
+    NEDEN GÖZDEN KAÇTI: terminal kural **video senaryosu** için yazılmış (tek
+    parkur, çarpma yok — `test_mission_complete_terminates_video`) ve ikinci
+    testi de PARKUR1→PARKUR2 sahte geçişini kapatıyor. **PARKUR3 ile etkileşimi
+    hiçbir test kapsamıyordu**; yarışma yerleşiminde son waypoint'in parkur-3
+    olması bu kuralı P3'ün terminaline dönüştürüyor — oysa P3'ün tasarlanmış
+    terminali **IMU şoku** (`shock_detected_p3`).
+
+    ⚠️ NEDEN DÜZELTİLMEDİ (bilinçli): `mission_complete` terminalini PARKUR3'te
+    devre dışı bırakmak, şok hiç algılanmazsa aracı **hiç durmayan** bir
+    kamikaze'de bırakır. Bu bir emniyet ödünleşimi ve yarışmaya 3 gün kala tek
+    başına verilecek karar değil — kaptanın. Aday çözümler:
+      (a) PARKUR3'te terminali yalnız `p3_bekleniyor` (renk yüklü) iken devre
+          dışı bırak; renk yoksa eski davranış aynen kalsın
+      (b) `P3_target` waypoint'ini görev dosyasından ÇIKAR (parkur-3'ün
+          waypoint'i olmasın) — o zaman COMPLETE P2 bitince gelmez
+      (c) `arrival_radius_m`'yi P3 için sıfıra yakın yap (temas ≈ varış)
+    Her üçünün de yan etkisi var; ölçülmeden seçilmemeli.
+    """
+    fsm = MissionFSM()
+    _advance_to_beklemede(fsm)
+    fsm.request_start()
+    fsm.tick(Observation(boot_ok=True, kill_switch_off=True))
+
+    # P1 bitti → P2
+    fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
+                         dist_to_last_wp_p1=1.0))
+    assert fsm.state is MissionState.PARKUR2
+
+    # P2'nin son waypoint'i + renk yüklü → PARKUR3 (kamikaze başlar)
+    fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
+                         p2_waypoints_done=True, p3_bekleniyor=True))
+    assert fsm.state is MissionState.PARKUR3, "kamikaze hiç başlamadı"
+
+    # P3_target'a 2 m kala varıldı sayıldı → mission_manager COMPLETE
+    fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
+                         p3_bekleniyor=True, mission_complete=True))
+
+    assert fsm.state is MissionState.TAMAMLANDI, (
+        "DAVRANIŞ DEĞİŞMİŞ: mission_complete artık PARKUR3'ü kesmiyor. "
+        "Bu İYİ bir değişiklik olabilir (bkz. docstring aday çözümler) ama "
+        "BİLİNÇLİ olmalı — şok algılanmazsa aracın durma yolu kalır mı, "
+        "onu da doğrulayarak bu testi güncelle."
+    )

@@ -135,6 +135,9 @@ _LIDAR_DEFAULTS: dict[str, tuple[float | int, type]] = {
     "min_cluster_size": (5, int),
     "max_cluster_size": (500, int),
     "split_cell_m": (1.0, float),       # F5.4: büyük küme bölme ızgarası
+    # F-P.30: yayılıma göre bölme eşiği (m). 0 = kapalı (eski davranış).
+    # Ölçüm: kıyı temsili 707 → 9,6 m², nokta örtüşmesi %100 korunuyor.
+    "split_max_yaricap_m": (0.0, float),
     "max_range": (25.0, float),
     "voxel_size": (0.1, float),         # F5.3: clustering öncesi downsample
     "log_period_s": (5.0, float),
@@ -197,6 +200,8 @@ _MPPI_DEFAULTS: dict[str, tuple[object, type]] = {
     "mppi_terminal_lookahead_m": (3.0, float),   # 08.08 ölçümü (bkz. MPPIConfig)
     "mppi_ref_window_size": (100, int),
     "mppi_ref_window_enabled": (True, bool),
+    "mppi_ileri_kisit": (False, bool),      # F-F.22 (bkz. MPPIConfig)
+    "mppi_w_ileri": (0.0, float),
 }
 # --show-args çıktısında operatörün göreceği açıklamalar (sınırlar dahil).
 _MPPI_ARG_DESC = {
@@ -213,6 +218,14 @@ _MPPI_ARG_DESC = {
                                  "≥ seyir_hızı × horizon olmalı",
     "mppi_ref_window_size": "Kayan referans penceresi ileri derinliği (nokta)",
     "mppi_ref_window_enabled": "false → eski tam tarama (16× yavaş, A/B için)",
+    "mppi_ileri_kisit": "SERT ileri tercihi: net ileri itki (ortak kip) "
+                        "negatif olamaz — Nav2 vx_min=0 karşılığı. 17.08 göl "
+                        "bandında komutların %23,1'i GERİYDİ. Saf pivot "
+                        "([-a,+a], ortak kip 0) ETKİLENMEZ",
+    "mppi_w_ileri": "YUMUŞAK ileri tercihi (Nav2 PreferForwardCritic): geri "
+                    "süratin zaman integrali × bu ağırlık. 0 = kapalı. "
+                    "⚠ Garanti DEĞİL — her ileri örnek daha kötüyse MPPI yine "
+                    "geri seçebilir; garanti isteniyorsa mppi_ileri_kisit",
 }
 # planning.gate_* — kapı takibi saha yüzeyi (2026-08-03). Sayısal değerler
 # prototype/mission/gate_follower.py GateFollowerConfig ile AYNI olmalı;
@@ -262,6 +275,18 @@ _FUSION_DEFAULTS: dict[str, tuple[object, type]] = {
     # taşınmasında düşmüş, 09.08'de algı ekibinin raporuyla geri geldi.
     "sync_queue_size": (100, int),
     "log_period_s": (5.0, float),
+    # 🔴 KAPTAN KARARI 18.08.2026 — *"bilinmeyen engelleri füzyona sokma".*
+    # `false` → eşleşmeyen LiDAR kümesi (CLASS_UNKNOWN) çıkışa GİRMEZ.
+    # Gerekçe ölçüldü: kameranın göremediği kapı direkleri bilinmeyen olarak
+    # engel torbasında kalıyor, `obstacle_margin` halkaları kapı açıklığını
+    # kaplıyor, hedef "engel içinde" sayılıyor → RRT* her döngüde
+    # `goal engel/sınır içinde` ile başarısız → yeni yol yok → araç bayat
+    # referansla yerinde dönüyor (18.08 Gazebo: kapı 0/8, 280 sn).
+    # ⚠️ EMNİYET BEDELİ: `false` iken kameranın sınıflayamadığı GERÇEK engel
+    # (kütük, bot, ağ) maliyet haritasına hiç girmez; kamera 69°, LiDAR 360°.
+    # Varsayılan bilerek `True` — saha yüzeyinden AÇIKÇA verilmeli, sessizce
+    # sızmamalı. TEKNOFEST öncesi denetim listesinde gözden geçirilecek.
+    "bilinmeyen_engelleri_tut": (True, bool),
 }
 # planning.obstacle_timeout_s — F-P.2 ENGEL BEKÇİSİ saha yüzeyi (15.08.2026).
 #
@@ -283,10 +308,55 @@ _FUSION_DEFAULTS: dict[str, tuple[object, type]] = {
 #   ⛔ Parkur-2'ye geçmeden GERİ AÇILMALI — LiDAR'sız P2 zaten imkânsız.
 #   Düğüm kapalıyken her açılışta "🔴 ENGEL BEKCISI KAPALI" basar
 #   (planning_node.py:555) — sessizce unutulmasın diye.
+# 🔴 F-F.30 — RRT*/PİVOT SAHA YÜZEYİ. Bu tablo OLMADAN node'daki parametreler
+# launch'tan HİÇ geçmiyordu: `planning_node` onları `declare_parameter` ile
+# açıyor ama launch yalnız _MPPI/_GATE/_BEKCI tablolarındaki anahtarları
+# iletiyor ⇒ hardware.yaml'a yazılan değer SESSİZCE yok sayılırdı.
+# Bu tam olarak `edge_unutma_katsayisi`'nın düştüğü tuzak (04bddb7): ölçülmüş
+# bir A/B tablosu varken değer sahada denenemiyordu.
+_RRT_DEFAULTS: dict[str, tuple[object, type]] = {
+    # ✅ AÇIK — 17.08 göl bandı GÜNCEL KODLA koşturularak ölçüldü
+    # (`scripts/bant_kosum.sh`, 180 s): `goal engel/sınır içinde` hatası
+    # 322 → 10 (−%97), düz çizgi geri düşüşü 43 → 7 (−%84).
+    # ⚠ 6,0 m DENENDİ ve DAHA KÖTÜ çıktı (düz çizgi 7 → 12) — 3,0 ölçülmüş değer.
+    "rrt_hedef_kurtarma_m": (3.0, float),
+    # ⛔ KAPALI — aynı bantta yardımcı OLMADI (düz çizgi 7 → 14). Kod duruyor,
+    # teşhis değeri var; sonuç ölçütünü bozduğu için varsayılan 0.
+    "rrt_kismi_plan_min_m": (0.0, float),
+    # ⛔ KAPALI — tek başına HİÇ ölçülmedi (0,50 = eski davranış).
+    "pivot_yakin_esik_m": (0.50, float),
+    "pivot_yedek_referans": (False, bool),
+}
+_RRT_ARG_DESC = {
+    "rrt_hedef_kurtarma_m": "Hedef engel içindeyse EN YAKIN serbest noktaya "
+                            "taşınır (Nav2 navfn `tolerance` karşılığı); 0 = "
+                            "eski davranış (plan reddedilir, düz çizgiye "
+                            "düşülür). Bantta 322 → 10 ölçüldü",
+    "rrt_kismi_plan_min_m": "Hedefe varan yol yoksa ağacın ulaştığı en yakın "
+                            "düğüme KISMİ plan (m, asgari ilerleme). 0 = "
+                            "kapalı. ⚠ Bantta yardımcı olmadı",
+    "pivot_yakin_esik_m": "Pivot kapısının yakın alan körlüğü (m). Bu "
+                          "yarıçapın içindeki referansa kerteriz ölçülmez "
+                          "(LOS 'circle of acceptance' = 2 gövde boyu = 1,57)",
+    "pivot_yedek_referans": "Plan boşken pivot kapısı son hedefi yedek "
+                            "referans olarak kullansın mı (RRT-RED anlarında "
+                            "kapı sessizce kapanıyordu)",
+}
 _BEKCI_DEFAULTS: dict[str, tuple[object, type]] = {
     "obstacle_timeout_s": (2.0, float),
+    # 🔴 18.08.2026 — SAHA YÜZEYİNE ÇIKARILDI. `d31873d0` bu parametreyi
+    # `planning_node`da açtı ama launch/hardware.yaml'a HİÇ bağlamadı; yani
+    # ölçülmüş A/B tablosu varken değer sahada denenemiyordu (yalnız kodu
+    # düzenleyerek). Varsayılan 2.0 = eski davranış, BİREBİR korunur.
+    "edge_unutma_katsayisi": (2.0, float),
 }
 _BEKCI_ARG_DESC = {
+    "edge_unutma_katsayisi": "Kenar dubası hafızasında unutma menzili = "
+                             "yayım yarıçapı × BU KATSAYI. 2.0 (varsayılan) "
+                             "⇒ 50 m: ölçülen 20×35 m alanda unutma HİÇ "
+                             "devreye girmez, torba 843 kayda şişer. "
+                             "Ölçülen A/B: 1.0 ⇒ torba %30 küçülür, "
+                             "kurtarılan yalnız %0,9 düşer",
     "obstacle_timeout_s": "F-P.2 engel bekçisi zaman aşımı (s). Engel "
                           "haritası bu süreden eskiyse (ya da HİÇ gelmediyse) "
                           "itki sıfırlanır. 0 = BEKÇİ KAPALI — araç engel "
@@ -339,6 +409,7 @@ def _load_hardware_config() -> dict:
     cfg["mppi"] = {k: v for k, (v, _) in _MPPI_DEFAULTS.items()}
     cfg["gate"] = {k: v for k, (v, _) in _GATE_DEFAULTS.items()}
     cfg["bekci"] = {k: v for k, (v, _) in _BEKCI_DEFAULTS.items()}
+    cfg["rrt"] = {k: v for k, (v, _) in _RRT_DEFAULTS.items()}
     cfg["tf"] = {}                      # ölçüm girilene kadar boş = hepsi 0
     try:
         cfg_dir = os.path.join(get_package_share_directory(_PKG), "config")
@@ -400,6 +471,10 @@ def _load_hardware_config() -> dict:
         for key, (_, cast) in _BEKCI_DEFAULTS.items():
             if key in planning_block:
                 cfg["bekci"][key] = cast(planning_block[key])
+        # planning.rrt_*/pivot_* — F-F.30 saha yüzeyi (aynı öncelik zinciri).
+        for key, (_, cast) in _RRT_DEFAULTS.items():
+            if key in planning_block:
+                cfg["rrt"][key] = cast(planning_block[key])
         # mission: görev dosyası + kaynak seçimi (video ↔ competition, file ↔ fc)
         mission_block = data.get("mission") or {}
         cfg["mission_file"] = str(
@@ -555,22 +630,9 @@ def generate_launch_description() -> LaunchDescription:
             "control_mode", default_value="mppi",
             description="planning_node yerel kontrolcüsü: mppi | pid (F-S.10)",
         ),
-        DeclareLaunchArgument(
-            "use_onboard_camera", default_value="false",
-            description="HSV YEDEK kamera node'u (perception_camera_node). "
-                        "VARSAYILAN false (2026-08-04, algı ekibi kararı): "
-                        "/perception/buoys'un ASIL üreticisi artık repoda — "
-                        "son_kodv2/algi (girdap-ida-algi, DepthAI ile OAK-D'yi "
-                        "doğrudan açar, YOLO kameranın VPU'sunda). İkisi aynı "
-                        "anda açılırsa hem topic'te ÇİFT PUBLISHER olur hem de "
-                        "bbox piksel uzayları farklı olduğu için füzyon bearing'i "
-                        "karışır. Geçmiş (F-P.22, 2026-07-17): varsayılan geçici "
-                        "olarak true yapılmıştı çünkü algı paketi o ortamda hiç "
-                        "yoktu ve /perception/buoys sessizce hiç üretilmedi; "
-                        "artık paket burada ve fusion sync bekçisi de bu sessiz "
-                        "hâli WARN'la yakalıyor. ⚠ true yaparsan algı node'unu "
-                        "kapatmak ZORUNDASIN (tek OAK, tek süreç açabilir).",
-        ),
+        # 🔴 16.08.2026: `use_onboard_camera` argümanı KALDIRILDI —
+        # kontrol ettiği HSV yedek node'u da kaldırıldı (bkz. camera_buoys.py).
+        # Kamera sahipliği algı ekibinde; bu bayrak zaten hep false idi.
         DeclareLaunchArgument(
             "use_mppi", default_value=_bool_default(hw["use_mppi"]),
             description="REZERVE (F3.2): şu an HİÇBİR node okumuyor — MPPI her "
@@ -599,7 +661,15 @@ def generate_launch_description() -> LaunchDescription:
         ],
         *[
             DeclareLaunchArgument(
-                f"perception.fusion.{key}", default_value=str(hw["fusion"][key]),
+                f"perception.fusion.{key}",
+                # bool anahtarlar (`bilinmeyen_engelleri_tut`) `str(True)` ile
+                # "True" olur ve ROS onu bool'a çeviremez — kamera/mppi
+                # bloklarındaki `_bool_default` deseninin aynısı kullanılır.
+                default_value=(
+                    _bool_default(hw["fusion"][key])
+                    if isinstance(hw["fusion"][key], bool)
+                    else str(hw["fusion"][key])
+                ),
                 description=f"Kamera-LiDAR bearing füzyonu: {key}",
             )
             for key in _FUSION_DEFAULTS
@@ -639,6 +709,15 @@ def generate_launch_description() -> LaunchDescription:
                 description=_BEKCI_ARG_DESC[key],
             )
             for key in _BEKCI_DEFAULTS
+        ],
+        # planning.rrt_* / planning.pivot_* — F-F.30
+        *[
+            DeclareLaunchArgument(
+                f"planning.{key}",
+                default_value=str(hw["rrt"][key]),
+                description=_RRT_ARG_DESC[key],
+            )
+            for key in _RRT_DEFAULTS
         ],
         # fusion.* — iSAM2 smoother (keyframe throttle + robust GPS + fix
         # kalitesi sigma'ları). CLI: fusion.keyframe_rate_hz:=10.0
@@ -968,6 +1047,13 @@ def generate_launch_description() -> LaunchDescription:
                 )
                 for key, (_, cast) in _BEKCI_DEFAULTS.items()
             },
+            # F-F.30: RRT* hedef kurtarma / kısmi plan + pivot kör noktaları
+            **{
+                key: ParameterValue(
+                    LaunchConfiguration(f"planning.{key}"), value_type=cast
+                )
+                for key, (_, cast) in _RRT_DEFAULTS.items()
+            },
         },
     ]
     # mission_file: config/ altında çözülen tam yol (video ↔ competition).
@@ -1056,20 +1142,22 @@ def generate_launch_description() -> LaunchDescription:
              parameters=_perception_params("lidar", _LIDAR_DEFAULTS)
              + [_mount_params("livox_frame", hw["tf"])],
              output="screen"),
-        # Sprint 2 — F3.1: VARSAYILAN KAPALI. /perception/buoys'un asıl
-        # üreticisi algı ekibinin OAK node'u (girdap-ida-algi, DepthAI
-        # doğrudan — VPU'da YOLO). Bu HSV node'u yalnız YEDEK; ikisi aynı
-        # anda açılırsa hem topic çakışır hem OAK USB cihazı iki süreçte
-        # açılamaz. Açmak için: use_onboard_camera:=true.
-        Node(package=_PKG, executable="perception_camera_node",
-             name="perception_camera_node",
-             # madde #4: hedef rengi `mission:` bloğunda yaşıyor (kamera TUNING
-             # ayarı değil, hakemin verdiği GÖREV bilgisi) → perception.camera.*
-             # zincirine değil, buraya ayrı ekleniyor.
-             parameters=_perception_params("camera", _CAMERA_DEFAULTS) + [
-                 {"kamikaze_target_color": str(hw["kamikaze_target_color"])},
-             ],
-             condition=IfCondition(LaunchConfiguration("use_onboard_camera")),
+        # 🔴 16.08.2026 — HSV YEDEK KAMERA NODE'U KALDIRILDI.
+        # Zaten VARSAYILAN KAPALI idi (`use_onboard_camera=false`) ve tek OAK'ı
+        # algı ekibi tutuyor ⇒ bu node'a kare hiç ulaşmıyordu. İki ayrı OpenCV
+        # hattının yan yana durması karışıklık üretiyordu. Parkur-3 hedefi için
+        # saf OpenCV tespiti: girdap-ida-p3/p3_hedef/hedef_bul.py (kırmızı/yeşil/
+        # SİYAH — siyah burada hiç yoktu). `camera_buoys.py` yalnız SINIF KİMLİĞİ
+        # SÖZLEŞMESİ olarak duruyor (fusion + kamikaze_hedef oradan okuyor).
+        # Parkur-3 hedef rengi parametresini BARINDIRAN node. HSV yedek
+        # node'u kaldirilinca `kamikaze_target_color` sahipsiz kalmisti =>
+        # renk yuklenemez => FSM PARKUR3'e gecmez => P3 = 0 puan, SESSIZCE.
+        # Operator (KALKISTAN ONCE, sartname s.22):
+        #   ros2 param set /kamikaze_param_node kamikaze_target_color <renk>
+        Node(package=_PKG, executable="kamikaze_param_node",
+             name="kamikaze_param_node",
+             parameters=[{"kamikaze_target_color":
+                          str(hw["kamikaze_target_color"])}],
              output="screen"),
         # Sprint 3: obstacle_map + buoys (sync) → /perception/classified_obstacles.
         # LiDAR+kamera node'larından SONRA gelmeli (mesajları tüketiyor).
@@ -1176,7 +1264,6 @@ def generate_launch_description() -> LaunchDescription:
             LogInfo(msg=[
                 "[hardware] ArduRover — fcu_url=", fcu_url,
                 " | algorithm: isam2=", use_isam2, " rrt=", use_rrt,
-                " | onboard_camera=", LaunchConfiguration("use_onboard_camera"),
                 " | with_mavros=", LaunchConfiguration("with_mavros"),
                 " (false=masa testi, mock_sensors besler)",
             ]),

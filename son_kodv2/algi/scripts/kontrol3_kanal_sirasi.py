@@ -25,10 +25,42 @@ kadrajda duba yoksa iki taraf da sıfır çıkar ve betik **KARARSIZ** der, "KAL
 demez. Karara varmak için kadrajda gerçek duba (ya da turuncu/sarı bir cisim)
 bulunmalı.
 
+## 🔴 `--bant`: NEDEN EKLENDİ (17.08.2026 — pahalıya öğrenildi)
+Yukarıdaki "gerçek duba bulunmalı" şartı bu kapıyı **fiilen çalıştırılamaz**
+yaptı: 13.08'den 17.08'e kadar KONTROL 3 **hiç koşulmadı**, çünkü her denemede
+duba elde değildi. Bu arada 16.08 22:27'de dağıtılan bozuk blob (`6df2d644`,
+`--scale_values` düşmüş) teknede **üç oturum** kaldı ve kare başına yüzlerce
+uydurma kutu üretti. 17.08'de ölçüldü: **o blob bu testten KALIRDI**
+(takas/normal = 0,862 ⇒ KALDI). Yani kapı vardı, doğru çalışıyordu — yalnız
+**donanım şartı yüzünden hiç açılmadı**.
+
+`--bant`, kareleri kameradan değil **kayıtlı gerçek göl karelerinden** alır.
+Karar mantığı (`_karar`) ve replay yolu (`_tekrar_oynat`) **aynen** kullanılır;
+değişen tek şey karelerin kaynağı. Ölçülen (120 kare, 13.08 göl seti):
+
+    blob                      normal/kare   takas/kare   oran    karar
+    c4d69ec7 (17.08, doğru)       2,5          0,6       0,232   ✅ GEÇTİ
+    31fb0348 (ep87, bilinen-iyi)  2,5          0,4       0,154   ✅ GEÇTİ   ← kontrol
+    6df2d644 (16.08, bozuk)     613,4        528,7       0,862   🔴 KALDI  ← kontrol
+
+⚠️ **KAPSAM SINIRI — abartma:** `--bant` blob'un beklediği kanal sırasını
+sınar; kamera→blob zincirinin **kamera yarısını sınamaz**. O yarı statik bir
+kod gerçeği (`duba_gecis_navigator:setColorOrder(BGR)` ↔ replay `BGR888p`) ve
+kanal açısından iki yol birebirdir. Duba eline geçtiğinde canlı kip **yine de**
+koşulmalı — `--bant` onun yerine geçmez, **koşulamadığı günlerde yerini tutar**.
+
 ## Koşum
     # Jetson, kamera takılı, algı servisi DURDURULMUŞ (tek OAK):
     sudo systemctl stop girdap-algi
     python3 scripts/kontrol3_kanal_sirasi.py --kare 8 --kaydet /tmp/kontrol3
+
+    # DUBA YOKKEN — kayıtlı gerçek karelerle (kamera yine de takılı olmalı:
+    # replay cihazın NN'inde koşar):
+    python3 scripts/kontrol3_kanal_sirasi.py --bant --kare 120
+
+    # kontrol grubu — başka bir blob'la aynı ölçüm:
+    python3 scripts/kontrol3_kanal_sirasi.py --bant --kare 120 \
+            --blob ~/models_yedek_512_ep87/yolo11n_duba_rvc2.blob
 
     # (istege bagli) PC'de 1:1 .pt kiyasi — kaydedilen kareler tasinir:
     python3 scripts/kontrol3_kanal_sirasi.py --pt ~/girdap_MODEL_512/girdap_512_ep87.pt \
@@ -55,6 +87,9 @@ GECTI, KALDI, KARARSIZ = 0, 1, 2
 TAKAS_TOLERANS = 0.25
 # Karar verebilmek için normal tarafta gereken en az tespit (kuru ortam tuzağı).
 MIN_TESPIT = 3
+# `--bant` varsayılan kaynağı: 13.08 göl oturumu, DOĞRU RAL dubalarıyla,
+# 1352x1014 — dağıtımdaki RGB çıkışının çözünürlüğü.
+BANT_DIZIN = "/home/girdap/girdap_veriseti/images"
 
 
 def _duz(kare: np.ndarray) -> np.ndarray:
@@ -111,6 +146,70 @@ def _kareleri_topla(sayi: int, zaman_asimi: float):
             kareler.append(kare)
             cihaz_tespit.append(0 if det is None else len(det.detections))
     return kareler, cihaz_tespit
+
+
+def _kayit_bgr_mi(kareler) -> tuple[bool, float]:
+    """Kayıtlı kareler BGR mi (cv2 düzeni), yoksa RGB mi kaydedilmiş?
+
+    🔴 NEDEN ŞART: `--bant` karelerin kameranın verdiği düzende olduğunu
+    varsayar. Klasör RGB kaydedilmişse turuncu/sarı dubalar **mavi** görünür,
+    normal taraf çöker, takas tarafı yükselir ve betik **"blob ters"** der.
+    Yani doğru blob, yanlış klasör yüzünden çöpe atılırdı — tam bir sessiz
+    katil. Bu kapı ölçümü değil, ölçüm ARACINI doğrular (§7 kuralı).
+
+    Yöntem: doygun piksellerin tonu. Duba boyaları RAL 2003 (turuncu) /
+    RAL 1026 (sarı) ⇒ BGR okunduğunda ton 0-40 bandında toplanır; klasör RGB
+    ise aynı pikseller cyan/mavi (85-135) tarafına düşer.
+
+    Dönüş: (bgr_mi, sicak_oran) — `sicak_oran` = 0-40 bandının payı.
+    """
+    import cv2
+    import numpy as np
+
+    sicak = soguk = 0
+    for kare in kareler:
+        hsv = cv2.cvtColor(kare, cv2.COLOR_BGR2HSV)
+        maske = (hsv[:, :, 1] > 140) & (hsv[:, :, 2] > 110)
+        if not maske.any():
+            continue
+        ton = hsv[:, :, 0][maske]
+        sicak += int(np.count_nonzero(ton < 40))
+        soguk += int(np.count_nonzero((ton >= 85) & (ton < 135)))
+    toplam = sicak + soguk
+    if toplam == 0:
+        # Karar verecek renk yok — çağıran KARARSIZ döndürmeli, "BGR" DEMEMELİ.
+        return False, 0.0
+    oran = sicak / toplam
+    return oran > 0.5, oran
+
+
+def _bant_kareleri_yukle(dizin: str, sayi: int):
+    """Kayıtlı gerçek kareleri NN girişine hazırla (kamera GEREKMEZ).
+
+    🔴 SIKIŞTIR, letterbox YAPMA: dağıtımda `keepAspectRatio(False)` var
+    (duba_gecis_navigator:setPreviewSize + §5 ölçümü — aynı model aynı videoda
+    kırp+sıkıştır 480 tespit ↔ letterbox 338). Burada letterbox'a kayılırsa
+    ölçülen şey dağıtımın gördüğü kare OLMAZ.
+    """
+    import glob
+
+    import cv2
+
+    from girdap_ida_algi import duba_gecis_navigator as dgn
+
+    yollar = sorted(glob.glob(os.path.join(dizin, "*.jpg"))
+                    + glob.glob(os.path.join(dizin, "*.png")))
+    if not yollar:
+        raise SystemExit(f"🔴 kare bulunamadı: {dizin}")
+    adim = max(1, len(yollar) // max(sayi, 1))
+    kareler, secilen = [], []
+    for p in yollar[::adim][:sayi]:
+        im = cv2.imread(p)
+        if im is None:
+            continue
+        kareler.append(cv2.resize(im, (dgn.NN_GIRIS, dgn.NN_GIRIS)))
+        secilen.append(p)
+    return secilen, kareler
 
 
 def _tekrar_oynat(kareler, takas: bool) -> int:
@@ -239,6 +338,11 @@ def main() -> int:
     ap.add_argument("--zaman-asimi", type=float, default=30.0)
     ap.add_argument("--pt", help="PC kipi: .pt ile 1:1 kıyas")
     ap.add_argument("--kareler", help="PC kipi: --kaydet ile üretilmiş klasör")
+    ap.add_argument("--bant", nargs="?", const=BANT_DIZIN, default=None,
+                    metavar="DIZIN",
+                    help="duba yokken: kareleri kamera yerine kayıtlı GERÇEK "
+                         f"göl karelerinden al (varsayılan {BANT_DIZIN})")
+    ap.add_argument("--blob", help="kontrol grubu: başka bir blob'la aynı ölçüm")
     a = ap.parse_args()
 
     if a.pt:
@@ -247,10 +351,37 @@ def main() -> int:
             return KARARSIZ
         return _pc_kiyas(a.pt, a.kareler)
 
-    print(f"KONTROL 3 — kanal sırası · {a.kare} kare toplanıyor…")
-    kareler, cihaz_tespit = _kareleri_topla(a.kare, a.zaman_asimi)
-    print(f"  toplandı: {len(kareler)} kare · cihazın canlı tespiti: "
-          f"{sum(cihaz_tespit)} kutu")
+    from girdap_ida_algi import duba_gecis_navigator as dgn
+
+    if a.blob:
+        # `_tekrar_oynat` blob yolunu buradan okur; kontrol grubu böyle koşar.
+        dgn.MODEL_BLOB = a.blob
+    print(f"KONTROL 3 — blob: {dgn.MODEL_BLOB}")
+
+    if a.bant:
+        print(f"KONTROL 3 [BANT] — {a.bant} · {a.kare} kare yükleniyor…")
+        secilen, kareler = _bant_kareleri_yukle(a.bant, a.kare)
+        cihaz_tespit = [0] * len(kareler)   # canlı tespit yok — kamera koşmadı
+        # 🔴 ÖNCE ARACI DOĞRULA, sonra ölç (§7): klasör RGB kaydedilmişse
+        # sonuç "blob ters" diye okunur ve DOĞRU blob çöpe atılır.
+        bgr_mi, oran = _kayit_bgr_mi(kareler)
+        if oran == 0.0:
+            print("⚠️  klasörde doygun renk YOK — bu kareler kanal sırasını "
+                  "ayırt edemez (dubasız/gri set?).")
+            return KARARSIZ
+        if not bgr_mi:
+            print(f"🔴 klasör RGB kaydedilmiş görünüyor (sıcak ton payı %{100*oran:.0f}, "
+                  "beklenen >%50) — turuncu/sarı dubalar MAVİ okunuyor. Bu klasörle "
+                  "ölçüm YANILTIR: doğru blob 'ters' damgası yer. DURDURULDU.")
+            return KARARSIZ
+        print(f"  yüklendi: {len(kareler)} kare "
+              f"({os.path.basename(secilen[0])} … {os.path.basename(secilen[-1])}) · "
+              f"kayıt düzeni BGR ✅ (sıcak ton payı %{100*oran:.0f})")
+    else:
+        print(f"KONTROL 3 — kanal sırası · {a.kare} kare toplanıyor…")
+        kareler, cihaz_tespit = _kareleri_topla(a.kare, a.zaman_asimi)
+        print(f"  toplandı: {len(kareler)} kare · cihazın canlı tespiti: "
+              f"{sum(cihaz_tespit)} kutu")
 
     print("  tekrar oynatılıyor: NORMAL kanal sırası…")
     normal = _tekrar_oynat(kareler, takas=False)
@@ -263,8 +394,6 @@ def main() -> int:
         import cv2
 
         os.makedirs(a.kaydet, exist_ok=True)
-        from girdap_ida_algi import duba_gecis_navigator as dgn
-
         kayit = {}
         for i, (kare, n) in enumerate(zip(kareler, cihaz_tespit)):
             ad = f"kare_{i:02d}.png"          # 🔴 PNG: jpeg pikselleri DEĞİŞTİRİR

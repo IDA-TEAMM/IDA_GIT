@@ -5,7 +5,8 @@
 NEDEN BU TEST VAR (2026-08-09):
 Jetson'da **RTC pili yok**; boot'ta saat geride açılıyor — iki kez ölçüldü
 (bir kez ~15 saat, bir kez tam bir gün: 08.08'de çekilen kareler 07.08
-damgası aldı). Kıyı yordamımız (`docs/veriseti_deniz_oturumu.md`) *"`date` ile
+damgası aldı). Kıyı yordamımız (`docs/veriseti_deniz_oturumu.md` — toplayıcıyla
+birlikte 16.08'de kaldırıldı, git geçmişinde) *"`date` ile
 saati gözle doğrula, yanlışsa `sudo date -s`"* diyor ve algı servisi boot'ta
 otomatik kalkıyor ⇒ **saat, node çalışırken düzeltiliyor.** Tethering takılırsa
 NTP de adım atar.

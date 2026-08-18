@@ -162,9 +162,10 @@ var) · G hedefli ton (fark yok, alınmadı) · epoch eğrisi (150'de bile plato
 - [ ] **Eğitim verisi TEK OTURUMDAN** (`20260807_150930`). %88,9 recall bir
       **üst sınır**, saha değeri değil. Çözüm: **farklı noktada bir göl oturumu,
       tamamı holdout** — tek kare bile eğitime girmeyecek.
-- [ ] Jetson: autostart doğrulaması · **reboot testi** · yarışma günü
-      `girdap-veriseti` **DISABLE** (her biri tek başına P1+P2'yi sıfırlar,
-      belirti vermeden)
+- [ ] Jetson: autostart doğrulaması · **reboot testi** · `girdap-veriseti`
+      **KALINTI unit'i silinmiş olmalı** (toplayıcı 16.08'de repodan kaldırıldı;
+      denetim: `systemctl list-unit-files | grep veriseti` → BOŞ). Her biri tek
+      başına P1+P2'yi sıfırlar, belirti vermeden
 - [ ] Kameraya **yağmur siperliği** (şartname md 4.1 sorumluluğu bizde;
       sette 0 yağmur karesi var)
 - [ ] **Yarışma yeri** — md 5.1 "deniz kenarı **veya** göl/gölet"; deniz çıkarsa

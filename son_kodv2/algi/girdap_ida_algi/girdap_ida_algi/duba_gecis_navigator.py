@@ -67,6 +67,7 @@ PLAN B hızlı başlangıç:
 import math
 import os
 import time
+import types
 # ⏱️ SAAT KURALI (2026-08-09) — İKİ SAAT VAR, KARIŞTIRMA:
 #   SÜRE / zaman aşımı / periyot   -> time.monotonic()   (duvar saati DEĞİL)
 #   MUTLAK an (damga, etiket, tarih) -> time.time() / ROS saati
@@ -77,7 +78,8 @@ import time
 # `time.monotonic()` değildir. Duvar saati ileri sıçrarsa geçiş penceresi
 # (`pass_bitis_t`) ANINDA dolar (G puanı), geri sıçrarsa `durum_log` susar
 # (sahadaki tek görünürlük kanalı) ve Dosya-1 kaydı durur (md 4.2 = 5 ceza p.).
-# Toplayıcı (scripts/oak_veriseti_topla.py) bu ayrımı zaten yapıyordu.
+# (Bu ayrımı veri seti toplayıcısı da yapıyordu; toplayıcı 16.08'de repodan
+#  kaldırıldı — ayrım burada kendi başına geçerli, tarihsel not olarak duruyor.)
 # Regresyon testi: test/test_saat_kaynagi.py
 from dataclasses import dataclass
 
@@ -86,10 +88,12 @@ import rclpy
 
 try:                                  # paket içi saf mantık (kamerasız testli)
     from girdap_ida_algi import gecit_mantik as gm
+    from girdap_ida_algi import p3_hedef_bul as p3
     from girdap_ida_algi import oak_baglanti as ob
     from girdap_ida_algi import saat as st
 except ImportError:                   # dosya doğrudan çalıştırılırsa
     import gecit_mantik as gm
+    import p3_hedef_bul as p3
     import oak_baglanti as ob
     import saat as st
 # ⚠️ `ob` import'u 05.08 smoke testinde eklendi — daha önce YOKTU ama kod
@@ -111,7 +115,9 @@ elif MOD == "algi_yayin":
     from geometry_msgs.msg import Pose, PoseArray
     from nav_msgs.msg import Odometry
     from std_msgs.msg import Bool, Int32, String
-    from vision_msgs.msg import (            # sudo apt install ros-humble-vision-msgs
+    from vision_msgs.msg import (
+        Detection3D,
+        Detection3DArray,            # sudo apt install ros-humble-vision-msgs
         Detection2D, Detection2DArray, ObjectHypothesisWithPose)
 
 # ================== AYARLAR ==================
@@ -238,6 +244,20 @@ BUOYS3D_TOPIC = "/perception/buoys_3d"   # PoseArray — BONUS: stereo 3D konum,
 ODOM_TOPIC = "/girdap/fusion/odom"       # karar stack'inin pürüzsüz poz çıkışı
                                          # (o stack TF yayınlamaz — geçiş doğrulaması
                                          # bu modda TF yerine buradan beslenir)
+# 🔴 ODOM BAYATLIK SINIRI (2026-08-13, ölçüldü) — poz "var ama donuk" olabilir.
+# Karar tarafı `fusion_node` girdi akışı kesilince odom yayınını BİLEREK KESİYOR
+# (F8.2, `fusion_node.py:560-568`; varsayılan `pose_timeout_s = 1.0` s ve
+# `hardware.yaml:83` bunu açıkça uyarıyor: "1-2 Hz'de odom yayını KESİLİR").
+# Yayın kesilince bizim `son_odom` SON DEĞERDE DONAR ve eski kod onu geçerli
+# poz sayardı. Ölçülen sonuç (scratchpad/dogrula2.py, aynı fiziksel geçiş):
+#     odom HİÇ gelmemiş -> geçit SAYILDI (1)
+#     odom BAYAT/DONUK  -> geçit SAYILMADI (0)
+# Yani donuk poz, poz olmamasından DAHA KÖTÜ: uzun pencereli çizgi kuruluyor,
+# `gecitten_gecti` donuk pozla hep False dönüyor, geçiş "doğrulanamadı" diye
+# elenip (G/KD)×10 ve ×40 puanı sessizce gidiyor.
+# 1,5 s = karar tarafının kendi eşiği (1,0) + bir tık pay; altında kalan kısa
+# kesintiler zaten normal jitter'dır ve davranışı DEĞİŞTİRMEZ.
+ODOM_BAYAT_SN = 1.5
 KAMERA_FRAME = "oak_rgb"
 
 # Sınıf eşlemesi — girdap-decision class_id STRING sözleşmesi:
@@ -327,7 +347,11 @@ ENGEL_YEDEK = False    # saha yedeği: hiç kenar çifti yoksa kenar+engel çift
 
 # ---- Geçiş tetikleme / sayaç (iki modda ortak) ----
 PASS_TETIK_Z = 2.0     # orta nokta bu kadar yaklaşınca "geçiş" fazına gir
-PASS_KAYIP_Z = 3.2     # geçit bu mesafeden yakınken FOV'dan çıkarsa da geç say
+# 🔴 ARTIK KULLANILMIYOR (18.08.2026) — sabit metre eşiği kapı genişliğinden
+# bağımsızdı ve W > ~4,4 m'de ÖLÜ BANT yaratıyordu (bkz. gecit_mantik.
+# fov_kayip_menzili docstring'i). Yerine `gm.fov_kaybi_mi()` geçti.
+# Silinmedi: eski logları/ölçümleri okuyan biri sayıyı arayacaktır.
+PASS_KAYIP_Z = 3.2     # (tarihsel) sabit FOV-kaybı eşiği — KULLANILMIYOR
 PASS_EK_YOL = KAMERA_KIC_MESAFE + 0.5  # kıçın da geçidi temizlemesi için ek yol
 
 # ---- Görev ----
@@ -346,6 +370,98 @@ GOREVDE_DUR = False    # True: şart sağlanınca yeni hedef/hız üretme
 KAYIT_AKTIF = True
 KAYIT_HZ = 2.0            # şart ≥1 Hz; 2 Hz pay bırakır (VPU'ya ek yük yok,
                           # passthrough zaten üretilen kare — sadece USB kopyası)
+# ── PARKUR-3 hedef yayını (FAZ 2, 2026-08-13) ────────────────────────────
+#: `/perception/targets` yayın hızı. Kare zaten Dosya-1 için 2 Hz'te
+#: çekiliyor; hedef adımı ondan hızlı koşamaz, ek kare ÇEKMİYORUZ.
+HEDEF_HZ = 2.0
+TARGETS_TOPIC = "/perception/targets"
+
+#: 🔴 PARKUR-3 HEDEF YAYINI ANA ŞALTERİ — VARSAYILAN **KAPALI** (16.08.2026).
+#: Eyüp kararı: *"Parkur 3'ü şimdilik aktif etme, testte bozar; Parkur 1 ve
+#: Parkur 2'yi ölçüyoruz."*
+#:
+#: Kapalıyken: `/perception/targets` HİÇ yayınlanmaz, bbox kırpma + renk
+#: analizi HİÇ koşmaz ⇒ P1/P2 ölçümü P3 kodundan **tamamen etkilenmez**
+#: (ne CPU, ne log gürültüsü, ne de topic trafiği).
+#:
+#: ⚠ BU ŞALTER *BÜYÜK CİSİM SÜZGECİNİ* KAPATMAZ — o bilerek parkurdan
+#: bağımsız ve her zaman açık: P3 hedefi Ø64 cm, 25 m'den 7,7 px eder ve
+#: tekne daha **P2'nin İÇİNDEYKEN** görür. Kenar/engel diye yayınlanırsa
+#: füzyon `EdgeBuoyMemory`'ye KALICI kenar yazar → hayalet kapı → **P2'de
+#: rota bozulur**. Yani süzgeç P3 için değil, P2'yi KORUMAK için var.
+#:
+#: Açmak için (yarışma günü, kalkıştan önce) — servis dosyasına ekle:
+#:     Environment=GIRDAP_P3_HEDEF=1
+#: (ROS parametresi değil: bu node'da `declare_parameter` altyapısı yok;
+#: ortam değişkeni tek satırlık ve systemd'den yönetilebilir.)
+P3_HEDEF_YAYINI = os.environ.get("GIRDAP_P3_HEDEF", "0").strip() in (
+    "1", "true", "True", "evet"
+)
+
+#: 🔴 STEREO YOKKEN hedef ayrımı — 16.08.2026, ÖLÇÜMLE belirlendi.
+#: Menzil yoksa boyut kapısı kurulamaz (mono z zaten Ø0,30 varsayımından
+#: türetilir ⇒ kıyas dairesel). Geriye tek ayırt edici kalıyor: RENK.
+#: 6.042 GERÇEK kenar/engel kutusunda (eski+yeni oturum, karanlık/ters ışık
+#: dahil) hedef renk eşiklerinin yanlış pozitif oranı:
+#:   kapsama eşiği | yeşil  | siyah  | kırmızı
+#:   0,25          | 0,000% | 0,232% | 13,87%
+#:   0,35          | 0,000% | 0,050% |  7,75%
+#:   **0,45**      | **0,000%** | **0,000%** |  4,83%
+#:   0,65          | 0,000% | 0,000% |  0,53%
+#: ⇒ 0,45'te yeşil ve siyah TEMİZ; kırmızı hiçbir eşikte temizlenmiyor
+#: (RAL 3026 ↔ turuncu kenar dubamız RAL 2003 tonda komşu) ⇒ **kırmızı yok**.
+#: ⛔ GERİ ALINIRSA: >10 m'de hedef dubası yine `/perception/buoys`'a girer,
+#: `EdgeBuoyMemory`'de KALICI kenar kaydı açar (unutma yok) ⇒ hayalet kapı
+#: (P1/P2 rotası bozulur) + MPPI hedeften KAÇAR (P3 angajmanı kaçar).
+MONO_HEDEF_ORANI = 0.45
+MONO_HEDEF_RENKLERI = ("yesil", "siyah")
+
+# ── P3 SU HATTI TUTARLILIĞI — 17.08.2026, gerçek veriyle ölçülerek eklendi ──
+#: 🔑 FİKİR: yüzen bir duba **su üzerindedir**. O hâlde iki BAĞIMSIZ menzil
+#: uyuşmalı: (a) bbox genişliğinden (Ø0,64 varsayımı), (b) bbox ALT kenarının
+#: ufkun ne kadar altında olduğundan (kamera yüksekliği geometrisi).
+#: Kıyı bitkisinin su yüzeyindeki YANSIMASI bu sınavda çöküyor: teknenin ~1 m
+#: yanındaki suda duruyor ama genişliği "8 m'deki hedef" diyor.
+#:
+#: ÖLÇÜLDÜ (240 gerçek göl karesi; iki popülasyon da GERÇEK):
+#:   yeşil yansıma  n=49  · oran (geo/genişlik) medyan **0,12** · p90 0,17
+#:   kendi dubamız  n=599 · oran medyan **1,97** · p10 1,02  ⇒ 6 kat boşluk
+#:   K=3 kapısı: yansımaların **%88'i** elenir, gerçek dubada kayıp **%0**.
+#: ⚖️ Alternatif (yeşil `doluluk` 0,55→0,62) ÖLÇÜLDÜ ve DAHA KÖTÜ çıktı:
+#:   gerçek yanlış adayların yalnız %47'sini eliyor ve kanonik süpürmeye göre
+#:   bulmayı %88→%73 düşürüyor. ⇒ eşiklere dokunulmadı, bu kapı eklendi.
+#: 🪤 Çürüyen hipotez: *"yansımanın kenarı yumuşaktır"* — ölçüldü, kenar
+#:   keskinliği yansımada 1,005 ↔ katı dubada 1,003 (AYNI). Uzaktaki her şey
+#:   bulanık; kenar keskinliği bu ölçekte bilgi taşımıyor.
+#:
+#: 🔴 PITCH BELİRSİZLİĞİNE KARŞI TASARIM: ufuk, pitch payı kadar AŞAĞI alınıp
+#: **en cömert** (en uzak) su-hattı menzili hesaplanır; yalnız bu cömert değer
+#: bile çelişkiliyse elenir. Sonuç: ufka yakın = UZAK hedefler tanım gereği
+#: elenemez (dy ≤ pay olduğunda "çelişki iddia edilemez" denir ve geçilir).
+#: 09.08'de ufuk süzgeci tam bu yüzden reddedilmişti (pitch ±5° → ufuk ±38 px);
+#: kapı o itirazı içine alarak kuruldu.
+P3_SU_HATTI_KAPISI = True
+#: 🔬 UFUK ve EĞİM **VERİDEN ÇIKARILDI** (17.08) — pitch işaret konvansiyonuna
+#: güvenilmedi ve iyi ki güvenilmemiş: iki konvansiyon da 0,04 sapıyordu.
+#: Yöntem: 327 gerçek duba kutusu, `cy_alt = ufuk + (h·f_y)·(1/d)` doğrusuna
+#: uyduruldu (d bbox GENİŞLİĞİNDEN, yani dikeyden bağımsız ölçüm):
+#:     kesişim (ufuk) = **0,5015**   ·   eğim (h·f_y) = **0,2228**   (r = 0,77)
+#: Eğimden kamera yüksekliği **0,230 m** çıkıyor — 10.08'de bağımsız yöntemle
+#: ölçülen 0,217 m ile %6 uyum (çapraz doğrulama). Pitch ise **≈0°** çıktı,
+#: memory'deki −2,3° bu oturumda görülmüyor ⇒ sabit yerine ÖLÇÜM kullanıldı.
+SU_HATTI_UFUK_CY = 0.50
+SU_HATTI_EGIM = 0.223
+#: Dalga/trim payı, cy biriminde: ±5° ≈ 0,085 (5° = 09.08'de ufuk süzgecini
+#: reddettiren belirsizliğin ta kendisi; burada kapıyı GEVŞETMEK için).
+P3_PITCH_PAYI_CY = 0.085
+#: Çelişki katı: su hattı menzili, genişlik menzilinin bu kadar altındaysa ele.
+#: Ölçüm (uydurulmuş ufukla yeniden yapıldı, aşağıdaki tabloya bak).
+P3_CELISKI_KATI = 3.0
+#: 🔴 Bu topic P1/P2'nin kullandığı `/perception/buoys`'tan **AYRI**. Hedef
+#: tespitleri oraya ASLA karışmaz: karışırsa füzyon `EdgeBuoyMemory`'ye kalıcı
+#: kenar kaydı açar → iki hedef arasında hayalet kapı → P2 rotası bozulur
+#: (11.08 gerekçesi, `buyuk_cisim_mi` docstring'i).
+
 KAYIT_SEGMENT_SN = 120.0  # çökme dayanımı: 2 dk'lık mp4 segmentleri (yarıda
                           # kesilirse en fazla son segment zarar görür)
 KAYIT_DIZIN = os.path.expanduser("~/girdap_logs/kamera")
@@ -354,6 +470,39 @@ if KAYIT_AKTIF:
     import cv2            # overlay çizimi + mp4 yazımı (yalnız kayıt aktifken)
 
 KONTROL_HZ = 15.0
+
+# ---- DAMGA: çekim anı ↔ yayın anı (2026-08-18, ÖLÇÜLDÜ) ----
+# 🔴 NE: `/perception/*` başlıklarına artık YAYIN anı değil ÇEKİM anı basılır.
+# ÖLÇÜM (bu kamerayla, dağıtım boru hattıyla, 2×40 sn): karenin çekilmesiyle
+# yayınlanması arasında **202,4 ms** (p95 233; cihaz+XLink 169,1 + bizim 15 Hz
+# döngümüz 33,3). Tüketicinin `sync_slop_s` değeri **100 ms** ⇒ hata slop'un
+# **2,02 KATI**.
+# NEDEN ÖNEMLİ (18.08'de büyüdü): karar tarafı artık tespiti **damgadaki** poza
+# göre dünyaya çeviriyor (`planning_node._poz_damgada`, poz tamponunda
+# interpolasyon). Gerekçesi kendi ölçümleri: dönerken 5 sn'de +1/+5/+2 hayalet
+# kayıt, dönüş kesilince dört pencere +0 — *"hayaletin kaynağı algı değil,
+# ZAMAN HİZALAMASI"*. Geç damga o düzeltmeye YANLIŞ ANAHTAR verir: 202 ms
+# sonrasının pozu döner. Hesaplandı — 0,60 m eşleşme bandına karşı yanal hata:
+#   ⚠️ DÜZELTME (18.08, aynı gün): ilk yazımda "30°/s dönüşte 8 m'de 0,85 m"
+#   demiştim — o dönüş hızı FİZİKSEL OLARAK ULAŞILAMAZ. Tekne dinamiğinden
+#   türetildi: r_max = max_thrust·B / |Nr| = 1,455·0,596/3,0 = 0,289 rad/s
+#   = **16,6 °/s** (simülasyonla birebir doğrulandı). 30°/s tavanın 1,8 katı.
+#   Ulaşılabilir en kötü hâl (TAM pivot, 16,6 °/s) ve 202 ms ile yanal hata:
+#       4 m 0,23 · 6 m 0,35 · 8 m 0,47 · 10 m 0,59 · 12 m 0,70 m
+#   `edge_memory` eşleşme bandı 0,60 m ⇒ bant ancak **~10,3 m ötesinde** aşılır
+#   ve LiDAR 30 cm dubayı zaten ~8 m'de kesiyor. Yani hayalet kayıt yolu
+#   GERÇEK ama dar; düzeltmenin asıl gerekçesi bu değil, aşağıdaki füzyon
+#   eşleşmesi (202,4 ms, slop'un 2,02 katı) ve damganın nesnel yanlışlığı.
+# 🔴 Ve SESSİZ: uyarı yalnız damga poz tamponunun DIŞINDA kalırsa yanıyor;
+# 202 ms tamponun (100 örnek @10 Hz = 10 sn) tam içinde, yani geçerli görünen
+# ama yanlış bir poz dönüyor — tek satır log basılmadan.
+# GERİ ALINIRSA: yukarıdaki hayalet kayıt yolu yeniden açılır.
+#
+# Yaş bu tavanı aşarsa damga UYDURULMAZ, eski davranışa düşülür (`damga_yedek`
+# sayacı artar). Tavan cömert: ölçülen p95 0,23 sn, yani 8 kat pay. Amaç
+# "gecikmeyi yakalamak" değil, `getTimestamp()` saçmalarsa (farklı zaman
+# tabanı, sıfır damga) **uydurma bir geçmişe** damga basmamak.
+DAMGA_MAKUL_TAVAN_S = 2.0
 HEDEF_KAYIP_SN = 1.0   # s - tespit tazeliği; 8 FPS'te 8 kareye denk (tam sınırda
                        # değil: 10 FPS'e düşerse 10 kare kalır, kare düşünce
                        # tazelik filtresi tetiklenebilir — 11 bu yüzden 10'a yeğlendi)
@@ -441,7 +590,195 @@ def _blob_denetle(blob_yolu: str, siniflar, logger=None):
     return sorunlar
 
 
-def pipeline_kur():
+# ══════════════════════════════════════════════════════════════════════════
+# SİMÜLASYON KAYNAK KİPİ (18.08.2026) — `GIRDAP_SIM_KAYNAK=1`
+#
+# 🔴 NEDEN: bu düğüm kareyi YALNIZ OAK-D cihazından alıyordu (`dai.Device`).
+# Cihaz yoksa `pipeline_kur` hiç dönmüyor ⇒ düğüm yapay gölde KOŞAMIYORDU.
+# Ölçüldü (18.08 göl koşumu): `/perception/buoys` **yayıncı 0**, buna karşılık
+# `/oak/rgb/image_raw` **abone 0** — yani sahte ham kamera üretiliyor ama
+# okuyan yok. Sonuç: karar tarafının GERÇEKTEN tükettiği tek algı çıktımız
+# (`/perception/buoys`, abone 3) gölde HİÇ sınanmıyordu.
+#
+# 🔑 TASARIM: düğümün GÖVDESİ DEĞİŞMİYOR. `pipeline_kur` `(dev, det_q, rgb_q,
+# siniflar)` döndürüyor ve gövde bunları yalnız `tryGet()` ile okuyor. Sim
+# kipinde aynı arayüzü sağlayan SAHTE KUYRUKLAR veriliyor; `tespitleri_oku`,
+# `_kare_tazele`, `tespit_yayinla`, geçit mantığı, P3 yolu — hepsi BİT BİREBİR
+# aynı kod. Yani gölde sınanan şey gerçekten dağıtım kodudur.
+#
+# ⚠ SINIR (abartma): bu kip YOLO'yu ve VPU'yu SINAMAZ — tespitler sanal
+# gölden hazır gelir. Sınanan: bbox→metre dönüşümü, menzil çözümü, sınıf
+# eşlemesi, geçit kurma, yayın sözleşmesi ve P3 zinciri. Model/blob doğruluğu
+# ayrı yoldan (KONTROL 3 `--bant`) sınanır.
+#
+# ⚠ VARSAYILAN KAPALI: çevre değişkeni verilmezse tek satır kod bile
+# değişmez; dağıtımda `dai.Device` yolu aynen koşar.
+# ══════════════════════════════════════════════════════════════════════════
+#: 0 = kapalı (dağıtım: OAK-D) · 1 = GEOMETRİK kip · 2 = GÖRÜNTÜ kipi
+SIM_KAYNAK_KIP = os.environ.get("GIRDAP_SIM_KAYNAK", "0")
+SIM_KAYNAK = SIM_KAYNAK_KIP in ("1", "2")
+#: Görüntü kipi: kare `/oak/rgb/image_raw`'dan gelir ve GERÇEK ön işlemeden
+#: geçer. Geometrik kipin (1) kapatamadığı yolları açar:
+#:   · görüntü taşıma + QoS uyumu (yayıncı BEST_EFFORT — abone katı olursa
+#:     bağlantı SESSİZCE kurulmaz; dağıtımdaki en sinsi arıza sınıfı)
+#:   · bgr8 çözme (cv_bridge YOK — CLAUDE.md'deki ABI tuzağı)
+#:   · CLAHE + doygunluk germesi (F-P.21: gerçek donanımda S≈29-83 ölçüldü,
+#:     sabit eşik 120 hiç tetiklenmiyordu)
+#:   · kontur → bbox → normalize → **mono pinhole menzil yedeği**
+#:     (08.08'de eklendi çünkü su stereo için dokusuz/aynasal)
+#:   · GERÇEK kare damgası ⇒ kamera↔LiDAR ms farkı ölçülebilir hale gelir
+#: Geometrik kipte bunların HİÇBİRİ koşmaz: orada tespit LiDAR haritasından
+#: türetilir, damga da o mesajdan gelir.
+SIM_GORUNTU = SIM_KAYNAK_KIP == "2"
+
+
+class _SahteTespit:
+    """`depthai` SpatialImgDetection'ın gövdenin kullandığı ALANLARI.
+
+    Yalnız `tespitleri_oku`nun okuduğu alanlar var — fazlası taklit edilmez,
+    çünkü taklit edilmeyen alan gövdede kullanılırsa AttributeError ile
+    **görünür** hata verir; sessizce yanlış değer üretmekten iyidir.
+    """
+
+    __slots__ = ("xmin", "xmax", "ymin", "ymax", "label", "confidence",
+                 "spatialCoordinates")
+
+    def __init__(self, xmin, xmax, ymin, ymax, label, confidence, x_mm, z_mm):
+        self.xmin, self.xmax = xmin, xmax
+        self.ymin, self.ymax = ymin, ymax
+        self.label, self.confidence = label, confidence
+        self.spatialCoordinates = types.SimpleNamespace(
+            x=x_mm, y=0.0, z=z_mm)
+
+
+class _SahteMesaj:
+    """`detections` listesi + `getTimestamp()` taşıyan sahte NN mesajı."""
+
+    def __init__(self, detections, yas_s=0.0):
+        self.detections = detections
+        self._yas = yas_s
+
+    def getTimestamp(self):                      # noqa: N802 (depthai adı)
+        import datetime
+        return datetime.timedelta(
+            seconds=time.monotonic() - self._yas)
+
+
+class _SahteKare:
+    """`getCvFrame()` sözleşmesini taşıyan sahte RGB karesi.
+
+    🔴 NEDEN GEREKLİ (18.08.2026): sim kipinde `rgb_q` kuruluyordu ama
+    KİMSE DOLDURMUYORDU ⇒ `_kare_tazele` hep `None` görüyor ⇒ **Dosya-1
+    (kamera mp4) gölde HİÇ üretilmiyordu** (oturum klasörü açılıyor, içi
+    boş kalıyordu). Şartname md 4.2: Dosya-1 ≥1 Hz zorunlu, eksik/oynatılamaz
+    her dosya **5 ceza puanı**; ayrıca C5 (temiz kapanış / moov atomu)
+    kuralı kamera tarafında hiç sınanamıyordu.
+    """
+
+    __slots__ = ("_k",)
+
+    def __init__(self, kare):
+        self._k = kare
+
+    def getCvFrame(self):                        # noqa: N802 (depthai adı)
+        return self._k
+
+
+class _SahteKuyruk:
+    """`tryGet()` sözleşmesi: mesaj varsa döndür ve TÜKET, yoksa None.
+
+    Gövde kuyruğu boşaltıp EN TAZE kareyi alıyor (`while tryGet()`); bu sınıf
+    aynı davranışı üretir ki o mantık da gerçekten sınansın.
+    """
+
+    def __init__(self):
+        self._kuyruk = []
+
+    def koy(self, m):
+        self._kuyruk.append(m)
+        del self._kuyruk[:-4]                    # det_q maxSize=4 ile aynı
+
+    def tryGet(self):                            # noqa: N802 (depthai adı)
+        return self._kuyruk.pop(0) if self._kuyruk else None
+
+
+def _sim_pipeline_kur(kaydet=None):
+    """Sim kipi: cihaz AÇILMAZ, sahte kuyruklar döner.
+
+    Kuyrukları `duba_gecis_navigator`'ın ROS abonelikleri doldurur
+    (`_sim_abonelikleri_kur`). Sınıf isimleri `config.json`'dan değil,
+    dağıtımdaki sırayla sabitlenir — sim kipinde blob okunmaz.
+    """
+    if kaydet:
+        kaydet("🔵 SİM KAYNAK KİPİ: OAK-D açılmıyor, kareler ROS'tan gelecek "
+               "(GIRDAP_SIM_KAYNAK=1). Bu kip YOLO'yu SINAMAZ.")
+    return None, _SahteKuyruk(), _SahteKuyruk(), ["kenar_dubasi", "engel_dubasi"]
+
+
+#: Sahte kameranın bastığı renkler (karar tarafı `sahte_ham_sensor._SINIF_BGR`)
+#: HSV karşılıkları: turuncu H≈16, sarı H≈26-30. Aralıklar bilerek GENİŞ —
+#: burada amaç renk ayrımını "başarmak" değil, ÜRETİM ZİNCİRİNİ koşturmak.
+_SIM_HSV = {
+    KENAR_CLASS: ((8, 120, 90), (22, 255, 255)),     # turuncu — kenar dubası
+    ENGEL_CLASS: ((23, 120, 90), (36, 255, 255)),    # sarı    — engel dubası
+}
+#: Kontur kapıları — dairesel duba için (plaka eşikleri duba'yı eler, 16.08).
+_SIM_MIN_ALAN_PX = 12.0
+_SIM_MIN_DOLULUK = 0.45
+_SIM_MAX_EN_BOY = 3.0
+#: Normalize bbox genişliği için ÜST sınır — fizik, ayar değil.
+#: Ø0,30 m duba, kabul edilen en yakın menzilde (MONO_MENZIL_ALT_M = 0,5 m)
+#: w = f·D/z = 0,7275·0,30/0,5 ≈ 0,44 kadar yer kaplar. 0,6 üstü bir "duba"
+#: geometrik olarak imkânsızdır ve tespit değil ZEMİN demektir.
+#: 🔴 Doğuran ölçüm: kanal sırası ters verilince (rgb8 → bgr8 sanılırsa) su
+#: rengi (110,70,20) → (20,70,110) oluyor, HSV tonu 17 çıkıyor ve TURUNCU
+#: aralığına düşüyor ⇒ kare boyu tek bir "kenar dubası" üretiliyordu
+#: (genişlik 1,000). Kapı olmadan bu, tüm gölü sahte bir duvara çevirirdi.
+_SIM_MAX_GENISLIK = 0.6
+
+
+def _sim_kareden_tespitler(bgr):
+    """BGR kare → `_SahteTespit` listesi (normalize bbox, stereo YOK).
+
+    🔑 `spatialCoordinates.z = 0` bilerek: depthai geçersiz derinlikte 0 verir
+    ve `menzil_coz` o hâlde **mono pinhole yedeğine** düşer. Yani bu kip o
+    yedeği (08.08'de suyun stereo'yu öldürmesi yüzünden eklendi) gerçekten
+    sınar. Geometrik kip stereo'yu hazır verdiği için o dalı hiç açmıyordu.
+    """
+    import cv2
+    import numpy as np
+    from girdap_ida_algi import p3_hedef_bul as p3
+
+    ayar = p3.Ayar()
+    kare = p3._clahe(bgr, ayar)                    # üretim ön işlemesi
+    hsv = p3._doygunluk_germe(cv2.cvtColor(kare, cv2.COLOR_BGR2HSV), ayar)
+    H, W = bgr.shape[:2]
+    dets = []
+    for sinif, (lo, hi) in _SIM_HSV.items():
+        maske = p3._maske(hsv, lo, hi, ayar.morf_px)
+        cnt, _ = cv2.findContours(maske, cv2.RETR_EXTERNAL,
+                                  cv2.CHAIN_APPROX_SIMPLE)
+        for c in cnt:
+            alan = cv2.contourArea(c)
+            if alan < _SIM_MIN_ALAN_PX:
+                continue
+            (_, _), (w, h), _ = cv2.minAreaRect(c)
+            if w < 1 or h < 1 or alan / (w * h) < _SIM_MIN_DOLULUK:
+                continue
+            if max(w, h) / min(w, h) > _SIM_MAX_EN_BOY:
+                continue
+            x, y, bw, bh = cv2.boundingRect(c)
+            if bw / float(W) > _SIM_MAX_GENISLIK:
+                continue                       # zemin/parlama, duba değil
+            dets.append(_SahteTespit(
+                xmin=x / W, xmax=(x + bw) / W,
+                ymin=y / H, ymax=(y + bh) / H,
+                label=sinif, confidence=0.9,
+                x_mm=0.0, z_mm=0.0))           # stereo YOK → mono yedek
+    return dets
+
+
+def pipeline_kur(kaydet=None):
     """OAK-D Lite üzerinde çalışan pipeline: RGB + Stereo + YOLO (VPU'da).
 
     depthai v2 (2.30.0.0) API'si — 2026-08-05'te v3'ten taşındı (v3 firmware'i
@@ -449,6 +786,12 @@ def pipeline_kur():
     Desen, bu cihazda 20 dk kesintisiz koşan ölçüm aracıyla
     (scripts/oak_derinlik_termal_testi.py) birebir aynı; tek bilinçli fark
     RGB sensör modu (aşağıda).
+
+    Args:
+        kaydet: opsiyonel log fonksiyonu (tek konumsal argüman alır).
+                `cihazi_bekle`ye geçirilir — cihaz USB'de yokken bekleyiş
+                SESSİZ kalmasın diye. None ise bekleyiş görünmez olur; node
+                bunu her zaman `self.get_logger().warn` ile besler.
     """
     siniflar = _model_siniflarini_oku(MODEL_BLOB)
     _blob_denetle(MODEL_BLOB, siniflar)      # logger yok: node __init__'te tekrar basılır
@@ -548,7 +891,14 @@ def pipeline_kur():
     # Kilit gelirse dayanikli_ac() sudo'suz USB reset atıp yeniden dener —
     # teknede kameraya fiziksel erişim olmayacağı için bu ZORUNLU.
     # v2'de cihaz pipeline İLE açılır (v3'teki pipeline.start() yok).
-    dev = ob.dayanikli_ac(lambda: dai.Device(pipeline, dai.UsbSpeed.HIGH))
+    #
+    # 🔑 F-A.4: `dayanikli_ac` artık her denemeden ÖNCE `cihazi_bekle()`
+    # çağırıyor (16.08'de bağlandı — 15.08'de yazılmış ama çağrılmamıştı).
+    # Kamera USB'de yoksa düğüm ÖLMEZ, bekler; `kaydet=` verdiğimiz için
+    # bekleyiş 30 sn'de bir journal'a düşer. "Cihaz VAR ama açılmıyor" hâli
+    # gerçek arızadır ve eski davranışını (USB reset + 4 deneme + raise) korur.
+    dev = ob.dayanikli_ac(lambda: dai.Device(pipeline, dai.UsbSpeed.HIGH),
+                          kaydet=kaydet)
 
     det_q = dev.getOutputQueue("tespit", maxSize=4, blocking=False)
     rgb_q = dev.getOutputQueue("rgb", maxSize=2, blocking=False) if KAYIT_AKTIF else None
@@ -579,6 +929,21 @@ def _sinif_indeksleri_coz(siniflar):
     return kenar, engel, True
 
 
+class _P3Aday:
+    """Saf OpenCV'nin bulduğu P3 hedef adayı (YOLO tespiti DEĞİL).
+
+    YOLO tespitiyle aynı alan adlarını taşır ki yayın döngüsü ikisini de aynı
+    şekilde işleyebilsin; farkı **rengi zaten bilmesi** (maskeden geldi, ayrıca
+    bbox kırpıp çözmeye gerek yok) ve **model güveni olmaması**.
+    """
+
+    __slots__ = ("cx", "cy", "w", "h", "z", "x", "renk")
+
+    def __init__(self, cx, cy, w, h, z, x, renk):
+        self.cx, self.cy, self.w, self.h = cx, cy, w, h
+        self.z, self.x, self.renk = z, x, renk
+
+
 class DubaNavigator(Node):
     def __init__(self):
         super().__init__("duba_gecis_navigator")
@@ -587,6 +952,9 @@ class DubaNavigator(Node):
             self.buoys_pub = self.create_publisher(Detection2DArray, BUOYS_TOPIC, 10)
             self.gate_pub = self.create_publisher(Bool, GATE_TOPIC, 10)
             self.buoys3d_pub = self.create_publisher(PoseArray, BUOYS3D_TOPIC, 10)
+            # FAZ 2 — Parkur-3 hedefleri. /perception/buoys'tan AYRI topic.
+            self.targets_pub = self.create_publisher(
+                Detection3DArray, TARGETS_TOPIC, 10)
             # Dürüst sinyal: geçilen FARKLI geçit sayısı (parkur bitişi İDDİA ETMEZ)
             self.gate_count_pub = self.create_publisher(Int32, GATE_COUNT_TOPIC, 10)
             # M2: geçide yönlendirecek hedef — karar tarafı waypoint'ler arasında
@@ -600,6 +968,7 @@ class DubaNavigator(Node):
                 String, MISSION_STATE_TOPIC, self.gorev_durumu_geldi, 10)
             self.son_gorev_durumu = None
             self.son_odom = None           # (x, y, yaw) — geçiş doğrulaması için
+            self.son_odom_t = -math.inf    # monotonic — bayatlık ölçümü (ODOM_BAYAT_SN)
         elif MOD == "mppi_hedef":
             self.goal_pub = self.create_publisher(PoseStamped, GOAL_TOPIC, 10)
             self.tf_buffer = tf2_ros.Buffer()
@@ -613,7 +982,15 @@ class DubaNavigator(Node):
         else:
             raise ValueError(f"Geçersiz MOD: {MOD}")
 
-        self.dev, self.det_q, self.rgb_q, siniflar = pipeline_kur()
+        # kaydet=: cihaz USB'de yokken bekleyiş journal'a düşsün (F-A.4).
+        # Sessiz bekleyiş, çökme döngüsünden bile kötüdür: "sessizlik başarı
+        # değildir" — kimse düğümün neyi beklediğini göremezdi.
+        if SIM_KAYNAK:
+            self.dev, self.det_q, self.rgb_q, siniflar = _sim_pipeline_kur(
+                kaydet=self.get_logger().warn)
+        else:
+            self.dev, self.det_q, self.rgb_q, siniflar = pipeline_kur(
+                kaydet=self.get_logger().warn)
         self._siniflar = siniflar or []
         # Dosya-1 kayıt durumu (şartname 4.2)
         self._kayit_bozuk = not KAYIT_AKTIF
@@ -659,6 +1036,31 @@ class DubaNavigator(Node):
                 "SIRA TERSSE TURUNCU/SARI YER DEĞİŞİR — sahaya çıkmadan doğrula!")
 
         self.dubalar = []
+        # FAZ 2 — P3 hedef adayları: `tespit_yayinla` içinde büyük cisim
+        # süzgecine takılan tespitler. Her karede sıfırlanır (bayat hedef
+        # yayınlamamak için).
+        self._hedef_adaylari = []
+        #: `/perception/buoys`'a GERÇEKTEN yayınlanmış tespitlerin normalize
+        #: kutuları — P3 OpenCV vetosunun girdisi. 🔑 "YOLO'nun gördüğü her şey"
+        #: DEĞİL, "sistemin BİZİM DUBAMIZ dediği" kutular: hedef adayına
+        #: ayrılanlar buraya girmez. Yoksa OpenCV kendi bulduğu GERÇEK hedefi
+        #: veto ederdi — kırmızı hedef mono'da tam bu yola düşüyor
+        #: (`_mono_hedef_mi` kırmızıyı bilerek dışlıyor, yani hedef "normal
+        #: duba" olarak yayınlanır; onu veto listesine koyarsak OpenCV'nin
+        #: hedefi bulan TEK yolu da kapanırdı).
+        self._yayinlanan_kutular = []
+        # Kare TEK YERDEN tazelenir (`_kare_tazele`); kayıt ve hedef adımı
+        # ikisi de bunu okur. Numarayla takip: aynı kare iki kez işlenmesin,
+        # ve biri diğerinin karesini "tüketmiş" olmasın.
+        self._son_kare = None
+        # Çekim anı damgası için kare/tespit YAŞI (sn, monotonic tabanlı).
+        # None = henüz ölçülemedi ⇒ `_damga` eski davranışa düşer.
+        self._tespit_yasi_s = None
+        self._kare_yasi_s = None
+        self._kare_no = 0
+        self._kayit_kare_no = -1
+        self._hedef_kare_no = -1
+        self._son_hedef_t = 0.0
         self.son_tespit_t = -math.inf
         self.durum = "ARAMA"
         self.arama_baslangic = time.monotonic()
@@ -682,8 +1084,43 @@ class DubaNavigator(Node):
                       # Sahada YÜKSEK çıkarsa stereo suda çalışmıyor demektir —
                       # SSH olmadığı için tek görünürlük kanalı bu sayaç.
                       "mono_menzil": 0,
+                      # Stereo yokken RENKTEN P3 hedefi sayılan tespit
+                      # (yalnız yeşil/siyah, `MONO_HEDEF_ORANI`). Sahada 0
+                      # kalırsa ya hedef görünmedi ya renk çözülemedi —
+                      # ikisi de P3'ün sessizce çalışmadığı anlamına gelir.
+                      "mono_hedef": 0,
                       # Ne stereo ne mono menzil üretilemedi → tespit atıldı.
-                      "menzil_yok": 0}
+                      "menzil_yok": 0,
+                      # SAF OpenCV'nin (YOLO'dan bağımsız) bulduğu P3 hedef
+                      # adayı. 🔑 Bu sayaç iki soruyu birden ayırıyor: YOLO
+                      # hedefi hiç görmediğinde (yeni model P3 hedefini
+                      # GÖRMEMEYİ öğrendi — etiketsiz P3 negatifleri) tek
+                      # üretici bu yol oluyor. Sahada 0 kalırsa P3'te hedef
+                      # HİÇ görülmüyor demektir; SSH yok, tek görünürlük bu.
+                      "p3_opencv": 0,
+                      # OpenCV adayı YOLO'nun "bizim duba" dediği yere denk
+                      # geldiği için elendi (veto). Ölçüm: kırmızı yanlış
+                      # adayların %95'i buraya düşüyor.
+                      "p3_veto": 0,
+                      # Su hattı ↔ genişlik menzili ÇELİŞTİĞİ için elenen aday
+                      # (kıyı bitkisinin su yansıması). Ölçüm: yeşil yanlış
+                      # adayların %88'i buraya düşüyor, gerçek dubada %0.
+                      # 🔴 Sahada bu sayaç GERÇEK hedef bulunduğu anda artarsa
+                      # kapı fazla sıkı demektir — tek görünürlük kanalı bu.
+                      "p3_su_hatti": 0,
+                      # `getTimestamp()` yaşı yok/saçma olduğu için çekim anı
+                      # yerine YAYIN anının damgalandığı kare sayısı. Sahada
+                      # sürekli artıyorsa damga düzeltmesi FİİLEN KAPALIDIR
+                      # (ve kimse fark etmez) — tek görünürlük kanalı bu sayaç.
+                      "damga_yedek": 0}
+        # 🔴 2026-08-13: sessiz-ret alarmının ÖNCEKİ görüntüsü. Sayaçlar
+        # KÜMÜLATİF (bilerek — toplamı sahada görmek istiyoruz) ama alarm
+        # doğrudan onların sıfırdan büyük olmasına bakıyordu ⇒ ölçüldü:
+        # tek bir geçmiş red, sonraki HER turda alarmı yakıyordu (5/5).
+        # Bu, kendi yazılı dersimizin ihlali: "her zaman yanan alarm alarm
+        # değildir" (09.08, mono_menzil). Alarm artık TOPLAMA değil, son
+        # log'dan bu yana olan ARTIŞA bakıyor.
+        self._tani_onceki = dict(self._tani)
         # Geçilen geçitlerin orta noktaları (dünya/odom çerçevesi). Şartname G
         # tanımı "FARKLI karşılıklı kenar dubaları arasından geçiş sayısı" →
         # aynı geçitten tekrar geçilirse SAYILMAZ (bkz. gm.yeni_gecit_mi).
@@ -719,7 +1156,147 @@ class DubaNavigator(Node):
         self._fps_t0 = time.monotonic()
         self.olculen_fps = 0.0
 
+        if SIM_KAYNAK:
+            self._sim_abonelikleri_kur()
+
         self.timer = self.create_timer(1.0 / KONTROL_HZ, self.dongu)
+
+    # ---------- Damga (çekim anı) ----------
+    @staticmethod
+    def _mesaj_yasi(msg):
+        """depthai mesajının YAŞI (sn) — çekimden şu ana.
+
+        `getTimestamp()` `dai::Clock::now()` tabanlıdır = host **steady_clock**
+        = `time.monotonic()` ile AYNI taban (2.30.0.0'da kurulu paketten
+        doğrulandı). ROS damgası ise DUVAR saatidir; bu yüzden damgayı doğrudan
+        yazmak YANLIŞ olur — yaşı çıkarıp ROS saatinden geri sayıyoruz.
+        🔑 Yan fayda: yaş monotonic ile ölçüldüğü için `girdap-saat-gec.service`
+        koşu öncesi duvar saatini adımlasa bile damga sıçramaz (saat kuralı).
+        """
+        try:
+            return time.monotonic() - msg.getTimestamp().total_seconds()
+        except (AttributeError, TypeError, OverflowError):
+            return None            # sürüm/mesaj tipi damga taşımıyor
+
+    def _damga(self, yas):
+        """Çekim anının ROS damgası; yaş yoksa/saçmaysa YAYIN anı (eski hâl).
+
+        Ölçüm ve gerekçe için `DAMGA_MAKUL_TAVAN_S`. Bu metot ASLA yükseltmez:
+        damga kodu node'u öldürmemeli (09.08 dersi — teşhis için eklenen satır
+        node'u öldürmüştü).
+        """
+        simdi = self.get_clock().now()
+        if yas is None or not (0.0 <= yas <= DAMGA_MAKUL_TAVAN_S):
+            if yas is not None:
+                self._tani["damga_yedek"] += 1
+            return simdi.to_msg()
+        return RclTime(nanoseconds=simdi.nanoseconds - int(yas * 1e9)).to_msg()
+
+    # ---------- SİM KAYNAĞI (yalnız GIRDAP_SIM_KAYNAK=1) ----------
+    def _sim_abonelikleri_kur(self) -> None:
+        """Sanal gölün ham çıktısını NN mesajına çevirip sahte kuyruğa koy.
+
+        🔑 Kaynak `/perception/obstacle_map` (PoseArray, base_link, gövde
+        çerçevesi; `orientation.z` = yarıçap — obstacle_map hack'i).
+        Bu topic'i sanal göl ya da `perception_lidar_node` üretir; ikisi de
+        aynı sözleşmeyi taşır.
+
+        Ters dönüşüm (metre → normalize bbox) dağıtımın ÖN İŞLEMESİNİN tersi:
+        `gecit_mantik.odak_px(1.0)` ile aynı odak sabiti kullanılır ki
+        `tespitleri_oku`nun menzil çözümü GERÇEKTEN sınansın (uydurma bir
+        ölçek kullanılsaydı zincir kendi kendini doğrulardı).
+        """
+        self._f_sim = gm.odak_px(1.0)
+        if SIM_GORUNTU:
+            from sensor_msgs.msg import Image
+            from rclpy.qos import qos_profile_sensor_data
+            # 🔴 QoS UYUMU: `sahte_ham_sensor` görüntüyü `sensor_data_qos()`
+            # (BEST_EFFORT) ile basıyor. Abone RELIABLE isterse DDS bağlantıyı
+            # SESSİZCE kurmaz — hata yok, kare yok. Dağıtımdaki en sinsi
+            # arıza sınıflarından biri; burada bilerek aynı profil kullanılır.
+            self.create_subscription(
+                Image, "/oak/rgb/image_raw", self._sim_kare_geldi,
+                qos_profile_sensor_data)
+            self.get_logger().info(
+                "🔵 sim aboneliği (GÖRÜNTÜ kipi): /oak/rgb/image_raw → "
+                "CLAHE+HSV → sahte NN kuyruğu (stereo YOK → mono yedek)")
+            return
+        from geometry_msgs.msg import PoseArray
+        self.create_subscription(
+            PoseArray, "/perception/obstacle_map", self._sim_engel_geldi, 10)
+        self.get_logger().info(
+            "🔵 sim aboneliği (GEOMETRİK kip): /perception/obstacle_map → "
+            "sahte NN kuyruğu")
+
+    def _sim_kare_geldi(self, msg) -> None:
+        """`sensor_msgs/Image` (bgr8) → gerçek ön işleme → sahte NN kuyruğu.
+
+        ⚠ cv_bridge KULLANILMAZ (CLAUDE.md: apt cv_bridge numpy 2.x ABI'siyle
+        çakışıyor). Çözme burada elle yapılır — dağıtımdaki `image_codec`
+        deseniyle aynı.
+        """
+        import numpy as np
+        if msg.encoding not in ("bgr8", "rgb8"):
+            self.get_logger().warn(
+                f"sim görüntü kipi: beklenmeyen encoding {msg.encoding!r} — "
+                "kare atlandı")
+            return
+        kare = np.frombuffer(msg.data, dtype=np.uint8).reshape(
+            msg.height, msg.width, 3)
+        if msg.encoding == "rgb8":
+            kare = kare[:, :, ::-1]
+        try:
+            dets = _sim_kareden_tespitler(kare)
+        except Exception as e:                    # kare bozuksa düğüm ÖLMESİN
+            self.get_logger().warn(f"sim kare işlenemedi: {e}")
+            return
+        # Kare yaşı GERÇEK damgadan — kamera↔LiDAR ms farkı ancak böyle ölçülür.
+        #
+        # 🔴 `max(0.0, ...)` YOK, BİLEREK (18.08.2026'da eklenip kaldırıldı).
+        # Gerçek yol (`_mesaj_yasi`) yaşı `time.monotonic` ile ölçer ve duvar
+        # saati adımından etkilenmez. Sim yolunda kare ROS'tan geldiği için
+        # yaş ancak DUVAR damgasından çıkarılabilir ⇒ saat adımına AÇIK:
+        #   · ileri sıçrama → yaş şişer → `_damga` tavanı (2,0 s) aşar →
+        #     yayın anına düşer, `damga_yedek` sayacı artar. GÖRÜNÜR.
+        #   · geri sıçrama → yaş NEGATİF olur. `_damga` bunu da yakalar
+        #     (`0.0 <= yas` koşulu). Ama `max(0.0, ...)` onu 0'a çevirip
+        #     kareyi "tertemiz taze" gösteriyordu ⇒ koruma devre dışı,
+        #     sayaç sessiz. 13.08 canlı arızasının (saat +1497,6 s adımı,
+        #     sahte heartbeat kaybı → KILL) tam sınıfı.
+        # Ham fark verilir; kararı TEK YERDE `_damga` verir.
+        yas = ((self.get_clock().now()
+                - RclTime.from_msg(msg.header.stamp)).nanoseconds / 1e9)
+        self.det_q.koy(_SahteMesaj(dets, yas_s=yas))
+        # Dosya-1 zinciri de GERÇEKTEN koşsun: `_kare_tazele` → mp4 segment
+        # → `kayit_kapat`. Kayıt kendi kopyasına çizdiği için ham kare verilir.
+        if self.rgb_q is not None:
+            self.rgb_q.koy(_SahteKare(kare))
+
+    def _sim_engel_geldi(self, msg) -> None:
+        """PoseArray → `_SahteTespit` listesi → sahte NN kuyruğu."""
+        dets = []
+        for p in msg.poses:
+            bx, by = float(p.position.x), float(p.position.y)
+            if bx <= 0.05:                     # kameranın arkası görülmez
+                continue
+            yaricap = abs(float(p.orientation.z)) or (DUBA_CAP / 2.0)
+            # Gövde (x ileri, y sol) → kamera (x sağ, z ileri)
+            x_kam, z_kam = -by, bx
+            # Ters pinhole: normalize bbox genişliği ve merkezi
+            w_n = min(0.9, (2.0 * yaricap) * self._f_sim / max(z_kam, 0.3))
+            cx = 0.5 + (x_kam / max(z_kam, 0.3)) * self._f_sim
+            if not (0.0 < cx < 1.0):           # kadraj dışı
+                continue
+            h_n = w_n * 1.4                    # duba h/w ≈ 1,4 (11.08 ölçümü)
+            # Sınıf: yarıçap ayrımı yok ⇒ hepsi KENAR (turuncu). Gerçek sınıf
+            # `/perception/classified_obstacles`ta; bu kip bbox/menzil
+            # zincirini sınar, renk sınıflandırmasını DEĞİL.
+            dets.append(_SahteTespit(
+                xmin=cx - w_n / 2, xmax=cx + w_n / 2,
+                ymin=0.5 - h_n / 2, ymax=0.5 + h_n / 2,
+                label=KENAR_CLASS, confidence=0.9,
+                x_mm=x_kam * 1000.0, z_mm=z_kam * 1000.0))
+        self.det_q.koy(_SahteMesaj(dets))
 
     # ---------- Algılama (ortak) ----------
     def tespitleri_oku(self):
@@ -740,6 +1317,8 @@ class DubaNavigator(Node):
                     "USB bağlantısı / VPU ısınması / kablo kontrol")
         if msg is None:
             return
+        # Çekim anı damgası: bu mesajın yaşı (bkz. DAMGA_MAKUL_TAVAN_S).
+        self._tespit_yasi_s = self._mesaj_yasi(msg)
         dets = []
         for d in msg.detections:
             if d.confidence < CONF_ESIK:
@@ -777,14 +1356,16 @@ class DubaNavigator(Node):
             self.tespit_yayinla()   # taze NN karesi → sözleşme topic'leri
 
     # ---------- Dosya-1: işlenmiş kamera kaydı (şartname 4.2, s.14) ----------
-    def kayit_adimi(self):
-        """bbox+sınıf overlay'li, zaman etiketli mp4 karesi yaz (~KAYIT_HZ).
+    def _kare_tazele(self):
+        """RGB kuyruğunu **TEK YERDEN** boşalt, en taze kareyi sakla.
 
-        Şartname: ≥1 Hz, her frame zaman etiketli, tespit çerçeveleri + sınıf
-        görünür. Kayıt hatası görevi ASLA durdurmaz — devre dışı kalır, loglanır.
+        🔴 Neden tek yer: `tryGet()` kareyi kuyruktan ALIR. İki ayrı boşaltıcı
+        olsaydı hangisi önce koşarsa kareyi o kapardı, diğeri `None` görürdü —
+        Dosya-1'de boşluk (md 4.2, ≥1 Hz) ya da hedefin hiç görülmemesi.
+        Saklanan kare **ÇİZİLMEMİŞ** ham karedir; kayıt kendi kopyasına çizer.
         """
         frame = None
-        while True:                      # kuyruğu boşalt, en taze kareyi al
+        while True:                      # kuyruğu boşalt, en tazesini al
             f = self.rgb_q.tryGet()
             if f is None:
                 break
@@ -792,7 +1373,263 @@ class DubaNavigator(Node):
         if frame is None:
             return
         try:
-            img = frame.getCvFrame()
+            self._son_kare = frame.getCvFrame()
+            self._kare_no += 1
+        except Exception as e:           # noqa: BLE001
+            self.get_logger().warn(f"kare alınamadı: {e}",
+                                   throttle_duration_sec=5.0)
+            return
+        # 🔴 Damga için kare YAŞI — eskiden yalnız piksel saklanıyordu ve çekim
+        # anı burada KAYBOLUYORDU. Kasten yukarıdaki try'ın DIŞINDA: içeride
+        # olsaydı buradaki bir hata `kare alınamadı`ya düşüp kareyi TAMAMEN
+        # düşürürdü ⇒ Dosya-1'de boşluk (md 4.2, ≥1 Hz, eksik dosya 5 ceza).
+        # Damga, kaydın önüne asla geçmez.
+        self._kare_yasi_s = self._mesaj_yasi(frame)
+
+    def hedef_adimi(self, simdi):
+        """Parkur-3 hedef adaylarını renklendirip `/perception/targets`'a yayınla.
+
+        🔴 **Dosya-1'den TAMAMEN BAĞIMSIZ.** İki yönlü:
+          · Buradaki bir hata kaydı **etkilemez** (kendi try'ı var; kaydın
+            `except`'i `_kayit_bozuk=True` yapıp Dosya-1'i KALICI kapatıyor —
+            md 4.2, eksik dosya **5 ceza puanı**).
+          · Kayıt bozulsa da (`_kayit_bozuk`) hedef yayını **sürer**; aksi
+            hâlde Parkur-3 Dosya-1'le birlikte sessizce ölürdü.
+
+        Boş liste de yayınlanır: tüketici *"hedef yok"* ile *"node ölmüş"*ü
+        ayırt edebilsin.
+        """
+        # 🔴 ANA ŞALTER — varsayılan KAPALI (bkz. P3_HEDEF_YAYINI).
+        if not P3_HEDEF_YAYINI:
+            return
+        if simdi - self._son_hedef_t < 1.0 / HEDEF_HZ:
+            return
+        self._son_hedef_t = simdi
+        try:
+            arr = Detection3DArray()
+            arr.header.stamp = self._damga(getattr(self, "_kare_yasi_s", None))
+            arr.header.frame_id = BASE_FRAME       # perception = GÖVDE çerçevesi
+            kare = self._son_kare
+            kare_taze = kare is not None and self._kare_no != self._hedef_kare_no
+            if kare_taze:
+                self._hedef_kare_no = self._kare_no
+            for d in self._hedef_adaylari:
+                renk = None
+                if kare is not None:
+                    renk = self._hedef_rengi_coz(kare, d)
+                det = Detection3D()
+                det.header = arr.header
+                # base_link: x=ileri, y=sol (buoys_3d ile AYNI dönüşüm)
+                det.bbox.center.position.x = d.z + KAMERA_OFSET_ILERI
+                det.bbox.center.position.y = -d.x
+                # ÖLÇÜLEN çap (varsayım değil): pinhole tersinden
+                # D = w_norm · z / f_norm. Tüketici "bu gerçekten 0,64 m mi"
+                # diye kendi kapısını kurabilsin diye yayınlanıyor.
+                cap = float(d.w * d.z / self._f_norm) if self._f_norm else 0.0
+                det.bbox.size.x = cap
+                det.bbox.size.y = cap
+                hyp = ObjectHypothesisWithPose()
+                # Sözleşme: 0=renk çözülemedi · 1=kırmızı · 2=yeşil · 3=siyah
+                hyp.hypothesis.class_id = str(gm.HEDEF_RENK_KODU[renk])
+                hyp.hypothesis.score = d.conf
+                det.results.append(hyp)
+                arr.detections.append(det)
+            # ── SAF OpenCV üreticisi (YOLO'dan bağımsız) ──────────────────
+            # Yukarıdaki adaylar YOLO kutularından türüyor; model P3 hedefini
+            # görmemeyi öğrendiği için o yol tek başına BOŞ kalabilir.
+            # Ayrıntı ve ölçümler: `_p3_opencv_adaylari` docstring'i.
+            for a in self._p3_opencv_adaylari(kare if kare_taze else None):
+                # Aynı cismi iki kez yayınlama: merkezi, YOLO'dan gelen bir
+                # adayın kutusunun içine düşüyorsa o zaten yayınlandı.
+                if any(abs(a.cx - d.cx) < max(d.w, a.w) / 2.0
+                       and abs(a.cy - d.cy) < max(d.h, a.h) / 2.0
+                       for d in self._hedef_adaylari):
+                    continue
+                det = Detection3D()
+                det.header = arr.header
+                det.bbox.center.position.x = a.z + KAMERA_OFSET_ILERI
+                det.bbox.center.position.y = -a.x
+                # 🔑 ÇAP 0,0 = "ÖLÇEMEDİM" — kasıtlı. Menzil Ø0,64 VARSAYARAK
+                # kurulduğu için ondan türetilen çap her zaman 0,64 çıkar
+                # (dairesel) ve tüketicide "ölçüm" gibi görünürdü.
+                # `hedef_secim.cap_makul_mu` 0'ı açıkça "iddia yok" sayıyor
+                # ⇒ kör eleme de olmuyor, sahte kanıt da üretmiyoruz.
+                det.bbox.size.x = 0.0
+                det.bbox.size.y = 0.0
+                hyp = ObjectHypothesisWithPose()
+                hyp.hypothesis.class_id = str(gm.HEDEF_RENK_KODU[a.renk])
+                # Saf OpenCV'nin model güveni YOKTUR. Doluluk oranını buraya
+                # yazmak onu "güven" gibi gösterirdi (tüketici `skor`u bugün
+                # kullanmıyor ama yarın sıralamada kullanabilir).
+                hyp.hypothesis.score = 0.0
+                det.results.append(hyp)
+                arr.detections.append(det)
+            self.targets_pub.publish(arr)
+            if arr.detections:
+                self._tani["hedef_yayin"] += len(arr.detections)
+        except Exception as e:           # noqa: BLE001
+            # ⚠️ Dosya-1'in aksine BURADA kalıcı devre dışı bırakma YOK:
+            # P3 geçici bir hatadan sonra kendini toparlayabilmeli.
+            self.get_logger().warn(f"hedef yayını atlandı: {e}",
+                                   throttle_duration_sec=5.0)
+
+    def _p3_opencv_adaylari(self, kare):
+        """SAF OpenCV ile P3 hedef adayları — **YOLO'dan bağımsız üretici**.
+
+        🔴 NEDEN GEREKLİ (yoksa P3'ün gözü yok):
+        Buraya kadarki hedef adayları **YOLO kutularından** türüyordu
+        (`buyuk_cisim_mi` / `_mono_hedef_mi`). Ama modelimiz 2 sınıflı ve
+        **P3 hedefini GÖRMEMEYİ öğrendi** (eğitim setinde etiketsiz P3
+        negatifleri var). YOLO hedefi hiç kutulamazsa o iki süzgeç de hiç
+        tetiklenmez ⇒ `/perception/targets` boş kalır ⇒ `hedef_sec` seçim
+        yapamaz ⇒ **P3 = 0**, hiçbir hata basılmadan. Bu yol o boşluğu
+        kapatıyor: renk maskeleri hedefi modelden bağımsız bulur.
+
+        🔑 İKİ DEDEKTÖR BİRBİRİNİ TAMAMLIYOR: YOLO *"bizim duba"*yı bilir,
+        OpenCV *"hedef rengi"*ni bulur, YOLO'nun **yayınladığı** kutular veto
+        edilir. Ölçüldü (16.08, gerçek kareler): kırmızı yanlış adayların
+        **%95'i** YOLO kutusuyla örtüşüyor — onlar zaten bizim dubalarımız.
+
+        ⚠️ VETO LİSTESİ = **yayınlanan** kutular, "YOLO'nun gördüğü her şey"
+        değil. Hedef adayına ayrılan tespitler dışarıda: kırmızı hedef
+        mono'da `_mono_hedef_mi`'den geçemediği için *normal duba* olarak
+        yayınlanır — onu veto listesine koysaydık OpenCV'nin hedefi bulan tek
+        yolunu da kapatırdık.
+
+        📏 ÖLÇÜM (17.08, 240 GERÇEK göl karesi, 512×512 deploy boyutu,
+        kadrajda hedef YOK): kare başına yanlış aday **vetosuz 0,267 →
+        vetolu 0,212**; renk kırılımı `kırmızı 3→0` · `siyah 8→2` ·
+        **`yeşil 53→49`**. Yeşilin kaynağı **kıyı bitkisinin su yüzeyindeki
+        yansıması** (gözle bakıldı) ve veto onu kesmiyor — konumla da
+        ayrılmıyor (medyan cy 0,84 = suyun içi), boyutla da (medyan alan 503 px
+        ↔ gerçek hedef 8 m'de 513 px). ⇒ **Hakem YEŞİL derse yanlış kilit
+        riski en yüksektir.** Eşikler BİLEREK değiştirilmedi: kanonik süpürme
+        yeşilde `doluluk 0,55 → 0,62`'nin yanlış alarmı 3 kat kestiğini ama
+        bulmayı **%88 → %73**'e düşürdüğünü ölçmüş; bu takas Eyüp'ün kararı,
+        elimizde tek bir gerçek hedef karesi yokken tek taraflı verilmez
+        (16.08 dersi: eşikleri kopyalayan ilk sürüm hedefin %81'ini elemişti).
+
+        Maliyet: 512×512'de **7,6 ms/kare** (bu PC, ölçüldü) ve yalnız
+        `HEDEF_HZ`=2 Hz'te koşar ⇒ Jetson'da 3-5 kat olsa bile tek çekirdeğin
+        ~%5'i. Kontrol döngüsünü **bloklayamaz**: ayrı süreç (algı node'u).
+        """
+        if kare is None or self._f_norm is None:
+            return []
+        h, w = kare.shape[:2]
+        if not h or not w:
+            return []
+        # Kapı modülün İÇİNDE (`hedef_bul_p3`): PARKUR3 dışında hiç koşmaz.
+        adaylar = p3.hedef_bul_p3(kare, self.son_gorev_durumu or "")
+        if not adaylar:
+            return []
+        veto_px = [(cx * w, cy * h, bw * w, bh * h)
+                   for (cx, cy, bw, bh) in self._yayinlanan_kutular]
+        # Örtüşme kuralı modülden alınıyor — burada YENİDEN YAZILMAZ; iki
+        # kopya ayrışırsa veto sessizce farklı davranır (tam da bu zincirde
+        # yaşanan sınıf: aynı tablonun iki kopyası ters düşmüştü).
+        kalan = [a for a in adaylar
+                 if not any(p3._ortusuyor(a, k) for k in veto_px)]
+        self._tani["p3_veto"] += len(adaylar) - len(kalan)
+        out = []
+        for a in kalan:
+            w_norm = a.w / float(w)
+            cx_norm = a.cx / float(w)
+            z = gm.mesafe_genislikten(w_norm, gm.HEDEF_CAP_M, self._f_norm)
+            if not z:                      # menzil kurulamadı → sessiz atma
+                continue
+            # 🔴 SU HATTI TUTARLILIĞI — yüzen duba su üzerindedir.
+            # Kıyı bitkisinin su yansıması burada eleniyor (ölçüm: %88),
+            # gerçek dubada kayıp %0. Ayrıntı: `P3_SU_HATTI_KAPISI` bloğu.
+            if P3_SU_HATTI_KAPISI and gm.su_hatti_celiskili(
+                    (a.cy + a.h / 2.0) / float(h), z, SU_HATTI_UFUK_CY,
+                    SU_HATTI_EGIM, P3_PITCH_PAYI_CY, P3_CELISKI_KATI):
+                self._tani["p3_su_hatti"] += 1
+                continue
+            out.append(_P3Aday(
+                cx=cx_norm, cy=a.cy / float(h),
+                w=w_norm, h=a.h / float(h),
+                z=z, x=gm.yanal_konum(z, cx_norm, self._f_norm),
+                renk=a.renk))
+        self._tani["p3_opencv"] += len(out)
+        return out
+
+    def _hedef_rengi_coz(self, kare, d):
+        """Tespitin bbox'ını karede kırp, rengini çöz. Çözülemezse None."""
+        h, w = kare.shape[:2]
+        x1 = max(0, int((d.cx - d.w / 2.0) * w))
+        y1 = max(0, int((d.cy - d.h / 2.0) * h))
+        x2 = min(w, int((d.cx + d.w / 2.0) * w))
+        y2 = min(h, int((d.cy + d.h / 2.0) * h))
+        if x2 <= x1 or y2 <= y1:         # kırpık/taşkın bbox
+            return None
+        return gm.hedef_rengi_bgr(kare[y1:y2, x1:x2])[0]
+
+    def _mono_hedef_mi(self, d) -> bool:
+        """Stereo yokken: bu tespit P3 hedef dubası MI (renkten)?
+
+        Yalnız **yeşil ve siyah** için True döner ve normal eşikten daha SIKI
+        bir kapsama ister (`MONO_HEDEF_ORANI`). Gerekçe ölçüm:
+        6.042 gerçek kenar/engel kutusunda 0,45 eşiğiyle yeşil **%0,000**,
+        siyah **%0,000** yanlış pozitif; kırmızı 0,65'te bile %0,53 ⇒
+        **kırmızı bu yoldan GEÇMEZ**, stereo ister.
+
+        Kare yoksa/bayatsa False — kör kabul yok (yanlış angajman TS3'te
+        100 → 50 puan, iki yanlış → 5).
+
+        🔴 ANA ŞALTERE BAĞLI (16.08.2026 akşamı, Eyüp: *"P3'ü şimdilik
+        kapatalım, OpenCV'ye geçmesin"*). `P3_HEDEF_YAYINI` kapalıyken bu yol
+        HİÇ koşmaz: bbox kırpma + `cv2.cvtColor`/HSV kapsama analizi kare
+        başına yapılmaz ⇒ P1/P2 ölçümü P3 kodundan **CPU olarak da** ayrışır.
+        Eskiden şalter yalnız `/perception/targets` YAYININI kapatıyordu;
+        OpenCV analizi her mono tespitte yine koşuyordu — yani "P3 kapalı"
+        denen durumda bile P3 kodu sıcak yoldaydı.
+
+        ⚖️ BİLİNÇLİ TAKAS — kapalıyken ne KAYBEDİYORUZ: stereo tavanının
+        (10 m) ötesindeki gerçek P3 hedef dubası `/perception/buoys`'a normal
+        duba olarak girer ⇒ `EdgeBuoyMemory` kalıcı kenar kaydı ⇒ hayalet kapı.
+        Bu risk **yalnız suda gerçek P3 hedef dubası varken** doğar; P1/P2
+        ölçüm koşusunda parkurda hedef duba YOK. Yarışma günü P3 açılırken
+        (`Environment=GIRDAP_P3_HEDEF=1`) bu yol da kendiliğinden geri gelir —
+        ikisi TEK şaltere bağlı, ayrı ayrı unutulacak bir adım kalmadı.
+        ⚠️ Stereo yolundaki `buyuk_cisim_mi` süzgeci bundan ETKİLENMEZ: o saf
+        geometri (OpenCV yok), parkurdan bağımsız ve her zaman açık kalır —
+        P2'yi koruyan asıl süzgeç odur.
+        """
+        if not P3_HEDEF_YAYINI:
+            return False
+        kare = self._son_kare
+        if kare is None or self._f_norm is None:
+            return False
+        h, w = kare.shape[:2]
+        x1 = max(0, int((d.cx - d.w / 2.0) * w))
+        y1 = max(0, int((d.cy - d.h / 2.0) * h))
+        x2 = min(w, int((d.cx + d.w / 2.0) * w))
+        y2 = min(h, int((d.cy + d.h / 2.0) * h))
+        if x2 <= x1 or y2 <= y1:
+            return False
+        renk, kapsama = gm.hedef_rengi_bgr(kare[y1:y2, x1:x2],
+                                           oran=MONO_HEDEF_ORANI)
+        return renk in MONO_HEDEF_RENKLERI and kapsama > MONO_HEDEF_ORANI
+
+    def kayit_adimi(self):
+        """bbox+sınıf overlay'li, zaman etiketli mp4 karesi yaz (~KAYIT_HZ).
+
+        Şartname: ≥1 Hz, her frame zaman etiketli, tespit çerçeveleri + sınıf
+        görünür. Kayıt hatası görevi ASLA durdurmaz — devre dışı kalır, loglanır.
+        """
+        # Kareyi artık `_kare_tazele` sağlıyor (tek boşaltıcı). Aynı kareyi
+        # iki kez yazmayız — eskiden "kuyruk boşsa atla" davranışı vardı,
+        # kare numarası onu birebir koruyor.
+        if self._son_kare is None or self._kare_no == self._kayit_kare_no:
+            return
+        self._kayit_kare_no = self._kare_no
+        try:
+            # 🔴 KOPYA ŞART: aşağıda görüntünün ÜSTÜNE çiziliyor (bbox
+            # dikdörtgenleri + yeşil zaman etiketi). numpy dizisi referanstır;
+            # kopyalamazsak `_son_kare` de boyanır ve Parkur-3 renk analizi
+            # kendi çizdiğimiz turuncu/sarı çerçeveyi okur. Ölçüldü (13.08):
+            # kopya 0,05 ms (Jetson ~0,25 ms) = 500 ms bütçenin %0,05'i.
+            img = self._son_kare.copy()
             h, w = img.shape[:2]
             for d in self.dubalar:
                 # bbox NN çerçevesinde normalize; passthrough karesi de NN
@@ -851,12 +1688,18 @@ class DubaNavigator(Node):
 
     # ---------- PLAN A çıkışı: girdap-decision perception sözleşmesi ----------
     def odom_geldi(self, msg):
-        """/girdap/fusion/odom → (x, y, yaw). Karar stack'inin poz kaynağı."""
+        """/girdap/fusion/odom → (x, y, yaw). Karar stack'inin poz kaynağı.
+
+        ⏱️ Varış anı MONOTONIC saatte saklanır (duvar saati DEĞİL — saat kuralı,
+        dosya başı): `girdap-saat-gec.service` koşu öncesi saati adımlayabilir ve
+        duvar saatiyle ölçülen "bayatlık" o an sıçrardı.
+        """
         p = msg.pose.pose.position
         q = msg.pose.pose.orientation
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
                          1.0 - 2.0 * (q.y * q.y + q.z * q.z))
         self.son_odom = (p.x, p.y, yaw)
+        self.son_odom_t = time.monotonic()
 
     def gorev_durumu_geldi(self, msg):
         """FSM durumu — yeniden başlama (md 5.5.3.1) yakalanır.
@@ -891,7 +1734,7 @@ class DubaNavigator(Node):
         ox, oy, px, py = self.gecit_geometri(a, b)
         hx, hy = gm.gecit_hedefi(ox, oy, px, py, HEDEF_OTELEME)
         p = PoseStamped()
-        p.header.stamp = self.get_clock().now().to_msg()
+        p.header.stamp = self._damga(getattr(self, "_tespit_yasi_s", None))
         p.header.frame_id = BASE_FRAME
         p.pose.position.x = float(hx)
         p.pose.position.y = float(hy)
@@ -904,7 +1747,8 @@ class DubaNavigator(Node):
         """Taze tespitleri /perception/buoys (2D, sözleşme) + /perception/buoys_3d
         (BONUS stereo 3D) olarak yayınla. Boş liste de yayınlanır — fusion'ın
         zaman senkronu ve 'görüş alanında duba yok' bilgisi için."""
-        stamp = self.get_clock().now().to_msg()
+        # 🔴 ÇEKİM anı (yayın anı DEĞİL) — bkz. DAMGA_MAKUL_TAVAN_S.
+        stamp = self._damga(getattr(self, "_tespit_yasi_s", None))
 
         arr = Detection2DArray()
         arr.header.stamp = stamp
@@ -912,6 +1756,10 @@ class DubaNavigator(Node):
         arr3d = PoseArray()
         arr3d.header.stamp = stamp
         arr3d.header.frame_id = BASE_FRAME
+        # 🔴 Her karede sıfırlanır: temizlenmezse eski hedefler birikir ve
+        # tekne çoktan geçmiş bir hedefe nişan almaya devam eder.
+        self._hedef_adaylari = []
+        yayinlanan = []
 
         for d in self.dubalar:
             # 🔴 BÜYÜK CİSİM SÜZGECİ (2026-08-11) — P3 hedef dubası bizim
@@ -921,12 +1769,54 @@ class DubaNavigator(Node):
             # Hedefler parkurun SONUNDA ama 64 cm 25 m'den 7,7 px eder ⇒ tekne
             # daha P2'nin İÇİNDEYKEN görüyor. Bu yüzden süzgeç parkurdan
             # BAĞIMSIZ, her zaman açık: mod yok, tetik yok, kilitlenme yok.
-            if getattr(d, "kaynak", "stereo") != "mono" and gm.buyuk_cisim_mi(
-                    d.z, d.w, self._f_norm):
+            mono = getattr(d, "kaynak", "stereo") == "mono"
+            if not mono and gm.buyuk_cisim_mi(d.z, d.w, self._f_norm):
                 self._tani["buyuk_cisim"] += 1
+                # FAZ 2: ATMIYORUZ ARTIK — Parkur-3 hedef adayı olarak
+                # ayrı tutuluyor. `/perception/buoys` sözleşmesi DEĞİŞMEDİ:
+                # aşağıdaki `continue` aynen duruyor, oraya hâlâ girmiyor.
+                self._hedef_adaylari.append(d)
                 self.get_logger().warn(
                     f"Tespit SÜZÜLDÜ — stereo {d.z:.1f} m ile bbox genişliği "
                     f"uyuşmuyor: cisim Ø0,30 m'den büyük (P3 hedef dubası?). "
+                    "Kenar/engel olarak YAYINLANMADI.",
+                    throttle_duration_sec=5.0)
+                continue
+            if mono and self._mono_hedef_mi(d):
+                # 🔴 16.08.2026 — STEREO YOKKEN HEDEF KAYBOLUYORDU (ve engele
+                # dönüşüyordu). Mekanizma: `buyuk_cisim_mi` mono'da atlanıyor —
+                # haklı olarak, çünkü mono `z` zaten Ø0,30 varsayarak
+                # genişlikten türetiliyor ⇒ kıyas DAİRESEL olurdu. Ama sonuç:
+                # stereo tavanı (10 m) ötesinde hedef dubası `/perception/buoys`'a
+                # NORMAL DUBA olarak giriyordu ⇒ `EdgeBuoyMemory` kalıcı kenar
+                # kaydı (unutma YOK) ⇒ hayalet kapı + MPPI'nin `w_obstacle=50`
+                # ile KAÇTIĞI engel. Süzgecin kendi gerekçesi *"tekne P2'nin
+                # içindeyken görüyor"* tam da o menzilde çalışmıyordu.
+                # ÇÖZÜM: menzil yoksa RENK karar versin — ama yalnız renk
+                # AYIRDIĞI yerde. 6.042 gerçek kenar/engel kutusunda ölçüldü
+                # (16.08, eski+yeni oturum, karanlık/ters ışık dahil):
+                #   kapsama eşiği 0,45'te  yeşil %0,000 · siyah %0,000 yanlış pozitif
+                #   kırmızı ise 0,65'te bile %0,53 (turuncu kenar dubamızla
+                #   karışıyor: RAL 3026 ↔ RAL 2003) ⇒ KIRMIZI STEREO İSTER.
+                self._tani["mono_hedef"] += 1
+                # 🔴 MENZİLİ HEDEF HİPOTEZİYLE YENİDEN KUR (16.08, ikinci tur).
+                # `menzil_coz` mono yedeğini **Ø0,30 varsayarak** kurar; o sayıyı
+                # olduğu gibi bırakırsak iki şey birden bozulur:
+                #   1) yayınlanan çap `w·z/f` = **her zaman 0,30** (dairesel) ⇒
+                #      tüketicinin `cap_makul_mu` bandı (0,40-1,00) bunu ELER,
+                #      yani süzmüş ama kurtarmamış oluruz — hedef yine seçilemez.
+                #   2) menzil **2,13 kat KISA**: gerçek 10,5 m'deki hedefe
+                #      "4,9 m" der ⇒ nişan noktası yarı yolda kurulur.
+                # Ayrımı RENK yaptı (ölçüm: yeşil/siyah %0,000 yanlış pozitif);
+                # o hâlde menzil de aynı hipotezle, Ø0,64 ile hesaplanmalı.
+                # ⚠️ Bu, çapı bilgi taşımayan bir sabite çevirir — tüketicinin
+                # boyut kapısı bu adaylar için ETKİSİZDİR, ayrımı renk yapmıştır.
+                d.z = gm.mesafe_genislikten(d.w, gm.HEDEF_CAP_M, self._f_norm)
+                d.x = gm.yanal_konum(d.z, d.cx, self._f_norm)
+                self._hedef_adaylari.append(d)
+                self.get_logger().warn(
+                    f"Tespit SÜZÜLDÜ — stereo yok, mono {d.z:.1f} m; rengi "
+                    "hedef paletinde (yeşil/siyah) ⇒ P3 hedef adayı. "
                     "Kenar/engel olarak YAYINLANMADI.",
                     throttle_duration_sec=5.0)
                 continue
@@ -953,7 +1843,11 @@ class DubaNavigator(Node):
             p.orientation.z = DUBA_CAP / 2.0   # obstacle_map hack'i: z = yarıçap
             p.orientation.w = 1.0
             arr3d.poses.append(p)
+            # P3 OpenCV vetosunun girdisi — yalnız GERÇEKTEN yayınlananlar
+            # (yukarıdaki iki `continue` hedef adaylarını zaten ayırdı).
+            yayinlanan.append((d.cx, d.cy, d.w, d.h))
 
+        self._yayinlanan_kutular = yayinlanan
         self.buoys_pub.publish(arr)
         self.buoys3d_pub.publish(arr3d)
 
@@ -1052,6 +1946,10 @@ class DubaNavigator(Node):
         varsayımıyla zaman saymak geçilmemiş geçidi 'geçildi' sayabilir.
         Zaman burada sadece SON ÇARE aşımıdır; TF alınamazsa eski davranışa düşer.
         """
+        # TEŞHİS izleyicisi: bu geçiş boyunca ulaşılan EN İYİ değerler.
+        # Zaman aşımında hangi koşulun düştüğü ÖLÇÜLEREK raporlanır.
+        self._gecis_en_ileri = -math.inf
+        self._gecis_en_yanal = math.inf
         self.durum = "GECIS"
         self.son_gecit = None
         # İki duba merkezi arası mesafenin yarısı — "dubaların ARASINDAN mı
@@ -1073,11 +1971,18 @@ class DubaNavigator(Node):
         self.tespitleri_oku()
         simdi = time.monotonic()
 
+        # Kare TEK YERDEN tazelenir; kayıt ve Parkur-3 ikisi de bunu okur.
+        self._kare_tazele()
+
         # Dosya-1: görev durumundan BAĞIMSIZ kayıt (şartname ≥1 Hz; görev
         # tamamlansa da karaya alınana dek kayıt sürer)
         if not self._kayit_bozuk and simdi - self._son_kayit_t >= 1.0 / KAYIT_HZ:
             self._son_kayit_t = simdi
             self.kayit_adimi()
+
+        # Parkur-3 hedef yayını — KAYITTAN BAĞIMSIZ (`_kayit_bozuk` olsa da
+        # sürer; buradaki hata da kaydı etkilemez).
+        self.hedef_adimi(simdi)
 
         if self.gorev_tamam and GOREVDE_DUR:
             if MOD == "dogrudan_surus":
@@ -1098,15 +2003,62 @@ class DubaNavigator(Node):
                     gecti = gm.gecitten_gecti(
                         p[0], p[1], mx, my, nx, ny, -ny, nx,
                         self.gecit_yari_gen, PASS_EK_YOL)
+                    # TEŞHİS: bileşenleri izle (karar yolunu DEĞİŞTİRMEZ).
+                    _ileri, _yanal = gm.gecis_bilesenleri(
+                        p[0], p[1], mx, my, nx, ny, -ny, nx)
+                    self._gecis_en_ileri = max(
+                        getattr(self, "_gecis_en_ileri", -math.inf), _ileri)
+                    self._gecis_en_yanal = min(
+                        getattr(self, "_gecis_en_yanal", math.inf), _yanal)
                 if not gecti:
-                    if simdi >= self.pass_bitis_t:
+                    if simdi < self.pass_bitis_t:
+                        self.durum_log()
+                        return
+                    if p is None:
+                        # 🔴 2026-08-13: "DOĞRULANAMADI" ile "GEÇMEDİ" aynı şey
+                        # değil. Burada doğrulayacak ÖLÇÜT yok — odom kesildi ya
+                        # da bayatladı (karar tarafı `pose_timeout_s=1.0` ile
+                        # yayını bilerek keser, `fusion_node.py:560-568`).
+                        # Eski kod bu hâlde geçidi ELİYORDU; ölçüldü ki odom HİÇ
+                        # gelmemişken AYNI geçiş sayılıyordu ⇒ tutarsız ve
+                        # doğrudan (G/KD)×10 + ×40 kaybettiren dal.
+                        # Burada odomsuz yolun zaten yaptığı şeye düşüyoruz:
+                        # zaman tahminine güven. `gecit_cizgi` BİLEREK
+                        # sıfırlanmıyor — orta noktası aşağıda `yeni_gecit_mi`
+                        # ile tekrar-sayma korumasını besliyor.
                         self.get_logger().warn(
-                            "Geçiş zaman aşımı — odometri geçişi DOĞRULAMADI, sayılmadı. "
-                            "(MPPI takılmış olabilir: obstacle_margin / engel haritasına bak)")
+                            "Geçiş penceresi doldu ve odom BAYAT/KESİK — poz "
+                            "doğrulaması yapılamadı, zaman tahminiyle SAYILDI. "
+                            f"(bayatlık eşiği {ODOM_BAYAT_SN} s) "
+                            "Sürekli görülüyorsa /girdap/fusion/odom akışına bak.")
+                        # aşağı düş → geçit sayımı
+                    else:
+                        # 🔑 TAHMİN DEĞİL ÖLÇÜM (19.08.2026). Eski mesaj
+                        # "MPPI takılmış olabilir" diyordu; hangi koşulun
+                        # düştüğünü söylemiyordu. İki sebep bambaşka arızadır:
+                        #   DUZLEMI_ASMADI → araç kapıya hiç varamadı
+                        #   YANDAN_DOLASTI → vardı ama dubaların arasından
+                        #                    değil (nişan noktası kayması)
+                        _ei = getattr(self, "_gecis_en_ileri", float("-inf"))
+                        _ey = getattr(self, "_gecis_en_yanal", float("inf"))
+                        _sebep = gm.gecis_red_sebebi(
+                            _ei, _ey, self.gecit_yari_gen, PASS_EK_YOL)
+                        self._tani[f"gecis_red_{_sebep}"] = (
+                            self._tani.get(f"gecis_red_{_sebep}", 0) + 1)
+                        # ⚠ "DOĞRULAMADI" ibaresi KORUNUYOR: ekibin
+                        # `test_odom_bayatligi.py` regresyonu bu anahtar
+                        # kelimeye bağlı (ortak alan kuralı — başkasının
+                        # testini kırmadan zenginleştir).
+                        self.get_logger().warn(
+                            "Geçiş zaman aşımı — odometri geçişi DOĞRULAMADI, "
+                            f"sayılmadı. SEBEP: {_sebep} · "
+                            f"en ileri {_ei:+.2f} m (gerekli > {PASS_EK_YOL:.2f}) · "
+                            f"en yakın yanal {_ey:.2f} m (gerekli ≤ "
+                            f"{self.gecit_yari_gen if self.gecit_yari_gen else float('nan'):.2f})")
                         self.gecit_cizgi = None
                         self.duruma_gec("ARAMA")
-                    self.durum_log()
-                    return
+                        self.durum_log()
+                        return
             elif simdi < self.pass_bitis_t:
                 # Plan B (veya TF'siz son çare): zaman tahmini
                 if MOD == "dogrudan_surus":
@@ -1192,9 +2144,19 @@ class DubaNavigator(Node):
             # algi_yayin: yaklaşmada çıkış yok — sürüş karar stack'inde
         else:
             sg = self.son_gecit
+            # 🔑 18.08.2026 — ÖLÜ BANT KAPATILDI. Eskiden burada sabit
+            # `sg[1] < PASS_KAYIP_Z` (3,2 m) vardı. Kapı, GENİŞLİĞİNE göre
+            # çok daha uzakta kadrajdan çıkar (b/tan(HFOV/2)); W > ~4,4 m
+            # olan her kapı bu eşiğe HİÇ inemiyordu ⇒ geçiş hiç sayılmadı.
+            # Ölçüm: 483 karede kapı 138 kez kuruldu, tetik 0 kez ateşlendi
+            # (en yakın orta menzil 3,91 m). Sahada da aynı belirti vardı.
+            # Artık ölçüt kapının KENDİ geometrisinden türüyor (ölçek-bağımsız).
+            # ⚠ `sg` None olabilir (hiç kapı görülmediyse) — eski koddaki
+            # kısa devre koruması korunmalı; ölçüt İÇERİDE hesaplanır.
             if (sg is not None
                     and (simdi - sg[2]) < 2.0 * HEDEF_KAYIP_SN
-                    and sg[1] < PASS_KAYIP_Z
+                    and gm.fov_kaybi_mi(sg[1], self.son_yari_gen)
+                    and sg[1] <= GECIT_MAX_MESAFE
                     and abs(sg[0]) < math.radians(25)):
                 # Geçide iyice yaklaşmışken dubalar FOV'dan çıktı -> geçiyoruz.
                 # Geçit çizgisini son bilinen bearing/mesafeden kur (yaklaşıkla yeter)
@@ -1237,8 +2199,19 @@ class DubaNavigator(Node):
     def arac_poz_yaw(self, timeout_s=0.0):
         """Aracın sabit çerçevedeki (x, y, yaw) pozu; kaynak MOD'a göre:
         algi_yayin → /girdap/fusion/odom aboneliği (karar stack'i TF yayınlamaz),
-        mppi_hedef → TF (odom->base_link). Poz yoksa None."""
+        mppi_hedef → TF (odom->base_link). Poz yoksa None.
+
+        🔴 BAYAT POZ = POZ YOK (2026-08-13): `son_odom` yalnız mesaj GELDİĞİNDE
+        güncelleniyor; karar tarafı yayını kesince (F8.2, `pose_timeout_s=1.0`)
+        değer DONAR. Donuk pozu geçerli saymak, poz hiç olmamasından daha kötü
+        sonuç veriyordu — ölçüm ve gerekçe `ODOM_BAYAT_SN` tanımında.
+        None dönmek kodun ZATEN bildiği "poz yok" yoluna düşürür (zaman tahmini).
+        """
         if MOD == "algi_yayin":
+            if self.son_odom is None:
+                return None
+            if (time.monotonic() - self.son_odom_t) > ODOM_BAYAT_SN:
+                return None
             return self.son_odom
         try:
             tf = self.tf_buffer.lookup_transform(
@@ -1359,7 +2332,16 @@ class DubaNavigator(Node):
         # görünürlük kanalı). 06.08'deki "sessiz ret" hatasının aynısı.
         RED_KALEMLERI = ("dar", "dizili", "arada_duba", "menzil_celiski",
                          "menzil_yok", "buyuk_cisim")
-        if k >= 2 and self.durum == "ARAMA" and any(self._tani[a] for a in RED_KALEMLERI):
+        # 🔴 2026-08-13: tetikleyici TOPLAM değil, son log'dan bu yana ARTIŞ.
+        # Sayaçlar kümülatif olduğu için `any(self._tani[a])` bir kez dolunca
+        # bir daha sönmüyordu (ölçüldü: 1 geçmiş red → sonraki 5/5 turda alarm).
+        # Sürekli yanan uyarıyı sahada kimse okumaz ve GERÇEK arızayı gizler;
+        # SSH yok, journal tek görünürlük kanalımız. Toplamlar mesajda YİNE
+        # basılıyor (tanı için lazım), yalnız ALARM anlık olaya bağlandı.
+        artan = {a: self._tani[a] - self._tani_onceki.get(a, 0)
+                 for a in RED_KALEMLERI}
+        self._tani_onceki = dict(self._tani)
+        if k >= 2 and self.durum == "ARAMA" and any(v > 0 for v in artan.values()):
             # ⚠️ TEK KONUMSAL ARGÜMAN — pazarlıksız. rclpy imzası
             # `log(message, severity, **kwargs)`; printf tarzı ek konumsal
             # argüman TypeError atar, istisna timer callback'inden `rclpy.spin()`e

@@ -28,11 +28,14 @@ from typing import Iterable, Optional, Protocol
 from rcl_interfaces.msg import SetParametersResult
 from std_msgs.msg import String
 
+from girdap_decision.qos_profiles import latched_qos
+
 from prototype.mission.kamikaze_hedef import (
     CLASS_HEDEF,
     HedefRengiHatasi,
     degistirilebilir_mi,
     hedef_isaretle,
+    kanonik_ad,
     renk_to_class,
 )
 
@@ -77,11 +80,41 @@ class KamikazeHedefKapisi:
         self._sub = node.create_subscription(
             String, "/girdap/mission/state", self._on_mission_state, 10
         )
+        # 🔴 16.08 EKLENDİ — bu yayıncı YOKTU. Docstring'i *"kapı
+        # /girdap/mission/hedef_rengi yayınlıyor"* diyordu ama `create_publisher`
+        # hiç çağrılmıyordu ⇒ `planning_node` (abone) rengi HİÇ öğrenmiyordu ve
+        # `fsm_node` P3'e geçemiyordu. Sessiz: hata basılmaz, tekne son
+        # waypoint'te temiz durur, Parkur-3 = 0 (145 puan).
+        #
+        # 🔑 LATCHED (TRANSIENT_LOCAL) ŞART: renk **kalkıştan ÖNCE** yüklenir
+        # (md s.22 — sonra `param set` reddediliyor). Sıradan bir topic'te,
+        # bizden sonra açılan ya da yeniden başlayan bir abone o tek mesajı
+        # SONSUZA KADAR kaçırırdı. Latch ile geç abone son değeri anında alır.
+        self._pub = node.create_publisher(
+            String, "/girdap/mission/hedef_rengi", latched_qos()
+        )
+        self._renk_yayinla()             # açılış değeri (boş olsa da) duyurulur
         if self._sinif is not None:
             self._log.info(
                 f"PARKUR-3 hedef rengi (config): {self._renk_adi!r} → "
                 f"class_id={CLASS_HEDEF}"
             )
+
+    def _renk_yayinla(self) -> None:
+        """Seçili rengin ADINI yayınla; boş dize = hedef atanmamış.
+
+        Kod değil AD yayınlanıyor: tüketici `RENK_KOD` ile kendisi çeviriyor,
+        böylece sayısal tablo tek yerde kalıyor (bkz. renk_kodu.py — tablo
+        elle kopyalanınca biri ters yazılmıştı).
+        """
+        # 🔴 18.08.2026: KANONİK ad yayınlanıyor, operatörün yazdığı ham metin
+        # DEĞİL. `planning_node._on_hedef_rengi` adı `renk_kodu.RENK_KOD`'da
+        # arıyor; "red"/"green"/"black" orada YOK ⇒ ham metin yayınlanınca kod
+        # 0 ("atanmamış") çıkıyordu ve P3 nişanı sessizce kapalı kalıyordu.
+        # `kanonik_ad` yeni tablo kurmaz, iki mevcut tablonun kesişimini alır.
+        msg = String()
+        msg.data = kanonik_ad(self._sinif) if self._sinif is not None else ""
+        self._pub.publish(msg)
 
     # ---------------------------------------------------------------- durum
 
@@ -121,6 +154,7 @@ class KamikazeHedefKapisi:
             self._sinif = yeni
             self._renk_adi = str(pr.value).strip()
             self._gorulmedi_uyarildi = False
+            self._renk_yayinla()          # tüketicilere duyur (P3'ün kapısı)
             # WARN seviyesi bilinçli: operatör koşu öncesi bunu GÖRMELİ.
             self._log.warn(
                 "PARKUR-3 HEDEF RENGI = "

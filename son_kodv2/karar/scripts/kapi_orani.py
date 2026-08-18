@@ -169,6 +169,10 @@ def kosum(
     mppi_k: int = URETIM_K,
     mppi_t: int = URETIM_T,
     iz: Optional[List[dict]] = None,
+    koridor_var: bool = False,
+    kurs_ekseni_kullan: bool = False,
+    arada_duba_kontrolu: bool = False,
+    stuck_recovery_enabled: bool = True,
 ) -> dict:
     """Kapalı döngüyü bir kez koştur, kapı geçiş metriklerini döndür.
 
@@ -193,12 +197,17 @@ def kosum(
         # çevir" davranışına ittiğini ölçmüştü. Yani düşük K/T ile ölçülen
         # yavaşlık ARACIN KENDİ ARTEFAKTI olabilir → `--K/--T` ile sınanır.
         PlanningPipelineConfig(
-            mppi_K=mppi_k, mppi_T=mppi_t, mppi_terminal_lookahead_m=3.0
+            mppi_K=mppi_k, mppi_T=mppi_t, mppi_terminal_lookahead_m=3.0,
+            stuck_recovery_enabled=stuck_recovery_enabled,
         ),
         dynamics=dyn,
     )
     pipe.set_mission_state("PARKUR1")
-    gate = GateFollower(GateFollowerConfig(HULL_W, HULL_L))
+    gate = GateFollower(
+        GateFollowerConfig(HULL_W, HULL_L),
+        kurs_ekseni_kullan=kurs_ekseni_kullan,
+        arada_duba_kontrolu=arada_duba_kontrolu,
+    )
     hafiza = EdgeBuoyMemory()
 
     # F-S.16 — HAKEM ölçüsü: parkur dışına çıkış. Sınır SAHNENİN gerçek kenar
@@ -263,11 +272,24 @@ def kosum(
 
         if round(t * 10) % 2 == 0:                    # görev katmanı 5 Hz
             if model_var:
-                hedef = gate.update(
+                sonuc = gate.update(
                     (x, y), gn[idx], kenar,
                     [(o.cx, o.cy, o.r) for o in engeller],
                     gozlem_no=algi_no,
-                ).surus_hedefi
+                )
+                hedef = sonuc.surus_hedefi
+                # F-S.16 (planning_node._koridoru_besle aynası) — koridoru
+                # da besle, yoksa bu araç kaptanın 18.08 06:52 bağlantısını
+                # ölçemez (koridor hep boş kalır, terim susar).
+                if koridor_var:
+                    omurga = [
+                        ((gx, gy), yari) for gx, gy, yari in gate.gecilen_kapilar
+                    ]
+                    if sonuc.gate is not None:
+                        omurga.append(
+                            (sonuc.gate.midpoint, 0.5 * sonuc.gate.width)
+                        )
+                    pipe.set_koridor(omurga)
             else:
                 hedef = gn[idx]
             pipe.set_waypoints([hedef])
@@ -425,7 +447,8 @@ def _iz_kosumu(parkur, a) -> None:
     iz: List[dict] = []
     r = kosum(parkur, baslangic=poz, yon_hatasi_rad=aci,
               model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni,
-              mppi_k=a.K, mppi_t=a.T, iz=iz)
+              mppi_k=a.K, mppi_t=a.T, iz=iz, koridor_var=a.koridor, kurs_ekseni_kullan=a.kurs_ekseni, arada_duba_kontrolu=a.arada_duba,
+              stuck_recovery_enabled=not a.kurtarma_kapali)
     if not iz:
         print("iz boş — koşum hiç adım atmadı")
         return
@@ -518,6 +541,24 @@ def main() -> None:
     ap.add_argument("--iz", action="store_true",
                     help="TEK koşumun hız/itki izini çıkar (yavaşlığın kökü: "
                          "düzgün sürünme mi, duraklama epizotları mı?)")
+    ap.add_argument("--koridor", action="store_true",
+                    help="F-S.16 koridor terimini besle (planning_node."
+                         "_koridoru_besle aynası) — kapatılırsa 17.08 taban "
+                         "davranışıyla birebir (A/B için)")
+    ap.add_argument("--kurs-ekseni", action="store_true",
+                    help="F-K.3 kurs ekseni sahte-kapı ayıklamasını aç "
+                         "(GateFollowerConfig.kurs_ekseni_kullan) — 13.08'de "
+                         "bu parkurda zararlı ölçülüp kapatılmıştı, yeniden "
+                         "A/B için")
+    ap.add_argument("--arada-duba", action="store_true",
+                    help="arada_duba_kontrolu aç (algı'dan port, 18.08) — "
+                         "yalnız arada gerçek bir duba varsa çifti reddeder, "
+                         "F-K.3'ten daha dar/hedefli, A/B için")
+    ap.add_argument("--kurtarma-kapali", action="store_true",
+                    help="F-P.11 sikisma kurtarmasini kapat (varsayilan ACIK "
+                         "- 18.08 gece IKINCI turda CARPMASIZ dogrulandi: "
+                         "zor kapi orani 50.0 den 84.4e, normal 79.2 den "
+                         "91.7ye, CARPMA 0/12 den 0/12ye. Yalniz A/B icin)")
     a = ap.parse_args()
 
     if a.iz:
@@ -542,7 +583,8 @@ def main() -> None:
     for i, (poz, aci) in enumerate(basl, 1):
         r = kosum(parkur, baslangic=poz, yon_hatasi_rad=aci,
                   model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni,
-                  mppi_k=a.K, mppi_t=a.T)
+                  mppi_k=a.K, mppi_t=a.T, koridor_var=a.koridor, kurs_ekseni_kullan=a.kurs_ekseni, arada_duba_kontrolu=a.arada_duba,
+                  stuck_recovery_enabled=not a.kurtarma_kapali)
         oran = r["gecilen"] / r["toplam_kapi"]
         oranlar.append(oran)
         paylar.append(r["en_kucuk_pay"])

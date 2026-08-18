@@ -41,6 +41,57 @@ def odak_px(genislik_px: float, hfov_rad: float = HFOV_RAD) -> float:
     return (genislik_px / 2.0) / math.tan(hfov_rad / 2.0)
 
 
+#: Deploy ön işlemesi 4:3 kareyi 1:1'e **SIKIŞTIRIYOR** (`setPreviewKeepAspectRatio(False)`),
+#: yani dikey piksel ölçeği yatayınkinden 4/3 kat büyük. `odak_px` YATAY odağı
+#: verir; su hattı hesabı DİKEY eksende olduğu için bu çarpan şart.
+#: 🔴 Ön işleme letterbox'a dönerse bu sayı da değişir — ikisi ASLA ayrı
+#: değişmez (aynı sözleşme: `duba_gecis_navigator.py:272-280`).
+DIKEY_ODAK_KATI = 4.0 / 3.0
+
+
+def su_hatti_menzili(cy_alt_norm: float, ufuk_cy: float, egim: float,
+                     pay_cy: float = 0.0):
+    """Su değme noktasından menzil (m) — **en CÖMERT** (en uzak) tahmin.
+
+    Yüzen cisim su üzerindedir; bbox'ın ALT kenarı su değme noktasıdır:
+        cy_alt = ufuk + (h·f_y)·(1/d)      ⇒      d = egim / (cy_alt − ufuk)
+    `egim` = h·f_y ve `ufuk_cy` **veriden çıkarıldı** (aşağıya bak), pitch
+    işaret konvansiyonuna hiç bağlanmadan.
+
+    `pay_cy` (dalga/trim belirsizliği) ufku **aşağı** alarak paydayı küçültür
+    ⇒ dönen değer *"olabileceğin en uzağı"*. Bu yüzden bununla kurulan çelişki
+    kapısı tek yönlü ve güvenlidir: ufka yakın (uzak) cisimlerde payda sıfırın
+    altına düşer ve **None** döner = *"çelişki İDDİA EDEMEM"*.
+
+    🔴 09.08'de reddedilen "ufuk süzgeci"nin aynısı DEĞİL: o, ufkun üstünü
+    kesip atıyordu ve pitch ±5° belirsizliği onu güvensiz yapıyordu. Burada
+    aynı belirsizlik **kapıyı gevşetmek** için kullanılıyor.
+    """
+    if egim is None or egim <= 0.0:
+        return None
+    dy = (float(cy_alt_norm) - float(ufuk_cy)) - float(pay_cy)
+    if dy <= 1e-3:
+        return None                     # ufka çok yakın ⇒ çelişki iddia edilemez
+    return float(egim) / dy
+
+
+def su_hatti_celiskili(cy_alt_norm: float, d_genislik_m: float,
+                       ufuk_cy: float, egim: float, pay_cy: float = 0.0,
+                       kat: float = 3.0) -> bool:
+    """Su hattı "çok yakın" derken genişlik "uzak" mı diyor? (TEK YÖNLÜ)
+
+    ⚖️ Tek yönlü, bilerek: yalnız *"su hattına göre olduğundan UZAK görünen"*
+    adayı eler. Tersi elenmez — dalga, kırpık bbox ve gövdenin kendi
+    yansımasıyla birleşmesi o yöne sapma üretebilir.
+    """
+    if not d_genislik_m or d_genislik_m <= 0.0:
+        return False
+    d_su = su_hatti_menzili(cy_alt_norm, ufuk_cy, egim, pay_cy)
+    if d_su is None:
+        return False
+    return d_su * float(kat) < float(d_genislik_m)
+
+
 def mesafe_genislikten(w_px: float, cap_m: float, f_px: float):
     """Bilinen çaptan menzil: D = f·W/w_px. Geçersiz pikselde None.
 
@@ -194,6 +245,68 @@ def bbox_piksel(cx, cy, w, h, lb_pay, hedef_w, hedef_h):
     return (cx * hedef_w, cy_ic * hedef_h, w * hedef_w, h_ic * hedef_h)
 
 
+def fov_kayip_menzili(yari_genislik_m: float,
+                      hfov_rad: float = HFOV_RAD) -> float:
+    """Bu kapının İKİ dubası birden kadrajdan çıkacağı menzil (m).
+
+    Saf geometri: yarı genişliği `b` olan çiftin dubaları `z` menzilinde
+    ±atan(b/z) açısında görünür. İkisi birden kadrajda kalabilmesi için
+    `atan(b/z) < HFOV/2` gerekir ⇒ **z > b / tan(HFOV/2)**. Bu eşitliğin
+    sınırı, kapının kaybolacağı menzildir.
+
+    🔴 NEDEN GEREKLİ (18.08.2026, sanal gölde ölçüldü ve SAHADA da doğrulandı
+    — kaptan: *"realde de gate'den geçmiyordu"*):
+    Geçiş fazına giriş sabit bir metre eşiğine (`PASS_KAYIP_Z = 3,2 m`)
+    bağlıydı. Ama kapı, genişliğine göre ÇOK DAHA UZAKTA kaybolur:
+
+        W =  4 m → 2,91 m'de kaybolur → 3,2 m eşiği yakalar ✅
+        W =  6 m → 4,37 m'de kaybolur → eşiğe HİÇ inemez ❌
+        W = 12 m → 8,73 m'de kaybolur → eşiğe HİÇ inemez ❌
+
+    Yani **W > ~4,4 m** olan her kapı için ÖLÜ BANT vardı: kapı görünürken
+    tetik menziline (2,0 m) inemiyor, kaybolduğunda da "yakındı" sayılmıyordu
+    ⇒ geçiş HİÇ sayılmıyordu. Ölçüldü: 483 karede kapı 138 kez kuruldu,
+    geçiş tetiği **0** kez ateşlendi; en yakın orta menzil 3,91 m idi.
+
+    Şartname (s.20, s.23) kapı mesafelerinin **alana göre değişeceğini**
+    söylüyor ⇒ metre cinsinden sabit eşik zaten TAHMİNDİR. Bu fonksiyon onu
+    ölçek-bağımsız geometriyle değiştirir: kapı 2 m de olsa 40 m de olsa
+    aynı kural çalışır.
+    """
+    t = math.tan(hfov_rad / 2.0)
+    if yari_genislik_m <= 0.0 or t <= 0.0:
+        return 0.0
+    return float(yari_genislik_m) / t
+
+
+#: Kayboluş menziline tanınan pay. 1,0 = tam geometrik sınır; tespit gürültüsü
+#: ve kare gecikmesi yüzünden kapı sınırdan biraz ÖNCE kaybolabilir.
+FOV_KAYIP_PAYI = 1.25
+
+
+def fov_kaybi_mi(son_menzil_m: float, yari_genislik_m: float,
+                 hfov_rad: float = HFOV_RAD,
+                 pay: float = FOV_KAYIP_PAYI) -> bool:
+    """Kapı GEOMETRİ gereği mi kayboldu (yaklaştık), yoksa tespit mi düştü?
+
+    Ayrım kritik: geometrik kayboluş "geçiyoruz" demektir ve geçiş fazı
+    başlatılmalıdır. Tespit düşmesi ise **hiçbir şey** demek değildir —
+    orada geçiş saymak sahte puan üretir (ve odometri doğrulaması onu
+    zaten reddeder, ama boşuna faz değiştirmiş oluruz).
+
+    Ölçüt: son görülen menzil, o kapının beklenen kayboluş menzilinin
+    payıyla birlikte ALTINDAysa kayboluş geometriktir.
+
+    ⚠ Üst sınır yok denemez: çok uzakta kaybolan geniş bir kapı için de
+    beklenen menzil büyüktür; çağıran ayrıca `GECIT_MAX_MESAFE` kapısını
+    uygular (bu fonksiyon TEK BAŞINA geçiş yetkisi vermez).
+    """
+    if son_menzil_m is None or yari_genislik_m is None:
+        return False
+    sinir = fov_kayip_menzili(yari_genislik_m, hfov_rad) * pay
+    return 0.0 < float(son_menzil_m) <= sinir
+
+
 def yan_yana_mi(a_ileri, a_yanal, b_ileri, b_yanal) -> bool:
     """Bu iki duba bir KAPI mı (kursa dik), yoksa ardışık kapılara mı ait?
 
@@ -228,6 +341,40 @@ def gecilebilir_mi(merkez_mesafe, hull_en, duba_cap: float = DUBA_CAP_M) -> bool
     görünmez kılar ve doğrudan puan kaybettirir ((G/KD)×10 ve ×40).
     """
     return (merkez_mesafe - duba_cap) >= hull_en
+
+
+def gecis_bilesenleri(px, py, mx, my, nx, ny, tx, ty):
+    """Aracın geçide göre (ileri, |yanal|) izdüşümü — TEŞHİS için.
+
+    🔴 NEDEN VAR (19.08.2026): `gecitten_gecti` yalnız True/False döndürüyor.
+    Geçiş sayılmadığında log *"MPPI takılmış olabilir"* diye **tahmin
+    yürütüyordu** — oysa iki bağımsız sebep var ve ayrımı ÖLÇÜLEBİLİR:
+
+        ① ileri ≤ ek_yol      → araç geçit düzlemini HİÇ AŞMADI
+                                 (kontrol/planlama duruyor ya da yavaş)
+        ② |yanal| > yarı_gen  → araç geçti ama DUBALARIN ARASINDAN değil,
+                                 YANDAN dolaştı (nişan noktası kayması)
+
+    İkisi bambaşka arızalar ve bambaşka düzeltmeler ister. Hangisi olduğunu
+    bilmeden "kapıdan geçmiyor" sorusu çözülemez — sahada da, gölde de.
+    """
+    ileri = (px - mx) * nx + (py - my) * ny
+    yanal = abs((px - mx) * tx + (py - my) * ty)
+    return float(ileri), float(yanal)
+
+
+def gecis_red_sebebi(ileri, yanal, yari_genislik, ek_yol) -> str:
+    """Ölçülen izdüşümlerden red sebebini ADLANDIR (saf, test edilebilir).
+
+    Döner: "GECTI" | "DUZLEMI_ASMADI" | "YANDAN_DOLASTI" | "IKISI_DE"
+    """
+    duzlem = ileri > ek_yol
+    arasindan = (yari_genislik is None) or (yanal <= yari_genislik)
+    if duzlem and arasindan:
+        return "GECTI"
+    if not duzlem and not arasindan:
+        return "IKISI_DE"
+    return "DUZLEMI_ASMADI" if not duzlem else "YANDAN_DOLASTI"
 
 
 def gecitten_gecti(px, py, mx, my, nx, ny, tx, ty, yari_genislik, ek_yol) -> bool:
@@ -364,3 +511,98 @@ def buyuk_cisim_mi(z_stereo, w_norm, f_px_norm, cap_m: float = DUBA_CAP_M,
         return False
     return (d_pin / z_stereo) < esik
 
+
+
+# ─────────────────────── PARKUR-3 HEDEF RENGİ (FAZ 2) ─────────────────────
+#: Hedef dubası renkleri — şartname s.18: RAL 3026 (floresan kırmızı) ·
+#: RAL 6037 (saf yeşil) · RAL 9005 (siyah). OpenCV HSV (h 0-179 = derece/2).
+#:
+#: 🔑 **Renk ADAY üretir, BOYUT karar verir.** Bu eşikler tek başına hedef
+#: seçmez: buraya yalnız `buyuk_cisim_mi` süzgecinden geçmiş, yani boyutu
+#: 0,30 m'lik dubadan belirgin büyük çıkmış tespitler gelir. Sıralama böyle
+#: olduğu için eşikler **gevşek** tutulabiliyor — sıkı eşik gerçek hedefi
+#: kaçırırdı (11.08 ölçümü: S>190'da gerçek hedef %41'e düşüyor).
+#:
+#: ⚠️ Aynı tablo `girdap-ida-p3/p3_hedef/hedef_mantik.py`'de de var (o repo
+#: FAZ 2'den önce yazıldı). ÜRETİMDE KULLANILAN BURASIDIR — orası artık
+#: referans. Birini değiştiren ötekini de değiştirmeli.
+HEDEF_RENK_ESIK = {
+    "kirmizi": dict(h=((0, 7), (174, 179)), s=130, v=90),   # RAL 3026 ≈ 3,2°
+    "yesil":   dict(h=((62, 85),),          s=80,  v=50),   # RAL 6037 ≈ 143,9°
+    "siyah":   dict(h=None,                 s=70,  v=-60),  # RAL 9005, akromatik
+}
+#: Kutu pikselinin bu oranı rengi tutmalı. %25: hedefin bir kısmı gölgede/
+#: parlamada olsa da geçer, ama bbox'ın çoğu su olan bir tespit geçmez.
+HEDEF_RENK_ORANI = 0.25
+
+#: Renk → sayısal kod. **Karar tarafıyla AYNI sözleşme**
+#: (`prototype/mission/renk_kodu.py KOD_RENK`): 0 = renk çözülemedi.
+#: 🔴 Üç repoda yaşıyor (algı · karar · İHA) — biri değişirse hepsi değişmeli;
+#: ayrışırsa yanlış hedefe angajman olur ve **hiç belirti vermez** (TS3).
+HEDEF_RENK_KODU = {None: 0, "kirmizi": 1, "yesil": 2, "siyah": 3}
+
+
+def _renk_kapsama(h, s, v, esik) -> float:
+    """Piksellerin `esik`e uyan oranı. h/s/v numpy dizisi."""
+    import numpy as np
+    h = np.asarray(h); s = np.asarray(s); v = np.asarray(v)
+    if h.size == 0:
+        return 0.0
+    if esik["h"] is None:
+        # Siyah: ton anlamsız (akromatik) ⇒ parlaklık TAVANI + doygunluk
+        # TAVANI. Doygunluk şart: gölgeli SU/zemin de karanlıktır ama rengini
+        # KORUR (13.08 İHA ölçümü: gölgeli çimen S=121 ↔ RAL 9005 S=23-32).
+        m = (v < -int(esik["v"])) & (s < int(esik["s"]))
+        return float(m.mean())
+    m = np.zeros(h.shape, bool)
+    for lo, hi in esik["h"]:
+        m |= (h >= lo) & (h <= hi)
+    return float((m & (s > esik["s"]) & (v > esik["v"])).mean())
+
+
+def hedef_rengi_bgr(roi_bgr, oran: float = HEDEF_RENK_ORANI):
+    """Hedef bbox'ının BGR kırpımından renk çöz — **üretimde çağrılan budur**.
+
+    🔴 **Gürültü bastırma ZORUNLU (13.08 ölçümü).** Doygunluk S=(max−min)/max
+    olduğu için **düşük parlaklıkta kararsızdır**: RAL 9005 (gerçek S≈20) σ=8
+    gürültüde **S≈89** okunuyor ⇒ doygunluk tavanı siyahı **eliyordu**
+    (kapsama %23, eşik %25 — sınırın hemen altında, yani sessiz ve rastgele).
+    3×3 Gauss sonrası: siyah kapsama **%71-82**, gölgeli su **%3-6**, gölgeli
+    çim **%1-2** ⇒ temiz ayrım. (Aynı olgu İHA plaka tarafında da bulundu.)
+
+    ⚠️ **Bilinen sınır:** siyah, herhangi bir KOYU AKROMATİK yüzeyden ayırt
+    edilemez (ölçüldü: koyu asfalt %92 geçiyor) — fizik böyle. Bizi koruyan
+    şey üstteki **boyut kapısı**: buraya yalnız suda yüzen, 0,50-0,91 m çapında
+    bir cisim gelir. Renk tek başına asla hedef seçmez.
+    """
+    import cv2
+    import numpy as np
+    roi = np.asarray(roi_bgr)
+    if roi.size == 0 or roi.ndim != 3:
+        return None, 0.0
+    if min(roi.shape[:2]) >= 3:
+        roi = cv2.GaussianBlur(roi, (3, 3), 0)
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    return hedef_rengi(hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2], oran)
+
+
+def hedef_rengi(h, s, v, oran: float = HEDEF_RENK_ORANI):
+    """Hedef dubasının rengi: ("kirmizi"|"yesil"|"siyah"|None, kapsama).
+
+    `None` = **renk çözülemedi**; hata değildir (gölge, parlama, kırpık bbox).
+    Çağıran yine de yayınlar — konum bilgisi tek başına değerlidir; rengi
+    bilinmeyen hedef `HEDEF_RENK_KODU[None] = 0` ile gider.
+
+    Birden fazla renk eşiği tutarsa **en yüksek kapsama** kazanır; siyah en
+    son bakılır çünkü gölgeli kırmızı/yeşil de karanlıktır — renkli bir
+    eşleşme varsa o önceliklidir (yanlış hedefe angajman TS3'ü artırır:
+    şartname s.25, 1 yanlış temas 100→50, 2 yanlış 100→**5**).
+    """
+    skor = {ad: _renk_kapsama(h, s, v, e) for ad, e in HEDEF_RENK_ESIK.items()}
+    renkli = {a: k for a, k in skor.items() if a != "siyah" and k > oran}
+    if renkli:
+        en = max(renkli, key=renkli.get)
+        return en, renkli[en]
+    if skor["siyah"] > oran:
+        return "siyah", skor["siyah"]
+    return None, 0.0
