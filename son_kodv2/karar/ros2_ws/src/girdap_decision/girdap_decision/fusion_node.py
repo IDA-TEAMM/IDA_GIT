@@ -41,6 +41,7 @@ import math
 
 import rclpy
 from rclpy.node import Node
+from rclpy.time import Time as RclTime
 
 from geometry_msgs.msg import PoseStamped, TwistStamped
 from nav_msgs.msg import Odometry
@@ -48,6 +49,13 @@ from sensor_msgs.msg import Imu, NavSatFix
 
 from girdap_decision.qos_profiles import sensor_data_qos
 from girdap_decision.saat_kaynagi import bayatlik_saati
+
+#: §1.57 — poz kaynağının ölçüm zamanı yayın anından bu kadar uzaksa
+#: GÜVENİLMEZ sayılır ve yayın anına düşülür. 5 s cömert: gerçek gecikme
+#: ölçüldü (ortanca 63 ms, %99 100,6 ms, maks 371 ms), yani meşru değerlerin
+#: 13 katı üstünde. Amaç dar bir kapı değil, FARKLI ZAMAN TABANINI yakalamak
+#: (monotonic ↔ duvar saati farkı milyarlarca saniyedir — P0'ın imzası).
+_DAMGA_MAKUL_PENCERE_S = 5.0
 
 # GTSAM'a bağımlı DEĞİL (düz fonksiyon) — heading düzeltmesi için isam2
 # modunda da, bypass'ın kendi kullanımı için de gerekli; ikisi de güvenle
@@ -189,6 +197,9 @@ class FusionNode(Node):
         # F8.2: poz kaynağının son güncelleme zamanı (bayatlık bekçisi)
         self._pose_timeout_s = float(self.get_parameter("pose_timeout_s").value)
         self._last_input_t: float | None = None
+        # §1.57 — ölçüm damgası yerine yayın anına kaç kez düşüldü.
+        self._damga_yedek = 0
+        self._damga_yedek_uyarildi = False
         # F-P.7: velocity_body'nin KENDİ bayatlık bekçisi (pose_timeout_s'ten
         # bağımsız — bkz. declare_parameter yorumu).
         self._vel_timeout_s = float(self.get_parameter("vel_timeout_s").value)
@@ -353,6 +364,32 @@ class FusionNode(Node):
 
     # ----- iSAM2 callback'leri -----
 
+    def _olcum_damgasi(self, yayin_ani):
+        """Poz kaynağının ölçüm zamanını ROS damgasına çevir; yoksa yayın anı.
+
+        Makullük kapısı `_DAMGA_MAKUL_PENCERE_S`: kaynak zaman yayın anından
+        bu kadar uzaksa GÜVENİLMEZ sayılır. İki gerçek senaryoyu kapsar —
+        kaynak hiç güncellenmemiş (bayat) ve kaynak BAŞKA zaman tabanında
+        (P0'ın kendisi: monotonic ↔ duvar saati farkı milyarlarca saniye).
+        Gelecekten damga da reddedilir; saat sıçraması iki yöne de gider.
+        """
+        t = getattr(self._source, "son_olcum_zamani", None)
+        if t is None or not math.isfinite(t) or t <= 0.0:
+            self._damga_yedek += 1
+            return yayin_ani
+        simdi = yayin_ani.sec + yayin_ani.nanosec * 1e-9
+        if abs(simdi - t) > _DAMGA_MAKUL_PENCERE_S:
+            self._damga_yedek += 1
+            if not self._damga_yedek_uyarildi:
+                self._damga_yedek_uyarildi = True
+                self.get_logger().warn(
+                    f"poz kaynağının ölçüm zamanı ({t:.3f}) yayın anından "
+                    f"({simdi:.3f}) {abs(simdi - t):.1f} s uzak — YAYIN ANINA "
+                    "düşüldü. Farklı zaman tabanı mı (use_sim_time)?"
+                )
+            return yayin_ani
+        return RclTime(seconds=t).to_msg()
+
     def _mark_input(self) -> None:
         """F8.2: poz kaynağını süren bir girdi geldi — bayatlık saatini sıfırla."""
         self._last_input_t = self._saat()
@@ -500,7 +537,10 @@ class FusionNode(Node):
         p = msg.pose.position
         q = msg.pose.orientation
         psi = self._quat_to_yaw(q.x, q.y, q.z, q.w)
-        self._source.update(p.x, p.y, psi)
+        # §1.57 — besleyen mesajın ÖLÇÜM damgasını taşı. Video kolunda kaynak
+        # doğrudan MAVROS EKF'i olduğu için bu, damganın en doğru hâli:
+        # aradaki tek katman biziz ve kendi gecikmemizi eklememiş oluruz.
+        self._source.update(p.x, p.y, psi, t=_stamp_to_seconds(msg.header.stamp))
         self._n_pose += 1
         self._mark_input()                       # bypass pozunu EKF sürer
 
@@ -688,11 +728,33 @@ class FusionNode(Node):
             return
 
         now = self.get_clock().now().to_msg()
+        # 🕰️ §1.57 — DAMGA = ÖLÇÜM ANI, yayın anı DEĞİL.
+        #
+        # Eskiden hem `pose` hem `odom` `now` ile damgalanıyordu. Ölçüldü
+        # (§1.56f, n=37 366): `fusion_odom.stamp` − besleyen
+        # `mavros_pose.stamp` = ortanca **63 ms** (%95 95,9 · %99 100,6 ·
+        # maks 371). 10 Hz zamanlayıcı ile 10 Hz girdinin faz aliasing'i +
+        # anahtar kare kovası.
+        #
+        # 🔴 BEDELİ: `planning_node._poz_damgada` bu damgayla poz arıyor ve
+        # LiDAR taramasını o pozla dünyaya çeviriyor. 63 ms'lik kayma,
+        # tekne dönerken taramayı yay boyunca kaydırır ve aynı duba İKİNCİ
+        # kayıt açar (hafızanın eşleşme bandı ~0,60 m; ölçülen ikiz eşiği
+        # 0,20 m). 18.08 bant ölçümü: 11 320 tespit bandın dışına düştü.
+        #
+        # ROS sözleşmesi zaten bunu istiyor: damga ölçümün ALINDIĞI anı
+        # gösterir, mesajın işlendiği anı değil.
+        #
+        # ⚠ YEDEK KOL BİLEREK: kaynak zaman yoksa ya da saçmaysa yayın anına
+        # düşülür — damga kodu düğümü ÖLDÜRMEMELİ (09.08 dersi, kamera
+        # tarafında `_damga` ile aynı desen). Sessiz değil: sayaç + tek
+        # seferlik uyarı.
+        stamp = self._olcum_damgasi(now)
         qz = math.sin(psi / 2.0)
         qw = math.cos(psi / 2.0)
 
         ps = PoseStamped()
-        ps.header.stamp = now
+        ps.header.stamp = stamp
         ps.header.frame_id = "map"
         ps.pose.position.x = x
         ps.pose.position.y = y
@@ -701,7 +763,7 @@ class FusionNode(Node):
         self._pub_pose.publish(ps)
 
         od = Odometry()
-        od.header.stamp = now
+        od.header.stamp = stamp
         od.header.frame_id = "map"
         od.child_frame_id = "base_link"
         od.pose.pose = ps.pose

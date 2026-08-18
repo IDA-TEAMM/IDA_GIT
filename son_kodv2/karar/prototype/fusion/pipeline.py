@@ -172,6 +172,13 @@ class FusionPipeline:
         self._vx_body: float = 0.0
         self._vy_body: float = 0.0
         self._last_imu_t: Optional[float] = None
+        # 🕰️ §1.57 — SON ANAHTARIN ÖLÇÜM ZAMANI. `current_pose()` son anahtarın
+        # tahminini döndürür; o anahtar bu ANDA kapandı. Yayın anı DEĞİL:
+        # ROS sözleşmesi damganın ölçüm anını göstermesini ister
+        # ("timestamps must represent measurement time, not the time the
+        # message hit the CPU"). Bunu taşımazsak `fusion_node` yayın anını
+        # basmak zorunda kalır ve ölçülen ~63 ms'lik kayma oradan doğar.
+        self._son_anahtar_t: Optional[float] = None
         self._t_since_flush: float = 0.0
         # En son görülen mutlak yön örneği (FC AHRS) — her keyframe flush'ında
         # heading prior'u olarak eklenir. None = hiç örnek gelmedi (heading
@@ -359,6 +366,9 @@ class FusionPipeline:
         self._sm.update()
         self._acc_delta = gtsam.Pose2()
         self._t_since_flush = 0.0
+        # Anahtar ŞİMDİ kapandı; taşıdığı bilgi `_last_imu_t`'ye kadarki
+        # ölçümlerdir. Damga olarak kullanılacak değer budur.
+        self._son_anahtar_t = self._last_imu_t
         return True
 
     def set_origin(self, lat: float, lon: float) -> None:
@@ -414,6 +424,17 @@ class FusionPipeline:
         return lat, lon
 
     # ----- sorgu -----
+
+    @property
+    def son_olcum_zamani(self) -> Optional[float]:
+        """`current_pose()`'un dayandığı ÖLÇÜMÜN zamanı (saniye), yoksa None.
+
+        `fusion_node` bunu `header.stamp` olarak kullanır. Anahtar kare
+        kovalaması nedeniyle bu değer yayın anından bir kova kadar (≤
+        `keyframe_period_s`) geride olabilir — ki DOĞRUSU da budur: poz
+        gerçekten o ana aittir.
+        """
+        return self._son_anahtar_t
 
     def current_pose(self) -> Tuple[float, float, float]:
         """En son smooth tahmini (x, y, psi) olarak döndür."""
