@@ -477,7 +477,16 @@ class PlanningNode(Node):
         self._edge_mem_son_acilan = 0        # log penceresi başına yeni kayıt
         self._son_cmd_vel_t: Optional[float] = None   # çıkış kadansı bekçisi
         # Damgaya göre poz araması için kısa geçmiş: (t, x, y, psi).
-        # 6 saniye @ 50 Hz = 300 örnek. Eskiden 2 s (100 örnek) — ama
+        # 🔑 ÖLÇÜLDÜ 18.08 (`session_20260817_193312`, 7455 mesaj): tamponu
+        # besleyen `/girdap/fusion/odom` **10,00 Hz** yayınlıyor (ortanca
+        # aralık 100,0 ms), 50 Hz DEĞİL ⇒ 300 örnek = **30 saniye**.
+        # Aşağıdaki "6 s @ 50 Hz" gerekçesi yazılırken kadans varsayılmıştı;
+        # gerçek derinlik beşte bir değil BEŞ KATI. Aynı bantta damganın
+        # tampon penceresini aşma oranı **0/5965**; kalan ıskaların tamamı
+        # (%5,5) pencere darlığından değil, damganın en yeni örnekten
+        # İLERİDE olmasından (ortanca 56 ms, hepsi < 1 odom periyodu).
+        # ⛔ Tamponu küçültmek isteyen önce bu ölçümü tekrarlasın.
+        # Eskiden 2 s (100 örnek) — ama
         # `perception_lidar_node`'un KENDİ ölçümü (09.07 tezgah, yoğun bulut)
         # clustering'in 1-3,3 s'ye çıkabildiğini gösteriyor (bu makinede
         # üretilemedi, en kötü 112 ms — ama tezgahta GERÇEKTEN ölçüldü,
