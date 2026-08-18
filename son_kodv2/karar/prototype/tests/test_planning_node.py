@@ -569,6 +569,52 @@ def test_kapi_ortasi_ham_gorev_noktasini_ezer(ros_context) -> None:  # noqa: ANN
         node.destroy_node()
 
 
+def test_FS16_kapi_kilitlenince_koridor_MPPIYE_BAGLANIR(ros_context) -> None:  # noqa: ANN001
+    """F-S.16 (§1.51) DÜĞÜM-SEVİYESİ SÖZLEŞMESİ: `_koridoru_besle` gerçekten
+    `_refine_target`'tan çağrılıyor mu ve `PlanningPipeline.set_koridor`'a
+    ulaşıyor mu?
+
+    `mppi.py`/`pipeline.py` seviyesinde bu mekanizmanın kendi testleri var
+    (`test_mppi_koridor.py`) ama **düğüm seviyesinde hiç kilitlenmemişti** —
+    yani `_koridoru_besle`'nin gövdesi silinse/çağrısı unutulsa bile hiçbir
+    test kırmızıya dönmezdi (bu deponun en sık tekrarlayan hata sınıfı:
+    "arıza vardı, kod biliyordu, kimse test etmiyordu" — bkz. `_on_targets`
+    merge-drop olayı, F-M kilit noktaları). Bu test o boşluğu kapatıyor.
+
+    Kapı kilitlenmeden önce `_koridor` boş kalmalı (eski davranış birebir,
+    terim kendiliğinden susar); kilitlenince kapının orta noktası + yarı
+    genişliği omurgaya eklenmeli.
+    """
+    node = pn.PlanningNode(
+        parameter_overrides=[Parameter("use_rrt", Parameter.Type.BOOL, False)]
+    )
+    try:
+        node._on_odom(_odom_poz(0.0, 0.0, 0.0))
+        assert node._pipe._koridor == []          # kapı yokken boş
+        # Kapı x=10'da, ortası (10, 0), genişlik 4 m (yarı = 2 m).
+        dubalar = [(10.0, +2.0, 0.15, 0), (10.0, -2.0, 0.15, 0)]
+        target = PoseStamped()
+        target.pose.position.x = 20.0
+        target.pose.position.y = 0.0
+        # F-A.1: ilk turuncu kare KENAR ONAYI için harcanır (tek kare kenar
+        # dubası yapmaz) → kapı onay penceresi bir kare kayar (bkz.
+        # test_kapi_ortasi_ham_gorev_noktasini_ezer).
+        node._on_classified(_classified(dubalar))
+        for _ in range(ONAY_TICK):
+            node._on_classified(_classified(dubalar))
+            node._on_target(target)
+        assert node._gate.committed_gate is not None, "kapı kilitlenmedi"
+        assert len(node._pipe._koridor) >= 1, (
+            "kapı kilitlendi ama koridor hâlâ boş — _koridoru_besle çağrılmıyor"
+        )
+        (cx, cy), yari = node._pipe._koridor[-1]
+        assert cx == pytest.approx(10.0, abs=1e-6)
+        assert cy == pytest.approx(0.0, abs=1e-6)
+        assert yari == pytest.approx(2.0, abs=1e-6)   # kapı genişliği / 2
+    finally:
+        node.destroy_node()
+
+
 def test_B5_ayni_algi_karesinde_tekrar_hedef_ONAYI_ILERLETMEZ(ros_context) -> None:  # noqa: ANN001
     """🔑 Kontrol tick'i ≠ algı karesi — B5'in gerçekten çalıştığı yer burası.
 
