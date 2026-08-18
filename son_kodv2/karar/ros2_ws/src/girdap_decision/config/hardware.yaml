@@ -182,6 +182,23 @@ planning:
   # %83,4'ünde hedef ARKADA. İkisi de KAPALI = eski davranış birebir.
   mppi_ileri_kisit: false     # SERT kısıt (Nav2 vx_min=0 karşılığı) — GARANTİ
   mppi_w_ileri: 0.0           # YUMUŞAK terim (PreferForwardCritic) — garanti yok
+
+  # 🔴 F-F.27/F-F.28 — RRT* GERİ DÜŞÜŞÜ. 17.08 göl bandı GÜNCEL KODLA
+  # koşturuldu (`scripts/bant_kosum.sh`, 180 s, izole domain 88):
+  #                             taban    kurtarma 3,0 m
+  #   goal engel/sınır içinde     322          10     (−%97)
+  #   düz çizgi geri düşüşü        43           7     (−%84)
+  # ⚠ Bütçe 6,0 m DENENDİ, DAHA KÖTÜ (7 → 12). 3,0 ölçülmüş değerdir.
+  # ⚠ SİM YANILTMIŞTI: sanal gölde başarısızlıkların 11/12'si "çözüm
+  #   bulamadı" görünüyordu; gerçek veride tam tersi. Karar GERÇEK BANTLA.
+  rrt_hedef_kurtarma_m: 3.0   # ✅ AÇIK
+  rrt_kismi_plan_min_m: 0.0   # ⛔ KAPALI — aynı bantta yardımcı olmadı (7 → 14)
+
+  # 🔴 F-F.23/F-F.24 — pivot kapısının iki kör noktası. İKİSİ DE KAPALI:
+  # tek başlarına HİÇ ölçülmediler. 1,57 m = 2 × gövde (0,785) = LOS
+  # literatürünün "circle of acceptance" değeri.
+  pivot_yakin_esik_m: 0.50    # ⛔ eski davranış (ölçülen aday: 1.57)
+  pivot_yedek_referans: false # ⛔ eski davranış
   # --- Kapı takibi (2026-08-03) — md 5.5.2.2, puan kapıdan geçmekten gelir.
   # 🔑 AYARLANABİLİR EŞİK YOK. Kapı geometrisi önceden bilinemez (şartname:
   # mesafeler yarışma alanına göre değişir + dubalar deniz şartlarıyla yer
@@ -309,7 +326,12 @@ perception:
     # ölçülen nokta örtüşmesi %100 → HİÇBİR gerçek engel kaybolmuyor.
     # ⚠ Bandın gerçek koşumunda `goal engel/sınır içinde` hatası 322 kez
     # ateşledi; bu şişme onun en güçlü adayı.
-    split_max_yaricap_m: 0.0
+    # ✅ AÇILDI 18.08 — ölçüm gerekçesi yukarıda. Kapsanan alan 707 → 9,6 m²,
+    # ölçülen nokta örtüşmesi %100 (hiçbir gerçek engel kaybolmuyor).
+    # ⚠ Gerçek LiDAR bulutuyla uçtan uca DOĞRULANMADI (ham bulut banda
+    # kaydedilmiyor — bilerek, 14 GB/8-12 sn donma). Gölde 2 dk'lık
+    # `rosbag_kaydet.sh --lidar` çekimiyle doğrulanacak.
+    split_max_yaricap_m: 2.0
     max_range: 25.0         # yatay menzil filtresi (m)
     voxel_size: 0.1         # m, clustering öncesi downsample (F5.3; 0=kapalı)
     log_period_s: 5.0       # "K engel" INFO log periyodu

@@ -308,6 +308,40 @@ _FUSION_DEFAULTS: dict[str, tuple[object, type]] = {
 #   ⛔ Parkur-2'ye geçmeden GERİ AÇILMALI — LiDAR'sız P2 zaten imkânsız.
 #   Düğüm kapalıyken her açılışta "🔴 ENGEL BEKCISI KAPALI" basar
 #   (planning_node.py:555) — sessizce unutulmasın diye.
+# 🔴 F-F.30 — RRT*/PİVOT SAHA YÜZEYİ. Bu tablo OLMADAN node'daki parametreler
+# launch'tan HİÇ geçmiyordu: `planning_node` onları `declare_parameter` ile
+# açıyor ama launch yalnız _MPPI/_GATE/_BEKCI tablolarındaki anahtarları
+# iletiyor ⇒ hardware.yaml'a yazılan değer SESSİZCE yok sayılırdı.
+# Bu tam olarak `edge_unutma_katsayisi`'nın düştüğü tuzak (04bddb7): ölçülmüş
+# bir A/B tablosu varken değer sahada denenemiyordu.
+_RRT_DEFAULTS: dict[str, tuple[object, type]] = {
+    # ✅ AÇIK — 17.08 göl bandı GÜNCEL KODLA koşturularak ölçüldü
+    # (`scripts/bant_kosum.sh`, 180 s): `goal engel/sınır içinde` hatası
+    # 322 → 10 (−%97), düz çizgi geri düşüşü 43 → 7 (−%84).
+    # ⚠ 6,0 m DENENDİ ve DAHA KÖTÜ çıktı (düz çizgi 7 → 12) — 3,0 ölçülmüş değer.
+    "rrt_hedef_kurtarma_m": (3.0, float),
+    # ⛔ KAPALI — aynı bantta yardımcı OLMADI (düz çizgi 7 → 14). Kod duruyor,
+    # teşhis değeri var; sonuç ölçütünü bozduğu için varsayılan 0.
+    "rrt_kismi_plan_min_m": (0.0, float),
+    # ⛔ KAPALI — tek başına HİÇ ölçülmedi (0,50 = eski davranış).
+    "pivot_yakin_esik_m": (0.50, float),
+    "pivot_yedek_referans": (False, bool),
+}
+_RRT_ARG_DESC = {
+    "rrt_hedef_kurtarma_m": "Hedef engel içindeyse EN YAKIN serbest noktaya "
+                            "taşınır (Nav2 navfn `tolerance` karşılığı); 0 = "
+                            "eski davranış (plan reddedilir, düz çizgiye "
+                            "düşülür). Bantta 322 → 10 ölçüldü",
+    "rrt_kismi_plan_min_m": "Hedefe varan yol yoksa ağacın ulaştığı en yakın "
+                            "düğüme KISMİ plan (m, asgari ilerleme). 0 = "
+                            "kapalı. ⚠ Bantta yardımcı olmadı",
+    "pivot_yakin_esik_m": "Pivot kapısının yakın alan körlüğü (m). Bu "
+                          "yarıçapın içindeki referansa kerteriz ölçülmez "
+                          "(LOS 'circle of acceptance' = 2 gövde boyu = 1,57)",
+    "pivot_yedek_referans": "Plan boşken pivot kapısı son hedefi yedek "
+                            "referans olarak kullansın mı (RRT-RED anlarında "
+                            "kapı sessizce kapanıyordu)",
+}
 _BEKCI_DEFAULTS: dict[str, tuple[object, type]] = {
     "obstacle_timeout_s": (2.0, float),
     # 🔴 18.08.2026 — SAHA YÜZEYİNE ÇIKARILDI. `d31873d0` bu parametreyi
@@ -375,6 +409,7 @@ def _load_hardware_config() -> dict:
     cfg["mppi"] = {k: v for k, (v, _) in _MPPI_DEFAULTS.items()}
     cfg["gate"] = {k: v for k, (v, _) in _GATE_DEFAULTS.items()}
     cfg["bekci"] = {k: v for k, (v, _) in _BEKCI_DEFAULTS.items()}
+    cfg["rrt"] = {k: v for k, (v, _) in _RRT_DEFAULTS.items()}
     cfg["tf"] = {}                      # ölçüm girilene kadar boş = hepsi 0
     try:
         cfg_dir = os.path.join(get_package_share_directory(_PKG), "config")
@@ -436,6 +471,10 @@ def _load_hardware_config() -> dict:
         for key, (_, cast) in _BEKCI_DEFAULTS.items():
             if key in planning_block:
                 cfg["bekci"][key] = cast(planning_block[key])
+        # planning.rrt_*/pivot_* — F-F.30 saha yüzeyi (aynı öncelik zinciri).
+        for key, (_, cast) in _RRT_DEFAULTS.items():
+            if key in planning_block:
+                cfg["rrt"][key] = cast(planning_block[key])
         # mission: görev dosyası + kaynak seçimi (video ↔ competition, file ↔ fc)
         mission_block = data.get("mission") or {}
         cfg["mission_file"] = str(
@@ -670,6 +709,15 @@ def generate_launch_description() -> LaunchDescription:
                 description=_BEKCI_ARG_DESC[key],
             )
             for key in _BEKCI_DEFAULTS
+        ],
+        # planning.rrt_* / planning.pivot_* — F-F.30
+        *[
+            DeclareLaunchArgument(
+                f"planning.{key}",
+                default_value=str(hw["rrt"][key]),
+                description=_RRT_ARG_DESC[key],
+            )
+            for key in _RRT_DEFAULTS
         ],
         # fusion.* — iSAM2 smoother (keyframe throttle + robust GPS + fix
         # kalitesi sigma'ları). CLI: fusion.keyframe_rate_hz:=10.0
@@ -998,6 +1046,13 @@ def generate_launch_description() -> LaunchDescription:
                     LaunchConfiguration(f"planning.{key}"), value_type=cast
                 )
                 for key, (_, cast) in _BEKCI_DEFAULTS.items()
+            },
+            # F-F.30: RRT* hedef kurtarma / kısmi plan + pivot kör noktaları
+            **{
+                key: ParameterValue(
+                    LaunchConfiguration(f"planning.{key}"), value_type=cast
+                )
+                for key, (_, cast) in _RRT_DEFAULTS.items()
             },
         },
     ]

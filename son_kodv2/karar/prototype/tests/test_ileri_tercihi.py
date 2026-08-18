@@ -536,3 +536,30 @@ def test_FP30_saha_yuzeyine_BAGLI() -> None:
     from prototype.perception.lidar_obstacles import LidarObstacleConfig
     assert LidarObstacleConfig().split_max_yaricap_m == 0.0, "varsayılan KAPALI"
     del ast
+
+
+def test_FF30_rrt_pivot_saha_yuzeyi_UCTAN_UCA_BAGLI() -> None:
+    """🔒 F-F.30 — node'da açık olmak YETMEZ, launch'un İLETMESİ gerekir.
+
+    04bddb7'nin ölçtüğü tuzak: `edge_unutma_katsayisi` node'da açılmış ama
+    launch/yaml'a hiç bağlanmamıştı ⇒ ölçülmüş A/B tablosu varken değer
+    sahada denenemiyordu. Aynı tuzağa RRT/pivot şalterleri de düşüyordu.
+    Zincirin DÖRT halkası da sınanır.
+    """
+    from pathlib import Path
+    kok = Path(__file__).resolve().parents[2]
+    pkg = kok / "ros2_ws" / "src" / "girdap_decision"
+    node = (pkg / "girdap_decision" / "planning_node.py").read_text()
+    launch = (pkg / "launch" / "hardware.launch.py").read_text()
+    hw = (pkg / "config" / "hardware.yaml").read_text()
+
+    for anahtar in ("rrt_hedef_kurtarma_m", "rrt_kismi_plan_min_m",
+                    "pivot_yakin_esik_m", "pivot_yedek_referans"):
+        assert f'declare_parameter("{anahtar}"' in node, f"{anahtar}: node açmıyor"
+        assert f'"{anahtar}"' in launch, f"{anahtar}: launch İLETMİYOR (tuzak!)"
+        assert f"{anahtar}:" in hw, f"{anahtar}: hardware.yaml'da YOK"
+
+    # launch tablosu node'a fiilen geçiriliyor mu (sadece tanımlı olması yetmez)
+    assert "_RRT_DEFAULTS.items()" in launch.split("planning_params")[1], (
+        "_RRT_DEFAULTS tanımlı ama planning_params'a geçirilmiyor"
+    )
