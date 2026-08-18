@@ -50,6 +50,30 @@ class MissionManagerConfig:
     arrival_radius_m: float = 2.0
     dwell_time_s: float = 2.0
     cruise_velocity_mps: float = 1.0
+    # 🔑 GEÇİŞ ZORUNLU — "yaklaştım" yerine "GEÇTİM" ölçütü (along-track).
+    #
+    # SORUN (ölçüldü, GIRDAP_DURUM §1.68): `arrival_radius_m` klasik
+    # *circle of acceptance*tır — araç çembere girince "vardım" der ve sonraki
+    # noktaya döner; noktanın ÜZERİNE gitmez. Şartname ise kapı geçişini
+    # **"İDA'nın duba ikilisinin %100'ünü geçmiş olması"** diye tanımlıyor ve
+    # algı tarafı bunu DÜZLEM AŞMA ile sayıyor
+    # (`duba_gecis_navigator.PASS_EK_YOL` = ARAC_BOY 1,03 + 0,5 = **1,53 m**).
+    # İki taraf aynı olayı farklı tanımlıyor; açık = 2,0 + 1,53 = **3,53 m**
+    # ve DWELL de kapatmıyor (dwell boyunca hedef aynı kalıyor ama dur komutu
+    # yok: ~0,5 m/s × 2 s ≈ 1 m). Ölçülen "en ileri −0,72 m" bu aralığa düşer.
+    #
+    # ÇÖZÜM: varışa ikinci koşul — araç, noktadan geçen ve BACAK yönüne dik
+    # düzlemi aşmış olmalı: `(p − wp)·t̂ > 0`. Literatürde *along-track/travel*
+    # koşulu; **ArduRover 4.3+ kendi waypoint tamamlamasını zaten böyle yapıyor**
+    # (`WP_RADIUS` AUTO'da etkisiz — ArduPilot #23457). Bizdeki sürüm V4.6.3.
+    #
+    # ⚠ False = ESKİ DAVRANIŞ BİREBİR (varsayılan). Ölçülmeden açılmaz.
+    gecis_zorunlu: bool = False
+    # Kilitlenme yedeği: araç yarıçapın İÇİNDE bu kadar saniye kalıp düzlemi
+    # hâlâ aşamadıysa varış yine kabul edilir ve sayaç artar (sessiz düşmez).
+    # Gerekli, çünkü nokta kapının ötesinde değilse ya da araç geçemiyorsa
+    # görev sonsuza kadar takılırdı. 0 = yedek YOK (takılma serbest).
+    gecis_zaman_asimi_s: float = 5.0
 
 
 def latlon_to_enu(
@@ -173,6 +197,12 @@ class MissionManager:
         self._phase = MissionPhase.IDLE
         self._idx = 0
         self._dwell_start: Optional[float] = None
+        # `gecis_zorunlu` durumu — çembere ilk girişteki yaklaşma yönü (idx=0'da
+        # bacak yönü yoktur) ve zaman aşımı saati + teşhis sayaçları.
+        self._giris_xy: Optional[Tuple[float, float]] = None
+        self._gecis_bekleme_basi: Optional[float] = None
+        self._gecis_bekleyen = 0
+        self._zaman_asimiyla_varilan = 0
 
     # ----- kontrol -----
 
@@ -182,6 +212,7 @@ class MissionManager:
             self._phase = MissionPhase.ACTIVE
             self._idx = 0
             self._dwell_start = None
+            self._gecis_durumunu_sifirla()
 
     def reset(self) -> None:
         """Görevi başa al — md 5.5.3.1 yeniden başlama hakkı.
@@ -193,6 +224,7 @@ class MissionManager:
         self._phase = MissionPhase.IDLE
         self._idx = 0
         self._dwell_start = None
+        self._gecis_durumunu_sifirla()
 
     def update(
         self, lat: float, lon: float, now: float
@@ -210,8 +242,16 @@ class MissionManager:
 
         if self._phase is MissionPhase.ACTIVE:
             if dist <= self._cfg.arrival_radius_m:
-                self._phase = MissionPhase.DWELL
-                self._dwell_start = now
+                if self._giris_xy is None:
+                    self._giris_xy = (east, north)   # araç → nokta, giriş anı
+                if self._varis_kabul(lat, lon, now):
+                    self._phase = MissionPhase.DWELL
+                    self._dwell_start = now
+                    self._gecis_durumunu_sifirla()
+            else:
+                # Çemberden çıkıldı: dalga/akıntı yüzünden girip çıkan araç
+                # zaman aşımını BİRİKTİRMEMELİ, yaklaşma yönü de tazelenmeli.
+                self._gecis_durumunu_sifirla()
 
         elif self._phase is MissionPhase.DWELL:
             assert self._dwell_start is not None
@@ -226,6 +266,65 @@ class MissionManager:
                 east, north = latlon_to_enu(lat, lon, wp.lat, wp.lon)
 
         return east, north
+
+    def _gecis_durumunu_sifirla(self) -> None:
+        """Yaklaşma yönü + zaman aşımı saati (sayaçlar KALIR — teşhis)."""
+        self._giris_xy = None
+        self._gecis_bekleme_basi = None
+
+    def _varis_kabul(self, lat: float, lon: float, now: float) -> bool:
+        """Yarıçapa girildi — varış SAYILSIN mı?
+
+        `gecis_zorunlu` kapalıysa evet (eski davranış birebir). Açıksa araç
+        ayrıca noktanın düzlemini aşmış olmalı; aşamıyorsa `gecis_zaman_asimi_s`
+        sonunda yine kabul edilir (kilitlenme yedeği) ve SAYAÇ artar.
+        """
+        if not self._cfg.gecis_zorunlu:
+            return True
+        if self._gecti(lat, lon):
+            return True
+        if self._gecis_bekleme_basi is None:
+            self._gecis_bekleme_basi = now
+            self._gecis_bekleyen += 1
+        t_asimi = self._cfg.gecis_zaman_asimi_s
+        if t_asimi > 0.0 and now - self._gecis_bekleme_basi >= t_asimi:
+            self._zaman_asimiyla_varilan += 1
+            return True
+        return False
+
+    def _gecti(self, lat: float, lon: float) -> bool:
+        """Araç, noktadan geçen ve bacak yönüne dik düzlemi AŞTI mı.
+
+        `t̂` = bacak yönü (önceki nokta → bu nokta). İlk noktada önceki yoktur;
+        o zaman aracın çembere GİRDİĞİ andaki yaklaşma yönü kullanılır — düz
+        yaklaşmada ikisi aynıdır ve idx=0 tanımsız kalmaz.
+        Ölçüt: `(p − wp) · t̂ > 0`.
+        """
+        wp = self._wps[self._idx]
+        e_vw, n_vw = latlon_to_enu(lat, lon, wp.lat, wp.lon)   # araç → nokta
+        if self._idx > 0:
+            onceki = self._wps[self._idx - 1]
+            tx, ty = latlon_to_enu(onceki.lat, onceki.lon, wp.lat, wp.lon)
+        elif self._giris_xy is not None:
+            tx, ty = self._giris_xy                            # giriş → nokta
+        else:
+            return False
+        n = math.hypot(tx, ty)
+        if n <= 1e-6:
+            # Bacak yönü tanımsız (üst üste iki nokta) ⇒ ölçüt uygulanamaz;
+            # takmamak için varış kabul edilir.
+            return True
+        return ((-e_vw) * tx + (-n_vw) * ty) / n > 0.0
+
+    @property
+    def gecis_bekleyen(self) -> int:
+        """`gecis_zorunlu` yüzünden varışın ertelendiği waypoint sayısı."""
+        return self._gecis_bekleyen
+
+    @property
+    def zaman_asimiyla_varilan(self) -> int:
+        """Düzlem aşılamadığı için ZAMAN AŞIMIYLA kabul edilen varış sayısı."""
+        return self._zaman_asimiyla_varilan
 
     def notify_external_reached(self, idx: int) -> bool:
         """F-V.8: dış otorite (FC MISSION_ITEM_REACHED) idx'e varıldı diyor.
@@ -245,10 +344,14 @@ class MissionManager:
         if idx + 1 >= len(self._wps):
             self._phase = MissionPhase.COMPLETE
             self._dwell_start = None
+            self._gecis_durumunu_sifirla()
             return True
         self._idx = idx + 1
         self._phase = MissionPhase.ACTIVE
         self._dwell_start = None
+        # Index dışarıdan atladı ⇒ eski noktanın yaklaşma yönü ve zaman aşımı
+        # saati ARTIK GEÇERSİZ; taşınırsa yeni noktada yanlış düzlem sınanır.
+        self._gecis_durumunu_sifirla()
         return True
 
     # ----- sorgu -----

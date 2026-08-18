@@ -277,7 +277,21 @@ mission:
   dwell_time_s: 2.0
   # FC'nin WP_RADIUS'u ile AYNI olmalı (ArduRover varsayılanı 2 m).
   # ⚠ FC ekibinden TEYİT AL — farklıysa hedef index'imiz FC'den ayrışır.
+  # ⚠ NOT (§1.68): ArduRover **4.3+** `WP_RADIUS`'u AUTO'da artık DİKKATE
+  #   ALMIYOR (ArduPilot #23457); tamamlama ölçütü "hedefi GEÇTİ mi". Bizde
+  #   koşan sürüm **V4.6.3** ⇒ bu eşleştirme kuralı bugün fiilen geçersiz.
   arrival_radius_m: 2.0
+  # 🔑 §1.68 — VARIŞ ÖLÇÜTÜ: "yaklaştım" mı, "GEÇTİM" mi.
+  # Şartname kapı geçişini *"İDA'nın duba ikilisinin %100'ünü geçmiş olması"*
+  # diye tanımlıyor; algı da bunu düzlem aşmayla sayıyor
+  # (duba_gecis_navigator.PASS_EK_YOL = ARAC_BOY 1,03 + 0,5 = 1,53 m).
+  # Varış yarıçapı ise araca kapıya 2,0 m KALA "vardın" diyor ⇒ ikisi
+  # buluşmuyor, açık = 3,53 m. AÇILINCA varış ayrıca düzlem aşmayı da ister.
+  # ⚠ false = ESKİ DAVRANIŞ BİREBİR. Bantta A/B ölçülmeden AÇILMAZ.
+  gecis_zorunlu: false
+  # Kilitlenme yedeği (s): yarıçapın içinde bu kadar kalıp düzlem aşılamazsa
+  # varış yine kabul edilir + sayaç artar. 0 = yedek yok (takılma serbest).
+  gecis_zaman_asimi_s: 5.0
 
 # --- iSAM2 sensör füzyonu (fusion_node) ---
 # ⚠ Bu blok `perception.fusion` (kamera-LiDAR bearing eşleştirmesi) ile

@@ -104,6 +104,17 @@ class MissionManagerNode(Node):
         self.declare_parameter("arrival_radius_m", _dflt.arrival_radius_m)
         self.declare_parameter("dwell_time_s", _dflt.dwell_time_s)
         self.declare_parameter("cruise_velocity_mps", _dflt.cruise_velocity_mps)
+        # 🔑 §1.68 — "yaklaştım" yerine "GEÇTİM" varış ölçütü (along-track).
+        # Şartname kapı geçişini *"İDA'nın duba ikilisinin %100'ünü geçmiş
+        # olması"* diye tanımlıyor; algı da bunu düzlem aşmayla sayıyor
+        # (PASS_EK_YOL = 1,53 m). Varış yarıçapı (2,0 m) ise araca kapıya
+        # 2 m kala "vardın" diyor ⇒ ikisi buluşmuyor (açık 3,53 m).
+        # ⚠ False = ESKİ DAVRANIŞ BİREBİR. Ölçülmeden AÇILMAZ.
+        # ⚠ Parametreye BAĞLI olması şart: `geri_hiz_yasak` ayar sınıfında
+        #   var ama hiçbir ROS parametresine bağlı değil ve canlıda
+        #   "Parameter not set" diyor (§1.60b) — aynı tuzağa düşmemek için.
+        self.declare_parameter("gecis_zorunlu", _dflt.gecis_zorunlu)
+        self.declare_parameter("gecis_zaman_asimi_s", _dflt.gecis_zaman_asimi_s)
 
         # F-M.1: hedef-mesafe makullük tavanı (m) — bir waypoint mevcut
         # konumdan bundan uzaksa görev başlatılmaz (masa OOM olayı).
@@ -191,6 +202,8 @@ class MissionManagerNode(Node):
             self.get_logger().info(
                 "mission_manager_node aktif (kaynak=fc): görev FC'den beklenecek, "
                 f"arrival={cfg.arrival_radius_m} m, dwell={cfg.dwell_time_s} s, "
+                f"geçiş_zorunlu={'AÇIK' if cfg.gecis_zorunlu else 'kapalı'}"
+                f"{f' (zaman aşımı {cfg.gecis_zaman_asimi_s:g} s)' if cfg.gecis_zorunlu else ''}, "
                 f"yayım={rate} Hz"
             )
         else:
@@ -208,6 +221,10 @@ class MissionManagerNode(Node):
         return MissionManagerConfig(
             arrival_radius_m=float(self.get_parameter("arrival_radius_m").value),
             dwell_time_s=float(self.get_parameter("dwell_time_s").value),
+            gecis_zorunlu=bool(self.get_parameter("gecis_zorunlu").value),
+            gecis_zaman_asimi_s=float(
+                self.get_parameter("gecis_zaman_asimi_s").value
+            ),
             cruise_velocity_mps=float(
                 self.get_parameter("cruise_velocity_mps").value
             ),
