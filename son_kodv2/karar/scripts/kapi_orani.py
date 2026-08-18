@@ -169,6 +169,7 @@ def kosum(
     mppi_k: int = URETIM_K,
     mppi_t: int = URETIM_T,
     iz: Optional[List[dict]] = None,
+    koridor_var: bool = False,
 ) -> dict:
     """Kapalı döngüyü bir kez koştur, kapı geçiş metriklerini döndür.
 
@@ -263,11 +264,24 @@ def kosum(
 
         if round(t * 10) % 2 == 0:                    # görev katmanı 5 Hz
             if model_var:
-                hedef = gate.update(
+                sonuc = gate.update(
                     (x, y), gn[idx], kenar,
                     [(o.cx, o.cy, o.r) for o in engeller],
                     gozlem_no=algi_no,
-                ).surus_hedefi
+                )
+                hedef = sonuc.surus_hedefi
+                # F-S.16 (planning_node._koridoru_besle aynası) — koridoru
+                # da besle, yoksa bu araç kaptanın 18.08 06:52 bağlantısını
+                # ölçemez (koridor hep boş kalır, terim susar).
+                if koridor_var:
+                    omurga = [
+                        ((gx, gy), yari) for gx, gy, yari in gate.gecilen_kapilar
+                    ]
+                    if sonuc.gate is not None:
+                        omurga.append(
+                            (sonuc.gate.midpoint, 0.5 * sonuc.gate.width)
+                        )
+                    pipe.set_koridor(omurga)
             else:
                 hedef = gn[idx]
             pipe.set_waypoints([hedef])
@@ -425,7 +439,7 @@ def _iz_kosumu(parkur, a) -> None:
     iz: List[dict] = []
     r = kosum(parkur, baslangic=poz, yon_hatasi_rad=aci,
               model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni,
-              mppi_k=a.K, mppi_t=a.T, iz=iz)
+              mppi_k=a.K, mppi_t=a.T, iz=iz, koridor_var=a.koridor)
     if not iz:
         print("iz boş — koşum hiç adım atmadı")
         return
@@ -518,6 +532,10 @@ def main() -> None:
     ap.add_argument("--iz", action="store_true",
                     help="TEK koşumun hız/itki izini çıkar (yavaşlığın kökü: "
                          "düzgün sürünme mi, duraklama epizotları mı?)")
+    ap.add_argument("--koridor", action="store_true",
+                    help="F-S.16 koridor terimini besle (planning_node."
+                         "_koridoru_besle aynası) — kapatılırsa 17.08 taban "
+                         "davranışıyla birebir (A/B için)")
     a = ap.parse_args()
 
     if a.iz:
@@ -542,7 +560,7 @@ def main() -> None:
     for i, (poz, aci) in enumerate(basl, 1):
         r = kosum(parkur, baslangic=poz, yon_hatasi_rad=aci,
                   model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni,
-                  mppi_k=a.K, mppi_t=a.T)
+                  mppi_k=a.K, mppi_t=a.T, koridor_var=a.koridor)
         oran = r["gecilen"] / r["toplam_kapi"]
         oranlar.append(oran)
         paylar.append(r["en_kucuk_pay"])

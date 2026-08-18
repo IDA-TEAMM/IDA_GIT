@@ -84,6 +84,21 @@ class ISAM2SmootherConfig:
     # bunun ötesindeki hataları doğrusal cezalandırır.
     gps_huber_k: float = 1.345
 
+    # 🔴 F-F.2 (18.08.2026) — heading outlier reddi (Huber M-estimator).
+    # SAHA OLAYI (17.08 akşam gölü): heading_sigma_psi=0.05 rad (≈2.9°) ile
+    # saf Gauss prior olarak modellenen pusula ölçümü, tek bir hatalı AHRS
+    # okumasında (manyetik girişim — motor/gövde metali, kalibrasyon
+    # tamamlanmamış pusula) whitened hatası onlarca sigma'ya çıkıp KARE
+    # hatayla cezalandırıldı → iSAM2 çözümü saniyeler içinde diverge etti
+    # (x/y katlanarak büyüdü, 1e23 → 1e73). F-F.1 (§0.98a) makullük kapısı
+    # bunu yayınlamadan YAKALADI (araç yanlış pozla sürmedi) ama sonucu
+    # sessizlikti — planning_node MPPI'yi tüm gece durdurdu, poz bir daha
+    # HİÇ gelmedi (görev bandı 783 mesaj/8+ saat). GPS'in Huber koruması
+    # (yukarı) zaten var, heading'in aynı korumadan yoksun olması tutarsızdı.
+    # gps_robust_enabled'ın birebir aynası: False → eski saf Gauss davranışı.
+    heading_robust_enabled: bool = True
+    heading_huber_k: float = 1.345
+
     # iSAM2 incremental ayarları
     relinearize_threshold: float = 0.01
     relinearize_skip: int = 1
@@ -137,6 +152,12 @@ class ISAM2Smoother:
             raise ValueError(
                 f"gps_huber_k pozitif olmalı, geldi: {self.cfg.gps_huber_k}"
             )
+        # heading_robust_enabled aynası: k<=0 → heading TAMAMEN yok sayılır,
+        # yaml yazım hatası sessizce buraya düşmesin (bkz. GPS gerekçesi).
+        if self.cfg.heading_robust_enabled and not self.cfg.heading_huber_k > 0.0:
+            raise ValueError(
+                f"heading_huber_k pozitif olmalı, geldi: {self.cfg.heading_huber_k}"
+            )
 
         self._isam = gtsam.ISAM2(self._isam_params())
 
@@ -184,12 +205,16 @@ class ISAM2Smoother:
         # (sigma=1e6 ≈ ∞) bırakılır ki sadece (x,y) ölçümü etkili olsun.
         # gps_robust_enabled ise bu taban model Huber kernel'i ile sarılır.
         self._gps_noise = self._make_gps_noise(self.cfg.gps_sigma_xy)
+        # Heading prior'u — GPS'in aynası (F-F.2): (x,y) kanalı uninformative,
+        # yalnız psi ölçülür. heading_robust_enabled ise Huber ile sarılır.
+        self._heading_noise = self._make_heading_noise(self.cfg.heading_sigma_psi)
 
         # Fix kalitesine göre override edilen (add_gps sigma_xy) ve keyframe
         # periyoduna göre ölçeklenen (add_odometry sigma_scale) modeller —
         # sıcak yolda her faktörde yeniden inşa etmemek için önbelleklenir.
         self._gps_noise_cache: Dict[float, Any] = {}
         self._odom_noise_cache: Dict[float, Any] = {}
+        self._heading_noise_cache: Dict[float, Any] = {}
 
     # ----- gürültü modeli fabrikaları -----
 
@@ -246,6 +271,38 @@ class ISAM2Smoother:
                 self._gps_noise_cache.clear()
             model = self._make_gps_noise(key)
             self._gps_noise_cache[key] = model
+        return model
+
+    def _make_heading_noise(self, sigma_psi: float) -> Any:
+        """sigma_psi'den heading prior gürültü modeli üret — `_make_gps_noise`
+        aynası: (x,y) kanalı uninformative, yalnız psi ölçülür.
+
+        heading_robust_enabled=True → Huber M-estimator ile sarılmış model;
+        False → taban diyagonal model (geri uyumlu, eski davranış).
+        """
+        if not sigma_psi > 0.0:
+            raise ValueError(f"heading sigma_psi pozitif olmalı, geldi: {sigma_psi}")
+        base = gtsam.noiseModel.Diagonal.Sigmas(
+            np.array([_HEADING_FREE_SIGMA, _HEADING_FREE_SIGMA, sigma_psi])
+        )
+        if not self.cfg.heading_robust_enabled:
+            return base
+        return gtsam.noiseModel.Robust.Create(
+            gtsam.noiseModel.mEstimator.Huber.Create(self.cfg.heading_huber_k),
+            base,
+        )
+
+    def _heading_noise_for(self, sigma_psi: Optional[float]) -> Any:
+        """sigma_psi=None → config varsayılanı; aksi halde önbellekli override."""
+        if sigma_psi is None:
+            return self._heading_noise
+        key = round(float(sigma_psi), 6)
+        model = self._heading_noise_cache.get(key)
+        if model is None:
+            if len(self._heading_noise_cache) >= _NOISE_CACHE_MAX:
+                self._heading_noise_cache.clear()
+            model = self._make_heading_noise(key)
+            self._heading_noise_cache[key] = model
         return model
 
     def _odom_noise_for(self, sigma_scale: float) -> Any:
@@ -380,19 +437,25 @@ class ISAM2Smoother:
         görevde jiroskop bias'ı birikir). GPS prior'u yalnızca (x,y)'yi
         düzeltir, heading kanalı bilerek serbesttir. Bu metod olmadan
         smoother'ın psi çıktısı zamanla FC'nin gerçek AHRS'inden ayrışabilir.
+
+        F-F.2 (18.08.2026): heading_robust_enabled=True (varsayılan) ise bu
+        prior GPS'in Huber kernel'iyle aynı korumadan geçer. SAHA OLAYI
+        (17.08 akşam): saf Gauss modelinde tek kötü AHRS okuması (manyetik
+        girişim) whitened hatası onlarca sigma'ya çıkardı, kare-hata cezası
+        iSAM2'yi saniyeler içinde diverge ettirdi (bkz. ISAM2SmootherConfig
+        docstring'i). Huber, GPS'te olduğu gibi outlier'ın ağırlığını
+        1/|e| ile söndürür — tek kötü okuma artık tüm çözümü kendine çekmez.
         """
         if key_index < 0 or key_index > self._latest_key:
             raise ValueError(f"Geçersiz key_index={key_index}")
-        sp = sigma_psi if sigma_psi is not None else self.cfg.heading_sigma_psi
-        if not sp > 0.0:
-            raise ValueError(f"heading sigma_psi pozitif olmalı, geldi: {sp}")
         # x,y placeholder (0,0) — sigma=_HEADING_FREE_SIGMA olduğu için
         # whitened katkıları ~0, gerçek değerleri fark etmez.
         heading_pose = gtsam.Pose2(0.0, 0.0, psi)
-        noise = gtsam.noiseModel.Diagonal.Sigmas(
-            np.array([_HEADING_FREE_SIGMA, _HEADING_FREE_SIGMA, sp])
+        self._graph.add(
+            gtsam.PriorFactorPose2(
+                X(key_index), heading_pose, self._heading_noise_for(sigma_psi)
+            )
         )
-        self._graph.add(gtsam.PriorFactorPose2(X(key_index), heading_pose, noise))
 
     # ----- optimizer -----
 

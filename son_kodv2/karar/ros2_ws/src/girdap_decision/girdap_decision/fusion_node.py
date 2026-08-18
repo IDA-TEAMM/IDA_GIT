@@ -129,6 +129,11 @@ class FusionNode(Node):
         # false → eski davranış (heading hiç düzeltilmez, yalnız gyro).
         self.declare_parameter("heading_correction_enabled", True)
         self.declare_parameter("heading_sigma_psi", 0.05)
+        # Heading outlier reddi — GPS'in aynası (F-F.2, 18.08.2026). 17.08
+        # akşam gölünde bunun YOKLUĞU tek kötü AHRS okumasını iSAM2'yi
+        # diverge ettiren kısıta çevirdi (bkz. isam2_smoother.py docstring'i).
+        self.declare_parameter("heading_robust_enabled", True)
+        self.declare_parameter("heading_huber_k", 1.345)
         # Fix kalitesine göre ölçüm sigma'sı [m] — hardware.yaml
         # `fusion.gps_sigma_by_status` bloğu. ROS parametreleri sözlük
         # taşımadığı için düzleştirilmiş skalerler.
@@ -270,6 +275,10 @@ class FusionNode(Node):
             heading_sigma_psi=float(
                 self.get_parameter("heading_sigma_psi").value
             ),
+            heading_robust_enabled=bool(
+                self.get_parameter("heading_robust_enabled").value
+            ),
+            heading_huber_k=float(self.get_parameter("heading_huber_k").value),
         )
         self.get_logger().info(
             f"iSAM2: keyframe≤{cfg.keyframe_rate_hz} Hz "
@@ -281,7 +290,9 @@ class FusionNode(Node):
             f"{self._gps_sigma_by_status[STATUS_FIX]} m, "
             f"yön düzeltmesi (FC AHRS)="
             f"{'AÇIK' if cfg.heading_correction_enabled else 'KAPALI — jiroskop yalnız, kayabilir'} "
-            f"(σ={cfg.heading_sigma_psi} rad)"
+            f"(σ={cfg.heading_sigma_psi} rad, "
+            f"robust={'AÇIK' if cfg.heading_robust_enabled else 'KAPALI'} "
+            f"Huber k={cfg.heading_huber_k})"
         )
         self._source = FusionPipeline(cfg)
         self._orijini_geri_yukle()

@@ -477,7 +477,13 @@ class PlanningNode(Node):
         self._edge_mem_son_acilan = 0        # log penceresi başına yeni kayıt
         self._son_cmd_vel_t: Optional[float] = None   # çıkış kadansı bekçisi
         # Damgaya göre poz araması için kısa geçmiş: (t, x, y, psi).
-        # 2 saniye @ 50 Hz = 100 örnek; algı gecikmesi bunun çok altında.
+        # 6 saniye @ 50 Hz = 300 örnek. Eskiden 2 s (100 örnek) — ama
+        # `perception_lidar_node`'un KENDİ ölçümü (09.07 tezgah, yoğun bulut)
+        # clustering'in 1-3,3 s'ye çıkabildiğini gösteriyor (bu makinede
+        # üretilemedi, en kötü 112 ms — ama tezgahta GERÇEKTEN ölçüldü,
+        # gözardı edilemez). 2 s tampon o gecikmeyle ÇAKIŞIR: damga pencere
+        # dışına düşer, `_poz_damgada` None döner, EN SON poza sessizce
+        # düşülür — tam da 18.08 düzeltmesinin önlemeye çalıştığı hâl.
         #: Damgasız odom (stamp=0) sayısı — tampona YAZILMAZ. Sahada sürekli
         #: artıyorsa yayıncı damga basmıyor demektir ve poz tamponu fiilen
         #: kapalıdır (tek görünürlük kanalı bu sayaç; SSH yok).
@@ -485,7 +491,7 @@ class PlanningNode(Node):
         #: Damga geriye sıçradığı için tamponun temizlendiği kez.
         self._saat_geri_gitti = 0
         self._poz_tampon: "deque[tuple[float, float, float, float]]" = deque(
-            maxlen=100)
+            maxlen=300)
         self._damga_disi_sayaci = 0      # damga tampon dışında kaldı (teşhis)
         self._backend_loglandi = False       # MPPI hesap yolu bir kez yazılır
         self._gate_post_margin = float(

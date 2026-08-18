@@ -86,6 +86,11 @@ class FusionPipelineConfig:
     heading_correction_enabled: bool = True
     heading_sigma_psi: float = 0.05       # rad, bkz. ISAM2SmootherConfig
 
+    # Heading outlier reddi — GPS'in aynası (F-F.2, bkz. ISAM2SmootherConfig
+    # docstring'i, 17.08 akşam saha olayı). False → eski saf Gauss davranışı.
+    heading_robust_enabled: bool = True
+    heading_huber_k: float = 1.345
+
     @property
     def keyframe_period_s(self) -> float:
         """Etkin key periyodu: throttle ile odom_period_s'in büyüğü.
@@ -120,6 +125,8 @@ class FusionPipeline:
                 gps_robust_enabled=self.cfg.gps_robust_enabled,
                 gps_huber_k=self.cfg.gps_huber_k,
                 heading_sigma_psi=self.cfg.heading_sigma_psi,
+                heading_robust_enabled=self.cfg.heading_robust_enabled,
+                heading_huber_k=self.cfg.heading_huber_k,
             )
         )
         self._sm.initialize(gtsam.Pose2(0.0, 0.0, 0.0))
