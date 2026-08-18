@@ -43,7 +43,30 @@ def _kare(renk_bgr=None, merkez=(256, 320), yaricap=26, boyut=512):
     return im
 
 
-def _ns(kare, durum="PARKUR3", yayinlanan=(), hedef_adaylari=()):
+SAHTE_SIMDI_NS = 1_800_000_000 * 10**9      # sabit, gercekci bir ROS ani
+
+
+def _stamp(ns_toplam):
+    from builtin_interfaces.msg import Time as _T
+    t = _T()
+    t.sec = int(ns_toplam // 10**9)
+    t.nanosec = int(ns_toplam % 10**9)
+    return t
+
+
+def _sahte_saat():
+    """`_damga` hem `.to_msg()` hem `.nanoseconds` ister (RclTime aritmetigi).
+
+    Sabit bir an dondurur ki damga testleri deterministik olsun.
+    """
+    return types.SimpleNamespace(
+        now=lambda: types.SimpleNamespace(
+            nanoseconds=SAHTE_SIMDI_NS,
+            to_msg=lambda: _stamp(SAHTE_SIMDI_NS)))
+
+
+def _ns(kare, durum="PARKUR3", yayinlanan=(), hedef_adaylari=(),
+        kare_yasi_s=None):
     """`hedef_adimi` + `_p3_opencv_adaylari` için sahte self."""
     kutu = {}
 
@@ -60,11 +83,13 @@ def _ns(kare, durum="PARKUR3", yayinlanan=(), hedef_adaylari=()):
         targets_pub=_Pub(),
         get_logger=lambda: types.SimpleNamespace(
             warn=lambda *a, **k: None, info=lambda *a, **k: None),
-        get_clock=lambda: types.SimpleNamespace(
-            now=lambda: types.SimpleNamespace(
-                to_msg=lambda: dgn.Detection3DArray().header.stamp)),
+        get_clock=lambda: _sahte_saat(),
     )
-    for ad in ("_p3_opencv_adaylari", "_hedef_rengi_coz", "hedef_adimi"):
+    ns._tani["damga_yedek"] = 0
+    ns._kare_yasi_s = kare_yasi_s
+    ns._mesaj_yasi = dgn.DubaNavigator._mesaj_yasi
+    for ad in ("_p3_opencv_adaylari", "_hedef_rengi_coz", "hedef_adimi",
+               "_damga"):
         setattr(ns, ad, types.MethodType(getattr(dgn.DubaNavigator, ad), ns))
     return ns, kutu
 

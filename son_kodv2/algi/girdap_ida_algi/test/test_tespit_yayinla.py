@@ -47,7 +47,30 @@ def p3_acik(monkeypatch):
     monkeypatch.setattr(dgn, "P3_HEDEF_YAYINI", True)
 
 
-def _yayinla(dubalar, kenar_cls=0, engel_cls=1, lb_pay=0.0, kare=None):
+SAHTE_SIMDI_NS = 1_800_000_000 * 10**9      # sabit, gercekci bir ROS ani
+
+
+def _stamp(ns_toplam):
+    from builtin_interfaces.msg import Time as _T
+    t = _T()
+    t.sec = int(ns_toplam // 10**9)
+    t.nanosec = int(ns_toplam % 10**9)
+    return t
+
+
+def _sahte_saat():
+    """`_damga` hem `.to_msg()` hem `.nanoseconds` ister (RclTime aritmetigi).
+
+    Sabit bir an dondurur ki damga testleri deterministik olsun.
+    """
+    return types.SimpleNamespace(
+        now=lambda: types.SimpleNamespace(
+            nanoseconds=SAHTE_SIMDI_NS,
+            to_msg=lambda: _stamp(SAHTE_SIMDI_NS)))
+
+
+def _yayinla(dubalar, kenar_cls=0, engel_cls=1, lb_pay=0.0, kare=None,
+             tespit_yasi_s=None):
     """`tespit_yayinla`'yı sahte yayıncılarla koştur, yayınlanan mesajları döndür.
 
     `kare`: mono yolunun renk kapısı için sahte görüntü (None = kare yok ⇒
@@ -73,12 +96,15 @@ def _yayinla(dubalar, kenar_cls=0, engel_cls=1, lb_pay=0.0, kare=None):
         get_logger=lambda: types.SimpleNamespace(
             warn=lambda *a, **k: None, info=lambda *a, **k: None,
             error=lambda *a, **k: None),
-        get_clock=lambda: types.SimpleNamespace(
-            now=lambda: types.SimpleNamespace(
-                to_msg=lambda: dgn.Detection2DArray().header.stamp)),
+        get_clock=lambda: _sahte_saat(),
     )
+    ns._tani["damga_yedek"] = 0
+    ns._tespit_yasi_s = tespit_yasi_s
+    # GERÇEK metotlar, sahte self — damga yolu da gerçekten sınansın.
     ns._mono_hedef_mi = types.MethodType(
-        dgn.DubaNavigator._mono_hedef_mi, ns)      # gerçek metot, sahte self
+        dgn.DubaNavigator._mono_hedef_mi, ns)
+    ns._damga = types.MethodType(dgn.DubaNavigator._damga, ns)
+    ns._mesaj_yasi = dgn.DubaNavigator._mesaj_yasi
     dgn.DubaNavigator.tespit_yayinla(ns)
     _yayinla.son_ns = ns          # sahte self'i sonraki denetim için sakla
     return kutu["2d"], kutu["3d"]
@@ -235,9 +261,10 @@ def test_suzulen_tespit_SAYACA_islenir():
         get_logger=lambda: types.SimpleNamespace(
             warn=lambda *a, **k: None, info=lambda *a, **k: None,
             error=lambda *a, **k: None),
-        get_clock=lambda: types.SimpleNamespace(
-            now=lambda: types.SimpleNamespace(
-                to_msg=lambda: dgn.Detection2DArray().header.stamp)))
+        get_clock=lambda: _sahte_saat())
+    ns._tani["damga_yedek"] = 0
+    ns._tespit_yasi_s = None
+    ns._damga = types.MethodType(dgn.DubaNavigator._damga, ns)
     dgn.DubaNavigator.tespit_yayinla(ns)
     assert tani["buyuk_cisim"] == 1
 

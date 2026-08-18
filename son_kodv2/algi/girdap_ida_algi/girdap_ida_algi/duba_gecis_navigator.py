@@ -465,6 +465,30 @@ if KAYIT_AKTIF:
     import cv2            # overlay çizimi + mp4 yazımı (yalnız kayıt aktifken)
 
 KONTROL_HZ = 15.0
+
+# ---- DAMGA: çekim anı ↔ yayın anı (2026-08-18, ÖLÇÜLDÜ) ----
+# 🔴 NE: `/perception/*` başlıklarına artık YAYIN anı değil ÇEKİM anı basılır.
+# ÖLÇÜM (bu kamerayla, dağıtım boru hattıyla, 2×40 sn): karenin çekilmesiyle
+# yayınlanması arasında **202,4 ms** (p95 233; cihaz+XLink 169,1 + bizim 15 Hz
+# döngümüz 33,3). Tüketicinin `sync_slop_s` değeri **100 ms** ⇒ hata slop'un
+# **2,02 KATI**.
+# NEDEN ÖNEMLİ (18.08'de büyüdü): karar tarafı artık tespiti **damgadaki** poza
+# göre dünyaya çeviriyor (`planning_node._poz_damgada`, poz tamponunda
+# interpolasyon). Gerekçesi kendi ölçümleri: dönerken 5 sn'de +1/+5/+2 hayalet
+# kayıt, dönüş kesilince dört pencere +0 — *"hayaletin kaynağı algı değil,
+# ZAMAN HİZALAMASI"*. Geç damga o düzeltmeye YANLIŞ ANAHTAR verir: 202 ms
+# sonrasının pozu döner. Hesaplandı — 0,60 m eşleşme bandına karşı yanal hata:
+#   30°/s dönüşte 6 m'de 0,64 m · 8 m'de 0,85 m  ⇒ AYNI duba YENİ kayıt açar.
+# 🔴 Ve SESSİZ: uyarı yalnız damga poz tamponunun DIŞINDA kalırsa yanıyor;
+# 202 ms tamponun (100 örnek @10 Hz = 10 sn) tam içinde, yani geçerli görünen
+# ama yanlış bir poz dönüyor — tek satır log basılmadan.
+# GERİ ALINIRSA: yukarıdaki hayalet kayıt yolu yeniden açılır.
+#
+# Yaş bu tavanı aşarsa damga UYDURULMAZ, eski davranışa düşülür (`damga_yedek`
+# sayacı artar). Tavan cömert: ölçülen p95 0,23 sn, yani 8 kat pay. Amaç
+# "gecikmeyi yakalamak" değil, `getTimestamp()` saçmalarsa (farklı zaman
+# tabanı, sıfır damga) **uydurma bir geçmişe** damga basmamak.
+DAMGA_MAKUL_TAVAN_S = 2.0
 HEDEF_KAYIP_SN = 1.0   # s - tespit tazeliği; 8 FPS'te 8 kareye denk (tam sınırda
                        # değil: 10 FPS'e düşerse 10 kare kalır, kare düşünce
                        # tazelik filtresi tetiklenebilir — 11 bu yüzden 10'a yeğlendi)
@@ -823,6 +847,10 @@ class DubaNavigator(Node):
         # ikisi de bunu okur. Numarayla takip: aynı kare iki kez işlenmesin,
         # ve biri diğerinin karesini "tüketmiş" olmasın.
         self._son_kare = None
+        # Çekim anı damgası için kare/tespit YAŞI (sn, monotonic tabanlı).
+        # None = henüz ölçülemedi ⇒ `_damga` eski davranışa düşer.
+        self._tespit_yasi_s = None
+        self._kare_yasi_s = None
         self._kare_no = 0
         self._kayit_kare_no = -1
         self._hedef_kare_no = -1
@@ -873,7 +901,12 @@ class DubaNavigator(Node):
                       # adayların %88'i buraya düşüyor, gerçek dubada %0.
                       # 🔴 Sahada bu sayaç GERÇEK hedef bulunduğu anda artarsa
                       # kapı fazla sıkı demektir — tek görünürlük kanalı bu.
-                      "p3_su_hatti": 0}
+                      "p3_su_hatti": 0,
+                      # `getTimestamp()` yaşı yok/saçma olduğu için çekim anı
+                      # yerine YAYIN anının damgalandığı kare sayısı. Sahada
+                      # sürekli artıyorsa damga düzeltmesi FİİLEN KAPALIDIR
+                      # (ve kimse fark etmez) — tek görünürlük kanalı bu sayaç.
+                      "damga_yedek": 0}
         # 🔴 2026-08-13: sessiz-ret alarmının ÖNCEKİ görüntüsü. Sayaçlar
         # KÜMÜLATİF (bilerek — toplamı sahada görmek istiyoruz) ama alarm
         # doğrudan onların sıfırdan büyük olmasına bakıyordu ⇒ ölçüldü:
@@ -919,6 +952,37 @@ class DubaNavigator(Node):
 
         self.timer = self.create_timer(1.0 / KONTROL_HZ, self.dongu)
 
+    # ---------- Damga (çekim anı) ----------
+    @staticmethod
+    def _mesaj_yasi(msg):
+        """depthai mesajının YAŞI (sn) — çekimden şu ana.
+
+        `getTimestamp()` `dai::Clock::now()` tabanlıdır = host **steady_clock**
+        = `time.monotonic()` ile AYNI taban (2.30.0.0'da kurulu paketten
+        doğrulandı). ROS damgası ise DUVAR saatidir; bu yüzden damgayı doğrudan
+        yazmak YANLIŞ olur — yaşı çıkarıp ROS saatinden geri sayıyoruz.
+        🔑 Yan fayda: yaş monotonic ile ölçüldüğü için `girdap-saat-gec.service`
+        koşu öncesi duvar saatini adımlasa bile damga sıçramaz (saat kuralı).
+        """
+        try:
+            return time.monotonic() - msg.getTimestamp().total_seconds()
+        except (AttributeError, TypeError, OverflowError):
+            return None            # sürüm/mesaj tipi damga taşımıyor
+
+    def _damga(self, yas):
+        """Çekim anının ROS damgası; yaş yoksa/saçmaysa YAYIN anı (eski hâl).
+
+        Ölçüm ve gerekçe için `DAMGA_MAKUL_TAVAN_S`. Bu metot ASLA yükseltmez:
+        damga kodu node'u öldürmemeli (09.08 dersi — teşhis için eklenen satır
+        node'u öldürmüştü).
+        """
+        simdi = self.get_clock().now()
+        if yas is None or not (0.0 <= yas <= DAMGA_MAKUL_TAVAN_S):
+            if yas is not None:
+                self._tani["damga_yedek"] += 1
+            return simdi.to_msg()
+        return RclTime(nanoseconds=simdi.nanoseconds - int(yas * 1e9)).to_msg()
+
     # ---------- Algılama (ortak) ----------
     def tespitleri_oku(self):
         msg = None
@@ -938,6 +1002,8 @@ class DubaNavigator(Node):
                     "USB bağlantısı / VPU ısınması / kablo kontrol")
         if msg is None:
             return
+        # Çekim anı damgası: bu mesajın yaşı (bkz. DAMGA_MAKUL_TAVAN_S).
+        self._tespit_yasi_s = self._mesaj_yasi(msg)
         dets = []
         for d in msg.detections:
             if d.confidence < CONF_ESIK:
@@ -997,6 +1063,13 @@ class DubaNavigator(Node):
         except Exception as e:           # noqa: BLE001
             self.get_logger().warn(f"kare alınamadı: {e}",
                                    throttle_duration_sec=5.0)
+            return
+        # 🔴 Damga için kare YAŞI — eskiden yalnız piksel saklanıyordu ve çekim
+        # anı burada KAYBOLUYORDU. Kasten yukarıdaki try'ın DIŞINDA: içeride
+        # olsaydı buradaki bir hata `kare alınamadı`ya düşüp kareyi TAMAMEN
+        # düşürürdü ⇒ Dosya-1'de boşluk (md 4.2, ≥1 Hz, eksik dosya 5 ceza).
+        # Damga, kaydın önüne asla geçmez.
+        self._kare_yasi_s = self._mesaj_yasi(frame)
 
     def hedef_adimi(self, simdi):
         """Parkur-3 hedef adaylarını renklendirip `/perception/targets`'a yayınla.
@@ -1019,7 +1092,7 @@ class DubaNavigator(Node):
         self._son_hedef_t = simdi
         try:
             arr = Detection3DArray()
-            arr.header.stamp = self.get_clock().now().to_msg()
+            arr.header.stamp = self._damga(getattr(self, "_kare_yasi_s", None))
             arr.header.frame_id = BASE_FRAME       # perception = GÖVDE çerçevesi
             kare = self._son_kare
             kare_taze = kare is not None and self._kare_no != self._hedef_kare_no
@@ -1346,7 +1419,7 @@ class DubaNavigator(Node):
         ox, oy, px, py = self.gecit_geometri(a, b)
         hx, hy = gm.gecit_hedefi(ox, oy, px, py, HEDEF_OTELEME)
         p = PoseStamped()
-        p.header.stamp = self.get_clock().now().to_msg()
+        p.header.stamp = self._damga(getattr(self, "_tespit_yasi_s", None))
         p.header.frame_id = BASE_FRAME
         p.pose.position.x = float(hx)
         p.pose.position.y = float(hy)
@@ -1359,7 +1432,8 @@ class DubaNavigator(Node):
         """Taze tespitleri /perception/buoys (2D, sözleşme) + /perception/buoys_3d
         (BONUS stereo 3D) olarak yayınla. Boş liste de yayınlanır — fusion'ın
         zaman senkronu ve 'görüş alanında duba yok' bilgisi için."""
-        stamp = self.get_clock().now().to_msg()
+        # 🔴 ÇEKİM anı (yayın anı DEĞİL) — bkz. DAMGA_MAKUL_TAVAN_S.
+        stamp = self._damga(getattr(self, "_tespit_yasi_s", None))
 
         arr = Detection2DArray()
         arr.header.stamp = stamp

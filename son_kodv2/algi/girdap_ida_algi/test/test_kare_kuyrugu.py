@@ -78,6 +78,11 @@ def _dugum():
     log = _Log()
     n.get_logger = lambda: log
     n._kare_tazele = types.MethodType(dgn.DubaNavigator._kare_tazele, n)
+    # Damga yasi (18.08): GERCEK staticmethod baglanir — sahte kare
+    # `getTimestamp` tasimadigi icin None doner, yani damga eski davranisa
+    # duser. Bu testlerin konusu KAYIT kapisi; damga onun onune gecmemeli.
+    n._mesaj_yasi = dgn.DubaNavigator._mesaj_yasi
+    n._kare_yasi_s = None
     return n
 
 
