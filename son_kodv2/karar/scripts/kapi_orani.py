@@ -172,7 +172,7 @@ def kosum(
     koridor_var: bool = False,
     kurs_ekseni_kullan: bool = False,
     arada_duba_kontrolu: bool = False,
-    stuck_recovery_enabled: bool = False,
+    stuck_recovery_enabled: bool = True,
 ) -> dict:
     """Kapalı döngüyü bir kez koştur, kapı geçiş metriklerini döndür.
 
@@ -448,7 +448,7 @@ def _iz_kosumu(parkur, a) -> None:
     r = kosum(parkur, baslangic=poz, yon_hatasi_rad=aci,
               model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni,
               mppi_k=a.K, mppi_t=a.T, iz=iz, koridor_var=a.koridor, kurs_ekseni_kullan=a.kurs_ekseni, arada_duba_kontrolu=a.arada_duba,
-              stuck_recovery_enabled=a.kurtarma_ac)
+              stuck_recovery_enabled=not a.kurtarma_kapali)
     if not iz:
         print("iz boş — koşum hiç adım atmadı")
         return
@@ -554,12 +554,11 @@ def main() -> None:
                     help="arada_duba_kontrolu aç (algı'dan port, 18.08) — "
                          "yalnız arada gerçek bir duba varsa çifti reddeder, "
                          "F-K.3'ten daha dar/hedefli, A/B için")
-    ap.add_argument("--kurtarma-ac", action="store_true",
-                    help="F-P.11 sıkışma kurtarmasını aç (varsayılan KAPALI — "
-                         "18.08 gece A/B'sinde ÇARPMA riski ölçüldü: 4 bilinen "
-                         "370s tıkanmadan 1'i −0.21 m payla, yani çarparak "
-                         "kurtuluyor; ÇARPMA 0/12→2/12. Yalnız A/B için, "
-                         "üretimde AÇMA)")
+    ap.add_argument("--kurtarma-kapali", action="store_true",
+                    help="F-P.11 sikisma kurtarmasini kapat (varsayilan ACIK "
+                         "- 18.08 gece IKINCI turda CARPMASIZ dogrulandi: "
+                         "zor kapi orani 50.0 den 84.4e, normal 79.2 den "
+                         "91.7ye, CARPMA 0/12 den 0/12ye. Yalniz A/B icin)")
     a = ap.parse_args()
 
     if a.iz:
@@ -585,7 +584,7 @@ def main() -> None:
         r = kosum(parkur, baslangic=poz, yon_hatasi_rad=aci,
                   model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni,
                   mppi_k=a.K, mppi_t=a.T, koridor_var=a.koridor, kurs_ekseni_kullan=a.kurs_ekseni, arada_duba_kontrolu=a.arada_duba,
-                  stuck_recovery_enabled=a.kurtarma_ac)
+                  stuck_recovery_enabled=not a.kurtarma_kapali)
         oran = r["gecilen"] / r["toplam_kapi"]
         oranlar.append(oran)
         paylar.append(r["en_kucuk_pay"])

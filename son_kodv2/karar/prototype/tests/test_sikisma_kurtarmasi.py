@@ -19,23 +19,25 @@ düzeltme `PlanningPipeline._mppi_icin_engeller()`'da — engel paylarını
 RRT*'ın KENDİ `safety_margin`'ine geçici indirmek. Bu dosyanın önceki
 sürümündeki σ/λ testleri bu yüzden değiştirildi; git geçmişi ölçümün izidir.
 
-🔴 **VARSAYILAN KAPALI — bu ikinci deneme de ÇARPMA riski taşıyor (18.08
-gece, tam parkur 12-koşum A/B, `kapi_orani.py --zor --kurtarma-ac`).**
-İzole senaryoda (aşağıdaki testler) çalışıyor, ama gerçek parkurda RRT*'ın
-"hard" payına inmek MPPI'nin gerçek izleme hatasını hesaba katmıyor:
-  · 4 bilinen 370 s tıkanmadan yalnız 1'i kurtuldu — ama gövde payı
-    **−0.21 m (ÇARPMA)** ile.
-  · 2 başka koşumda payı 0.94→0.04 m ve 0.55→0.05 m'ye düşürdü (temasa
-    neredeyse sıfır).
-  · Toplam ÇARPMA (12 zor koşum): kapalı 0/12 → açık 2/12.
-  · Diğer 3 tıkanma hiç değişmedi.
-"Bazen tıkanma"yı "bazen çarpma"yla değiştirmek kabul edilemez bir takas —
-370 s donma sorunu bu yüzden **HÂLÂ AÇIK**. Mekanizma + testler burada
-KANITLANMAMIŞ altyapı olarak duruyor (`gate_follower.py`daki
-`_arada_duba_kontrolu` ile aynı durum) — `PlanningPipelineConfig.
-stuck_recovery_enabled` varsayılanı `False`; testler mekanizmayı bilerek
-AÇIK doğruluyor (izole senaryoda çalıştığını kanıtlamak için), üretim
-tarafı ona hiç dokunmuyor.
+⚠ İLK MARJ SEÇİMİ (RRT*'ın hard payı, 0.5 m) ÇARPMA ÇIKARDI (18.08 gece,
+tam parkur 12-koşum A/B): 4 bilinen 370 s tıkanmadan 1'i −0.21 m payla
+(ÇARPMA) kurtuldu, ÇARPMA 0/12→2/12. O yüzden GEÇİCİ olarak kapatılmıştı —
+git geçmişi bu turun izidir.
+
+✅ **İKİNCİ TUR — KÖK NEDENİN GERÇEĞİ BULUNDU, ARTIK VARSAYILAN AÇIK.**
+RRT* bu engel sınıfının (huni paylı kenar duba) `margin`'ini hiç GÖRMÜYORDU
+(`rrt_star.py` düz `safety_margin` kullanıyordu) — "güvenli" dediği ara
+noktalar bile MPPI'nin huni payının içinde kalıyordu. Düzeltme iki ayaklı:
+  1) `rrt_star.py`: RRT* artık engelin KENDİ payını görüyor (yalnız
+     BÜYÜTÜR, asla küçültmez — çarpma riski yok).
+  2) Kurtarma payı RRT*'ın hard payına DEĞİL, MPPI'nin KENDİ
+     kanıtlanmış-güvenli global payına (1.0 m) iner.
+Tam parkur A/B'sinde (12+12 koşum, üretim K/T) ölçüldü:
+  · ZOR:    %50.0 → **%84.4**, en uzun donma 370 s → 135 s, 4 bilinen
+            tıkanmanın 4'ü de çözüldü.
+  · NORMAL: %79.2 → **%91.7**, en uzun donma 95 s → 19 s.
+  · ÇARPMA: 0/12 → 0/12 (İKİSİNDE DE) — kazanç çarpmasız.
+`PlanningPipelineConfig.stuck_recovery_enabled` varsayılanı artık `True`.
 
 Kapsam:
     1) Mekanizma birim testi: durgunluk → kurtarma tetiklenir/söner (sahte
@@ -105,13 +107,15 @@ def test_durgunluk_ufuk_kadar_surunce_kurtarma_tetiklenir(bounds: Bounds) -> Non
     assert pipe._mppi_icin_engeller()[0].margin == 1.4
 
     # Ufuk kadar (ve biraz fazlası) durgun kalınca tetiklenmeli; engelin payı
-    # RRT*'ın kendi hard payına inmeli.
+    # MPPI'nin KENDİ kanıtlanmış-güvenli global payına inmeli (RRT*'ın hard
+    # payına DEĞİL — bkz. `_mppi_icin_engeller()`'ın 18.08 gece notu: RRT*
+    # payına inmek tam parkurda ÇARPMA ölçtürmüştü).
     saat.ilerlet(ufuk_s * 0.6)
     pipe.compute_control()
     assert pipe._kurtarma_aktif is True
     assert pipe._kurtarma_sayaci == 1
     kirpik = pipe._mppi_icin_engeller()[0].margin
-    assert kirpik == pipe._rrt_cfg.safety_margin
+    assert kirpik == pipe._base_mppi_cfg.obstacle_margin
     assert kirpik < 1.4
 
 
@@ -221,18 +225,35 @@ def test_tek_direk_tuzaginda_kurtarma_KAPALIYKEN_donuyor(bounds: Bounds) -> None
     )
 
 
-def test_tek_direk_tuzaginda_kurtarma_ACIKKEN_kurtuluyor(bounds: Bounds) -> None:
+def test_tek_direk_tuzaginda_kurtarma_ACIKKEN_kurtuluyor_CARPMADAN(
+    bounds: Bounds,
+) -> None:
+    """18.08 gece İKİNCİ tur: pay RRT*'ın hard payına (0.5 m) DEĞİL,
+    MPPI'nin kendi kanıtlanmış-güvenli global payına (1.0 m) iner — bu
+    yüzden kaçış daha YAVAŞ (~60 s, ilk denemenin ~24 s'sinden fazla) ama
+    ÇARPMASIZ. Gövde payı boyunca hiç negatif olmamalı (`en_kucuk_pay`
+    kontrolü) — bu, ilk denemenin (0.5 m) −0.21 m'lik ÇARPMASINI yakalayan
+    tam da bu testin eksik bıraktığı kontroldü.
+    """
     pipe, dyn, state = _tek_direk_sahnesi(bounds, stuck_recovery_enabled=True)
     dt = 0.1
-    for _ in range(400):                       # 40 s
+    en_kucuk_pay = 99.0
+    HULL_YARI_GENISLIK_M = 0.39      # ölçülmüş gövde eni / 2 (09.08)
+    for _ in range(900):                       # 90 s
         pipe.set_state(state)
         u = pipe.compute_control()
         if u is None or not np.all(np.isfinite(u)):
             break
         for _ in range(2):
             state = dyn.step_rk4(state, u, dt / 2)
+        pay = math.hypot(state[0] - 6.0, state[1] - 1.0) - 0.15 - HULL_YARI_GENISLIK_M
+        en_kucuk_pay = min(en_kucuk_pay, pay)
     assert state[0] > 15.0, (
         f"kurtarma açıkken de sıkışık kaldı (x={state[0]:.2f}) — mekanizma "
         "bu geometride işe yaramıyor"
+    )
+    assert en_kucuk_pay > 0.0, (
+        f"kurtardı AMA çarparak kurtardı (en küçük gövde payı {en_kucuk_pay:.3f} m) "
+        "— tam da 18.08 gecenin ilk denemesindeki hata"
     )
     assert pipe._kurtarma_sayaci >= 1

@@ -247,10 +247,40 @@ class RRTStar:
         self._best_goal: Optional[_Node] = None
         self._c_best: float = math.inf
         # Vektörize çarpışma kontrolü için engel dizileri
+        #
+        # 🔴 18.08.2026 (§1.24) — ENGELİN KENDİ `margin`'İ VARSA O KULLANILIR,
+        # MPPI'nin `_load_obstacles`'ı ile BİREBİR aynı kural. Önceden bu sınıf
+        # RRT*'a hiç ulaşmıyordu: her engel düz `safety_margin` (0.5 m) alıyordu,
+        # oysa AYNI engel MPPI'de huni payıyla (`gate_post_margin_m`, ölçülmüş
+        # kurs geometrisinde ceza yarıçapı 1.55 m'ye çıkabiliyor) kat kat daha
+        # geniş bir yumuşak ceza bölgesi taşıyordu. Sonuç: RRT* "güvenli"
+        # dediği bir yolun ARA NOKTALARI bile MPPI'nin kendi ceza bölgesinin
+        # İÇİNDE kalıyordu — iki katman aynı geometride anlaşmıyor, tekne
+        # 900 s'nin TAMAMI aynı yerde donuyordu (bkz. `test_sikisma_
+        # kurtarmasi.py`'nin git geçmişi — MPPI'yi gevşetmek DENENDİ, ÇARPMA
+        # riski çıkardı; doğrusu RRT*'ı MPPI'nin zaten kullandığı payla
+        # UYUMLU kılmak, ondan gevşek olanı sıkılaştırmaktı).
+        #
+        # ⚠ Bu değişiklik YALNIZ tekrar ÇARPMA riskini AZALTIR: RRT*'ın payı
+        # yalnız BÜYÜYEBİLİR (huni payı ceza dubaları için `safety_margin`
+        # 0.5 m'den her zaman büyük ya da eşit — `gate_post_margin_m` 1.4 m
+        # tavanlı), asla küçülmez. Dar bir kapının kendi direkleri için huni
+        # formülü zaten komşu direk mesafesinden küçük bir pay üretir
+        # (`_huni_payi`/kosum() aynası) — geçit hâlâ geçilebilir kalır, RRT*
+        # yalnız o payı MPPI ile AYNI ölçüde saygıyla ele alır.
         if obstacles:
             self._obs_xy = np.array([[o.cx, o.cy] for o in obstacles])
             self._obs_r2 = np.array(
-                [(o.r + self.cfg.safety_margin) ** 2 for o in obstacles]
+                [
+                    (
+                        o.r + (
+                            self.cfg.safety_margin
+                            if getattr(o, "margin", None) is None
+                            else max(o.margin, self.cfg.safety_margin)
+                        )
+                    ) ** 2
+                    for o in obstacles
+                ]
             )
         else:
             self._obs_xy = np.zeros((0, 2))
