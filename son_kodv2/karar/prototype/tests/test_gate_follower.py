@@ -22,6 +22,7 @@ from prototype.mission.gate_follower import (
     GateDiagnostics,
     GateFollower,
     GateFollowerConfig,
+    _arada_duba_cezasi,
     select_gate,
 )
 
@@ -1007,6 +1008,61 @@ def test_FK3_COK_KONUMLU_tarama_HEPSINDE_gercek() -> None:
     # kendisidir (§0.75b) ve ayrı bir iştir.
     assert gercek >= denenen - 1, f"{denenen - gercek}/{denenen} konumda SAHTE kapı"
     assert gercek / denenen > 0.9, "sahte kapı ayıklama ölçülen seviyenin altında"
+
+
+def _arac_8_dubalar():
+    """§0.17b zigzag parkurunda (0.0, 8.0) — KAPALI iken 17,46 m'lik sahte
+    kapıya kilitlenen, ölçülerek bulunmuş somut bir konum (bkz. bu testin
+    yazıldığı 18.08 A/B taraması)."""
+    _, dubalar = _gercek_parkur()
+    return (0.0, 8.0), (0.0, 16.0), dubalar
+
+
+def test_arada_duba_cezasi_SUREKLI_ve_segment_mesafesine_dayanir() -> None:
+    """🔬 18.08.2026 — `_arada_duba_cezasi` saf geometri: İKİLİ DEĞİL, sürekli.
+
+    Aday çift dünya konumunda (0,0)-(10,0). Üçüncü duba segmentin TAM
+    ÜZERİNDEYSE ceza ≈ eşik (büyük); segmentten uzaksa 0; ara mesafede
+    ARADA DEĞER — bu süreklilik, `ONAY_TICK` ile çakışan ikili
+    titreşimi önlemek için var (bkz. fonksiyon docstring'i)."""
+    a, b = (0.0, 0.0), (10.0, 0.0)
+    tam_ustunde = _arada_duba_cezasi(a, b, [(5.0, 0.0)], esik=3.0)
+    yakin = _arada_duba_cezasi(a, b, [(5.0, 1.0)], esik=3.0)
+    uzak = _arada_duba_cezasi(a, b, [(5.0, 5.0)], esik=3.0)
+    ucun_yakininda = _arada_duba_cezasi(a, b, [(0.5, 0.0)], esik=3.0)
+    assert tam_ustunde == pytest.approx(3.0), "segment üzerindeki duba tavan cezayı almalı"
+    assert 0.0 < yakin < tam_ustunde, "ara mesafede ceza ARA bir değer olmalı (süreklilik)"
+    assert uzak == 0.0, "segmentten çok uzak (5 m) bir duba ceza almamalı"
+    # Uçlara (dubaların KENDİSİNE) yakın üçüncü nokta sayılmamalı (t sınırı).
+    assert ucun_yakininda == 0.0, "adayın kendi ucuna yakın nokta yanlışlıkla cezalandı"
+
+
+def test_ARADA_DUBA_KONTROLU_diagnostik_sayaci_gercek_parkurda_artar() -> None:
+    """§0.17b zigzag parkurunda (0.0, 8.0) konumu — kapalı döngü A/B'nin
+    kendisinde kullanılan somut konum: en az bir çift, arada gerçek bir duba
+    olduğu için reddedilmeli (mekanizmanın gerçekten tetiklendiğinin kanıtı;
+    hangi kapının KAZANDIĞI ayrı bir soru — bkz. kapi_orani.py A/B)."""
+    diag = GateDiagnostics()
+    arac, gn, dubalar = _arac_8_dubalar()
+    select_gate(arac, gn, dubalar, cfg=GateFollowerConfig(), diag=diag,
+               arada_duba_kontrolu=True)
+    assert diag.reddedilen_arada_duba >= 1
+
+
+def test_ARADA_DUBA_KONTROLU_KAPALIYKEN_davranis_degismez() -> None:
+    """Varsayılan (False) = geri uyumlu, davranış birebir korunur.
+
+    🔬 18.08.2026 tarihçesi (bkz. `_arada_duba_cezasi` docstring'i): SABİT
+    (yasak) bir `esik` ile kapalı döngüde büyük görünen bir kazanç (%79,2→
+    %97,9) ölçüldü, ama bu SAHTE çıktı — parkurun ölçeğine rastlayan bir
+    sayıydı. Kurallı öz-ölçekli hâliyle (`esik=0.5×sep`) kazanç YOK, taban
+    ile aynı. Ayrıca sabit-eşikli sürüm bile `test_koridordaki_ucuncu_duba_
+    nisani_iter`'ı kırıyordu: kapı açıklığının içine sarkan bir KENAR
+    dubası, "başka bir kapıya ait" ile "bu kapının içinde nişanı iten bir
+    şey" arasında ayırt edilemiyor. Varsayılan bu yüzden False kalıyor."""
+    arac, gn, dubalar = _arac_8_dubalar()
+    g = select_gate(arac, gn, dubalar, cfg=GateFollowerConfig())
+    assert g is not None and abs(g.width - 12.0) > 1.0
 
 
 def test_FK3_kurs_ekseni_GECILEN_KAPIDAN_ogrenilir() -> None:

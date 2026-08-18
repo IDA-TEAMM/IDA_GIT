@@ -170,6 +170,8 @@ def kosum(
     mppi_t: int = URETIM_T,
     iz: Optional[List[dict]] = None,
     koridor_var: bool = False,
+    kurs_ekseni_kullan: bool = False,
+    arada_duba_kontrolu: bool = False,
 ) -> dict:
     """Kapalı döngüyü bir kez koştur, kapı geçiş metriklerini döndür.
 
@@ -199,7 +201,11 @@ def kosum(
         dynamics=dyn,
     )
     pipe.set_mission_state("PARKUR1")
-    gate = GateFollower(GateFollowerConfig(HULL_W, HULL_L))
+    gate = GateFollower(
+        GateFollowerConfig(HULL_W, HULL_L),
+        kurs_ekseni_kullan=kurs_ekseni_kullan,
+        arada_duba_kontrolu=arada_duba_kontrolu,
+    )
     hafiza = EdgeBuoyMemory()
 
     # F-S.16 — HAKEM ölçüsü: parkur dışına çıkış. Sınır SAHNENİN gerçek kenar
@@ -439,7 +445,7 @@ def _iz_kosumu(parkur, a) -> None:
     iz: List[dict] = []
     r = kosum(parkur, baslangic=poz, yon_hatasi_rad=aci,
               model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni,
-              mppi_k=a.K, mppi_t=a.T, iz=iz, koridor_var=a.koridor)
+              mppi_k=a.K, mppi_t=a.T, iz=iz, koridor_var=a.koridor, kurs_ekseni_kullan=a.kurs_ekseni, arada_duba_kontrolu=a.arada_duba)
     if not iz:
         print("iz boş — koşum hiç adım atmadı")
         return
@@ -536,6 +542,15 @@ def main() -> None:
                     help="F-S.16 koridor terimini besle (planning_node."
                          "_koridoru_besle aynası) — kapatılırsa 17.08 taban "
                          "davranışıyla birebir (A/B için)")
+    ap.add_argument("--kurs-ekseni", action="store_true",
+                    help="F-K.3 kurs ekseni sahte-kapı ayıklamasını aç "
+                         "(GateFollowerConfig.kurs_ekseni_kullan) — 13.08'de "
+                         "bu parkurda zararlı ölçülüp kapatılmıştı, yeniden "
+                         "A/B için")
+    ap.add_argument("--arada-duba", action="store_true",
+                    help="arada_duba_kontrolu aç (algı'dan port, 18.08) — "
+                         "yalnız arada gerçek bir duba varsa çifti reddeder, "
+                         "F-K.3'ten daha dar/hedefli, A/B için")
     a = ap.parse_args()
 
     if a.iz:
@@ -560,7 +575,7 @@ def main() -> None:
     for i, (poz, aci) in enumerate(basl, 1):
         r = kosum(parkur, baslangic=poz, yon_hatasi_rad=aci,
                   model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni,
-                  mppi_k=a.K, mppi_t=a.T, koridor_var=a.koridor)
+                  mppi_k=a.K, mppi_t=a.T, koridor_var=a.koridor, kurs_ekseni_kullan=a.kurs_ekseni, arada_duba_kontrolu=a.arada_duba)
         oran = r["gecilen"] / r["toplam_kapi"]
         oranlar.append(oran)
         paylar.append(r["en_kucuk_pay"])
