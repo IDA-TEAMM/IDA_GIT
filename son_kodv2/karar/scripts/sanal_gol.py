@@ -341,10 +341,22 @@ class SanalGol(Node):
             Twist, "/mavros/setpoint_velocity/cmd_vel_unstamped", self._on_cmd, 10
         )
 
-        self.create_timer(0.02, self._fizik)        # 50 Hz
-        self.create_timer(0.10, self._algi)         # 10 Hz
-        self.create_timer(0.20, self._gps)          # 5 Hz
-        self.create_timer(0.50, self._durum)        # 2 Hz
+        # 🔴 18.08.2026 — KADANSLAR GERÇEĞE UYDURULDU. Amaç gölün "iyi
+        # çalışması" değil, GERÇEĞİ YANSITMASI: kod buraya olduğu gibi
+        # düşecek. Kaynaklar (birinci elden, tahmin değil):
+        #   · mavros akışları: `hardware.yaml stream_rate_hz: 10` →
+        #     `REQUEST_DATA_STREAM STREAM_ALL @10 Hz` (mavros_bridge_node:530)
+        #     ⇒ IMU / local_position / velocity GERÇEKTE **10 Hz**, 50 DEĞİL.
+        #   · `/mavros/state`: mavros'un kendi kadansı ~**1 Hz**
+        #     (mavros_bridge_node:535 yorumu).
+        #   · GPS fix: H-RTK **1 Hz** (CLAUDE.md boru hattı şeması).
+        #   · LiDAR (Livox Mid-360): **10 Hz**.
+        # Fizik entegrasyonu 50 Hz KALIR (doğruluk); yalnız YAYIN seyreltilir —
+        # ikisi karıştırılırsa ya dinamik bozulur ya kadans yalan söyler.
+        self.create_timer(0.02, self._fizik)        # 50 Hz — SADECE entegrasyon
+        self.create_timer(0.10, self._algi)         # 10 Hz — Livox
+        self.create_timer(1.00, self._gps)          # 1 Hz — H-RTK fix
+        self.create_timer(1.00, self._durum)        # 1 Hz — /mavros/state
         self.create_timer(1.00, self._gorev)        # 1 Hz — "Mission Planner"
         self.create_timer(2.00, self._rapor)
         self.get_logger().info(
@@ -397,9 +409,15 @@ class SanalGol(Node):
                     y + self.ar_sicrama_m * math.sin(a))
         return x, y
 
+    #: Fizik adımı / mavros yayın adımı oranı. 50 Hz entegrasyon, 10 Hz yayın
+    #: (`stream_rate_hz: 10`). Değiştirilirse kadans gerçeği yansıtmaz.
+    _MAVROS_SEYRELTME = 5
+
     def _fizik(self) -> None:
         dt = 0.02
         self.t += dt
+        self._mavros_sayac = getattr(self, "_mavros_sayac", 0) + 1
+        _yayinla = (self._mavros_sayac % self._MAVROS_SEYRELTME) == 0
         if self._dyn is not None:
             # GERÇEK MODEL: cmd_vel (hız setpoint'i) → itki. `planning_node`
             # tersini yapıyor (`hedef_u = 2T/|Xu|`), burada onu geri çeviriyoruz
@@ -445,13 +463,15 @@ class SanalGol(Node):
         imu.orientation.w = math.cos(self.psi / 2.0)
         imu.angular_velocity.z = self.r
         imu.linear_acceleration.z = 9.81
-        self.p_imu.publish(imu)
+        if _yayinla:
+            self.p_imu.publish(imu)
 
         tw = TwistStamped()
         tw.header = imu.header
         tw.twist.linear.x = self.u
         tw.twist.angular.z = self.r
-        self.p_vel.publish(tw)
+        if _yayinla:
+            self.p_vel.publish(tw)
 
         # 🔴 ARIZA ENJEKSİYONU BURAYA DA GEREKLİ (18.08 ölçümüyle bulundu).
         # `fusion_node` bu kipte ([MAVROS EKF geçişi (video)], use_isam2=false)
@@ -468,7 +488,8 @@ class SanalGol(Node):
         _lx, _ly = self._ariza_konum(self.x, self.y)
         lp.pose.position.x, lp.pose.position.y = _lx, _ly
         lp.pose.orientation = imu.orientation
-        self.p_lpose.publish(lp)
+        if _yayinla:
+            self.p_lpose.publish(lp)
 
         # Açıklık: gövde YÜZEYİNDEN duba YÜZEYİNE
         for i, (wx, wy, yari) in enumerate(

@@ -387,16 +387,35 @@ def test_siniflandirma_duba_DONGUSUNUN_icinde():
     raise AssertionError("`for ... in cisimler` döngüsü bulunamadı")
 
 
-def test_gol_KAMERA_cozunurlugu_tasinabilir_boyutta():
-    """1280×720 kare 2,7 MB; 10 Hz'te 27 MB/s ⇒ DDS düşürüyor.
+def test_gol_KAMERA_karesi_SOKET_TAMPONUNA_siginiyor():
+    """Ham görüntü DDS'ten geçerse kare soket tamponundan KÜÇÜK olmalı.
 
-    Ölçüldü: varsayılanla `/perception/buoys` 1,71 Hz'e düşüyor ve LiDAR
-    karelerinin %64,9'u füzyonda eşleşemiyordu; 512×512'de omap 10,00 Hz,
-    buoys 5,12 Hz. Darboğaz tespit DEĞİL (13,7 ms/kare), TAŞIMA.
+    Ölçüldü: `net.core.rmem_max = 212992` B (bu makinede). Tek kare bundan
+    büyükse FastDDS parçaları toparlayamıyor ve kare DÜŞÜYOR:
+        1280×720 → 2,7 MB  ⇒ abone ~1,0 Hz
+         512×512 → 786 KB  ⇒ abone 4,25 Hz (yayıncı 8,11)
+         256×256 → 196 KB  ⇒ kayıpsız, abone 8,00 Hz
+    🔑 Korunan şey KADANS: gerçek 8 Hz kamera ↔ 10 Hz LiDAR farkı kapı
+    zincirini bozan etkendir. Çözünürlük yalnız tespit hassasiyetini
+    etkiler; bbox NORMALİZE olduğu için bu kip ölçekten bağımsız.
+    ⚠ Gerçek teknede görüntü DDS'ten HİÇ geçmez (depthai USB, aynı süreç);
+    bu sınır yalnız gölde vardır. Jetson kurulumunda `net.core.rmem_max`
+    büyütülmeli.
     """
+    import re
     m = _kos_komutlari()
-    assert "kamera_genislik_px:=512" in m and "kamera_yukseklik_px:=512" in m, (
-        "göl kamerası dağıtımın NN girdisine (512×512) sabitlenmemiş")
+    esl = re.search(r"kamera_genislik_px:=\"?\$\{GIRDAP_GOL_KAM_PX:-(\d+)\}",
+                    m)
+    assert esl, "göl kamera çözünürlüğü ayarlamıyor"
+    px = int(esl.group(1))
+    try:
+        tampon = int((pathlib.Path("/proc/sys/net/core/rmem_max")
+                      ).read_text().strip())
+    except OSError:                      # Linux dışı / erişilemez
+        tampon = 212992
+    assert px * px * 3 <= tampon, (
+        f"{px}×{px} kare {px*px*3} B > rmem_max {tampon} B ⇒ kareler düşer, "
+        "kamera kadansı gerçeği yansıtmaz")
 
 
 def test_P3_sinif5_rengi_SIYAH():
@@ -417,3 +436,105 @@ def test_P3_sinif5_rengi_SIYAH():
                 f"sınıf 5 rengi {tablo['5']} — siyah (RAL 9005) değil")
             return
     raise AssertionError("_SINIF_BGR bulunamadı")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# GÖL GERÇEĞİ YANSITIYOR MU — kadans · TF · montaj (18.08.2026)
+#
+# Eyüp: *"gerçekte nasıl ise kodda öyle olsun"* — gölün amacı kodun burada
+# iyi görünmesi DEĞİL, gerçek koşulları yansıtması. Aşağıdaki her sayı
+# dağıtım kaynağından gelir, tahminden değil.
+# ══════════════════════════════════════════════════════════════════════════
+_HAM = _KOK / "scripts" / "sahte_ham_sensor.py"
+_HW = _KOK / "ros2_ws/src/girdap_decision/config/hardware.yaml"
+
+
+def test_LIDAR_ve_KAMERA_ayri_kadansta():
+    """Gerçekte Livox 10 Hz, OAK 8 Hz (`duba_gecis_navigator.FPS`).
+
+    Tek timer'da basmak yavaş tarafın hızlı tarafın karelerini düşürmesini
+    gizler — füzyon `ApproximateTimeSynchronizer` ile eşleştirdiği için bu
+    fark kapı zincirini doğrudan etkiler.
+    """
+    # ⚠ Alt dize araması YETMEZ: `_tick_kamera_X` de "_tick_kamera" içerir
+    # ve mutasyon testten KAÇTI (ölçüldü). Metot adları AST'ten okunur.
+    import ast
+    agac = ast.parse(_HAM.read_text(encoding="utf-8"))
+    metotlar = {n.name for n in ast.walk(agac)
+                if isinstance(n, ast.FunctionDef)}
+    assert {"_tick_lidar", "_tick_kamera"} <= metotlar, (
+        f"LiDAR ve kamera ayrı kadansta değil — bulunan: "
+        f"{sorted(x for x in metotlar if x.startswith('_tick'))}")
+    # ve ikisi de GERÇEKTEN timer'a bağlı olmalı
+    baglilar = {ast.unparse(a).split(".")[-1]
+                for n in ast.walk(agac)
+                if isinstance(n, ast.Call)
+                and getattr(n.func, "attr", None) == "create_timer"
+                for a in n.args[1:2]}
+    assert {"_tick_lidar", "_tick_kamera"} <= baglilar, (
+        f"timer'a bağlı olanlar: {sorted(baglilar)}")
+    m = _kos_komutlari()
+    assert "kamera_hz:=8.0" in m, "kamera kadansı gerçeğe (8 Hz) sabitlenmemiş"
+    assert "lidar_hz:=10.0" in m, "LiDAR kadansı gerçeğe (10 Hz) sabitlenmemiş"
+
+
+def test_kamera_kadansi_ALGI_kodundaki_FPS_ile_ayni():
+    """🔑 Ayrışma kapısı: algı `FPS`'i değişirse göl de değişmeli."""
+    import ast
+    nav = _NAV.read_text(encoding="utf-8")
+    fps = next(
+        (n.value.value for n in ast.parse(nav).body
+         if isinstance(n, ast.Assign)
+         and any(getattr(t, "id", None) == "FPS" for t in n.targets)), None)
+    assert fps is not None, "algı FPS sabiti bulunamadı"
+    assert f"kamera_hz:={float(fps)}" in _kos_komutlari(), (
+        f"algı FPS={fps} ama göl farklı kadansta koşuyor")
+
+
+def test_MAVROS_yayin_hizi_stream_rate_ile_ayni():
+    """`hardware.yaml stream_rate_hz` FC'den istenen akış hızı (STREAM_ALL).
+
+    Göl 50 Hz basıyordu — 5× gerçeküstü. Fizik 50 Hz kalır, YAYIN seyrelir.
+    """
+    import yaml
+    hw = yaml.safe_load(_HW.read_text(encoding="utf-8")) or {}
+    hz = None
+    for blok in hw.values():
+        if isinstance(blok, dict) and "stream_rate_hz" in blok:
+            hz = int(blok["stream_rate_hz"])
+    assert hz, "stream_rate_hz hardware.yaml'da yok"
+    sg = _SANAL_GOL.read_text(encoding="utf-8")
+    assert "_MAVROS_SEYRELTME" in sg, "yayın seyreltmesi yok — göl 50 Hz basar"
+    import ast
+    seyreltme = next(
+        (n.value.value for n in ast.walk(ast.parse(sg))
+         if isinstance(n, ast.Assign)
+         and any(getattr(t, "id", None) == "_MAVROS_SEYRELTME"
+                 for t in n.targets)), None)
+    assert 50 / seyreltme == hz, (
+        f"göl {50/seyreltme:.0f} Hz basıyor, gerçek {hz} Hz")
+
+
+def test_fizik_entegrasyonu_50_Hz_KALIYOR():
+    """Yayın seyreltilir ama entegrasyon seyreltilmez — yoksa dinamik bozulur."""
+    sg = _SANAL_GOL.read_text(encoding="utf-8")
+    assert "self.create_timer(0.02, self._fizik)" in sg, (
+        "fizik adımı 50 Hz'den çıkmış — kadans düzeltmesi dinamiği bozdu")
+
+
+def test_TF_agaci_golde_YAYINLANIYOR():
+    """🔴 Gölde `/tf_static` YAYINCI 0'dı; dağıtımda üç static TF var."""
+    m = _kos_komutlari()
+    assert "static_transform_publisher" in m, "gölde TF ağacı yok"
+    for cerceve in ("livox_frame", "oak_frame", "imu_link"):
+        assert cerceve in m, f"{cerceve} TF'i gölde yayınlanmıyor"
+
+
+def test_TF_degerleri_ELLE_yazilmamis_hardware_yaml_okunuyor():
+    """Tek kaynak kuralı: sayı iki yerde yaşarsa göl yanlış montajı yansıtır.
+
+    (ör. oak yaw = +0,0415 rad, 11.08'de şeritle ÖLÇÜLDÜ.)
+    """
+    m = _kos_komutlari()
+    assert "hardware.yaml" in m, "TF değerleri hardware.yaml'dan okunmuyor"
+    assert "0.0415" not in m, "ölçülmüş TF değeri betiğe elle kopyalanmış"

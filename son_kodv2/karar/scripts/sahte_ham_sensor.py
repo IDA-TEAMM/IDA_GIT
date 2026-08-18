@@ -122,7 +122,21 @@ class SahteHamSensor(Node):
             Detection3DArray, "/gercek/classified_obstacles",
             self._on_gercek_sinif, 10,
         )
-        self.create_timer(0.1, self._tick)      # 10 Hz — Livox/OAK kadansı
+        # 🔴 18.08.2026 — LiDAR ve KAMERA AYRI KADANSTA. Tek 10 Hz timer
+        # ikisini de aynı anda basıyordu; GERÇEKTE öyle değil:
+        #   · Livox Mid-360 : 10 Hz
+        #   · OAK-D + YOLO  : `duba_gecis_navigator.FPS = 8` (12.08'de 11→8,
+        #     NN girişi 512'ye çıkınca). Yani kamera LiDAR'dan YAVAŞ.
+        # Bu fark önemsiz değil: füzyon `ApproximateTimeSynchronizer` ile
+        # eşleştiriyor ve yavaş olan taraf hızlı olanın karelerini DÜŞÜRÜYOR.
+        # Aynı timer'da basmak o kaybı gölden gizliyordu — gölün amacı
+        # gerçeği yansıtmak, kolaylaştırmak değil.
+        self.declare_parameter("lidar_hz", 10.0)
+        self.declare_parameter("kamera_hz", 8.0)
+        _l = float(self.get_parameter("lidar_hz").value)
+        _k = float(self.get_parameter("kamera_hz").value)
+        self.create_timer(1.0 / _l, self._tick_lidar)
+        self.create_timer(1.0 / _k, self._tick_kamera)
 
         self.get_logger().info(
             f"sahte_ham_sensor aktif: /gercek/* → /livox/lidar + "
@@ -214,19 +228,23 @@ class SahteHamSensor(Node):
 
     # ----------------------------------------------------------------- tick
 
-    def _tick(self) -> None:
+    def _tick_lidar(self) -> None:
+        """Livox Mid-360 kadansı (10 Hz)."""
         if not self._son_engeller:
             return
-        simdi = self.get_clock().now().to_msg()
-
         h = Header()
-        h.stamp = simdi
+        h.stamp = self.get_clock().now().to_msg()
         h.frame_id = "base_link"
         noktalar = self._bulut_uret()
         self._pub_cloud.publish(
             point_cloud2.create_cloud_xyz32(h, noktalar.tolist())
         )
 
+    def _tick_kamera(self) -> None:
+        """OAK-D kadansı (8 Hz) — LiDAR'dan BAĞIMSIZ damga."""
+        if not self._son_engeller:
+            return
+        simdi = self.get_clock().now().to_msg()
         kare = self._kare_uret()
         img = Image()
         img.header.stamp = simdi

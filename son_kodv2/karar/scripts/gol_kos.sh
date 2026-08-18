@@ -93,6 +93,34 @@ AR="-p ariza_poz_sicramasi_m:=${GIRDAP_ARIZA_SICRAMA:-0.0}
     -p ariza_kesinti_t_s:=${GIRDAP_ARIZA_KESINTI:-0.0}
     -p ariza_govde_yansimasi_m:=${GIRDAP_ARIZA_GOVDE:-0.0}"
 
+# ── STATİK TF AĞACI (18.08.2026 — GÖLDE HİÇ YOKTU) ────────────────────────
+# 🔴 Ölçüldü: gölde `/tf` ve `/tf_static` YAYINCI 0. Dağıtımda
+# `hardware.launch` üç static TF basıyor (base_link → livox_frame / oak_frame
+# / imu_link) ve değerler `hardware.yaml tf:` bloğunda ÖLÇÜLMÜŞ montaj
+# sayıları (ör. oak yaw = +0,0415 rad, 11.08'de şeritle ölçüldü).
+# TF olmadan tf2 sorgusu yapan her yol gölde sessizce farklı davranır.
+# Değerler TEK KAYNAKTAN (hardware.yaml) okunur — burada elle sayı YAZILMAZ,
+# yoksa ayrışır ve göl yanlış montajı yansıtır.
+HW="$HOME/IDA_GIT/son_kodv2/karar/ros2_ws/src/girdap_decision/config/hardware.yaml"
+tf_bas() {   # $1 = cocuk cerceve
+    local c="$1"
+    local v
+    v="$(python3 - "$HW" "$c" <<'PYTF'
+import sys, yaml
+tf = (yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or {}).get("tf", {})
+d = tf.get(sys.argv[2]) or {}
+print(" ".join(str(float(d.get(k, 0.0)))
+                for k in ("x", "y", "z", "yaw", "pitch", "roll")))
+PYTF
+)"
+    set -- $v
+    basla "tf_$c" ros2 run tf2_ros static_transform_publisher \
+        --x "$1" --y "$2" --z "$3" --yaw "$4" --pitch "$5" --roll "$6" \
+        --frame-id base_link --child-frame-id "$c"
+}
+tf_bas livox_frame; tf_bas oak_frame; tf_bas imu_link
+echo "  + TF: base_link → livox_frame · oak_frame · imu_link (hardware.yaml)"
+
 basla sanal_gol python3 "$S/sanal_gol.py" --ros-args $SG_REMAP $AR $DYN \
     -p kapi_sayisi:="$KAPI" -p kapi_acikligi_m:="$ACIK" \
     -p kapi_araligi_m:="$ARALIK" -p engel_sayisi:="$ENGEL" \
@@ -139,17 +167,27 @@ basla planning ros2 run girdap_decision planning_node --ros-args --params-file "
 # aynı topic'e basarsa füzyon hangisini aldığını bilemez.
 if [ "${GIRDAP_GOL_ALGI:-0}" = "1" ]; then
     # Remap YOK: bu dugum zaten /gercek/* dinliyor (remap sanal_gol'de).
-    # 🔴 KAMERA ÇÖZÜNÜRLÜĞÜ 512x512 (ölçümle seçildi, keyfî değil):
-    # Varsayılan 1280x720 → kare 2,7 MB → 10 Hz'te 27 MB/s. DDS bunu
-    # taşıyamıyor: ÖLÇÜLDÜ, abone kareleri ~1 Hz alıyordu ⇒ `/perception/buoys`
-    # 4,85 yerine 1,71 Hz'e düştü ve LiDAR karelerinin %64,9'u füzyonda
-    # eşleşemedi. Darboğaz tespit değil (13,7 ms/kare = 73 Hz tavan), TAŞIMA.
-    # 512x512 dağıtımın NN girdisidir (4:3 → 1:1 SIKIŞTIRMA sözleşmesi) ⇒
-    # hem 3,4× hafif hem de düğümün gerçekte gördüğü çözünürlük.
-    # ⚠ Gerçek teknede görüntü DDS'ten HİÇ geçmez (depthai USB ile aynı
-    # sürece verir); bu taşıma yalnız gölde vardır.
+    # 🔴 KAMERA: KADANS gerçek (8 Hz), ÇÖZÜNÜRLÜK gölün taşıma sınırı.
+    #
+    # Gerçekte görüntü DDS'ten **HİÇ GEÇMEZ** — depthai onu USB'den aynı
+    # sürece verir. Gölde iki ayrı süreç olduğu için DDS'e girmek zorunda ve
+    # orada ham görüntü çok pahalı:
+    #     1280×720 → 2,7 MB/kare ⇒ abone ~1 Hz alıyordu
+    #      512×512 → 786 KB/kare ⇒ abone 4,25 Hz (yayıncı 8,11)
+    #      256×256 → 196 KB/kare ⇒ `net.core.rmem_max` (208 KB) İÇİNDE
+    # Kök neden ölçüldü: tek kare soket tamponundan büyükse FastDDS
+    # parçaları toparlayamıyor. Kalıcı çözüm `sysctl net.core.rmem_max`
+    # büyütmek (root ister; Jetson kurulumunda YAPILMALI).
+    #
+    # 🔑 Neyi koruduğumuz önemli: **KADANS ve ZAMANLAMA** gerçek (8 Hz kamera
+    # ↔ 10 Hz LiDAR) — kapı zincirini bozan şey odur. Çözünürlük yalnız
+    # tespit hassasiyetini etkiler, onu da bu kip zaten sınamıyor (YOLO
+    # yerine renk eşiği koşuyor). bbox NORMALİZE olduğu için ölçekten
+    # bağımsız. `GIRDAP_GOL_KAM_PX=512` ile büyütülebilir (kare kaybı pahasına).
     basla ham_sensor python3 "$S/sahte_ham_sensor.py" --ros-args \
-        -p kamera_genislik_px:=512 -p kamera_yukseklik_px:=512
+        -p kamera_genislik_px:="${GIRDAP_GOL_KAM_PX:-256}" \
+        -p kamera_yukseklik_px:="${GIRDAP_GOL_KAM_PX:-256}" \
+        -p kamera_hz:=8.0 -p lidar_hz:=10.0
     basla p_lidar  ros2 run girdap_decision perception_lidar_node --ros-args --params-file "$P"
     basla p_fusion ros2 run girdap_decision perception_fusion_node --ros-args --params-file "$P"
 
