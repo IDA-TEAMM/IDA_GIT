@@ -52,7 +52,11 @@ KAPI="${1:-8}"
 # mesafeler "yarışma alanına göre değişkenlik gösterecektir" (s.20).
 # ACIK=0 → her kapı BANTTAN çekilir (gerçekçi, VARSAYILAN).
 # ACIK>0 → bütün kapılar o genişlikte (A/B / regresyon için).
-ACIK="${2:-0}"; ARALIK="${3:-4.0}"; ENGEL="${4:-4}"
+ACIK="${2:-0}"
+# ARALIK=0 → Şekil 3 oranından (0,80 × genişlik) türetilir. Eski sabit 4,0 m
+# ~10 m kapıda oran 0,40 demekti = Şekil 3'ün yarısı kadar sık.
+ARALIK="${3:-0}"; ENGEL="${4:-4}"
+ARALIK="$(printf '%.2f' "$ARALIK")"
 ACIK="$(printf '%.2f' "$ACIK")"
 # 5./6. argüman: dalga bozucusu (yanal sürüklenme m/s · yaw rad/s) — 0 = kapalı
 DALGA="${5:-0.0}"; DALGA_YAW="${6:-0.0}"

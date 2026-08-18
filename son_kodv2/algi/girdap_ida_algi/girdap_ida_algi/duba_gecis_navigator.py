@@ -1946,6 +1946,10 @@ class DubaNavigator(Node):
         varsayımıyla zaman saymak geçilmemiş geçidi 'geçildi' sayabilir.
         Zaman burada sadece SON ÇARE aşımıdır; TF alınamazsa eski davranışa düşer.
         """
+        # TEŞHİS izleyicisi: bu geçiş boyunca ulaşılan EN İYİ değerler.
+        # Zaman aşımında hangi koşulun düştüğü ÖLÇÜLEREK raporlanır.
+        self._gecis_en_ileri = -math.inf
+        self._gecis_en_yanal = math.inf
         self.durum = "GECIS"
         self.son_gecit = None
         # İki duba merkezi arası mesafenin yarısı — "dubaların ARASINDAN mı
@@ -1999,6 +2003,13 @@ class DubaNavigator(Node):
                     gecti = gm.gecitten_gecti(
                         p[0], p[1], mx, my, nx, ny, -ny, nx,
                         self.gecit_yari_gen, PASS_EK_YOL)
+                    # TEŞHİS: bileşenleri izle (karar yolunu DEĞİŞTİRMEZ).
+                    _ileri, _yanal = gm.gecis_bilesenleri(
+                        p[0], p[1], mx, my, nx, ny, -ny, nx)
+                    self._gecis_en_ileri = max(
+                        getattr(self, "_gecis_en_ileri", -math.inf), _ileri)
+                    self._gecis_en_yanal = min(
+                        getattr(self, "_gecis_en_yanal", math.inf), _yanal)
                 if not gecti:
                     if simdi < self.pass_bitis_t:
                         self.durum_log()
@@ -2022,9 +2033,28 @@ class DubaNavigator(Node):
                             "Sürekli görülüyorsa /girdap/fusion/odom akışına bak.")
                         # aşağı düş → geçit sayımı
                     else:
+                        # 🔑 TAHMİN DEĞİL ÖLÇÜM (19.08.2026). Eski mesaj
+                        # "MPPI takılmış olabilir" diyordu; hangi koşulun
+                        # düştüğünü söylemiyordu. İki sebep bambaşka arızadır:
+                        #   DUZLEMI_ASMADI → araç kapıya hiç varamadı
+                        #   YANDAN_DOLASTI → vardı ama dubaların arasından
+                        #                    değil (nişan noktası kayması)
+                        _ei = getattr(self, "_gecis_en_ileri", float("-inf"))
+                        _ey = getattr(self, "_gecis_en_yanal", float("inf"))
+                        _sebep = gm.gecis_red_sebebi(
+                            _ei, _ey, self.gecit_yari_gen, PASS_EK_YOL)
+                        self._tani[f"gecis_red_{_sebep}"] = (
+                            self._tani.get(f"gecis_red_{_sebep}", 0) + 1)
+                        # ⚠ "DOĞRULAMADI" ibaresi KORUNUYOR: ekibin
+                        # `test_odom_bayatligi.py` regresyonu bu anahtar
+                        # kelimeye bağlı (ortak alan kuralı — başkasının
+                        # testini kırmadan zenginleştir).
                         self.get_logger().warn(
-                            "Geçiş zaman aşımı — odometri geçişi DOĞRULAMADI, sayılmadı. "
-                            "(MPPI takılmış olabilir: obstacle_margin / engel haritasına bak)")
+                            "Geçiş zaman aşımı — odometri geçişi DOĞRULAMADI, "
+                            f"sayılmadı. SEBEP: {_sebep} · "
+                            f"en ileri {_ei:+.2f} m (gerekli > {PASS_EK_YOL:.2f}) · "
+                            f"en yakın yanal {_ey:.2f} m (gerekli ≤ "
+                            f"{self.gecit_yari_gen if self.gecit_yari_gen else float('nan'):.2f})")
                         self.gecit_cizgi = None
                         self.duruma_gec("ARAMA")
                         self.durum_log()

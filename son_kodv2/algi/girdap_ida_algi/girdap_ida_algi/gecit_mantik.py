@@ -343,6 +343,40 @@ def gecilebilir_mi(merkez_mesafe, hull_en, duba_cap: float = DUBA_CAP_M) -> bool
     return (merkez_mesafe - duba_cap) >= hull_en
 
 
+def gecis_bilesenleri(px, py, mx, my, nx, ny, tx, ty):
+    """Aracın geçide göre (ileri, |yanal|) izdüşümü — TEŞHİS için.
+
+    🔴 NEDEN VAR (19.08.2026): `gecitten_gecti` yalnız True/False döndürüyor.
+    Geçiş sayılmadığında log *"MPPI takılmış olabilir"* diye **tahmin
+    yürütüyordu** — oysa iki bağımsız sebep var ve ayrımı ÖLÇÜLEBİLİR:
+
+        ① ileri ≤ ek_yol      → araç geçit düzlemini HİÇ AŞMADI
+                                 (kontrol/planlama duruyor ya da yavaş)
+        ② |yanal| > yarı_gen  → araç geçti ama DUBALARIN ARASINDAN değil,
+                                 YANDAN dolaştı (nişan noktası kayması)
+
+    İkisi bambaşka arızalar ve bambaşka düzeltmeler ister. Hangisi olduğunu
+    bilmeden "kapıdan geçmiyor" sorusu çözülemez — sahada da, gölde de.
+    """
+    ileri = (px - mx) * nx + (py - my) * ny
+    yanal = abs((px - mx) * tx + (py - my) * ty)
+    return float(ileri), float(yanal)
+
+
+def gecis_red_sebebi(ileri, yanal, yari_genislik, ek_yol) -> str:
+    """Ölçülen izdüşümlerden red sebebini ADLANDIR (saf, test edilebilir).
+
+    Döner: "GECTI" | "DUZLEMI_ASMADI" | "YANDAN_DOLASTI" | "IKISI_DE"
+    """
+    duzlem = ileri > ek_yol
+    arasindan = (yari_genislik is None) or (yanal <= yari_genislik)
+    if duzlem and arasindan:
+        return "GECTI"
+    if not duzlem and not arasindan:
+        return "IKISI_DE"
+    return "DUZLEMI_ASMADI" if not duzlem else "YANDAN_DOLASTI"
+
+
 def gecitten_gecti(px, py, mx, my, nx, ny, tx, ty, yari_genislik, ek_yol) -> bool:
     """Araç geçidin ARASINDAN mı geçti? (yalnız düzlemi aşmak YETMEZ)
 

@@ -86,7 +86,20 @@ class SanalGol(Node):
         self.declare_parameter("kapi_acik_max_m", 12.0)
         #: >0 ise bandı EZER ve bütün kapılar bu genişlikte olur (A/B için).
         self.declare_parameter("kapi_acikligi_m", 0.0)
-        self.declare_parameter("kapi_araligi_m", 4.0)
+        # 📐 ARALIK/GENİŞLİK ORANI = 0,80 (Şekil 3 Parkur-1'den ÖLÇÜLDÜ,
+        # 18.08.2026): 16 duba merkezden bulundu, çiftler ÜRETİM ÖLÇÜTÜYLE
+        # (`|Δileri| < |Δyanal|`, kurs yönü GN1→GN4 segmentlerinden) seçildi
+        # → genişlik ortanca 60,3 px · aralık ortanca 48,5 px.
+        # ⚠ Görsel "temsili" ⇒ oran TASARIM İŞARETİ, garanti değil. Ama
+        # mutlak metreden güvenilir: oran ölçekten bağımsızdır.
+        # 🔴 Göl 4,0 m sabit aralık kullanıyordu = ~10 m kapıda oran 0,40,
+        # yani Şekil 3'ün YARISI kadar sık. Sık kapı, `|Δileri|<|Δyanal|`
+        # ölçütünü zorlaştırır (ardışık kapıların dubaları yan yana görünür)
+        # ⇒ `dizili` reddi şişer. 18.08 ölçümünde red 621, topoloji
+        # düzeltmesiyle 207'ye indi — aralık da bandına oturtulmalı.
+        # 0 = orandan türet (VARSAYILAN) · >0 = sabit metre (A/B).
+        self.declare_parameter("kapi_aralik_orani", 0.80)
+        self.declare_parameter("kapi_araligi_m", 0.0)
         self.declare_parameter("zigzag_m", 5.0)
         self.declare_parameter("gercek_gn", True)      # §0.17b'nin kaçık GN'leri
         n = int(self.get_parameter("kapi_sayisi").value)
@@ -94,6 +107,9 @@ class SanalGol(Node):
         acik_min = float(self.get_parameter("kapi_acik_min_m").value)
         acik_max = float(self.get_parameter("kapi_acik_max_m").value)
         aralik = float(self.get_parameter("kapi_araligi_m").value)
+        if aralik <= 0.0:                     # orandan türet
+            _ortW = (acik_sabit if acik_sabit > 0.0 else (acik_min + acik_max) / 2.0)
+            aralik = _ortW * float(self.get_parameter("kapi_aralik_orani").value)
         zig = float(self.get_parameter("zigzag_m").value)
 
         # ── PARKUR-1 TOPOLOJİSİ (Şekil 3'ten okundu, 18.08.2026) ─────────
