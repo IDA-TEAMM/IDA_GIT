@@ -610,14 +610,16 @@ def test_GERI_GIDEN_yorunge_elenir_FREN_ELENMEZ() -> None:
     traj[1, :, 3] = +0.5                       # ileri — itki negatif olsa da
     U = np.zeros((2, T, 2))
     U[1, :, :] = -1.0                          # 1. yörünge TAM GERİ İTKİ (fren)
-    maliyet = k._trajectory_cost(traj, U)
+    maliyet = np.asarray(k._as_numpy(
+        k._trajectory_cost(k.xp.asarray(traj), k.xp.asarray(U))))
     fark = float(maliyet[0] - maliyet[1])
     assert fark >= _YASAK_MALIYET * 0.9, (
         f"geri GİDEN yörünge elenmedi (maliyet farkı {fark:.1f})")
     # Ölü bandın İÇİNDE kalan minik geri kayma elenMEmeli.
     traj2 = traj.copy()
     traj2[0, :, 3] = -_GERI_HIZ_OLU_BANT / 2.0
-    m2 = k._trajectory_cost(traj2, U)
+    m2 = np.asarray(k._as_numpy(
+        k._trajectory_cost(k.xp.asarray(traj2), k.xp.asarray(U))))
     assert float(m2[0] - m2[1]) < _YASAK_MALIYET * 0.5, (
         "ölü bant içindeki gürültü 'geri gidiş' sayıldı")
 
