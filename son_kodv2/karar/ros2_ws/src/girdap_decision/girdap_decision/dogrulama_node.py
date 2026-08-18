@@ -83,7 +83,9 @@ class DogrulamaIzleyici(Node):
         self.declare_parameter("bayat_esigi_s", 5.0)
 
         self._ob: Dict[str, object] = {}      # topic -> son mesaj
-        self._t_son: Dict[str, float] = {}    # topic -> varış (monotonic)
+        self._t_son: Dict[str, float] = {}    # topic -> varış (tek yönlü saat)
+        #: topic -> son N periyot örneği (callback'te biriktirilir, bkz. `_yakala`)
+        self._periyot: Dict[str, list] = {}
         self._grup = MutuallyExclusiveCallbackGroup()
         self._bayat_esigi = float(self.get_parameter("bayat_esigi_s").value)
         # ⏱️ §0.61 TEK YÖNLÜ SAAT — düz monotonik saat DOĞRUDAN kullanılmaz:
@@ -133,8 +135,23 @@ class DogrulamaIzleyici(Node):
 
     def _yakala(self, topic: str):
         def _cb(msg):
+            simdi = self._saat()
+            # 🔴 PERİYOT CALLBACK'TE BİRİKTİRİLİR, timer'da DEĞİL (18.08).
+            # İlk sürümde B1 periyodu 5 Hz'lik değerlendirme timer'ında
+            # okuyordu; 10 Hz'lik `thrust` arasında İKİ mesaj geçiyordu ve
+            # ölçülen periyot **202 ms** çıkıyordu — oysa `ros2 topic hz`
+            # 10,007 Hz (100 ms) diyordu. Klasik örnekleme (Nyquist) hatası:
+            # gözlemci gözlediğinden yavaş örneklerse sonucu KENDİ kadansı
+            # belirler. Literatür de aynı yeri işaret ediyor: gecikme
+            # ABONE CALLBACK'inde ölçülür.
+            onceki = self._t_son.get(topic)
+            if onceki is not None:
+                d = simdi - onceki
+                if d > 0:
+                    self._periyot.setdefault(topic, []).append(d)
+                    del self._periyot[topic][:-20]      # son 20 örnek
             self._ob[topic] = msg
-            self._t_son[topic] = self._saat()
+            self._t_son[topic] = simdi
         return _cb
 
     # ───────────────────────────── bağlantılar ─────────────────────────────
@@ -232,6 +249,24 @@ class DogrulamaIzleyici(Node):
                 self._durum_son, self._durum_basi = d, simdi
             return (simdi - getattr(self, "_durum_basi", simdi), d)
 
+        def _dongu_periyodu(_):
+            """B1 — kontrol döngüsünün GERÇEK adım süresi.
+
+            🔑 Ölçüt `/girdap/control/thrust` yayın periyodudur; bu, KAR-11'in
+            sahada kullandığı metriğin BİREBİR aynısı (`_publish_thrust`
+            kontrol adımının içinden çağrılıyor). Farklı bir ölçüt seçseydik
+            gölün bulduğu ile sahanın bulduğu kıyaslanamazdı.
+
+            KAR-11'de ölçülen: 117 ms → 1.062 ms (9,1× bozulma), hedef 100 ms.
+            """
+            ornekler = self._periyot.get("/girdap/control/thrust")
+            if not ornekler:
+                return None
+            # EN KÖTÜ örnek raporlanır (ortalama değil): tek bir 1 saniyelik
+            # takılma ortalamada kaybolur ama komutu hesaplandığı andan
+            # koparmak için YETER. KAR-11 de bozulmayı uçlardan gördü.
+            return (max(ornekler), 1.0 / 10.0)   # (ölçülen, nominal 10 Hz)
+
         def _topic_akis(topic: str, periyot: float):
             def _f(_):
                 t = self._t_son.get(topic)
@@ -249,6 +284,7 @@ class DogrulamaIzleyici(Node):
             (sozlesme.S1, ["/perception/buoys"], _buoys_damga),
             (sozlesme.S2, ["/perception/buoys"], _buoys_sinif),
             (sozlesme.S5, ["/perception/buoys"], _buoys_cerceve),
+            (butce.B1, ["/girdap/control/thrust"], _dongu_periyodu),
             (canlilik.C1, ["/girdap/control/thrust"], _itki_sifir),
             (canlilik.C2, ["/girdap/mission/state"], _durum_sure),
             (canlilik.C3, ["/perception/buoys"],

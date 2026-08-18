@@ -26,7 +26,10 @@
 # Kullanım:
 #     bash jetson_taklit.sh gol_kos.sh 4 12.0 4.0 2
 #     GIRDAP_JETSON_KAT=3.0 bash jetson_taklit.sh ...   (elle oran)
-set -e
+# 🪤 `set -e` KULLANILMIYOR (18.08): bu sarmalayıcı `pgrep`/`kill`/`taskset`
+# gibi "bulamadım" durumunda SIFIRDAN FARKLI dönen komutlar çağırıyor.
+# `set -e` ile betik hiç çıktı vermeden ölüyordu ve sebebi görünmüyordu —
+# tam da gölün ayıklamak istediği "sessiz ölüm" sınıfı.
 S="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 KAT="${GIRDAP_JETSON_KAT:-2.51}"     # ölçülen oran (yukarıdaki çapa)
@@ -50,11 +53,23 @@ fi
 # doğrudan sürece uygulanır; yoksa rakip yük (spin) ile aynı etki üretilir.
 # ⚠ Rakip yük yöntemi GÜRÜLTÜLÜDÜR (zamanlayıcıya bağlı) — ölçüm alırken
 # tercih `cpulimit`tir.
+# 🪤 TRAP TASARIM KUSURU (18.08, ölçümle bulundu):
+# `gol_kos.sh` düğümleri ARKA PLANDA başlatıp HEMEN dönüyor. `trap ... EXIT`
+# ile rakip yükü sarmalayıcı çıkarken öldürüyorduk ⇒ göl ayaktayken ZARF
+# KAYBOLUYORDU. Ölçüldü: 14 düğüm koşuyor ama yük süreci 0 — yani "Jetson
+# zarfında koştu" sanılan koşum aslında MASAÜSTÜ hızındaydı. Sessiz ve
+# tamamen yanıltıcı bir ölçüm; gölün ayıklamak istediği sınıfın ta kendisi.
+#
+# Doğrusu: yük gölün ömrü boyunca yaşar ve `jetson_yuk_dur.sh` ile ölür.
+# PID'ler göl log dizinine yazılır. INT/TERM'de (elle Ctrl-C) yine temizlenir
+# — yalnız EXIT'te DEĞİL.
 YUK_PIDS=()
+YUK_DOSYA="${GIRDAP_GOL_LOG:-$HOME/girdap_logs/gol}/jetson_yuk.pids"
 temizle() {
-    for p in "${YUK_PIDS[@]}"; do kill "$p" 2>/dev/null || true; done
+    for p in "${YUK_PIDS[@]}"; do kill "$p" 2>/dev/null; done
+    rm -f "$YUK_DOSYA"
 }
-trap temizle EXIT INT TERM
+trap temizle INT TERM
 
 if [ "${GIRDAP_JETSON_YUK:-1}" = "1" ]; then
     # 🔴 RAKİP YÜK SAYISI KALİBRE EDİLDİ (ölçümle, formülle DEĞİL).
@@ -73,19 +88,36 @@ if [ "${GIRDAP_JETSON_YUK:-1}" = "1" ]; then
 while True: pass" >/dev/null 2>&1 &
         YUK_PIDS+=($!)
     done
+    mkdir -p "$(dirname "$YUK_DOSYA")"
+    printf "%s\n" "${YUK_PIDS[@]}" > "$YUK_DOSYA"
     echo "  🔧 rakip yük: $N çekirdek meşgul (oran %$(python3 -c "print(int($ORAN*100))"))"
 fi
 
-# ── 3) BELLEK TAVANI — 8 GB paylaşımlı ───────────────────────────────────
-# Orin Nano'da bellek CPU+GPU ORTAK. MPPI'nin engel tensörü N=2000'de 1,6 GB
-# (F-M.2 ölçümü) ⇒ burada sığan, orada OOM olabilir. `ulimit -v` sanal
-# bellek tavanı koyar; aşan süreç MemoryError alır — sessiz OOM yerine
-# GÖRÜNÜR hata.
-ulimit -v $((BELLEK_MB * 1024)) 2>/dev/null || \
-    echo "  ⚠ ulimit -v uygulanamadı (bellek tavanı YOK)"
+# ── 3) BELLEK — 🔴 TAVAN UYGULANMIYOR, SEBEBİ ÖLÇÜLDÜ ────────────────────
+# İlk sürüm `ulimit -v $((BELLEK_MB*1024))` koyuyordu. ÇALIŞMADI: kabuk ve
+# alt süreçler **exit 144** ile ölüyordu.
+# Kök neden (ölçüldü): `ulimit -v` **SANAL adres alanını** (VSZ) sınırlar,
+# fiziksel kullanımı değil. numpy/DDS/CUDA büyük sanal alan ayırır ama
+# çoğunu KULLANMAZ ⇒ 8 GB VSZ tavanı gerçek 8 GB RAM'i taklit ETMEZ,
+# yalnız süreci erken öldürür. Yanlış araç.
+#
+# Doğru araçlar (bu makinede kurulu değil, saha için not):
+#   · cgroup v2 `memory.max` — GERÇEK fiziksel tavan, OOM killer ile
+#   · `systemd-run --scope -p MemoryMax=8G`
+#   · en dürüstü: Jetson'ın kendisinde koşturmak
+#
+# ⚠ Bu yüzden bellek zarfı ŞU AN TAKLİT EDİLMİYOR. MPPI'nin engel tensörü
+# N=2000'de 1,6 GB (F-M.2) ⇒ burada sığan, Orin'de OOM olabilir ve bu göl
+# onu YAKALAMAZ. Kural motorundaki R1 (kaynak tükenmesi) hâlâ yazılmadı.
+if [ "${GIRDAP_JETSON_BELLEK:-0}" = "1" ]; then
+    echo "  ⚠ bellek tavanı istendi ama ulimit -v YANLIŞ ARAÇ (bkz. yorum)"
+fi
 
 echo "🔵 JETSON TAKLİDİ: ${CEKIRDEK} çekirdek · yavaşlatma ${KAT}× · bellek ${BELLEK_MB} MB"
 echo "   (çapa: gerçek Jetson 128 ms ↔ bu makine 51,2 ms, KAR-11 ölçümü)"
 
 KOMUT="$1"; shift
 $ONEK bash "$S/$KOMUT" "$@"
+DURUM=$?
+echo "  ⏹  zarfı kaldırmak için: bash $S/jetson_yuk_dur.sh"
+exit $DURUM

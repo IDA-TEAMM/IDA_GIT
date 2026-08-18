@@ -116,6 +116,20 @@ def test_C1_yalniz_GOREV_AKTIFKEN_degerlendirilir():
     assert "return None" in blok, "görev aktif değilken muaf tutulmuyor"
 
 
+def test_B1_dongu_periyodu_SAHADAKI_metrikle_AYNI():
+    """🔑 B1 `/girdap/control/thrust` yayın periyodunu ölçmeli.
+
+    KAR-11 sahada tam bu metriği kullandı (117 ms → 1.062 ms, 9,1× bozulma).
+    Farklı bir ölçüt seçilseydi gölün bulduğu ile sahanın bulduğu
+    KIYASLANAMAZDI — ve "sistem kaldırmıyor" sorusu gölde hiç görünmezdi.
+    """
+    assert "butce.B1" in _KAYNAK, "B1 izleyiciye bağlı değil"
+    i = _KAYNAK.index("def _dongu_periyodu")
+    blok = _KAYNAK[i:i + 900]
+    assert "/girdap/control/thrust" in blok, "B1 yanlış topic'i ölçüyor"
+    assert "1.0 / 10.0" in blok, "nominal 10 Hz bütçesi verilmemiş"
+
+
 def test_setup_py_entry_pointu_KAYITLI():
     sp = io.open(_KOK / "ros2_ws/src/girdap_decision/setup.py", encoding="utf-8").read()
     assert "dogrulama_node = girdap_decision.dogrulama_node:main" in sp

@@ -69,13 +69,51 @@ def test_SINIRLAR_acikca_yazili():
     assert "Jetson'ın kendisinde ölçülür" in _METIN
 
 
-def test_yuk_surecleri_TEMIZLENIYOR():
-    """Sızan spin süreci makineyi kalıcı yavaşlatır — hayalet düğüm dersi."""
-    assert "trap temizle EXIT INT TERM" in _METIN
+def test_yuk_gol_omru_boyunca_YASAR_ama_temizlenebilir():
+    """🪤 TRAP TASARIM KUSURU (18.08, ölçümle bulundu).
+
+    `gol_kos.sh` düğümleri ARKA PLANDA başlatıp hemen dönüyor. `trap ... EXIT`
+    ile rakip yükü sarmalayıcı çıkarken öldürüyorduk ⇒ **14 düğüm koşuyor ama
+    yük süreci 0** — yani "Jetson zarfında koştu" sanılan koşum aslında
+    MASAÜSTÜ hızındaydı. Sessiz ve tamamen yanıltıcı bir ölçüm.
+
+    Doğrusu: yük gölün ömrü boyunca yaşar, ayrı betikle öldürülür.
+    Test iki yönü de dondurur: EXIT'te ÖLMEZ, ama INT/TERM'de ve
+    `jetson_yuk_dur.sh` ile ölür (sızan spin makineyi kalıcı yavaşlatır).
+    """
+    assert "trap temizle INT TERM" in _METIN
+    assert "trap temizle EXIT" not in _METIN, "EXIT trap'i zarfı öldürür"
     assert 'kill "$p"' in _METIN
+    assert "jetson_yuk.pids" in _METIN, "PID'ler kalıcı dosyaya yazılmıyor"
+
+    dur = _KOK / "scripts/jetson_yuk_dur.sh"
+    assert dur.exists(), "yükü durduran betik yok"
+    metin = io.open(dur, encoding="utf-8").read()
+    assert "jetson_yuk.pids" in metin and "pkill" in metin
 
 
-def test_bellek_TAVANI_sessiz_OOM_yerine_GORUNUR_hata():
-    """Orin'de bellek CPU+GPU ortak; MPPI tensörü N=2000'de 1,6 GB."""
-    assert "ulimit -v" in _METIN
-    assert "MemoryError" in _METIN or "GÖRÜNÜR" in _METIN
+def test_set_e_KULLANILMIYOR():
+    """Sarmalayıcı `pgrep`/`kill` gibi 'bulamadım'da sıfırdan farklı dönen
+    komutlar çağırıyor; `set -e` ile betik HİÇ ÇIKTI VERMEDEN ölüyordu."""
+    assert not any(l.strip() == "set -e" for l in _METIN.splitlines())
+    assert "`set -e` KULLANILMIYOR" in _METIN
+
+
+def test_bellek_tavani_UYGULANMIYOR_ve_SEBEBI_yazili():
+    """🪤 `ulimit -v` YANLIŞ ARAÇ — ölçüldü, kabuk exit 144 ile ölüyordu.
+
+    `-v` SANAL adres alanını (VSZ) sınırlar, fiziksel kullanımı değil.
+    numpy/DDS/CUDA büyük sanal alan ayırır ama çoğunu kullanmaz ⇒ 8 GB VSZ
+    tavanı gerçek 8 GB RAM'i taklit ETMEZ, yalnız süreci erken öldürür.
+
+    Test iki şeyi birden dondurur: (a) tavan uygulanmıyor, (b) sebebi ve
+    doğru araçlar yazılı — biri "eksik" sanıp geri eklemesin.
+    """
+    import re
+    # Etkin `ulimit -v` satırı OLMAMALI (yorumda geçmesi serbest)
+    etkin = [l for l in _METIN.splitlines()
+             if l.strip().startswith("ulimit -v")]
+    assert not etkin, f"etkin ulimit -v satırı var: {etkin}"
+    assert "SANAL adres alanını" in _METIN, "sebep yazılmamış"
+    assert "cgroup" in _METIN, "doğru araç önerilmemiş"
+    assert "R1" in _METIN, "kalan boşluk (kaynak tükenmesi kuralı) not edilmemiş"
