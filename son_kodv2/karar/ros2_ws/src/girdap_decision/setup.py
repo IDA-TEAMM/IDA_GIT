@@ -58,6 +58,9 @@ setup(
             "perception_lidar_node = girdap_decision.perception_lidar_node:main",
             "perception_fusion_node = girdap_decision.perception_fusion_node:main",
             "kamikaze_param_node = girdap_decision.kamikaze_param_node:main",
+            # Salt-okur dogrulama izleyicisi (runtime verification).
+            # Sistem topic'lerine YAZMAZ; yalniz /girdap/dogrulama* yayinlar.
+            "dogrulama_node = girdap_decision.dogrulama_node:main",
             "mock_sensors = girdap_decision.mock_sensors:main",
             "yarisma_simulasyonu = girdap_decision.yarisma_simulasyonu:main",
         ],
