@@ -725,3 +725,104 @@ def test_parkur_KUNYESI_tek_kaynak():
         "sanal_gol parkur künyesi yazmıyor")
     pdc = (_KOK / "scripts" / "gol_pdc_olc.py").read_text(encoding="utf-8")
     assert "parkur.json" in pdc, "pdc künyeden okumuyor — geometri ayrışır"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 🔑 KAPIDAN NEDEN GEÇMİYOR — SÖZLEŞME UYUMSUZLUĞU (19.08.2026)
+#
+# Ölçüm zinciri (sanal göl, şartname geometrisi):
+#   SEBEP: DUZLEMI_ASMADI · en ileri −0,72 / −1,08 m · yanal 0,00 m
+#   ⇒ nişan MÜKEMMEL hizalı; araç kapı ortasına kadar geliyor ama
+#     düzlemi aşmıyor.
+#
+# Aritmetik:
+#   karar tarafı  : hedef = kapının NİŞAN NOKTASI (`_refine_target` →
+#                   `GateFollower.aim_point`, engel yoksa = geometrik ORTA).
+#                   Nişan kapı KİRİŞİ ÜZERİNDEDİR — ötesinde değil.
+#   varış         : `arrival_radius_m = 2,0` ⇒ araç ortaya 2 m kala
+#                   "vardı" sayılır ve SONRAKİ noktaya döner.
+#   algı şartı    : geçiş sayılması için düzlemi `PASS_EK_YOL = 1,53 m`
+#                   aşmak (kıç da temizlesin diye).
+#   ⇒ AÇIK = 2,0 + 1,53 = 3,53 m. Araç en iyi ihtimalle orta−2 m'de döner.
+#
+# 🔑 Algı ekibi bu tuzağı BİLİYOR: kendi `mppi_hedef` modunda
+# `HEDEF_OTELEME = 2,03 m` ile hedefi kapının ÖTESİNE koyuyor. Ama
+# dağıtımda kullanılan Plan A'da (`MOD = "algi_yayin"`) sürüşü KARAR
+# tarafı yapıyor ve o öteleme YOK.
+#
+# ⚠ Bu dosya davranışı DÜZELTMEZ (düzeltme karar tarafının kararı —
+# ortak alan kuralı). Uyumsuzluğu GÖRÜNÜR ve ÖLÇÜLEBİLİR tutar.
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _algi_sabiti(ad: str) -> float:
+    """Algı düğümünden modül düzeyi sabit (AST — import gerektirmez)."""
+    import ast
+    kaynak = _NAV.read_text(encoding="utf-8")
+    for n in ast.parse(kaynak).body:
+        if isinstance(n, ast.Assign) and any(
+                getattr(t, "id", None) == ad for t in n.targets):
+            try:
+                return float(ast.literal_eval(n.value))
+            except ValueError:
+                # `KAMERA_KIC_MESAFE + 0.5` gibi ifadeler
+                return float(eval(  # noqa: S307 — sabit aritmetik
+                    ast.unparse(n.value),
+                    {"KAMERA_KIC_MESAFE": _algi_sabiti("ARAC_BOY"),
+                     "ARAC_BOY": 1.03}))
+    raise AssertionError(f"algı sabiti bulunamadı: {ad}")
+
+
+def test_gecis_sarti_ile_VARIS_yaricapi_arasindaki_ACIK():
+    """🔑 Kapıdan geçmemenin ölçülmüş sebebi — sayı olarak dondurulur.
+
+    Açık daralırsa (varış yarıçapı küçülür / öteleme eklenir) bu test
+    kırılır ve NOT güncellenmesi gerekir; büyürse durum kötüleşmiştir.
+    """
+    import yaml
+    p = (_KOK / "ros2_ws/src/girdap_decision/config/params.yaml"
+         ).read_text(encoding="utf-8")
+    varis = None
+    for blok in (yaml.safe_load(p) or {}).values():
+        if isinstance(blok, dict):
+            for alt in blok.values():
+                if isinstance(alt, dict) and "arrival_radius_m" in alt:
+                    varis = float(alt["arrival_radius_m"])
+    assert varis is not None, "arrival_radius_m params.yaml'da bulunamadı"
+    ek_yol = _algi_sabiti("PASS_EK_YOL")
+    acik = varis + ek_yol
+    assert acik == pytest.approx(3.53, abs=0.2), (
+        f"varış {varis} + geçiş şartı {ek_yol} = {acik:.2f} m açık — "
+        "sözleşme değişmiş, teşhis notu güncellenmeli")
+
+
+def test_karar_hedefi_kapi_KIRISI_uzerinde_OTESINDE_degil():
+    """Karar tarafı nişanı kiriş üzerinde seçiyor; öteleme YOK.
+
+    Algı `mppi_hedef` modunda `HEDEF_OTELEME` ile ötesine koyuyor — iki
+    yol arasındaki bu fark, geçişin sayılmamasının doğrudan sebebi.
+    """
+    gf = (_KOK / "prototype/mission/gate_follower.py").read_text(
+        encoding="utf-8")
+    assert "aim_point" in gf
+    # nişan kiriş üzerinde: normal yönünde öteleme yapan bir terim OLMAMALI
+    assert "HEDEF_OTELEME" not in gf, (
+        "karar tarafına öteleme eklenmiş — teşhis notu ve bu test "
+        "birlikte güncellenmeli (uyumsuzluk kapanmış olabilir)")
+    oteleme = _algi_sabiti("HEDEF_OTELEME")
+    assert oteleme > 0.0, "algı tarafındaki öteleme kaybolmuş"
+
+
+def test_algi_yayin_modunda_surusu_KARAR_yapiyor():
+    """Plan A'da algı yalnız yayın yapar; hedefi karar tarafı sürer.
+
+    Bu yüzden algının kendi `HEDEF_OTELEME` çözümü Plan A'da DEVREDE DEĞİL.
+    """
+    import ast
+    agac = ast.parse(_NAV.read_text(encoding="utf-8"))
+    mod = next((n.value.value for n in agac.body
+                if isinstance(n, ast.Assign)
+                and any(getattr(t, "id", None) == "MOD" for t in n.targets)),
+               None)
+    assert mod == "algi_yayin", (
+        f"MOD={mod!r} — teşhisin dayanağı değişti")

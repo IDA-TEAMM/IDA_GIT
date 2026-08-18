@@ -143,15 +143,35 @@ class SanalGol(Node):
                     else _grng.uniform(acik_min, acik_max))
             self.kapilar.append((gx, gy, acik / 2.0))
 
-        if bool(self.get_parameter("gercek_gn").value) and n == 8:
-            # §0.17b'nin GN'leri (x↔y çevrilmiş: bizim eksende y=ileri)
-            self.gorev_xy = [(0.0, 2.0), (5.0, 12.0), (-5.0, 20.0), (5.0, 32.0)]
+        # ── GÖREV NOKTALARI (GN) ─────────────────────────────────────────
+        # 📐 Şekil 3: Parkur-1'de **4 GN** (GN1→GN4) ve ~8 kapı var; yani GN
+        # kapıdan SEYREK. Ayrıca hakemin noktası kapı ortasında OLMAYABİLİR
+        # (md 5.5.2.2) — bu KAÇIKLIK kasıtlıdır ve `gate_follower`'ın var
+        # olma sebebidir: araç ham GN'ye değil kapı ortasına gitmeli.
+        #
+        # 🔴 19.08 BULGUSU: §0.17b'nin sabit listesi ESKİ geometriye aitti
+        # (y ≤ 32). Şartname topolojisinde kapılar **y = 62**'ye uzanıyor ⇒
+        # GN'ler parkurun YARISINI kapsıyor, son GN'ye varınca görev bitiyor
+        # ve kapıların yarısı hiç görülmüyor. Kaçıklık KUSUR DEĞİL, kapsama
+        # eksikliği KUSUR.
+        #
+        # ⚠ İlk düzeltme denemem yanlış yöndeydi: GN'leri kapı ortasına
+        # hizalamak gölü KOLAYLAŞTIRIR ve asıl sorunu (aracın ham GN'ye
+        # gitmesi) gizler. Kaçıklık KORUNUR, kapsama düzeltilir.
+        _gn_sabit = [(0.0, 2.0), (5.0, 12.0), (-5.0, 20.0), (5.0, 32.0)]
+        _kapsiyor = (n == 8 and max(gy for _, gy in _gn_sabit)
+                     >= 0.8 * max(ky for _, ky, _ in self.kapilar))
+        if bool(self.get_parameter("gercek_gn").value) and _kapsiyor:
+            self.gorev_xy = _gn_sabit
         else:
-            # Kapı ortalarından türet ama KAÇIKLIK KORU (2 m) — ham noktaya
-            # sürmenin bandın dışına çıkardığı özellik kaybolmasın.
+            # Kapı hattından SEYREK türet (Şekil 3: ~2 kapıda bir GN) ve
+            # yanal KAÇIKLIĞI KORU (±2 m) — ham noktaya sürmenin bandın
+            # dışına çıkardığı özellik kaybolmasın.
+            _adim = max(1, len(self.kapilar) // 4)
             self.gorev_xy = [
-                (gx + (2.0 if i % 2 else -2.0), gy)
+                (gx + (2.0 if (i // _adim) % 2 else -2.0), gy)
                 for i, (gx, gy, _) in enumerate(self.kapilar)
+                if i % _adim == 0
             ]
 
         # ── SARI ENGELLER ────────────────────────────────────────────────

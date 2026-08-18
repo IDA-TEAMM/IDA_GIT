@@ -37,7 +37,13 @@ ESIK_S = 1800          # 30 dk: canlı yığın bundan çok daha yaşlı
 # ölçülen hız 4,94 yerine **9,88 Hz** çıktı ve ms ölçümü anlamsızlaştı.
 # (Aynı sınıf 13.08'de `sahte_ham_sensor` ile de yaşandı.)
 _GOL_DESENLERI = ("girdap_decision", "sanal_gol", "sahte_ham_sensor",
-                  "girdap_ida_algi", "duba_gecis_navigator")
+                  "girdap_ida_algi", "duba_gecis_navigator",
+                  # 🔴 18.08'de göle static TF eklendi ama buraya YAZILMADI
+                  # ⇒ her koşumda 3 TF düğümü kaldı ve biriktiler: ölçüldü,
+                  # domain'de **78 düğüm** vardı (çoğu
+                  # `static_transform_publisher_*`). Aynı sınıf üçüncü kez
+                  # (13.08 sahte_ham_sensor · 18.08 duba_gecis_navigator).
+                  "static_transform_publisher")
 
 
 def _ata_zinciri() -> set[int]:
