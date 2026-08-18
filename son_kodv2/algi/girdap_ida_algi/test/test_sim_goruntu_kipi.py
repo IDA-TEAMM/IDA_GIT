@@ -125,3 +125,36 @@ def test_encoding_KORUNUYOR_rgb8_de_calisir():
     # `_SIM_MAX_GENISLIK` fizik kapısı onu eler.
     assert not d_rgb, (
         "kanal sırası ters iken tüm su 'duba' sayılıyor — boyut kapısı yok")
+
+
+def test_DOSYA1_zinciri_sim_kipinde_de_kosuyor():
+    """🔴 `rgb_q` kuruluyordu ama KİMSE DOLDURMUYORDU ⇒ `_kare_tazele` hep
+    `None` görüyor ⇒ Dosya-1 (kamera mp4) gölde HİÇ üretilmiyordu; oturum
+    klasörü açılıyor, içi boş kalıyordu.
+
+    Şartname md 4.2: Dosya-1 ≥1 Hz zorunlu; eksik/oynatılamaz her dosya
+    **5 ceza puanı**. Ayrıca C5 (temiz kapanış / moov atomu) kuralı kamera
+    tarafında hiç sınanamıyordu.
+
+    Gölde doğrulandı: seg_0001.mp4 = 1.465.922 B, moov atomu VAR.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    nav = _nav("2")
+    # ⚠ `inspect.getsource` metodu GİRİNTİLİ döndürür; `ast.parse` doğrudan
+    # IndentationError verir (ölçüldü). `dedent` şart.
+    agac = ast.parse(textwrap.dedent(
+        inspect.getsource(nav.DubaNavigator._sim_kare_geldi)))
+    kaynak = ast.unparse(agac)
+    assert "rgb_q" in kaynak and "_SahteKare" in kaynak, (
+        "sim görüntü kipi RGB kuyruğunu doldurmuyor → Dosya-1 üretilmez")
+
+
+def test_sahte_kare_getCvFrame_SOZLESMESI():
+    """`_kare_tazele` yalnız `getCvFrame()` çağırır; fazlası taklit edilmez."""
+    nav = _nav("2")
+    k = _kare([(100, 100, 8, _TURUNCU)])
+    sk = nav._SahteKare(k)
+    assert sk.getCvFrame() is k

@@ -664,6 +664,26 @@ class _SahteMesaj:
             seconds=time.monotonic() - self._yas)
 
 
+class _SahteKare:
+    """`getCvFrame()` sözleşmesini taşıyan sahte RGB karesi.
+
+    🔴 NEDEN GEREKLİ (18.08.2026): sim kipinde `rgb_q` kuruluyordu ama
+    KİMSE DOLDURMUYORDU ⇒ `_kare_tazele` hep `None` görüyor ⇒ **Dosya-1
+    (kamera mp4) gölde HİÇ üretilmiyordu** (oturum klasörü açılıyor, içi
+    boş kalıyordu). Şartname md 4.2: Dosya-1 ≥1 Hz zorunlu, eksik/oynatılamaz
+    her dosya **5 ceza puanı**; ayrıca C5 (temiz kapanış / moov atomu)
+    kuralı kamera tarafında hiç sınanamıyordu.
+    """
+
+    __slots__ = ("_k",)
+
+    def __init__(self, kare):
+        self._k = kare
+
+    def getCvFrame(self):                        # noqa: N802 (depthai adı)
+        return self._k
+
+
 class _SahteKuyruk:
     """`tryGet()` sözleşmesi: mesaj varsa döndür ve TÜKET, yoksa None.
 
@@ -1234,6 +1254,10 @@ class DubaNavigator(Node):
         yas = max(0.0, (self.get_clock().now()
                         - RclTime.from_msg(msg.header.stamp)).nanoseconds / 1e9)
         self.det_q.koy(_SahteMesaj(dets, yas_s=yas))
+        # Dosya-1 zinciri de GERÇEKTEN koşsun: `_kare_tazele` → mp4 segment
+        # → `kayit_kapat`. Kayıt kendi kopyasına çizdiği için ham kare verilir.
+        if self.rgb_q is not None:
+            self.rgb_q.koy(_SahteKare(kare))
 
     def _sim_engel_geldi(self, msg) -> None:
         """PoseArray → `_SahteTespit` listesi → sahte NN kuyruğu."""
