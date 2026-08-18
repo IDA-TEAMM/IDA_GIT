@@ -604,16 +604,16 @@ class SanalGol(Node):
             p.orientation.z, p.orientation.w = yaricap, 1.0   # yarıçap hack'i
             pa.poses.append(p)
 
-        # ARIZA: GÖVDE YANSIMASI — LiDAR'ın kendi teknesini görmesi (F5).
-        # ALG-02: engel bulutunun %27'si aracın ARKASINDAYDI, en yakını 1,3 mm.
-        # Gövde yarıçapından (0,393 m) yakın hiçbir "engel" gerçek olamaz.
-        if self.ar_govde_m > 0.0:
-            gp = Pose()
-            gp.position.x = self.ar_govde_m
-            gp.position.y = 0.0
-            gp.orientation.z, gp.orientation.w = 0.05, 1.0
-            pa.poses.append(gp)
-
+            # 🔴 18.08.2026 GİRİNTİ KUSURU DÜZELTİLDİ. Bu blok döngünün
+            # DIŞINDA ve `if self.ar_govde_m > 0.0:` (gövde yansıması ARIZASI,
+            # varsayılan KAPALI) içinde duruyordu. İki sonucu vardı:
+            #   ① `da.detections` **her zaman BOŞ** kalıyordu ⇒
+            #      `/gercek/classified_obstacles` 120 mesajda 0 tespit
+            #      (ölçüldü) ⇒ `sahte_ham_sensor` renk bulamayıp HİÇ duba
+            #      çizmiyordu ⇒ `/oak/rgb/image_raw` baştan beri **boş su**
+            #      karesiydi. Kamera görüntü yolu gölde hiç sınanamıyordu.
+            #   ② Arıza açıkken bile döngüden ARTAKALAN `bx, by, yaricap,
+            #      sinif` kullanılıyordu ⇒ yalnız SON dubayı yazıyordu.
             d = Detection3D()
             d.bbox.center.position.x, d.bbox.center.position.y = bx, by
             d.bbox.size.x = 2.0 * yaricap
@@ -626,6 +626,16 @@ class SanalGol(Node):
             h.hypothesis.score = 0.9
             d.results.append(h)
             da.detections.append(d)
+
+        # ARIZA: GÖVDE YANSIMASI — LiDAR'ın kendi teknesini görmesi (F5).
+        # ALG-02: engel bulutunun %27'si aracın ARKASINDAYDI, en yakını 1,3 mm.
+        # Gövde yarıçapından (0,393 m) yakın hiçbir "engel" gerçek olamaz.
+        if self.ar_govde_m > 0.0:
+            gp = Pose()
+            gp.position.x = self.ar_govde_m
+            gp.position.y = 0.0
+            gp.orientation.z, gp.orientation.w = 0.05, 1.0
+            pa.poses.append(gp)
 
         # ③ HAYALET / KIYI — kimliksiz (UNKNOWN) ek tespitler.
         # Gerçek bantta bunlar HAYALET DEĞİL, kalıcı kıyı yapılarıydı

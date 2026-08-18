@@ -139,7 +139,17 @@ basla planning ros2 run girdap_decision planning_node --ros-args --params-file "
 # aynı topic'e basarsa füzyon hangisini aldığını bilemez.
 if [ "${GIRDAP_GOL_ALGI:-0}" = "1" ]; then
     # Remap YOK: bu dugum zaten /gercek/* dinliyor (remap sanal_gol'de).
-    basla ham_sensor python3 "$S/sahte_ham_sensor.py"
+    # 🔴 KAMERA ÇÖZÜNÜRLÜĞÜ 512x512 (ölçümle seçildi, keyfî değil):
+    # Varsayılan 1280x720 → kare 2,7 MB → 10 Hz'te 27 MB/s. DDS bunu
+    # taşıyamıyor: ÖLÇÜLDÜ, abone kareleri ~1 Hz alıyordu ⇒ `/perception/buoys`
+    # 4,85 yerine 1,71 Hz'e düştü ve LiDAR karelerinin %64,9'u füzyonda
+    # eşleşemedi. Darboğaz tespit değil (13,7 ms/kare = 73 Hz tavan), TAŞIMA.
+    # 512x512 dağıtımın NN girdisidir (4:3 → 1:1 SIKIŞTIRMA sözleşmesi) ⇒
+    # hem 3,4× hafif hem de düğümün gerçekte gördüğü çözünürlük.
+    # ⚠ Gerçek teknede görüntü DDS'ten HİÇ geçmez (depthai USB ile aynı
+    # sürece verir); bu taşıma yalnız gölde vardır.
+    basla ham_sensor python3 "$S/sahte_ham_sensor.py" --ros-args \
+        -p kamera_genislik_px:=512 -p kamera_yukseklik_px:=512
     basla p_lidar  ros2 run girdap_decision perception_lidar_node --ros-args --params-file "$P"
     basla p_fusion ros2 run girdap_decision perception_fusion_node --ros-args --params-file "$P"
 
@@ -168,7 +178,15 @@ if [ "${GIRDAP_GOL_ALGI:-0}" = "1" ]; then
     # SINAMAZ. Füzyonun kamera↔LiDAR eşleştirmesi de burada tanım gereği
     # tutarlıdır (aynı kaynaktan türüyor) — onun gerçek sınavı bant
     # koşumudur (KONTROL 3 `--bant`), göl değil.
-    basla algi_navigator env GIRDAP_SIM_KAYNAK=1 \
+    # KİP: 2 = GÖRÜNTÜ (varsayılan, daha çok kod yolu koşar) · 1 = GEOMETRİK
+    #   1 → tespit `/perception/obstacle_map`'ten türetilir. Hızlı ve konumlar
+    #       kesin, ama görüntü taşıma · QoS uyumu · bgr8 çözme · CLAHE ·
+    #       doygunluk germesi · kontur · MONO MENZİL YEDEĞİ hiç koşmaz.
+    #   2 → kare `/oak/rgb/image_raw`'dan gelir ve yukarıdakilerin HEPSİ koşar;
+    #       stereo bilerek YOK (z=0) ⇒ suyun stereo'yu öldürdüğü gerçek durum
+    #       (08.08 bulgusu) ve onun için yazılan pinhole yedeği sınanır.
+    #       Damga da GERÇEK kareden gelir ⇒ kamera↔LiDAR ms farkı anlamlı olur.
+    basla algi_navigator env "GIRDAP_SIM_KAYNAK=${GIRDAP_GOL_ALGI_KIP:-2}" \
         ros2 run girdap_ida_algi duba_gecis_navigator
     echo "  + ALGI zinciri: sahte_ham_sensor → perception_lidar → perception_fusion"
     echo "  + BİZİM KATMAN: duba_gecis_navigator (SİM KAYNAK) → /perception/buoys"

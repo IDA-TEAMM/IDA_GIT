@@ -614,7 +614,22 @@ def _blob_denetle(blob_yolu: str, siniflar, logger=None):
 # ⚠ VARSAYILAN KAPALI: çevre değişkeni verilmezse tek satır kod bile
 # değişmez; dağıtımda `dai.Device` yolu aynen koşar.
 # ══════════════════════════════════════════════════════════════════════════
-SIM_KAYNAK = os.environ.get("GIRDAP_SIM_KAYNAK", "0") == "1"
+#: 0 = kapalı (dağıtım: OAK-D) · 1 = GEOMETRİK kip · 2 = GÖRÜNTÜ kipi
+SIM_KAYNAK_KIP = os.environ.get("GIRDAP_SIM_KAYNAK", "0")
+SIM_KAYNAK = SIM_KAYNAK_KIP in ("1", "2")
+#: Görüntü kipi: kare `/oak/rgb/image_raw`'dan gelir ve GERÇEK ön işlemeden
+#: geçer. Geometrik kipin (1) kapatamadığı yolları açar:
+#:   · görüntü taşıma + QoS uyumu (yayıncı BEST_EFFORT — abone katı olursa
+#:     bağlantı SESSİZCE kurulmaz; dağıtımdaki en sinsi arıza sınıfı)
+#:   · bgr8 çözme (cv_bridge YOK — CLAUDE.md'deki ABI tuzağı)
+#:   · CLAHE + doygunluk germesi (F-P.21: gerçek donanımda S≈29-83 ölçüldü,
+#:     sabit eşik 120 hiç tetiklenmiyordu)
+#:   · kontur → bbox → normalize → **mono pinhole menzil yedeği**
+#:     (08.08'de eklendi çünkü su stereo için dokusuz/aynasal)
+#:   · GERÇEK kare damgası ⇒ kamera↔LiDAR ms farkı ölçülebilir hale gelir
+#: Geometrik kipte bunların HİÇBİRİ koşmaz: orada tespit LiDAR haritasından
+#: türetilir, damga da o mesajdan gelir.
+SIM_GORUNTU = SIM_KAYNAK_KIP == "2"
 
 
 class _SahteTespit:
@@ -678,6 +693,69 @@ def _sim_pipeline_kur(kaydet=None):
         kaydet("🔵 SİM KAYNAK KİPİ: OAK-D açılmıyor, kareler ROS'tan gelecek "
                "(GIRDAP_SIM_KAYNAK=1). Bu kip YOLO'yu SINAMAZ.")
     return None, _SahteKuyruk(), _SahteKuyruk(), ["kenar_dubasi", "engel_dubasi"]
+
+
+#: Sahte kameranın bastığı renkler (karar tarafı `sahte_ham_sensor._SINIF_BGR`)
+#: HSV karşılıkları: turuncu H≈16, sarı H≈26-30. Aralıklar bilerek GENİŞ —
+#: burada amaç renk ayrımını "başarmak" değil, ÜRETİM ZİNCİRİNİ koşturmak.
+_SIM_HSV = {
+    KENAR_CLASS: ((8, 120, 90), (22, 255, 255)),     # turuncu — kenar dubası
+    ENGEL_CLASS: ((23, 120, 90), (36, 255, 255)),    # sarı    — engel dubası
+}
+#: Kontur kapıları — dairesel duba için (plaka eşikleri duba'yı eler, 16.08).
+_SIM_MIN_ALAN_PX = 12.0
+_SIM_MIN_DOLULUK = 0.45
+_SIM_MAX_EN_BOY = 3.0
+#: Normalize bbox genişliği için ÜST sınır — fizik, ayar değil.
+#: Ø0,30 m duba, kabul edilen en yakın menzilde (MONO_MENZIL_ALT_M = 0,5 m)
+#: w = f·D/z = 0,7275·0,30/0,5 ≈ 0,44 kadar yer kaplar. 0,6 üstü bir "duba"
+#: geometrik olarak imkânsızdır ve tespit değil ZEMİN demektir.
+#: 🔴 Doğuran ölçüm: kanal sırası ters verilince (rgb8 → bgr8 sanılırsa) su
+#: rengi (110,70,20) → (20,70,110) oluyor, HSV tonu 17 çıkıyor ve TURUNCU
+#: aralığına düşüyor ⇒ kare boyu tek bir "kenar dubası" üretiliyordu
+#: (genişlik 1,000). Kapı olmadan bu, tüm gölü sahte bir duvara çevirirdi.
+_SIM_MAX_GENISLIK = 0.6
+
+
+def _sim_kareden_tespitler(bgr):
+    """BGR kare → `_SahteTespit` listesi (normalize bbox, stereo YOK).
+
+    🔑 `spatialCoordinates.z = 0` bilerek: depthai geçersiz derinlikte 0 verir
+    ve `menzil_coz` o hâlde **mono pinhole yedeğine** düşer. Yani bu kip o
+    yedeği (08.08'de suyun stereo'yu öldürmesi yüzünden eklendi) gerçekten
+    sınar. Geometrik kip stereo'yu hazır verdiği için o dalı hiç açmıyordu.
+    """
+    import cv2
+    import numpy as np
+    from girdap_ida_algi import p3_hedef_bul as p3
+
+    ayar = p3.Ayar()
+    kare = p3._clahe(bgr, ayar)                    # üretim ön işlemesi
+    hsv = p3._doygunluk_germe(cv2.cvtColor(kare, cv2.COLOR_BGR2HSV), ayar)
+    H, W = bgr.shape[:2]
+    dets = []
+    for sinif, (lo, hi) in _SIM_HSV.items():
+        maske = p3._maske(hsv, lo, hi, ayar.morf_px)
+        cnt, _ = cv2.findContours(maske, cv2.RETR_EXTERNAL,
+                                  cv2.CHAIN_APPROX_SIMPLE)
+        for c in cnt:
+            alan = cv2.contourArea(c)
+            if alan < _SIM_MIN_ALAN_PX:
+                continue
+            (_, _), (w, h), _ = cv2.minAreaRect(c)
+            if w < 1 or h < 1 or alan / (w * h) < _SIM_MIN_DOLULUK:
+                continue
+            if max(w, h) / min(w, h) > _SIM_MAX_EN_BOY:
+                continue
+            x, y, bw, bh = cv2.boundingRect(c)
+            if bw / float(W) > _SIM_MAX_GENISLIK:
+                continue                       # zemin/parlama, duba değil
+            dets.append(_SahteTespit(
+                xmin=x / W, xmax=(x + bw) / W,
+                ymin=y / H, ymax=(y + bh) / H,
+                label=sinif, confidence=0.9,
+                x_mm=0.0, z_mm=0.0))           # stereo YOK → mono yedek
+    return dets
 
 
 def pipeline_kur(kaydet=None):
@@ -1108,13 +1186,54 @@ class DubaNavigator(Node):
         `tespitleri_oku`nun menzil çözümü GERÇEKTEN sınansın (uydurma bir
         ölçek kullanılsaydı zincir kendi kendini doğrulardı).
         """
-        from geometry_msgs.msg import PoseArray
-
         self._f_sim = gm.odak_px(1.0)
+        if SIM_GORUNTU:
+            from sensor_msgs.msg import Image
+            from rclpy.qos import qos_profile_sensor_data
+            # 🔴 QoS UYUMU: `sahte_ham_sensor` görüntüyü `sensor_data_qos()`
+            # (BEST_EFFORT) ile basıyor. Abone RELIABLE isterse DDS bağlantıyı
+            # SESSİZCE kurmaz — hata yok, kare yok. Dağıtımdaki en sinsi
+            # arıza sınıflarından biri; burada bilerek aynı profil kullanılır.
+            self.create_subscription(
+                Image, "/oak/rgb/image_raw", self._sim_kare_geldi,
+                qos_profile_sensor_data)
+            self.get_logger().info(
+                "🔵 sim aboneliği (GÖRÜNTÜ kipi): /oak/rgb/image_raw → "
+                "CLAHE+HSV → sahte NN kuyruğu (stereo YOK → mono yedek)")
+            return
+        from geometry_msgs.msg import PoseArray
         self.create_subscription(
             PoseArray, "/perception/obstacle_map", self._sim_engel_geldi, 10)
         self.get_logger().info(
-            "🔵 sim aboneliği: /perception/obstacle_map → sahte NN kuyruğu")
+            "🔵 sim aboneliği (GEOMETRİK kip): /perception/obstacle_map → "
+            "sahte NN kuyruğu")
+
+    def _sim_kare_geldi(self, msg) -> None:
+        """`sensor_msgs/Image` (bgr8) → gerçek ön işleme → sahte NN kuyruğu.
+
+        ⚠ cv_bridge KULLANILMAZ (CLAUDE.md: apt cv_bridge numpy 2.x ABI'siyle
+        çakışıyor). Çözme burada elle yapılır — dağıtımdaki `image_codec`
+        deseniyle aynı.
+        """
+        import numpy as np
+        if msg.encoding not in ("bgr8", "rgb8"):
+            self.get_logger().warn(
+                f"sim görüntü kipi: beklenmeyen encoding {msg.encoding!r} — "
+                "kare atlandı")
+            return
+        kare = np.frombuffer(msg.data, dtype=np.uint8).reshape(
+            msg.height, msg.width, 3)
+        if msg.encoding == "rgb8":
+            kare = kare[:, :, ::-1]
+        try:
+            dets = _sim_kareden_tespitler(kare)
+        except Exception as e:                    # kare bozuksa düğüm ÖLMESİN
+            self.get_logger().warn(f"sim kare işlenemedi: {e}")
+            return
+        # Kare yaşı GERÇEK damgadan — kamera↔LiDAR ms farkı ancak böyle ölçülür.
+        yas = max(0.0, (self.get_clock().now()
+                        - RclTime.from_msg(msg.header.stamp)).nanoseconds / 1e9)
+        self.det_q.koy(_SahteMesaj(dets, yas_s=yas))
 
     def _sim_engel_geldi(self, msg) -> None:
         """PoseArray → `_SahteTespit` listesi → sahte NN kuyruğu."""

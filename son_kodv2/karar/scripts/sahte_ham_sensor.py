@@ -67,7 +67,12 @@ _SINIF_BGR = {
     "1": (0, 220, 255),     # sarı,    RAL 1026 — engel
     "3": (0, 0, 220),       # kırmızı
     "4": (0, 150, 0),       # yeşil
-    "5": (19, 49, 79),      # kahverengi
+    # 🔴 18.08.2026: sınıf 5 KAHVERENGİ değil **SİYAH** (RAL 9005). Şartname
+    # s.18 hedef renkleri RAL 3026/6037/9005; "kahverengi" hiçbir maddede
+    # geçmiyor. `kamikaze_hedef.py` 18.08'de düzeltildi ama gölün sahte
+    # kamerası eski rengi basmaya devam ediyordu ⇒ hakem "siyah" dediğinde
+    # göl YANLIŞ RENGİ gösteriyordu (P3 zinciri sahte veriyle sınanır).
+    "5": (28, 28, 28),      # siyah, RAL 9005 (mat siyah ~#282828)
 }
 _SU_BGR = (110, 70, 20)
 _BILINMEYEN = "99"

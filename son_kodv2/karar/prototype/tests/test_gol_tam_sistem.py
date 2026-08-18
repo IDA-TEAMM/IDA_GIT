@@ -250,8 +250,16 @@ def test_algi_katmani_BIZIM_dugumu_baslatiyor():
     assert "duba_gecis_navigator" in m, (
         "gol_kos.sh bizim algı düğümümüzü başlatmıyor → /perception/buoys "
         "yayıncı 0 → S1/S2/S5/C3 STALE (ölçülmemiş)")
-    assert "GIRDAP_SIM_KAYNAK=1" in m, (
+    # Kip seçilebilir: 1 = geometrik · 2 = görüntü (varsayılan). Aranan şey
+    # bayrağın VERİLMİŞ ve SIFIR OLMAMASI; 0 olursa düğüm OAK-D arar ve
+    # gölde asla açılmaz.
+    import re
+    esl = re.search(r"GIRDAP_SIM_KAYNAK=\$\{GIRDAP_GOL_ALGI_KIP:-(\d)\}", m)
+    assert esl or "GIRDAP_SIM_KAYNAK=1" in m or "GIRDAP_SIM_KAYNAK=2" in m, (
         "sim kaynak kipi verilmemiş → düğüm OAK-D arar, gölde asla açılmaz")
+    if esl:
+        assert esl.group(1) in ("1", "2"), (
+            f"geçersiz varsayılan kip {esl.group(1)!r}")
 
 
 def test_navigator_ALGI_katmanina_bagli():
@@ -319,3 +327,93 @@ def test_gate_passed_TUZAGI_kapali_kalıyor():
     nav = _NAV.read_text(encoding="utf-8")
     assert "GATE_PASSED_YAYINLA = False" in nav, (
         "gate_passed açılmış — FSM'i erken PARKUR3'e atlatır")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# SANAL GÖL: SINIFLI TESPİT ÜRETİMİ (18.08.2026)
+#
+# 🔴 GİRİNTİ KUSURU: `_algi()` içinde `Detection3D` bloğu duba döngüsünün
+# DIŞINDA ve `if self.ar_govde_m > 0.0:` (gövde yansıması ARIZASI, varsayılan
+# KAPALI) İÇİNDE duruyordu. Sonuç:
+#   ① `/perception/classified_obstacles` **her zaman BOŞ** (ölçüldü: 120
+#      mesaj / 0 tespit) ⇒ `sahte_ham_sensor` renk bulamayıp hiç duba
+#      çizmiyordu ⇒ `/oak/rgb/image_raw` baştan beri boş su karesiydi.
+#   ② Arıza açıkken bile döngüden ARTAKALAN değişkenler kullanılıyordu ⇒
+#      yalnız SON duba yazılıyordu.
+# Düzeltmeden sonra ölçüldü: 120 mesaj / **1240 tespit**.
+# ══════════════════════════════════════════════════════════════════════════
+_SANAL_GOL = _KOK / "scripts" / "sanal_gol.py"
+
+
+def _algi_govdesi() -> str:
+    """`_algi` metodunun kaynağı (ast ile kesilir — metin araması değil)."""
+    import ast
+    kaynak = _SANAL_GOL.read_text(encoding="utf-8")
+    agac = ast.parse(kaynak)
+    for n in ast.walk(agac):
+        if isinstance(n, ast.FunctionDef) and n.name == "_algi":
+            return ast.get_source_segment(kaynak, n) or ""
+    raise AssertionError("sanal_gol._algi bulunamadı")
+
+
+def test_siniflandirma_ARIZA_bayragina_bagli_DEGIL():
+    """🔑 Asıl kural: sınıflı tespit üretimi arıza enjeksiyonundan bağımsız.
+
+    `da.detections.append` çağrısı `ar_govde_m` dalının içindeyse, arıza
+    kapalıyken (varsayılan) sınıflı topic boş kalır ve kamera zinciri
+    sessizce kör olur.
+    """
+    import ast
+    agac = ast.parse(_algi_govdesi())
+    for n in ast.walk(agac):
+        if not (isinstance(n, ast.If) and "ar_govde_m" in ast.unparse(n.test)):
+            continue
+        icerik = ast.unparse(n)
+        assert "da.detections.append" not in icerik, (
+            "sınıflı tespit üretimi gövde-yansıması ARIZASININ içinde — "
+            "arıza kapalıyken classified_obstacles BOŞ kalır")
+
+
+def test_siniflandirma_duba_DONGUSUNUN_icinde():
+    """Her duba için bir tespit üretilmeli; döngü dışında kalırsa yalnız
+    SONUNCUSU (artakalan değişkenlerle) yazılır."""
+    import ast
+    agac = ast.parse(_algi_govdesi())
+    for n in ast.walk(agac):
+        if isinstance(n, ast.For) and "cisimler" in ast.unparse(n.iter):
+            assert "da.detections.append" in ast.unparse(n), (
+                "tespit üretimi duba döngüsünün dışında")
+            return
+    raise AssertionError("`for ... in cisimler` döngüsü bulunamadı")
+
+
+def test_gol_KAMERA_cozunurlugu_tasinabilir_boyutta():
+    """1280×720 kare 2,7 MB; 10 Hz'te 27 MB/s ⇒ DDS düşürüyor.
+
+    Ölçüldü: varsayılanla `/perception/buoys` 1,71 Hz'e düşüyor ve LiDAR
+    karelerinin %64,9'u füzyonda eşleşemiyordu; 512×512'de omap 10,00 Hz,
+    buoys 5,12 Hz. Darboğaz tespit DEĞİL (13,7 ms/kare), TAŞIMA.
+    """
+    m = _kos_komutlari()
+    assert "kamera_genislik_px:=512" in m and "kamera_yukseklik_px:=512" in m, (
+        "göl kamerası dağıtımın NN girdisine (512×512) sabitlenmemiş")
+
+
+def test_P3_sinif5_rengi_SIYAH():
+    """Şartname s.18 hedef renkleri RAL 3026/6037/9005 — kahverengi YOK.
+
+    `kamikaze_hedef.py` 18.08'de düzeltildi ama gölün sahte kamerası eski
+    rengi basmaya devam ediyordu ⇒ hakem 'siyah' dediğinde göl YANLIŞ rengi
+    gösteriyordu.
+    """
+    ham = (_KOK / "scripts" / "sahte_ham_sensor.py").read_text(encoding="utf-8")
+    import ast
+    for n in ast.walk(ast.parse(ham)):
+        if isinstance(n, ast.Assign) and any(
+                getattr(t, "id", None) == "_SINIF_BGR" for t in n.targets):
+            tablo = ast.literal_eval(n.value)
+            b, g, r = tablo["5"]
+            assert max(b, g, r) <= 60, (
+                f"sınıf 5 rengi {tablo['5']} — siyah (RAL 9005) değil")
+            return
+    raise AssertionError("_SINIF_BGR bulunamadı")
