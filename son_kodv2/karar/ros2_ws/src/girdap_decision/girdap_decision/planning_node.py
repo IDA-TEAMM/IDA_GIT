@@ -478,6 +478,12 @@ class PlanningNode(Node):
         self._son_cmd_vel_t: Optional[float] = None   # çıkış kadansı bekçisi
         # Damgaya göre poz araması için kısa geçmiş: (t, x, y, psi).
         # 2 saniye @ 50 Hz = 100 örnek; algı gecikmesi bunun çok altında.
+        #: Damgasız odom (stamp=0) sayısı — tampona YAZILMAZ. Sahada sürekli
+        #: artıyorsa yayıncı damga basmıyor demektir ve poz tamponu fiilen
+        #: kapalıdır (tek görünürlük kanalı bu sayaç; SSH yok).
+        self._damgasiz_odom = 0
+        #: Damga geriye sıçradığı için tamponun temizlendiği kez.
+        self._saat_geri_gitti = 0
         self._poz_tampon: "deque[tuple[float, float, float, float]]" = deque(
             maxlen=100)
         self._damga_disi_sayaci = 0      # damga tampon dışında kaldı (teşhis)
@@ -986,7 +992,50 @@ class PlanningNode(Node):
         # göre çevir; tf2'de `lookupTransform(..., stamp)` bunu interpolasyonla
         # yapar. Burada tf2 zinciri yok (poz `/girdap/fusion/odom`'dan geliyor),
         # o yüzden kısa bir tampon tutup damgada interpolasyon yapıyoruz.
-        self._poz_tampon.append((self._last_odom_t, p.x, p.y, psi))
+        #
+        # 🔴🔴 18.08 — TAMPON ARTIK MESAJIN KENDİ DAMGASINDA (saat tabanı hatası).
+        # Buraya `self._last_odom_t` yazılıyordu; o **bayatlık saati** ve
+        # donanımda `time.monotonic` (`saat_kaynagi.bayatlik_saati` — kendi
+        # docstring'i *"mesaj damgası yapılmaz"* diyor). Aranan anahtar ise
+        # `msg.header.stamp` = ROS **duvar saati**. ÖLÇÜLDÜ (gerçek
+        # `_poz_damgada` ile): tampon 4.630 sn'de, damga 1.787.051.062 sn'de —
+        # **~57 yıl** arayla ⇒ `ilk_t <= t <= son_t` ASLA tutmuyor ⇒ her çağrı
+        # `None` ⇒ `_damga_pozu_ya_da_son` EN SON POZA düşüyor = düzeltmenin
+        # kapatmak istediği hayalet duba yolu AÇIK kalıyor.
+        # 🪤 Neden fark edilmedi: ölçüm **Gazebo**'da yapıldı ve orada
+        # `use_sim_time=true` ⇒ `bayatlik_saati` ROS saatine döner, tabanlar
+        # ÇAKIŞIR ve düzeltme gerçekten çalışır. `hardware.launch.py`
+        # varsayılanı `use_sim_time=false` ⇒ **teknede sessizce devre dışı**.
+        # (Kodun kendi uyarı metni bunu zaten soruyordu: *"Yayıncı ile bizim
+        # saat tabanımız aynı mı (use_sim_time)?"*)
+        # ⚠ `_last_odom_t` DEĞİŞMEDİ: bayatlık ölçümü monotonic kalmalı (saat
+        # adımına bağışık, F-P.1). İki görev artık iki ayrı değerde.
+        # GERİ ALINIRSA: poz tamponu donanımda yine hiç eşleşmez ve dönerken
+        # hayalet kenar kaydı üretilir (ölçüm: 30°/s'de 8 m'de 0,85 m kayma,
+        # `edge_memory` eşleşme bandı 0,60 m).
+        self._poz_tamponuna_yaz(msg.header.stamp, p.x, p.y, psi)
+
+    def _poz_tamponuna_yaz(self, stamp, x: float, y: float, psi: float) -> None:
+        """Pozu **mesajın damgasıyla** tampona yaz (bkz. `_on_odom` gerekçesi).
+
+        İki koruma:
+          · **Damga yoksa (0) YAZILMAZ.** Yazsaydık tampon iki zaman tabanını
+            karıştırırdı ve interpolasyon 57 yıllık bir boşluğu geçerdi —
+            sessizce uydurma poz üretirdi. Yazmamak bugünkü davranışa
+            (`None` → en son poz) düşer; bu kötü ama BİLİNEN ve loglanan hâl.
+          · **Saat geri giderse tampon TEMİZLENİR.** `girdap-saat-gec` fix
+            gelince duvar saatini adımlayabilir (ARM kapısı var, koşu ortasında
+            beklenmiyor) ve yayıncı yeniden başlayabilir; karışık tamponda
+            interpolasyon iki farklı epoch arasında yapılırdı.
+        """
+        t = float(stamp.sec) + float(stamp.nanosec) * 1e-9
+        if t <= 0.0:
+            self._damgasiz_odom += 1
+            return
+        if self._poz_tampon and t < self._poz_tampon[-1][0]:
+            self._poz_tampon.clear()
+            self._saat_geri_gitti += 1
+        self._poz_tampon.append((t, x, y, psi))
 
     def _poz_makul(self, x: float, y: float, psi: float) -> bool:
         """F-F.1: gelen poz sonlu ve makul menzilde mi (§0.98a).
