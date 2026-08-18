@@ -39,14 +39,18 @@ from datetime import datetime
 # Çözüm: class_id varsa ONDAN, yoksa (ida_topics'in kendi perception_node'u
 # `det.results`'ı hiç doldurmuyor) topic varsayılanından etiketle.
 # Sözleşme: "0"=kenar(turuncu) "1"=engel(sarı) "2"=hedef "3"/"4"/"5"=kırmızı/
-# yeşil/kahverengi, "99"=eşleşmemiş (füzyon CLASS_UNKNOWN).
+# yeşil/siyah, "99"=eşleşmemiş (füzyon CLASS_UNKNOWN).
 SINIF_ETIKET = {
     0: ('KENAR DUBASI', (0, 127, 255)),
     1: ('ENGEL DUBASI', (0, 255, 255)),
     2: ('HEDEF', (255, 0, 255)),
     3: ('KIRMIZI', (0, 0, 255)),
     4: ('YESIL', (0, 200, 0)),
-    5: ('KAHVERENGI', (30, 90, 140)),
+    # 18.08.2026: sinif 5 KAHVERENGI -> SIYAH (RAL 9005, sartname s.18).
+    # Etiket teslim edilen mp4'un ustune basiliyor; yanlis ad hakemde
+    # yanlis sinif izlenimi birakirdi (ayni satirin daha once duzeltilmis
+    # bir surumu bu dosyanin ust notunda anlatiliyor).
+    5: ('SIYAH', (40, 40, 40)),
     99: ('BILINMIYOR', (200, 200, 200)),
 }
 

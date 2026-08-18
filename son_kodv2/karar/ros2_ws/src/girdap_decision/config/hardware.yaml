@@ -252,7 +252,10 @@ mission:
   #     ros2 param set /perception_camera_node kamikaze_target_color kirmizi
   #
   # Kabul edilenler: kirmizi/kırmızı/red · yesil/yeşil/green ·
-  #                  kahverengi/kahve/brown
+  #                  siyah/black   (18.08: kahverengi KALDIRILDI — sartname
+  #                  s.18 hedef renkleri RAL 3026/6037/**9005 siyah**;
+  #                  kahverengi hicbir maddede gecmiyor ve asagi akista
+  #                  RENK_KOD'a cevrilemiyordu = olu yoldu)
   # 🔴 turuncu ve sarı REDDEDİLİR (kod düzeyinde): turuncu = parkur KENAR
   #    dubası — `gate_follower` kapıları tam o sınıftan buluyor, hedefe
   #    taşınırsa kapılar görünmez olur VE tekne kapı dubalarına sürer;
@@ -261,7 +264,7 @@ mission:
   #    zorluyor — FSM `PARKUR1/2/3` durumundayken `ros2 param set` reddedilir.
   #    Yeniden vermek gerekirse önce `/girdap/mission/reset` (madde #11).
   # 🔴 11.08 UYARISI — BU PARAMETRE TEK BASINA YETMEZ: YOLO yesil/kirmizi/
-  # kahverengi icin EGITILMEDI. Yani akista class_id 3/4/5 HIC YOKSA burada
+  # siyah icin EGITILMEDI. Yani akista class_id 3/4/5 HIC YOKSA burada
   # renk vermek hicbir seyi hedefe tasimaz (sessizce 0 tespit). Cozum yeniden
   # egitim DEGIL: camera_buoys.py'deki BuoyLocalizer + classify_roi_color()
   # deseni (YOLO sinifsiz duba bulur, rengi bbox ici HSV karar verir).

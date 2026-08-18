@@ -9,7 +9,7 @@ aktarım yasak.
 
 **Mekanizma:** kamera node'u zaten her rengi ayrı sınıfla yayınlıyor
 (`camera_buoys.py`: turuncu=0, sarı=1, hedef=2, kırmızı=3, yeşil=4,
-kahverengi=5). Hakem "kırmızı" derse yapılacak tek şey, kırmızı tespitlerini
+siyah=5). Hakem "kırmızı" derse yapılacak tek şey, kırmızı tespitlerini
 **`CLASS_HEDEF=2`** olarak yeniden etiketlemek — aşağı akıştaki hiçbir şey
 (MPPI `w_kamikaze` çekicisi, FSM Parkur-3 mantığı) değişmez, çünkü hepsi
 sınıf 2'ye bakıyor.
@@ -42,7 +42,7 @@ CLASS_ENGEL = 1
 CLASS_HEDEF = 2
 CLASS_KIRMIZI = 3
 CLASS_YESIL = 4
-CLASS_KAHVERENGI = 5
+CLASS_SIYAH = 5          # RAL 9005 — şartname s.18 (18.08: kahverengi'nin yerine)
 
 #: Hakemin söyleyebileceği renk adı → kamera sınıfı. Türkçe karakterli ve
 #: karaktersiz yazımlar, İngilizce karşılıkları da kabul edilir; operatör
@@ -54,9 +54,8 @@ RENK_SINIFLARI: dict[str, int] = {
     "yesil": CLASS_YESIL,
     "yeşil": CLASS_YESIL,
     "green": CLASS_YESIL,
-    "kahverengi": CLASS_KAHVERENGI,
-    "kahve": CLASS_KAHVERENGI,
-    "brown": CLASS_KAHVERENGI,
+    "siyah": CLASS_SIYAH,
+    "black": CLASS_SIYAH,
     # Aşağıdakiler TANINIR ama REDDEDİLİR — bilinmeyen renk ile yasak renk
     # farklı hatalar, operatöre farklı şey söylenmeli.
     "turuncu": CLASS_PARKUR_KENARI,
@@ -68,7 +67,7 @@ RENK_SINIFLARI: dict[str, int] = {
 
 #: Hedef olarak seçilebilen sınıflar. Kasıtlı olarak 0 ve 1 YOK.
 SECILEBILIR_SINIFLAR: frozenset[int] = frozenset(
-    {CLASS_KIRMIZI, CLASS_YESIL, CLASS_KAHVERENGI}
+    {CLASS_KIRMIZI, CLASS_YESIL, CLASS_SIYAH}
 )
 
 _YASAK_GEREKCE: dict[int, str] = {
@@ -92,6 +91,35 @@ class _Tespit(Protocol):
 
 class HedefRengiHatasi(ValueError):
     """Renk adı tanınmadı ya da hedef olarak seçilmesi yasak."""
+
+
+def kanonik_ad(sinif: Optional[int]) -> str:
+    """Sınıf kimliği → `renk_kodu` tablosunun anladığı **kanonik** renk adı.
+
+    🔴 18.08.2026 — NEDEN VAR: `kamikaze_param._renk_yayinla` operatörün
+    YAZDIĞI ham metni yayınlıyordu, `planning_node._on_hedef_rengi` ise onu
+    `renk_kodu.RENK_KOD`'da arıyor. İki tablo aynı adları tutmadığı için
+    takma adlar sessizce düşüyordu (ölçüldü: `RENK_KOD.get("red", 0)` → **0**
+    = "hedef atanmamış") ⇒ operatör *"red"* yazarsa renk kabul edilmiş
+    görünür ama **P3 nişanı hiç açılmaz**. Aynı delik "green"/"black"te de var.
+
+    Yeni tablo EKLENMEDİ (elle yazılan tablo zaten bu arızanın kaynağıydı):
+    kanonik ad, `RENK_SINIFLARI` ile `RENK_KOD`'un **kesişiminden** türetiliyor.
+    Kesişim tam olarak bir ad vermiyorsa `test_kanonik_ad_*` kırmızı yanar.
+
+    GERİ ALINIRSA: hakemin rengini İngilizce ya da takma adla girmek P3'ü
+    sessizce kapatır (145 puan).
+    """
+    if sinif is None:
+        return ""
+    from prototype.mission.renk_kodu import RENK_KOD
+    for ad, s in RENK_SINIFLARI.items():
+        if s == sinif and ad in RENK_KOD:
+            return ad
+    raise HedefRengiHatasi(
+        f"sinif {sinif} icin kanonik ad yok — RENK_SINIFLARI ile "
+        f"renk_kodu.RENK_KOD ayrismis (bkz. kanonik_ad docstring)"
+    )
 
 
 def renk_to_class(ad: Optional[str]) -> Optional[int]:

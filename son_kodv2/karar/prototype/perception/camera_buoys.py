@@ -26,7 +26,19 @@ CLASS_ENGEL = 1             # sarı
 CLASS_HEDEF = 2             # Parkur-3 hedef (YOLO)
 CLASS_KIRMIZI = 3           # kırmızı
 CLASS_YESIL = 4             # yeşil
-CLASS_KAHVERENGI = 5        # kahverengi
+# 🔴 18.08.2026 — `CLASS_KAHVERENGI` → `CLASS_SIYAH` (değer 5 AYNI kaldı).
+# NE: kahverengi sınıf adı siyahla değiştirildi.
+# NEDEN: şartname s.18 hedef renkleri **RAL 3026 kırmızı · RAL 6037 yeşil ·
+#   RAL 9005 SİYAH**; "kahverengi" hiçbir şartname maddesinde geçmiyor.
+#   İki ölçüm (18.08, çalıştırılarak):
+#     · `renk_to_class("siyah")` → HedefRengiHatasi ⇒ hakem "siyah" derse renk
+#       HİÇ yüklenemez ⇒ `/girdap/mission/hedef_rengi` boş ⇒ `fsm_node:600`
+#       `p3_bekleniyor=False` ⇒ `mission_fsm:307` PARKUR3'e HİÇ geçmez = P3 sıfır.
+#     · `RENK_KOD.get("kahverengi", 0)` → **0** ⇒ kabul edilse bile
+#       `planning_node._on_hedef_rengi` onu "atanmamış" sayıyordu = zaten ölü yol.
+# GERİ ALINIRSA: hakem üç renkten birini (siyah) söylediğinde P3 hiç açılmaz —
+#   **145 puan**, tek satır hata basılmadan.
+CLASS_SIYAH = 5             # siyah (RAL 9005) — şartname s.18
 
 
 @dataclass

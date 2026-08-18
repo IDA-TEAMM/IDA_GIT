@@ -35,6 +35,7 @@ from prototype.mission.kamikaze_hedef import (
     HedefRengiHatasi,
     degistirilebilir_mi,
     hedef_isaretle,
+    kanonik_ad,
     renk_to_class,
 )
 
@@ -106,8 +107,13 @@ class KamikazeHedefKapisi:
         böylece sayısal tablo tek yerde kalıyor (bkz. renk_kodu.py — tablo
         elle kopyalanınca biri ters yazılmıştı).
         """
+        # 🔴 18.08.2026: KANONİK ad yayınlanıyor, operatörün yazdığı ham metin
+        # DEĞİL. `planning_node._on_hedef_rengi` adı `renk_kodu.RENK_KOD`'da
+        # arıyor; "red"/"green"/"black" orada YOK ⇒ ham metin yayınlanınca kod
+        # 0 ("atanmamış") çıkıyordu ve P3 nişanı sessizce kapalı kalıyordu.
+        # `kanonik_ad` yeni tablo kurmaz, iki mevcut tablonun kesişimini alır.
         msg = String()
-        msg.data = self._renk_adi if self._sinif is not None else ""
+        msg.data = kanonik_ad(self._sinif) if self._sinif is not None else ""
         self._pub.publish(msg)
 
     # ---------------------------------------------------------------- durum
