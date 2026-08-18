@@ -172,6 +172,7 @@ def kosum(
     koridor_var: bool = False,
     kurs_ekseni_kullan: bool = False,
     arada_duba_kontrolu: bool = False,
+    stuck_recovery_enabled: bool = False,
 ) -> dict:
     """Kapalı döngüyü bir kez koştur, kapı geçiş metriklerini döndür.
 
@@ -196,7 +197,8 @@ def kosum(
         # çevir" davranışına ittiğini ölçmüştü. Yani düşük K/T ile ölçülen
         # yavaşlık ARACIN KENDİ ARTEFAKTI olabilir → `--K/--T` ile sınanır.
         PlanningPipelineConfig(
-            mppi_K=mppi_k, mppi_T=mppi_t, mppi_terminal_lookahead_m=3.0
+            mppi_K=mppi_k, mppi_T=mppi_t, mppi_terminal_lookahead_m=3.0,
+            stuck_recovery_enabled=stuck_recovery_enabled,
         ),
         dynamics=dyn,
     )
@@ -445,7 +447,8 @@ def _iz_kosumu(parkur, a) -> None:
     iz: List[dict] = []
     r = kosum(parkur, baslangic=poz, yon_hatasi_rad=aci,
               model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni,
-              mppi_k=a.K, mppi_t=a.T, iz=iz, koridor_var=a.koridor, kurs_ekseni_kullan=a.kurs_ekseni, arada_duba_kontrolu=a.arada_duba)
+              mppi_k=a.K, mppi_t=a.T, iz=iz, koridor_var=a.koridor, kurs_ekseni_kullan=a.kurs_ekseni, arada_duba_kontrolu=a.arada_duba,
+              stuck_recovery_enabled=a.kurtarma_ac)
     if not iz:
         print("iz boş — koşum hiç adım atmadı")
         return
@@ -551,6 +554,12 @@ def main() -> None:
                     help="arada_duba_kontrolu aç (algı'dan port, 18.08) — "
                          "yalnız arada gerçek bir duba varsa çifti reddeder, "
                          "F-K.3'ten daha dar/hedefli, A/B için")
+    ap.add_argument("--kurtarma-ac", action="store_true",
+                    help="F-P.11 sıkışma kurtarmasını aç (varsayılan KAPALI — "
+                         "18.08 gece A/B'sinde ÇARPMA riski ölçüldü: 4 bilinen "
+                         "370s tıkanmadan 1'i −0.21 m payla, yani çarparak "
+                         "kurtuluyor; ÇARPMA 0/12→2/12. Yalnız A/B için, "
+                         "üretimde AÇMA)")
     a = ap.parse_args()
 
     if a.iz:
@@ -575,7 +584,8 @@ def main() -> None:
     for i, (poz, aci) in enumerate(basl, 1):
         r = kosum(parkur, baslangic=poz, yon_hatasi_rad=aci,
                   model_var=not a.model_yok, sure=a.sure, huni_tavani=a.huni,
-                  mppi_k=a.K, mppi_t=a.T, koridor_var=a.koridor, kurs_ekseni_kullan=a.kurs_ekseni, arada_duba_kontrolu=a.arada_duba)
+                  mppi_k=a.K, mppi_t=a.T, koridor_var=a.koridor, kurs_ekseni_kullan=a.kurs_ekseni, arada_duba_kontrolu=a.arada_duba,
+                  stuck_recovery_enabled=a.kurtarma_ac)
         oran = r["gecilen"] / r["toplam_kapi"]
         oranlar.append(oran)
         paylar.append(r["en_kucuk_pay"])

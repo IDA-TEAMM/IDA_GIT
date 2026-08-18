@@ -57,6 +57,28 @@ GOVDE_ENI_M = 0.785          # ölçüldü 09.08
 #: temizlemesinin ölçüsü budur; uydurulmuş bir pay değil, teknenin kendisi.
 GOVDE_CEVREL_YARICAP_M = 0.5 * math.hypot(GOVDE_BOYU_M, GOVDE_ENI_M)   # 0,651 m
 
+# --- F-P.11 (18.08.2026) SIKIŞMA KURTARMASI sabitleri ----------------------
+# 🔴 Ölçülen arıza (GIRDAP_DURUM §1.24): tekne, HEDEFTE OLMAYAN ama zaten
+# "kenar" sınıflanmış bir kapı direğinin huni payı (`gate_post_margin_m`
+# =1.4 m, kasıtlı olarak `mppi_obstacle_margin`=1.0 m'den BÜYÜK — Ç1/Ç2
+# çarpma cezası 16-30 puan) çemberinin hemen kenarına kilitlendi: 900 s'nin
+# TAMAMI. Kök neden İLK bakışta "λ=1.0'ın dejenere softmax'ı keşfi
+# engelliyor" sanıldı; σ_u/λ'yı geçici yükseltmek DENENDİ ve ÖLÇÜLDÜ, hiçbir
+# etkisi olmadı (bkz. test_sikisma_kurtarmasi.py'nin git geçmişi). Gerçek
+# neden `_mppi_icin_engeller()`'da anlatılıyor: RRT*'ın kendi hard payıyla
+# (0.5 m) çizdiği global yol, MPPI'nin daha geniş yumuşak payının (1.0-1.4 m)
+# İÇİNDEN geçiyor — iki katman aynı geometriyi farklı "güvenli" sayıyor ve
+# statik bir denge oluşuyor. Kurtarma bu yüzden ÖRNEKLEME değil PAY kırpması.
+#
+# Eşikler UYDURMA DEĞİL:
+#   · hız eşiği kapi_orani.py `_iz_kosumu`'nun "durgun" tanımıyla BİREBİR
+#     aynı oran (erişilebilir hızın %10'u) — yeni bir sayı değil.
+#   · süre eşiği MPPI'nin KENDİ ufku (T·dt, 2,5 s): ufku içinde kaçamamışsa
+#     ufuk TANIM GEREĞİ başarısız olmuştur.
+#   · pay tavanı `_mppi_icin_engeller()`'da RRT*'ın KENDİ `safety_margin`'i
+#     — burada AYRICA bir sayı yok.
+_DURGUN_ORAN = 0.10            # kapi_orani.py DURGUN_ORAN ile aynı tanım
+
 if TYPE_CHECKING:                      # yalnız tip denetimi için
     from prototype.planning.plan_isci import PlanIscisi
 
@@ -217,6 +239,27 @@ class PlanningPipelineConfig:
     rrt_hedef_kurtarma_m: Optional[float] = None
     # F-F.28 kısmi plan asgari ilerlemesi (m). None/0.0 → eski davranış.
     rrt_kismi_plan_min_m: Optional[float] = None
+    # F-P.11 (18.08.2026) SIKIŞMA KURTARMASI — bkz. PlanningPipeline
+    # `_sikisma_kurtarmasini_guncelle`.
+    #
+    # 🔴 VARSAYILAN KAPALI — ÖLÇÜLEN ÇARPMA RİSKİ (18.08 gece, tam parkur A/B,
+    # 12 zor koşum). Mekanizma engel payını RRT*'ın kendi HARD payına
+    # (`safety_margin`, 0.5 m) indiriyor; bu pay PLANLAMA payıdır, MPPI'nin
+    # gerçek izleme hatasını saymaz — "Emniyet Payları" bölümündeki `RRT* ≤
+    # MPPI` kuralının TERSİNE düşer. Sonuç ölçüldü:
+    #   · 4 bilinen 370 s tıkanmadan yalnız 1'i kurtuldu — ama gövde payı
+    #     **−0.21 m (ÇARPMA)** ile.
+    #   · 2 başka koşumda payı 0.94→0.04 m ve 0.55→0.05 m'ye düşürdü (temasa
+    #     çok yakın, çarpma sayılmadı ama pay neredeyse sıfır).
+    #   · Toplam ÇARPMA 0/12 (kapalı) → 2/12 (açık).
+    #   · Diğer 3 tıkanma HİÇ değişmedi (mekanizma onları çözemedi bile).
+    # Yani "bazen tıkanma" riskini "bazen çarpma" riskiyle değiştiriyor —
+    # kabul edilemez bir takas. 370 s'lik donma sorunu bu yüzden HÂLÂ AÇIK;
+    # kod/testler (bkz. `test_sikisma_kurtarmasi.py`) belgelenmiş ama
+    # KANITLANMAMIŞ altyapı olarak duruyor — `_arada_duba_kontrolu`
+    # (gate_follower.py) ile AYNI durum. True → eski (bu gece ölçülen,
+    # riskli) davranış; yalnız A/B için, üretimde AÇMA.
+    stuck_recovery_enabled: bool = False
 
     def __post_init__(self) -> None:
         if self.pid_cfg is None:
@@ -341,6 +384,11 @@ class PlanningPipeline:
         self._duz_cizgiye_dusuldu = 0    # A1: RRT* reddedip düz çizgiye düşülen tur
         # F-S.10: PID yedek kontrolcü — cfg.control_mode="pid" iken kullanılır.
         self._pid = CascadeHeadingPidController(self.cfg.pid_cfg)
+        # F-P.11: sıkışma kurtarması durumu (bkz. modül başı sabitleri).
+        self._durgun_baslangic_t: Optional[float] = None
+        self._hareket_baslangic_t: Optional[float] = None
+        self._kurtarma_aktif: bool = False
+        self._kurtarma_sayaci: int = 0        # teşhis: kaç kez tetiklendi
 
     # ----- girdi setter'ları -----
 
@@ -997,6 +1045,91 @@ class PlanningPipeline:
             ),
         )
 
+    def _erisilebilir_hiz(self) -> float:
+        """Modelin erişebileceği azami seyir hızı (m/s) — sabit sayı DEĞİL,
+        dinamik modelin kendisinden türer (`kapi_orani.py
+        _erisilebilir_seyir_hizi` ile AYNI formül, dairesel import'tan
+        kaçınmak için burada ayrıca tutuluyor): 2·T_max/|Xu|."""
+        return 2.0 * self._dyn.p.max_thrust / abs(self._dyn.p.Xu)
+
+    def _mppi_icin_engeller(self) -> List[CircleObstacle]:
+        """MPPI'ye verilecek engel listesi — sıkışma kurtarması KAPALIYKEN
+        `self._obstacles` birebir (eski davranış). AKTİFKEN her engelin payı
+        RRT*'ın KENDİ hard payına (`_rrt_cfg.safety_margin`) İNDİRİLİR.
+
+        🔑 **Ölçülen kök neden (18.08, GIRDAP_DURUM §1.24).** Sorun bir
+        keşif/örnekleme eksikliği DEĞİLDİ (σ_u/λ geçici yükseltmesi
+        `test_sikisma_kurtarmasi.py`'de mutasyon turunda ÖLÇÜLDÜ, etkisiz
+        çıktı — bkz. o dosyanın git geçmişi). Gerçek neden: RRT* bir kapı
+        direğinin YANINDAN kendi hard payıyla (0.5 m) güvenle geçen bir
+        global yol kuruyor, ama o yolun kırılma noktası MPPI'nin KENDİ
+        (huni/global) yumuşak payının (1.0-1.4 m) İÇİNDE kalıyor — MPPI o
+        segmenti izlemeyi engel maliyetiyle ÇELİŞtiriyor ve iki katman
+        arasında statik bir denge (ne ilerleme ne geri çekilme) oluşuyor.
+        Ölçüldü: payı sabit 1.4 m bırakınca 40 s'de 0.17 m yol; RRT*'ın
+        KENDİ payına (0.5 m) indirilince 24 s'de hedefe varıldı.
+
+        Yeni bir sayı İCAT EDİLMEDİ — global planlayıcı zaten bu payla
+        güvenli kabul ediyor (start/goal denetimi ve ayak izi temizleme
+        aynı `safety_margin`'i kullanıyor); yalnız MPPI'nin daha geniş,
+        kendi başına makul ama BU çelişkiyi yaratan payı geçici olarak o
+        seviyeye ÇEKİLİYOR.
+        """
+        if not self._kurtarma_aktif:
+            return self._obstacles
+        tavan = self._rrt_cfg.safety_margin
+        return [
+            replace(
+                o,
+                margin=min(
+                    o.margin if o.margin is not None
+                    else self._base_mppi_cfg.obstacle_margin,
+                    tavan,
+                ),
+            )
+            for o in self._obstacles
+        ]
+
+    def _sikisma_kurtarmasini_guncelle(self) -> None:
+        """MPPI'nin KENDİ ufku kadar süredir hız 'durgun' eşiğinin altındaysa
+        kurtarmayı tetikle: engel paylarını `_mppi_icin_engeller()` ile geçici
+        kırp + warm-start'ı sıfırla (bkz. o metodun ve modül başı notlar).
+
+        🔴 **Histerezis ZORUNLU (18.08 mutasyon turu).** İlk sürümde kurtarma
+        hız eşiği aşılır aşılmaz ANINDA kapanıyordu; ölçüldü: tekne payı
+        kırpılınca bir tekme alıp hareketleniyor, ama daha engeli GERÇEKTEN
+        geçmeden kurtarma kapanıyor, tam pay geri gelince aynı engel onu geri
+        itiyor, hız yeniden düşüyor → sürekli tetikle/kapa döngüsü, NET
+        ilerleme sıfır (bkz. test geçmişi). Çözüm: kapanma da TETİKLENME ile
+        AYNI ufuk kadar KESİNTİSİZ hareketi ister — "bir kez tekme yemek"
+        ile "gerçekten kurtulmuş olmak" ayrı şeyler.
+        """
+        u, v = float(self._state[3]), float(self._state[4])
+        hiz = math.hypot(u, v)
+        esik = _DURGUN_ORAN * self._erisilebilir_hiz()
+        simdi = self._saat()
+        ufuk_s = self.cfg.mppi_T * self.cfg.mppi_dt
+        if hiz >= esik:
+            self._durgun_baslangic_t = None
+            if not self._kurtarma_aktif:
+                return
+            if self._hareket_baslangic_t is None:
+                self._hareket_baslangic_t = simdi
+            elif (simdi - self._hareket_baslangic_t) >= ufuk_s:
+                self._kurtarma_aktif = False
+                self._hareket_baslangic_t = None
+                self._mppi.set_obstacles(self._mppi_icin_engeller())
+            return
+        self._hareket_baslangic_t = None      # durgunluğa dönüş: kapanma sayacı sıfırlanır
+        if self._durgun_baslangic_t is None:
+            self._durgun_baslangic_t = simdi
+            return
+        if not self._kurtarma_aktif and (simdi - self._durgun_baslangic_t) >= ufuk_s:
+            self._kurtarma_aktif = True
+            self._kurtarma_sayaci += 1
+            self._mppi.set_obstacles(self._mppi_icin_engeller())
+            self._mppi.reset_warm_start()
+
     def _rebuild_mppi(self) -> None:
         """Referans/engel/parkur değiştiğinde MPPI'yi güncelle.
 
@@ -1022,12 +1155,12 @@ class PlanningPipeline:
             # yani hatanın en sinsi hâli geri gelir.
             self._mppi.bounds = sinir
             self._mppi.set_koridor(self._koridor)     # F-S.16: sınır gibi ELDE
-            self._mppi.set_obstacles(self._obstacles)
+            self._mppi.set_obstacles(self._mppi_icin_engeller())
             self._mppi.set_reference(self._ref_path, spacing=self.cfg.ref_spacing)
             return
         onceki = self._mppi
         self._mppi = MPPIController(
-            self._dyn, sinir, self._obstacles, new_cfg
+            self._dyn, sinir, self._mppi_icin_engeller(), new_cfg
         )
         self._mppi.set_reference(self._ref_path, spacing=self.cfg.ref_spacing)
         self._mppi.set_koridor(self._koridor)         # yeni kontrolcüye de ver
@@ -1068,6 +1201,8 @@ class PlanningPipeline:
             return self._compute_control_pid()
         if self._mppi is None:
             return None
+        if self.cfg.stuck_recovery_enabled:
+            self._sikisma_kurtarmasini_guncelle()
         return self._mppi.step(self._state)
 
     def _compute_control_pid(self) -> Optional[np.ndarray]:
