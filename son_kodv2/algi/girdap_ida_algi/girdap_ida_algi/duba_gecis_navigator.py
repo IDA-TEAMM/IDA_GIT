@@ -67,6 +67,7 @@ PLAN B hızlı başlangıç:
 import math
 import os
 import time
+import types
 # ⏱️ SAAT KURALI (2026-08-09) — İKİ SAAT VAR, KARIŞTIRMA:
 #   SÜRE / zaman aşımı / periyot   -> time.monotonic()   (duvar saati DEĞİL)
 #   MUTLAK an (damga, etiket, tarih) -> time.time() / ROS saati
@@ -585,6 +586,96 @@ def _blob_denetle(blob_yolu: str, siniflar, logger=None):
     return sorunlar
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# SİMÜLASYON KAYNAK KİPİ (18.08.2026) — `GIRDAP_SIM_KAYNAK=1`
+#
+# 🔴 NEDEN: bu düğüm kareyi YALNIZ OAK-D cihazından alıyordu (`dai.Device`).
+# Cihaz yoksa `pipeline_kur` hiç dönmüyor ⇒ düğüm yapay gölde KOŞAMIYORDU.
+# Ölçüldü (18.08 göl koşumu): `/perception/buoys` **yayıncı 0**, buna karşılık
+# `/oak/rgb/image_raw` **abone 0** — yani sahte ham kamera üretiliyor ama
+# okuyan yok. Sonuç: karar tarafının GERÇEKTEN tükettiği tek algı çıktımız
+# (`/perception/buoys`, abone 3) gölde HİÇ sınanmıyordu.
+#
+# 🔑 TASARIM: düğümün GÖVDESİ DEĞİŞMİYOR. `pipeline_kur` `(dev, det_q, rgb_q,
+# siniflar)` döndürüyor ve gövde bunları yalnız `tryGet()` ile okuyor. Sim
+# kipinde aynı arayüzü sağlayan SAHTE KUYRUKLAR veriliyor; `tespitleri_oku`,
+# `_kare_tazele`, `tespit_yayinla`, geçit mantığı, P3 yolu — hepsi BİT BİREBİR
+# aynı kod. Yani gölde sınanan şey gerçekten dağıtım kodudur.
+#
+# ⚠ SINIR (abartma): bu kip YOLO'yu ve VPU'yu SINAMAZ — tespitler sanal
+# gölden hazır gelir. Sınanan: bbox→metre dönüşümü, menzil çözümü, sınıf
+# eşlemesi, geçit kurma, yayın sözleşmesi ve P3 zinciri. Model/blob doğruluğu
+# ayrı yoldan (KONTROL 3 `--bant`) sınanır.
+#
+# ⚠ VARSAYILAN KAPALI: çevre değişkeni verilmezse tek satır kod bile
+# değişmez; dağıtımda `dai.Device` yolu aynen koşar.
+# ══════════════════════════════════════════════════════════════════════════
+SIM_KAYNAK = os.environ.get("GIRDAP_SIM_KAYNAK", "0") == "1"
+
+
+class _SahteTespit:
+    """`depthai` SpatialImgDetection'ın gövdenin kullandığı ALANLARI.
+
+    Yalnız `tespitleri_oku`nun okuduğu alanlar var — fazlası taklit edilmez,
+    çünkü taklit edilmeyen alan gövdede kullanılırsa AttributeError ile
+    **görünür** hata verir; sessizce yanlış değer üretmekten iyidir.
+    """
+
+    __slots__ = ("xmin", "xmax", "ymin", "ymax", "label", "confidence",
+                 "spatialCoordinates")
+
+    def __init__(self, xmin, xmax, ymin, ymax, label, confidence, x_mm, z_mm):
+        self.xmin, self.xmax = xmin, xmax
+        self.ymin, self.ymax = ymin, ymax
+        self.label, self.confidence = label, confidence
+        self.spatialCoordinates = types.SimpleNamespace(
+            x=x_mm, y=0.0, z=z_mm)
+
+
+class _SahteMesaj:
+    """`detections` listesi + `getTimestamp()` taşıyan sahte NN mesajı."""
+
+    def __init__(self, detections, yas_s=0.0):
+        self.detections = detections
+        self._yas = yas_s
+
+    def getTimestamp(self):                      # noqa: N802 (depthai adı)
+        import datetime
+        return datetime.timedelta(
+            seconds=time.monotonic() - self._yas)
+
+
+class _SahteKuyruk:
+    """`tryGet()` sözleşmesi: mesaj varsa döndür ve TÜKET, yoksa None.
+
+    Gövde kuyruğu boşaltıp EN TAZE kareyi alıyor (`while tryGet()`); bu sınıf
+    aynı davranışı üretir ki o mantık da gerçekten sınansın.
+    """
+
+    def __init__(self):
+        self._kuyruk = []
+
+    def koy(self, m):
+        self._kuyruk.append(m)
+        del self._kuyruk[:-4]                    # det_q maxSize=4 ile aynı
+
+    def tryGet(self):                            # noqa: N802 (depthai adı)
+        return self._kuyruk.pop(0) if self._kuyruk else None
+
+
+def _sim_pipeline_kur(kaydet=None):
+    """Sim kipi: cihaz AÇILMAZ, sahte kuyruklar döner.
+
+    Kuyrukları `duba_gecis_navigator`'ın ROS abonelikleri doldurur
+    (`_sim_abonelikleri_kur`). Sınıf isimleri `config.json`'dan değil,
+    dağıtımdaki sırayla sabitlenir — sim kipinde blob okunmaz.
+    """
+    if kaydet:
+        kaydet("🔵 SİM KAYNAK KİPİ: OAK-D açılmıyor, kareler ROS'tan gelecek "
+               "(GIRDAP_SIM_KAYNAK=1). Bu kip YOLO'yu SINAMAZ.")
+    return None, _SahteKuyruk(), _SahteKuyruk(), ["kenar_dubasi", "engel_dubasi"]
+
+
 def pipeline_kur(kaydet=None):
     """OAK-D Lite üzerinde çalışan pipeline: RGB + Stereo + YOLO (VPU'da).
 
@@ -792,8 +883,12 @@ class DubaNavigator(Node):
         # kaydet=: cihaz USB'de yokken bekleyiş journal'a düşsün (F-A.4).
         # Sessiz bekleyiş, çökme döngüsünden bile kötüdür: "sessizlik başarı
         # değildir" — kimse düğümün neyi beklediğini göremezdi.
-        self.dev, self.det_q, self.rgb_q, siniflar = pipeline_kur(
-            kaydet=self.get_logger().warn)
+        if SIM_KAYNAK:
+            self.dev, self.det_q, self.rgb_q, siniflar = _sim_pipeline_kur(
+                kaydet=self.get_logger().warn)
+        else:
+            self.dev, self.det_q, self.rgb_q, siniflar = pipeline_kur(
+                kaydet=self.get_logger().warn)
         self._siniflar = siniflar or []
         # Dosya-1 kayıt durumu (şartname 4.2)
         self._kayit_bozuk = not KAYIT_AKTIF
@@ -959,6 +1054,9 @@ class DubaNavigator(Node):
         self._fps_t0 = time.monotonic()
         self.olculen_fps = 0.0
 
+        if SIM_KAYNAK:
+            self._sim_abonelikleri_kur()
+
         self.timer = self.create_timer(1.0 / KONTROL_HZ, self.dongu)
 
     # ---------- Damga (çekim anı) ----------
@@ -991,6 +1089,54 @@ class DubaNavigator(Node):
                 self._tani["damga_yedek"] += 1
             return simdi.to_msg()
         return RclTime(nanoseconds=simdi.nanoseconds - int(yas * 1e9)).to_msg()
+
+    # ---------- SİM KAYNAĞI (yalnız GIRDAP_SIM_KAYNAK=1) ----------
+    def _sim_abonelikleri_kur(self) -> None:
+        """Sanal gölün ham çıktısını NN mesajına çevirip sahte kuyruğa koy.
+
+        🔑 Kaynak `/perception/obstacle_map` (PoseArray, base_link, gövde
+        çerçevesi; `orientation.z` = yarıçap — obstacle_map hack'i).
+        Bu topic'i sanal göl ya da `perception_lidar_node` üretir; ikisi de
+        aynı sözleşmeyi taşır.
+
+        Ters dönüşüm (metre → normalize bbox) dağıtımın ÖN İŞLEMESİNİN tersi:
+        `gecit_mantik.odak_px(1.0)` ile aynı odak sabiti kullanılır ki
+        `tespitleri_oku`nun menzil çözümü GERÇEKTEN sınansın (uydurma bir
+        ölçek kullanılsaydı zincir kendi kendini doğrulardı).
+        """
+        from geometry_msgs.msg import PoseArray
+
+        self._f_sim = gm.odak_px(1.0)
+        self.create_subscription(
+            PoseArray, "/perception/obstacle_map", self._sim_engel_geldi, 10)
+        self.get_logger().info(
+            "🔵 sim aboneliği: /perception/obstacle_map → sahte NN kuyruğu")
+
+    def _sim_engel_geldi(self, msg) -> None:
+        """PoseArray → `_SahteTespit` listesi → sahte NN kuyruğu."""
+        dets = []
+        for p in msg.poses:
+            bx, by = float(p.position.x), float(p.position.y)
+            if bx <= 0.05:                     # kameranın arkası görülmez
+                continue
+            yaricap = abs(float(p.orientation.z)) or (DUBA_CAP / 2.0)
+            # Gövde (x ileri, y sol) → kamera (x sağ, z ileri)
+            x_kam, z_kam = -by, bx
+            # Ters pinhole: normalize bbox genişliği ve merkezi
+            w_n = min(0.9, (2.0 * yaricap) * self._f_sim / max(z_kam, 0.3))
+            cx = 0.5 + (x_kam / max(z_kam, 0.3)) * self._f_sim
+            if not (0.0 < cx < 1.0):           # kadraj dışı
+                continue
+            h_n = w_n * 1.4                    # duba h/w ≈ 1,4 (11.08 ölçümü)
+            # Sınıf: yarıçap ayrımı yok ⇒ hepsi KENAR (turuncu). Gerçek sınıf
+            # `/perception/classified_obstacles`ta; bu kip bbox/menzil
+            # zincirini sınar, renk sınıflandırmasını DEĞİL.
+            dets.append(_SahteTespit(
+                xmin=cx - w_n / 2, xmax=cx + w_n / 2,
+                ymin=0.5 - h_n / 2, ymax=0.5 + h_n / 2,
+                label=KENAR_CLASS, confidence=0.9,
+                x_mm=x_kam * 1000.0, z_mm=z_kam * 1000.0))
+        self.det_q.koy(_SahteMesaj(dets))
 
     # ---------- Algılama (ortak) ----------
     def tespitleri_oku(self):

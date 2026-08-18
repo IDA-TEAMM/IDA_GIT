@@ -103,6 +103,19 @@ def test_her_kural_MARJ_topicine_de_yayinlaniyor():
     assert "/girdap/dogrulama/{k.ad}" in _KAYNAK
 
 
+def test_C1_yalniz_GOREV_AKTIFKEN_degerlendirilir():
+    """🔴 18.08 canlı koşumda bulundu: görev TAMAMLANDI'ya geçince sıfır itki
+    DOĞRU davranıştır, ama C1 −25 s ile İHLAL bastı.
+
+    Yanlış pozitif gerçek ihlal kadar zararlıdır — her koşuda yanan alarm
+    alarm değildir (09.08 `mono_menzil` dersi)."""
+    assert "PARKUR1" in _KAYNAK and "PARKUR2" in _KAYNAK and "PARKUR3" in _KAYNAK
+    i = _KAYNAK.index("def _itki_sifir")
+    blok = _KAYNAK[i:i + 900]
+    assert "mission/state" in blok, "C1 görev durumuna bakmıyor"
+    assert "return None" in blok, "görev aktif değilken muaf tutulmuyor"
+
+
 def test_setup_py_entry_pointu_KAYITLI():
     sp = io.open(_KOK / "ros2_ws/src/girdap_decision/setup.py", encoding="utf-8").read()
     assert "dogrulama_node = girdap_decision.dogrulama_node:main" in sp

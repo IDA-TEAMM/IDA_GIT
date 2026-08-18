@@ -200,6 +200,16 @@ class DogrulamaIzleyici(Node):
             return (min(math.hypot(p.position.x, p.position.y) for p in m.poses),)
 
         def _itki_sifir(_):
+            # 🔴 KAPI (18.08 canlı koşumda bulundu): C1 yalnız görev AKTİFken
+            # anlamlıdır. Kuralın kendi docstring'i bunu söylüyordu ama kapı
+            # UYGULANMAMIŞTI ⇒ görev TAMAMLANDI'ya geçince sıfır itki DOĞRU
+            # davranışken kural −25 s ile İHLAL bastı. Yanlış pozitif, gerçek
+            # ihlal kadar zararlıdır: her koşuda yanan alarm alarm değildir.
+            d = ob.get("/girdap/mission/state")
+            if d is not None and d.data.strip().upper() not in (
+                    "PARKUR1", "PARKUR2", "PARKUR3"):
+                self._sifir_basi = None
+                return None                    # görev aktif değil ⇒ muaf
             m = ob.get("/girdap/control/thrust")
             if m is None or not m.data:
                 return None

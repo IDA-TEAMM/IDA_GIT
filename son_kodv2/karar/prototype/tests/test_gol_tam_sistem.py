@@ -165,6 +165,33 @@ def test_ariza_enjeksiyon_salterleri_VAR_ve_KAPALI():
         assert float(v) in (0.0, 1.0), f"{p} varsayılanı {v} — kapalı değil"
 
 
+def test_gol_temizleyici_TUM_gol_dugumlerini_taniyor():
+    """🔴 HAYALET DÜĞÜM KAPISI (18.08 ölçümü).
+
+    `gol_temizle.py` yalnız `girdap_decision` + `sanal_gol` arıyordu;
+    `sahte_ham_sensor.py` listede YOKTU ⇒ hiç öldürülmüyordu. Ardışık
+    koşumlardan **6 kopya** birikti (en eskisi 26 dakikalık) ve aynı topic'e
+    altı üretici basıyordu — hangi verinin kimden geldiği belirsizleşir,
+    ölçüm SESSİZCE anlamsızlaşır.
+
+    Bu test göl betiğinin başlattığı her `scripts/*.py` düğümünün
+    temizleyicinin desen listesinde olduğunu doğrular.
+    """
+    import re
+
+    temizle = io.open(_KOK / "scripts/gol_temizle.py", encoding="utf-8").read()
+    desenler = re.search(r"_GOL_DESENLERI\s*=\s*\(([^)]*)\)", temizle)
+    assert desenler, "_GOL_DESENLERI bulunamadı"
+    liste = re.findall(r'"([^"]+)"', desenler.group(1))
+    assert "girdap_decision" in liste and "sanal_gol" in liste
+
+    # Göl betiğinde `python3 "$S/<ad>.py"` ile başlatılan her düğüm
+    for ad in re.findall(r'python3 "\$S/(\w+)\.py"', _GOL_METIN):
+        assert any(d in ad or ad in d for d in liste), (
+            f"{ad}.py göl betiğinde başlatılıyor ama gol_temizle.py onu "
+            "TANIMIYOR — öldürülemez, hayalet düğüm olarak kalır")
+
+
 def test_betik_SOZDIZIMI_temiz():
     import subprocess
     r = subprocess.run(["bash", "-n", str(_GOL)], capture_output=True)
