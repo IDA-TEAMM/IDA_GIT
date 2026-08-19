@@ -176,6 +176,18 @@ FPS = 8                # sensorFps üst sınırı. 🔴 2026-08-12: 11 → 8 (NN
                        # 1,5 m/s'te kare arası yol 18,8 cm ↔ duba çapı 30 cm.
                        # Şartname md 4.2 Dosya-1 şartı ≥1 Hz.
 FPS_UYARI_ESIK = 6.5   # ölçülen NN FPS bunun altına düşerse logda uyar.
+#: 🔴 SIFIR VERİM UYARISI (2026-08-19). Mevcut "SESSİZ RET" alarmı yalnız
+#: tespit VARKEN ve reddedilirken yanar; tespit HİÇ üretilmediğinde reddedilecek
+#: bir şey olmadığı için hiçbir alarm yanmaz ve düğüm `kenar=0 engel=0 | NN 8.0
+#: FPS` diyerek SAĞLIKLI görünür. Bant taraması bunun sistemik olduğunu gösterdi
+#: (tespit/kare): 13.08 sabah 0,9-3,4 ✅ · 13.08 09:46+ 0,00 ❌ · 14.08 0,7-2,7 ✅
+#: · 15-16.08 0,00-0,07 ❌ · 17.08 04:20 **89,26** (kaçak) · 17.08 19:33 2,33 ✅.
+#: Yani model çalışıyor ama verim İKİ UÇLU ve günlerce fark edilmedi — sahada
+#: SSH yok, journal tek görünürlük kanalı. NN nominal hızda dönerken verim bu
+#: süre boyunca sıfır kalırsa GÜRÜLTÜLÜ uyarı basılır.
+#: ⚠ Tek başına kusur kanıtı DEĞİL: kadrajda duba yoksa sıfır NORMALDİR
+#: (kapalı alan). Uyarı "bak buraya" der, "bozuk" demez.
+SIFIR_VERIM_UYARI_S = 60.0
                        # 🪤 HEDEF FPS'İN ALTINDA KALMALI. Eskiden 8.0 idi; FPS 11
                        # iken doğruydu, ama FPS 8'e inince eşik hedefin ÜSTÜNE
                        # çıkmış olurdu ⇒ alarm HER KARE yanardı. Bizde bunun dersi
@@ -1121,6 +1133,9 @@ class DubaNavigator(Node):
         # değildir" (09.08, mono_menzil). Alarm artık TOPLAMA değil, son
         # log'dan bu yana olan ARTIŞA bakıyor.
         self._tani_onceki = dict(self._tani)
+        #: SIFIR VERİM: NN sağlıklı dönerken tespitsiz geçen sürenin başı.
+        self._sifir_verim_bas = None
+        self._sifir_verim_uyarildi = False
         # Geçilen geçitlerin orta noktaları (dünya/odom çerçevesi). Şartname G
         # tanımı "FARKLI karşılıklı kenar dubaları arasından geçiş sayısı" →
         # aynı geçitten tekrar geçilirse SAYILMAZ (bkz. gm.yeni_gecit_mi).
@@ -1221,12 +1236,72 @@ class DubaNavigator(Node):
                 "🔵 sim aboneliği (GÖRÜNTÜ kipi): /oak/rgb/image_raw → "
                 "CLAHE+HSV → sahte NN kuyruğu (stereo YOK → mono yedek)")
             return
+        # 🔴 19.08 ÖLÇÜMÜ — SINIFLI KAYNAK TERCİH EDİLİR.
+        # Sınıfsız `obstacle_map` her tespiti KENAR yapıyordu; ayrıca görüntü
+        # kipinin renk eşiği dubaların çoğunu kaçırıyordu. Aynı sahnede
+        # ölçüldü (600 kare):
+        #     FOV'da GEOMETRİK ≥2 duba : %67,7
+        #     kamera tespiti   ≥2 duba : %12,7   ⇒ 5,3 KAT KAYIP
+        # Kapı ancak İKİ duba birden görülünce kurulabildiği için bu kayıp
+        # kapı zincirini gölde sınanamaz hale getiriyordu. Sınıflı kaynak
+        # hem kaybı kapatır hem gerçek sınıfı (0=kenar · 1=engel) taşır.
+        # ⚠ Bu kip YOLO'yu SINAMAZ (zaten sınamıyordu); sınadığı şey
+        # bbox→metre, menzil, kapı geometrisi ve geçiş zinciridir.
+        from vision_msgs.msg import Detection3DArray
+        self.create_subscription(
+            Detection3DArray, "/gercek/classified_obstacles",
+            self._sim_sinifli_geldi, 10)
         from geometry_msgs.msg import PoseArray
         self.create_subscription(
             PoseArray, "/perception/obstacle_map", self._sim_engel_geldi, 10)
         self.get_logger().info(
-            "🔵 sim aboneliği (GEOMETRİK kip): /perception/obstacle_map → "
+            "🔵 sim aboneliği (GEOMETRİK kip): /gercek/classified_obstacles "
+            "(sınıflı, tercih) + /perception/obstacle_map (yedek) → "
             "sahte NN kuyruğu")
+
+    def _sim_sinifli_geldi(self, msg) -> None:
+        """`Detection3DArray` → sınıfıyla birlikte sahte NN kuyruğu.
+
+        Sınıf kaynağın kendisinden gelir: kamera FOV'u/menzili dışındaki
+        cisimler zaten UNKNOWN etiketlidir ve burada ELENİR — yani "kameranın
+        gördüğü" kısıtı korunur, yalnız renk eşiğinin kaçırması ortadan kalkar.
+        """
+        dets = []
+        for d in msg.detections:
+            bx = float(d.bbox.center.position.x)
+            by = float(d.bbox.center.position.y)
+            if bx <= 0.05:
+                continue
+            sinif = None
+            for r in d.results:
+                try:
+                    sinif = int(r.hypothesis.class_id)
+                except (TypeError, ValueError):
+                    sinif = None
+                break
+            if sinif not in (KENAR_CLASS, ENGEL_CLASS):
+                continue                      # UNKNOWN(99) → kamera görmedi
+            yaricap = max(0.05, float(d.bbox.size.x) / 2.0)
+            det = self._sim_tespit_kur(bx, by, yaricap, sinif)
+            if det is not None:
+                dets.append(det)
+        if dets:
+            self._sim_sinifli_taze = True
+            self.det_q.koy(_SahteMesaj(dets))
+
+    def _sim_tespit_kur(self, bx, by, yaricap, sinif):
+        """Gövde (x ileri, y sol) → ters pinhole → `_SahteTespit` (ortak yol)."""
+        x_kam, z_kam = -by, bx
+        w_n = min(0.9, (2.0 * yaricap) * self._f_sim / max(z_kam, 0.3))
+        cx = 0.5 + (x_kam / max(z_kam, 0.3)) * self._f_sim
+        if not (0.0 < cx < 1.0):
+            return None
+        h_n = w_n * 1.4
+        return _SahteTespit(
+            xmin=cx - w_n / 2, xmax=cx + w_n / 2,
+            ymin=0.5 - h_n / 2, ymax=0.5 + h_n / 2,
+            label=sinif, confidence=0.9,
+            x_mm=x_kam * 1000.0, z_mm=z_kam * 1000.0)
 
     def _sim_kare_geldi(self, msg) -> None:
         """`sensor_msgs/Image` (bgr8) → gerçek ön işleme → sahte NN kuyruğu.
@@ -1273,7 +1348,13 @@ class DubaNavigator(Node):
             self.rgb_q.koy(_SahteKare(kare))
 
     def _sim_engel_geldi(self, msg) -> None:
-        """PoseArray → `_SahteTespit` listesi → sahte NN kuyruğu."""
+        """PoseArray → `_SahteTespit` listesi → sahte NN kuyruğu (YEDEK).
+
+        ⚠ Sınıflı kaynak akıyorsa BU YOL SUSAR — iki üretici aynı kuyruğu
+        doldurursa tespitler ikiye katlanır ve ölçüm anlamsızlaşır.
+        """
+        if getattr(self, "_sim_sinifli_taze", False):
+            return
         dets = []
         for p in msg.poses:
             bx, by = float(p.position.x), float(p.position.y)
@@ -2330,6 +2411,27 @@ class DubaNavigator(Node):
         # 🔴 11.08: "buyuk_cisim" LİSTEDE YOKTU — büyük cisim süzgeci gerçek
         # dubayı elese sahada TEK SATIR bile basılmıyordu (SSH yok, journal tek
         # görünürlük kanalı). 06.08'deki "sessiz ret" hatasının aynısı.
+        # 🔴 SIFIR VERİM NÖBETÇİSİ (2026-08-19) — aşağıdaki "sessiz ret"
+        # alarmının GÖREMEDİĞİ hâl: hiç tespit üretilmiyorsa reddedilecek bir
+        # şey de yoktur, o yüzden o alarm susar ve düğüm sağlıklı görünür.
+        if self.olculen_fps >= FPS_UYARI_ESIK and not self.dubalar:
+            if self._sifir_verim_bas is None:
+                self._sifir_verim_bas = simdi
+            gecen = simdi - self._sifir_verim_bas
+            if gecen >= SIFIR_VERIM_UYARI_S and not self._sifir_verim_uyarildi:
+                self._sifir_verim_uyarildi = True
+                self.get_logger().warn(
+                    f"⚠️ SIFIR VERİM: NN {self.olculen_fps:.1f} FPS ile SAĞLIKLI "
+                    f"dönüyor ama {gecen:.0f} sn'dir HİÇ tespit üretilmedi. "
+                    "Kadrajda duba yoksa bu NORMALDİR (kapalı alan); suda ve "
+                    "duba görüş alanındayken görülüyorsa algı hattı fiilen "
+                    "ölüdür — model/blob yüklenmesi ve pozlama denetlenmeli. "
+                    "(19.08 bant taraması: verim günlere göre 0,00 ↔ 3,4 "
+                    "arasında zıplıyor ve bugüne kadar hiç izlenmiyordu.)")
+        else:
+            self._sifir_verim_bas = None
+            self._sifir_verim_uyarildi = False
+
         RED_KALEMLERI = ("dar", "dizili", "arada_duba", "menzil_celiski",
                          "menzil_yok", "buyuk_cisim")
         # 🔴 2026-08-13: tetikleyici TOPLAM değil, son log'dan bu yana ARTIŞ.

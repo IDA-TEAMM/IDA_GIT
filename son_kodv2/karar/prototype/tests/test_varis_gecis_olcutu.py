@@ -22,6 +22,7 @@ ArduPilot #23457); bizde koşan sürüm V4.6.3.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 from prototype.mission.mission_manager import (
     MissionManager,
@@ -159,3 +160,126 @@ def test_ILK_noktaya_GECMIS_halde_girilirse_yon_KURULAMAZ() -> None:
     m.update(_kuzey_m(0.5), 0.0, 5.0)           # yedek devreye girer
     assert m.phase is MissionPhase.DWELL
     assert m.zaman_asimiyla_varilan == 1
+
+
+# ─────────────────────────── FLY-BY (19.08.2026) ───────────────────────────
+# 🔴 Sabit öteleme (`hedef_oteleme_m`) DENENDİ ve KALDIRILDI: 2,03 m → red2
+# +1,41 m (eşik 1,53 ⇒ 12 cm eksik), 2,5 m → DAHA KÖTÜ (geçit 0/8). Mesafeyi
+# mesafeyle yenmek kırılgan. Fly-by ayar gerektirmiyor: kapı durulacak değil
+# GEÇİLECEK noktadır.
+
+def _wp(lat, lon, parkur=1):
+    return Waypoint(lat=lat, lon=lon, parkur=parkur)
+
+
+def _ikinci_noktaya_getir(mm):
+    """Rotanın ORTA noktasına kadar sür (muafiyetler uçlarda uygulanır)."""
+    for i in range(400):
+        mm.update(39.99995 + i * 2e-6, 31.0, i * 0.1)
+        if mm.current_index == 1:
+            return True
+    return False
+
+
+def _nisan_mesafesi(mm, la):
+    e, n = mm.update(la, 31.0, 500.0)
+    return math.hypot(e, n)
+
+
+def test_FLYBY_PARKUR3te_UYGULANMAZ() -> None:
+    """P3 (kamikaze) noktaya VARMAYI ister — içinden geçmeyi değil."""
+    rota = [_wp(40.0, 31.0, 3), _wp(40.0001, 31.0, 3), _wp(40.0002, 31.0, 3)]
+    mm = MissionManager(rota, MissionManagerConfig(gecis_zorunlu=True))
+    mm.start()
+    assert _ikinci_noktaya_getir(mm), "test kurulumu"
+    assert _nisan_mesafesi(mm, 40.0001 - 9e-6) < 3.0, (
+        "PARKUR 3'te fly-by uygulandı — araç kamikaze hedefinin ötesine sürülür"
+    )
+
+
+def test_FLYBY_PARKUR_DEGISEN_noktada_UYGULANMAZ() -> None:
+    """P2 → P3 devir noktası bir GEÇİT değil.
+
+    Orada ileri gitmek aracı **P3'ün büyük dubasının** görüş/menzil
+    penceresinden (kamera 69°, LiDAR ~8 m) çıkarabilir.
+    """
+    rota = [_wp(40.0, 31.0, 2), _wp(40.0001, 31.0, 2), _wp(40.0002, 31.0, 3)]
+    mm = MissionManager(rota, MissionManagerConfig(gecis_zorunlu=True))
+    mm.start()
+    assert _ikinci_noktaya_getir(mm), "test kurulumu"
+    assert _nisan_mesafesi(mm, 40.0001 - 9e-6) < 3.0, (
+        "parkur DEĞİŞEN noktada fly-by uygulandı — P3'ün büyük dubası kaçabilir"
+    )
+
+
+def test_FLYBY_SON_NOKTADA_UYGULANMAZ() -> None:
+    """Görevin son noktasının ötesinde sayılacak bir şey yok."""
+    rota = [_wp(40.0, 31.0), _wp(40.0001, 31.0)]
+    mm = MissionManager(rota, MissionManagerConfig(gecis_zorunlu=True))
+    mm.start()
+    assert _ikinci_noktaya_getir(mm), "test kurulumu"
+    assert _nisan_mesafesi(mm, 40.0001 - 9e-6) < 3.0, (
+        "SON noktada fly-by uygulandı — fazladan yol, kazanç yok"
+    )
+
+
+def test_FLYBY_cember_icinde_duzlem_asilmadiysa_nisan_SONRAKI_nokta() -> None:
+    """🔑 Kapı durulacak değil GEÇİLECEK noktadır — ayarlanacak sayı yok.
+
+    Sabit ötelemenin çıkmazı ölçüldü: 2,03 m → red2 +1,41 m (eşik 1,53 ⇒
+    12 cm eksik), 2,5 m → daha kötü (0/8 geçit). Belirleyici olan öteleme
+    değil aracın DURDUĞU yer: çemberin içine girince nişan ayağının dibinde
+    kalıyor ve araç kapı ortasında ölüyor.
+    """
+    rota = [_wp(40.0, 31.0), _wp(40.0001, 31.0), _wp(40.0002, 31.0)]
+    mm = MissionManager(rota, MissionManagerConfig(gecis_zorunlu=True))
+    mm.start()
+    # 2. noktanın ~1 m güneyinde: çember (2 m) İÇİNDE, düzlem AŞILMADI.
+    for i in range(400):
+        la = 39.99995 + i * 2e-6
+        mm.update(la, 31.0, i * 0.1)
+        if mm.current_index == 1:
+            break
+    assert mm.current_index == 1, "test kurulumu: ikinci noktaya gelinemedi"
+    la_ic = 40.0001 - 9e-6                      # ~1 m güney → çember içi
+    nisan = mm.update(la_ic, 31.0, 500.0)
+    hedef_mesafe = math.hypot(*nisan)
+    # Nişan artık SONRAKİ nokta (≈11,1 m ileride), kendi noktası (~1 m) değil.
+    assert hedef_mesafe > 5.0, (
+        f"nişan hâlâ kapının kendisinde ({hedef_mesafe:.2f} m) — araç kapıda "
+        "durur, düzlemi aşamaz"
+    )
+
+
+def test_FLYBY_gecis_zorunlu_KAPALIYKEN_eski_davranis() -> None:
+    """`gecis_zorunlu` kapalıyken fly-by devreye girmez (geriye uyum)."""
+    rota = [_wp(40.0, 31.0), _wp(40.0001, 31.0), _wp(40.0002, 31.0)]
+    mm = MissionManager(rota, MissionManagerConfig(gecis_zorunlu=False))
+    mm.start()
+    for i in range(400):
+        la = 39.99995 + i * 2e-6
+        mm.update(la, 31.0, i * 0.1)
+        if mm.current_index == 1:
+            break
+    la_ic = 40.0001 - 9e-6
+    nisan = mm.update(la_ic, 31.0, 500.0)
+    assert math.hypot(*nisan) < 3.0, (
+        "gecis_zorunlu KAPALIYKEN nişan sonraki noktaya kaydı — eski davranış bozuldu"
+    )
+
+
+def test_FLYBY_DUZLEM_ASILINCA_nisan_geri_doner() -> None:
+    """Düzlem aşıldıysa fly-by'a gerek yok; nişan kendi noktasına döner."""
+    rota = [_wp(40.0, 31.0), _wp(40.0001, 31.0), _wp(40.0002, 31.0)]
+    mm = MissionManager(rota, MissionManagerConfig(gecis_zorunlu=True))
+    mm.start()
+    for i in range(400):
+        la = 39.99995 + i * 2e-6
+        mm.update(la, 31.0, i * 0.1)
+        if mm.current_index == 1:
+            break
+    la_asti = 40.0001 + 9e-6                    # düzlemin ÖTESİ, çember içi
+    nisan = mm.update(la_asti, 31.0, 500.0)
+    assert math.hypot(*nisan) < 3.0, (
+        "düzlem aşıldığı hâlde nişan sonraki noktaya kaydı"
+    )

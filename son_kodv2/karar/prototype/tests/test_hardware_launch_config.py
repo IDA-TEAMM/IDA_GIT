@@ -562,3 +562,49 @@ def test_parkur1_gorev_dosyasi_TEK_parkur_yani_kamikaze_tetiklenemez() -> None:
     for idx in range(len(labels) + 3):        # fazladan waypoint de gelse
         logic.current_waypoint_reached(idx)
     assert logic.state is ParkurState.PARKUR_1
+
+
+def test_MissionManagerConfig_TUM_alanlari_mission_timingde() -> None:
+    """§1.60b sınıfı drift kapısı (19.08.2026): `cruise_velocity_mps`
+    `MissionManagerConfig`'te vardı ama `_MISSION_TIMING_DEFAULTS`'ta
+    YOKTU — hardware.yaml'da değiştirmek sessizce hiçbir şey yapmıyordu,
+    tek kaynak `params.yaml`'ın SABİT değeriydi. Kod çökmüyordu, bu yüzden
+    hiçbir test kırmızıya dönmedi.
+
+    Bu nöbetçi TÜM `MissionManagerConfig` alanlarını `_MISSION_TIMING_
+    DEFAULTS` anahtarlarına bağlar — tek tek değil, dataclass'ın kendisinden
+    türeterek — ki gelecekte eklenen bir alan da otomatik kapsansın.
+    """
+    import dataclasses
+
+    from prototype.mission.mission_manager import MissionManagerConfig
+
+    mod = _load_module()
+    alanlar = {f.name for f in dataclasses.fields(MissionManagerConfig)}
+    eksik = alanlar - set(mod._MISSION_TIMING_DEFAULTS)
+    assert not eksik, (
+        f"hardware.yaml/launch yüzeyine BAĞLI DEĞİL: {eksik} — "
+        "MissionManagerConfig'te var ama _MISSION_TIMING_DEFAULTS'ta yok, "
+        "yani hardware.yaml'da değiştirmek sessizce etkisiz kalır."
+    )
+
+
+def test_mission_params_MISSION_TIMINGdeki_HER_anahtari_dugume_gecirir() -> None:
+    """_MISSION_TIMING_DEFAULTS'a eklenen bir anahtar `mission_params`
+    sözlüğüne de elle taşınmalı — üstteki nöbetçi yalnız hardware.yaml
+    okumayı bağlar, bu da onu gerçekten `mission_manager_node`'a
+    ULAŞTIRIR mı diye launch kaynağını metin düzeyinde denetler
+    (ROS başlatmadan, launch_ros importorskip'i zaten bu dosyayı korur)."""
+    kaynak = _LAUNCH_FILE.read_text(encoding="utf-8")
+    baslangic = kaynak.index("mission_params = [")
+    bitis = kaynak.index("\n    ]", baslangic)
+    blok = kaynak[baslangic:bitis]
+    mod = _load_module()
+    eksik = [
+        k for k in mod._MISSION_TIMING_DEFAULTS
+        if f'hw["mission_timing"]["{k}"]' not in blok
+    ]
+    assert not eksik, (
+        f"_MISSION_TIMING_DEFAULTS'ta var ama mission_params bloğuna hiç "
+        f"taşınmamış: {eksik}"
+    )

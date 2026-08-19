@@ -74,6 +74,16 @@ class MissionManagerConfig:
     # Gerekli, çünkü nokta kapının ötesinde değilse ya da araç geçemiyorsa
     # görev sonsuza kadar takılırdı. 0 = yedek YOK (takılma serbest).
     gecis_zaman_asimi_s: float = 5.0
+    # 📐 GEÇİŞ PAYI (19.08.2026) — düzlemi NE KADAR aşmış sayılmalı.
+    # `_gecti` ölçütü `(p − wp)·t̂ > 0` idi: REFERANS NOKTA düzlemi geçer
+    # geçmez "geçti" sayılıyordu. Şartname ise **İDA'nın %100'ünün** geçmesini
+    # istiyor (md: "birinci duba ikilisinin %100'ünü geçmiş olması"), algı
+    # tarafı da bunu `PASS_EK_YOL` = ARAC_BOY 1,03 + 0,5 = **1,53 m** ile
+    # sayıyor. İki taraf aynı olayı farklı eşikle sayarsa geçit "sayıldı" ama
+    # puanlanmaz. ÖLÇÜLDÜ (12 farklı parkur süpürmesi, `gecis_supurme.py`):
+    # pay 0 iken ortanca aşma **+1,32 m** — eşiğin 21 cm altında.
+    # ⚠ 0.0 = ESKİ DAVRANIŞ BİREBİR.
+    gecis_payi_m: float = 0.0
 
 
 def latlon_to_enu(
@@ -265,6 +275,53 @@ class MissionManager:
                 wp = self._wps[self._idx]
                 east, north = latlon_to_enu(lat, lon, wp.lat, wp.lon)
 
+        return self._nisan(east, north, lat, lon)
+
+    def _nisan(
+        self, east: float, north: float, lat: float, lon: float
+    ) -> Tuple[float, float]:
+        """Kontrolcüye verilecek nişan (ENU ofseti) — kapıda **fly-by**.
+
+        🔴 SABİT ÖTELEME DENENDİ VE KALDIRILDI (19.08.2026). Ölçüldü:
+        `2,03 m` → red2 **+1,41 m** (eşik 1,53 ⇒ 12 cm eksik) · `2,5 m` →
+        **daha kötü** (geçit 0/8, red −0,54/−0,62). Mesafeyi mesafeyle yenmek
+        kırılgan: belirleyici olan öteleme değil aracın **DURDUĞU** yer.
+        `arrival_radius_m` (2,0 m) içine girince nişan ayağının dibinde kalıyor,
+        itki sıfıra gidiyor ve araç kapının ortasında ölüyor.
+
+        ✅ ÇÖZÜM — **fly-by**: otopilotların *fly-over* (noktaya var ve dur) ↔
+        *fly-by* (noktayı geçerken sonrakine dön) ayrımı. Kapı durulacak değil
+        **geçilecek** noktadır. Çemberin içindeyken düzlem henüz aşılmadıysa
+        nişan **sonraki nokta** olur; araç durmaz, kapının içinden geçer ve
+        düzlemi geniş payla aşar. **Ayarlanacak sayı yok.**
+        (ArduRover 4.3+ waypoint tamamlamayı zaten "geçti mi" ile tetikliyor;
+        `WP_RADIUS` AUTO'da etkisiz — ArduPilot #23457.)
+
+        ⚠ SAYIM DEĞİŞMEZ: geçiş hâlâ GERÇEK waypoint düzlemine göre sayılır.
+        ⚠ Yalnız `gecis_zorunlu` açıkken; kapalıyken eski davranış birebir.
+
+        Üç yerde fly-by UYGULANMAZ:
+          1) **Parkur 3** — kamikaze noktaya VARMAYI ister, geçmeyi değil.
+          2) **Parkur değiştiren nokta** — P2'nin son waypoint'i bir GEÇİT
+             değil DEVİR noktasıdır; orada ileri gitmek aracı P3'ün büyük
+             dubasının görüş/menzil penceresinden (kamera 69°, LiDAR ~8 m)
+             çıkarabilir. Kazanılacak geçit yok, kaybedilecek nişan var.
+          3) **Görevin son noktası** — ötesinde sayılacak bir şey yok.
+        """
+        wp = self._wps[self._idx]
+        son_nokta = self._idx + 1 >= len(self._wps)
+        parkur_degisiyor = (
+            not son_nokta and self._wps[self._idx + 1].parkur != wp.parkur
+        )
+        if wp.parkur == 3 or son_nokta or parkur_degisiyor:
+            return east, north
+        if (
+            self._cfg.gecis_zorunlu
+            and math.hypot(east, north) <= self._cfg.arrival_radius_m
+            and not self._gecti(lat, lon)
+        ):
+            sonraki = self._wps[self._idx + 1]
+            return latlon_to_enu(lat, lon, sonraki.lat, sonraki.lon)
         return east, north
 
     def _gecis_durumunu_sifirla(self) -> None:
@@ -298,7 +355,8 @@ class MissionManager:
         `t̂` = bacak yönü (önceki nokta → bu nokta). İlk noktada önceki yoktur;
         o zaman aracın çembere GİRDİĞİ andaki yaklaşma yönü kullanılır — düz
         yaklaşmada ikisi aynıdır ve idx=0 tanımsız kalmaz.
-        Ölçüt: `(p − wp) · t̂ > 0`.
+        Ölçüt: `(p − wp) · t̂ > gecis_payi_m` (0 = eski davranış; şartname
+        teknenin TAMAMININ geçmesini ister ⇒ dağıtımda 1,53 m).
         """
         wp = self._wps[self._idx]
         e_vw, n_vw = latlon_to_enu(lat, lon, wp.lat, wp.lon)   # araç → nokta
@@ -314,7 +372,7 @@ class MissionManager:
             # Bacak yönü tanımsız (üst üste iki nokta) ⇒ ölçüt uygulanamaz;
             # takmamak için varış kabul edilir.
             return True
-        return ((-e_vw) * tx + (-n_vw) * ty) / n > 0.0
+        return ((-e_vw) * tx + (-n_vw) * ty) / n > self._cfg.gecis_payi_m
 
     @property
     def gecis_bekleyen(self) -> int:

@@ -288,10 +288,21 @@ mission:
   # Varış yarıçapı ise araca kapıya 2,0 m KALA "vardın" diyor ⇒ ikisi
   # buluşmuyor, açık = 3,53 m. AÇILINCA varış ayrıca düzlem aşmayı da ister.
   # ⚠ false = ESKİ DAVRANIŞ BİREBİR. Bantta A/B ölçülmeden AÇILMAZ.
-  gecis_zorunlu: false
+  gecis_zorunlu: true
   # Kilitlenme yedeği (s): yarıçapın içinde bu kadar kalıp düzlem aşılamazsa
   # varış yine kabul edilir + sayaç artar. 0 = yedek yok (takılma serbest).
   gecis_zaman_asimi_s: 5.0
+  gecis_payi_m: 0.0       # mekanizma HAZIR ama KAPALI: fly-by gercek kosumda
+                          # duzlemi +5,98 m astirdi (esik 1,53) ⇒ siki esige GEREK YOK.
+                          # 1,53'e cekmek OLCULMEDI; gerekirse tek satir.
+  # 19.08.2026 — daha önce burada YOKTU (§1.60b: alan var, yüzeye bağlı
+  # değil — hardware.yaml'da değiştirmek sessizce etkisizdi). Referans
+  # seyir hızı (MPPI hedef hızı); şu an params.yaml'daki (1.0) ile AYNI —
+  # bu satır saf tellemektir, davranış değişmedi.
+  # ⚠ AÇIK KARAR: kaptanın göl bandından ölçtüğü gerçek seyir 0,62 m/s,
+  # burada 1.0 — henüz uzlaştırılmadı, sahada gerçek kapı geçme
+  # performansıyla doğrulanmalı (bkz. CLAUDE.md "MPPI Terminal Maliyeti").
+  cruise_velocity_mps: 1.0
 
 # --- iSAM2 sensör füzyonu (fusion_node) ---
 # ⚠ Bu blok `perception.fusion` (kamera-LiDAR bearing eşleştirmesi) ile
