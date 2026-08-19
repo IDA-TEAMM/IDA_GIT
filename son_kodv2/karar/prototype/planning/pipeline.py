@@ -402,8 +402,14 @@ class PlanningPipeline:
         # F-S.10: PID yedek kontrolcü — cfg.control_mode="pid" iken kullanılır.
         self._pid = CascadeHeadingPidController(self.cfg.pid_cfg)
         # F-P.11: sıkışma kurtarması durumu (bkz. modül başı sabitleri).
-        self._durgun_baslangic_t: Optional[float] = None
-        self._hareket_baslangic_t: Optional[float] = None
+        # 19.08 gece — TUMBLING PENCERE: anlık hız yerine pencere boyunca NET
+        # yer değiştirme (bkz. `_sikisma_kurtarmasini_guncelle`). Jetson'da
+        # ölçüldü (`test_sikisma_kurtarmasi_kirilganligi.py`): anlık hız eşiğin
+        # HEMEN üstünde titreşince (CPU/GPU'nun float64/float32 farkı zamanla
+        # birikip ufak sayısal sapmalara yol açıyor) tetikleme 101. adımdan
+        # 777. adıma geç kalıyordu — pencere yaklaşımı tekil titreşime bağışık.
+        self._pencere_baslangic_t: Optional[float] = None
+        self._pencere_baslangic_xy: Optional[Tuple[float, float]] = None
         self._kurtarma_aktif: bool = False
         self._kurtarma_sayaci: int = 0        # teşhis: kaç kez tetiklendi
 
@@ -1147,44 +1153,71 @@ class PlanningPipeline:
         ]
 
     def _sikisma_kurtarmasini_guncelle(self) -> None:
-        """MPPI'nin KENDİ ufku kadar süredir hız 'durgun' eşiğinin altındaysa
-        kurtarmayı tetikle: engel paylarını `_mppi_icin_engeller()` ile geçici
-        kırp + warm-start'ı sıfırla (bkz. o metodun ve modül başı notlar).
+        """GİRİŞ: MPPI'nin KENDİ ufku kadar süren bir PENCEREDE tekne NET
+        olarak yeterince ilerlemediyse kurtarmayı tetikle. ÇIKIŞ: tekne
+        kırpılan engellerin TAMININ ORİJİNAL (kırpılmamış) güvenlik
+        yarıçapının GERÇEKTEN dışına çıkana kadar kapanmaz — bkz. aşağıdaki
+        iki ayrı not.
 
-        🔴 **Histerezis ZORUNLU (18.08 mutasyon turu).** İlk sürümde kurtarma
-        hız eşiği aşılır aşılmaz ANINDA kapanıyordu; ölçüldü: tekne payı
-        kırpılınca bir tekme alıp hareketleniyor, ama daha engeli GERÇEKTEN
-        geçmeden kurtarma kapanıyor, tam pay geri gelince aynı engel onu geri
-        itiyor, hız yeniden düşüyor → sürekli tetikle/kapa döngüsü, NET
-        ilerleme sıfır (bkz. test geçmişi). Çözüm: kapanma da TETİKLENME ile
-        AYNI ufuk kadar KESİNTİSİZ hareketi ister — "bir kez tekme yemek"
-        ile "gerçekten kurtulmuş olmak" ayrı şeyler.
+        🔴 **TÜMSEK (tumbling) PENCERE GİRİŞİ — ANLIK HIZ DEĞİL (19.08 gece,
+        Jetson bulgusu #1).** İlk sürüm anlık hızı eşikle karşılaştırıyordu;
+        ölçüldü (`test_sikisma_kurtarmasi_kirilganligi.py`): CPU/GPU'nun
+        float64/float32 farkı zamanla birikip anlık hızı eşiğin HEMEN
+        üstünde titreştiriyor — CPU'da tetik 101. adımda gelirken GPU'da
+        777. adıma kadar hiç gelmiyordu. Çözüm: eşikle karşılaştırılan şey
+        artık anlık hız değil, pencere BOYUNCA kat edilen NET mesafe.
+
+        🔴 **GEOMETRİK ÇIKIŞ — PENCERE-BAZLI DEĞİL (19.08 gece, Jetson
+        bulgusu #2).** Pencere-bazlı çıkış ("bu pencerede yeterince
+        ilerledim mi") GPU'da ÖLÇÜLEN bir döngüye yol açıyordu: tekne bir
+        pencerede engelden uzaklaşıyor gibi görünüp kurtarma KAPANIYOR, tam
+        pay geri geliyor, engel onu tekrar İTİYOR, yeniden durgunlaşıp
+        TEKRAR tetikleniyor (`kurtarma_sayaci=2`) — ama bu ikinci turda
+        90 s'lik test bütçesi yetmiyordu (CPU'da tek turda 50 s'de biten iş
+        GPU'da iki yarım turda hiç bitmiyordu). Çözüm: çıkış artık "bu
+        pencerede ilerledim mi" değil, "kırptığım TÜM engellerin ORİJİNAL
+        (kırpılmamış) payının GERÇEKTEN dışında mıyım" — yani tam pay geri
+        geldiğinde aracı yeniden itmeyeceği KANITLANMIŞ olmadan kapanmaz.
         """
-        u, v = float(self._state[3]), float(self._state[4])
-        hiz = math.hypot(u, v)
-        esik = _DURGUN_ORAN * self._erisilebilir_hiz()
+        x, y = float(self._state[0]), float(self._state[1])
         simdi = self._saat()
         ufuk_s = self.cfg.mppi_T * self.cfg.mppi_dt
-        if hiz >= esik:
-            self._durgun_baslangic_t = None
-            if not self._kurtarma_aktif:
-                return
-            if self._hareket_baslangic_t is None:
-                self._hareket_baslangic_t = simdi
-            elif (simdi - self._hareket_baslangic_t) >= ufuk_s:
+
+        if self._kurtarma_aktif:
+            temiz = True
+            for o in self._obstacles:
+                tam_pay = (
+                    o.margin if o.margin is not None
+                    else self._base_mppi_cfg.obstacle_margin
+                )
+                if math.hypot(x - o.cx, y - o.cy) < o.r + tam_pay:
+                    temiz = False
+                    break
+            if temiz:
                 self._kurtarma_aktif = False
-                self._hareket_baslangic_t = None
                 self._geri_planla_veya_engelleri_tazele()
+                self._pencere_baslangic_t = None
             return
-        self._hareket_baslangic_t = None      # durgunluğa dönüş: kapanma sayacı sıfırlanır
-        if self._durgun_baslangic_t is None:
-            self._durgun_baslangic_t = simdi
+
+        if self._pencere_baslangic_t is None:
+            self._pencere_baslangic_t = simdi
+            self._pencere_baslangic_xy = (x, y)
             return
-        if not self._kurtarma_aktif and (simdi - self._durgun_baslangic_t) >= ufuk_s:
-            self._kurtarma_aktif = True
-            self._kurtarma_sayaci += 1
-            self._geri_planla_veya_engelleri_tazele()
-            self._mppi.reset_warm_start()
+        sure = simdi - self._pencere_baslangic_t
+        if sure < ufuk_s:
+            return
+        x0, y0 = self._pencere_baslangic_xy
+        net_mesafe = math.hypot(x - x0, y - y0)
+        esik_mesafe = _DURGUN_ORAN * self._erisilebilir_hiz() * ufuk_s
+        # Pencere kapandı: yenisi ŞİMDİKİ konumdan başlar (tümsek, kayan değil).
+        self._pencere_baslangic_t = simdi
+        self._pencere_baslangic_xy = (x, y)
+        if net_mesafe >= esik_mesafe:
+            return          # hareketli, durgun sayılmadı — kurtarma zaten kapalı
+        self._kurtarma_aktif = True
+        self._kurtarma_sayaci += 1
+        self._geri_planla_veya_engelleri_tazele()
+        self._mppi.reset_warm_start()
 
     def _geri_planla_veya_engelleri_tazele(self) -> None:
         """Kurtarma AÇILIRKEN/KAPANIRKEN global yolu da tazele.
