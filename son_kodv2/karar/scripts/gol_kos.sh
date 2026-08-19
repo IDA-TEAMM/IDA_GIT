@@ -11,7 +11,12 @@
 # GRUBUNDA başlar; `gol_dur.sh` grubu topluca öldürür.
 source /opt/ros/humble/setup.bash
 source "$HOME/ros2_ws/install/setup.bash" 2>/dev/null
-export ROS_DOMAIN_ID=77
+# 🔑 PARALEL KOŞUM (19.08): domain dışarıdan ezilebilir. ROS'lu gölde tek
+# koşum karar veremiyor (aynı ayar 0-2 kapı arası oynuyor — ROS 2'de çok
+# süreçli koşum belirlenimsiz), N koşum şart. Ayrı domain + ayrı
+# `GIRDAP_GOL_LOG` ile koşumlar birbirini görmeden AYNI ANDA koşabilir.
+# ⚠ CPU paylaşılır: 3'ten fazla paralel koşum kadans sadakatini bozar.
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-77}"
 export PYTHONPATH="$HOME/IDA_GIT/son_kodv2/karar:$PYTHONPATH"
 P="$HOME/ros2_ws/install/girdap_decision/share/girdap_decision/config/params.yaml"
 
