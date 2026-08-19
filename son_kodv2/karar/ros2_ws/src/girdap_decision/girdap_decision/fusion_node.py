@@ -526,7 +526,14 @@ class FusionNode(Node):
                         return
             self._son_gps = (msg.latitude, msg.longitude, simdi)
 
-        self._source.on_gps(msg.latitude, msg.longitude, sigma_xy=sigma_xy)
+        # §1.58 (19.08 gece) — besleyen mesajın ÖLÇÜM damgasını taşı, `_on_imu`
+        # ile AYNI zaman tabanında (`_stamp_to_seconds`). §1.57'nin (poz ÇIKIŞ
+        # damgası) GİRİŞ tarafındaki karşılığı: GPS gecikmeliyse
+        # `FusionPipeline.on_gps` bunu KENDİ ölçüm anına geri sarar.
+        self._source.on_gps(
+            msg.latitude, msg.longitude, sigma_xy=sigma_xy,
+            t=_stamp_to_seconds(msg.header.stamp),
+        )
         self._orijini_kaydet()
         self._n_gps += 1
 

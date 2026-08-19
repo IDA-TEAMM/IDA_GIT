@@ -42,7 +42,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import gtsam
 import numpy as np
@@ -189,6 +189,13 @@ class FusionPipeline:
         # adımları Pose2 kompozisyonuyla eklenir → dönüş sırasında bile
         # doğru; skaler toplam olsaydı yaw değişimi ihmal edilirdi.
         self._acc_delta: gtsam.Pose2 = gtsam.Pose2()
+        # 🕰️ §1.58 (19.08 gece) — GPS GİRİŞ ZAMAN DAMGASI. Her IMU alt-adımının
+        # KENDİ ölçüm zamanındaki BİRİKMİŞ deltayı tutar (son flush'tan beri).
+        # `on_gps`'e bir ölçüm zamanı (`t`) verilirse, GPS'in KENDİ ölçüm
+        # anındaki deltaya "geri sarılır" — bkz. `_gecmiste_delta`. Her
+        # flush'ta temizlenir; büyümesi bir keyframe periyodu (tipik ~0,2 s)
+        # ile doğal olarak sınırlıdır, ayrı bir tavan gerekmez.
+        self._acc_delta_gecmisi: List[Tuple[float, gtsam.Pose2]] = []
 
         # GPS origin (ilk fix)
         self._lat0: Optional[float] = None
@@ -275,6 +282,9 @@ class FusionPipeline:
         self._acc_delta = self._acc_delta.compose(
             gtsam.Pose2(self._vx_body * dt, self._vy_body * dt, omega_z * dt)
         )
+        # §1.58 — bu alt-adımın KENDİ zamanındaki birikmiş deltayı kaydet
+        # (GPS'in geç gelen ölçüm anına "geri sarabilmek" için).
+        self._acc_delta_gecmisi.append((t, self._acc_delta))
         self._t_since_flush += dt
         if self._t_since_flush < self.cfg.keyframe_period_s:
             return False
@@ -282,13 +292,22 @@ class FusionPipeline:
         return self._flush()
 
     def on_gps(
-        self, lat: float, lon: float, sigma_xy: Optional[float] = None
+        self, lat: float, lon: float, sigma_xy: Optional[float] = None,
+        t: Optional[float] = None,
     ) -> None:
         """GPS fix: ENU'ya çevir, latest_key'e prior ekle.
 
         sigma_xy: fix kalitesinden türetilen ölçüm sigma'sı (m). None →
         config gps_sigma_xy. Reddedilmiş fix'ler buraya HİÇ gelmemeli
         (bkz. fusion.gps_quality.sigma_for_status).
+
+        t: GPS ölçümünün KENDİ zamanı (mesajın `header.stamp`'i, saniye,
+        IMU ile AYNI zaman tabanında — bkz. `_gecmiste_delta`). None → eski
+        davranış (GPS "şimdi" alınmış sayılır, doğrudan `_last_imu_t`'ye
+        bağlanır). Verilirse ve bu keyframe periyodu içinde GPS'ten SONRA
+        gelmiş IMU örnekleri varsa (yani GPS gecikmeli geldi), prior GPS'in
+        KENDİ ölçüm anındaki birikmiş deltaya bağlanır — §1.57'nin (poz
+        ÇIKIŞ damgası) GİRİŞ tarafındaki karşılığı, 19.08 gece (§1.58).
         """
         degerler = (lat, lon) if sigma_xy is None else (lat, lon, sigma_xy)
         if self._reddet_non_finite("on_gps", *degerler):
@@ -300,6 +319,48 @@ class FusionPipeline:
             self._lat0 = lat
             self._lon0 = lon
             self._cos_lat0 = math.cos(math.radians(lat))
+            return
+
+        # §1.58 — GPS GECİKMELİYSE ÖLÇÜM ANINA GERİ SARIL.
+        #
+        # 🔴 Ölçülen arıza (GIRDAP_DURUM, 19.08 gece): `add_gps` hiçbir zaman
+        # damgası taşımıyordu — GPS fix'i her zaman "şimdi"nin (bu callback'in
+        # ateşlendiği an, yani `_last_imu_t`) key'ine bağlanıyordu. GPS'in
+        # KENDİ ölçüm anı (mesajın `header.stamp`'i) ile callback'in işlendiği
+        # an arasında (seri port/ROS/QoS gecikmesi) fark varsa, düzeltme
+        # aracın O ANDA OLMADIĞI bir noktaya iğneleniyordu — §1.57'nin (poz
+        # ÇIKIŞ damgası, bugün düzeltildi) GİRİŞ tarafındaki aynı hata sınıfı,
+        # ama HENÜZ düzeltilmemişti.
+        #
+        # Çözüm yeni bir eşik İCAT ETMİYOR: `_acc_delta_gecmisi` zaten yalnız
+        # BU keyframe periyodu kadar (~0,2 s, throttle'ın kendi tavanı) geriye
+        # gidiyor — "GPS ne kadar gecikmiş sayılır" sorusu ayrı bir sabitle
+        # değil, mevcut pencerenin kendi sınırıyla cevaplanıyor. Pencerede
+        # GPS'in ANINDAN sonraki bir örnek yoksa (GPS zaten "güncel") ya da
+        # GPS pencereden daha eskiyse (bu periyottan ÖNCEKİ bir key'e ait,
+        # düzeltilemez) sessizce eski davranışa düşülür.
+        kadar = self._gecmiste_delta(t) if t is not None else None
+        if (
+            kadar is not None
+            and self._last_imu_t is not None
+            and t < self._last_imu_t
+        ):
+            kalan = kadar.inverse().compose(self._acc_delta)
+            kalan_sure = max(0.0, self._last_imu_t - t)
+            # `_flush()` kendi sonunda `_acc_delta_gecmisi`yi TEMİZLER — GPS
+            # anından SONRAKİ örnekleri o temizlikten ÖNCE burada kopyala.
+            kalan_gecmis = [
+                (tt, dd) for tt, dd in self._acc_delta_gecmisi if tt > t
+            ]
+            self._acc_delta = kadar
+            self._flush(force=True)
+            self._son_anahtar_t = t          # gerçek ölçüm anı — flush'un yazdığını EZER
+            x, y = self._latlon_to_enu(lat, lon)
+            self._sm.add_gps(self._sm.latest_key, x, y, sigma_xy=sigma_xy)
+            self._sm.update()
+            self._acc_delta = kalan
+            self._t_since_flush = kalan_sure
+            self._acc_delta_gecmisi = kalan_gecmis
             return
 
         # 🔴 17.08.2026 — KEYFRAME THROTTLE'INI GPS EZİYORDU.
@@ -366,10 +427,29 @@ class FusionPipeline:
         self._sm.update()
         self._acc_delta = gtsam.Pose2()
         self._t_since_flush = 0.0
+        self._acc_delta_gecmisi = []          # §1.58 — yeni segment, geçmiş sıfırlanır
         # Anahtar ŞİMDİ kapandı; taşıdığı bilgi `_last_imu_t`'ye kadarki
         # ölçümlerdir. Damga olarak kullanılacak değer budur.
         self._son_anahtar_t = self._last_imu_t
         return True
+
+    def _gecmiste_delta(self, t_hedef: float) -> Optional[gtsam.Pose2]:
+        """§1.58 — `t_hedef` anında (ya da ondan hemen ÖNCEKİ IMU alt-adımında)
+        birikmiş olan deltayı `_acc_delta_gecmisi`den bul.
+
+        En yakın-ÖNCEKİ örnek (nearest-before) — enterpolasyon YOK: liste zaten
+        IMU'nun kendi kadansında (tipik 10-50 Hz), yani en kötü hata bir IMU
+        periyodu kadar — ayrı bir enterpolasyon karmaşıklığına değmez. Bulunamazsa
+        (t_hedef geçmişten daha eski ya da geçmiş boş) None — çağıran eski
+        davranışa düşer.
+        """
+        en_iyi: Optional[gtsam.Pose2] = None
+        for tt, delta in self._acc_delta_gecmisi:
+            if tt <= t_hedef:
+                en_iyi = delta
+            else:
+                break
+        return en_iyi
 
     def set_origin(self, lat: float, lon: float) -> None:
         """ENU orijinini AÇIKÇA çak — süreç yeniden doğduğunda çerçeve kaymasın.
