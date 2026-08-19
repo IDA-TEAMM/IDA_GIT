@@ -226,7 +226,7 @@ def test_follower_taze_algiyla_drift_gunceller() -> None:
     # Kapı biraz kaydıysa (dalga) ve match_radius içindeyse kilitli kapı
     # taze algıyla güncellenir (aynı kapı, drift).
     gf = GateFollower(_CFG)
-    gf.update((0.0, 0.0), (0.0, 20.0), [(-2.0, 10.0), (2.0, 10.0)])
+    _kilitlen(gf, (0.0, 0.0), (0.0, 20.0), [(-2.0, 10.0), (2.0, 10.0)])
     res = gf.update((0.0, 1.0), (0.0, 20.0), [(-1.5, 10.5), (2.5, 10.5)])
     assert res.used_fallback is False
     # Orta nokta ~ (0.5, 10.5) — güncellendi, eski (0,10)'da kalmadı.
@@ -747,7 +747,13 @@ def test_K1_ardisik_parkurda_hedef_GERIYE_gitmez() -> None:
     ]
     en_ileri_hedef_x = -math.inf
     for arac, gn in izlence:
-        res = gf.update(arac, gn, hepsi)
+        # B5 (19.08 — ONAY_TICK 2→4): tek `update()` artık kilitlenmeye
+        # yetmeyebilir. İzlencenin HER adımını ONAY_TICK kez tekrarlamak
+        # kursun gidiş şeklini bozmadan (araç/GN aynı kalıyor) onay
+        # penceresini her dura noktasında geçirir — `_kilitlen` ile aynı
+        # mantık, çoklu nokta üzerinde.
+        for _ in range(ONAY_TICK):
+            res = gf.update(arac, gn, hepsi)
         # Hedef ya kapı nişanıdır ya ham GN — ikisi de geriye gitmemeli.
         assert res.target[0] >= en_ileri_hedef_x - 1.0, (
             f"hedef GERİYE düştü: {res.target} (araç {arac})"
