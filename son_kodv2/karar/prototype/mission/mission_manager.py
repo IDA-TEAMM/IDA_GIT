@@ -74,6 +74,20 @@ class MissionManagerConfig:
     # Gerekli, çünkü nokta kapının ötesinde değilse ya da araç geçemiyorsa
     # görev sonsuza kadar takılırdı. 0 = yedek YOK (takılma serbest).
     gecis_zaman_asimi_s: float = 5.0
+    # 🎯 HEDEF ÖTELEME (19.08.2026) — nişanı waypoint'in BACAK YÖNÜNDE bu kadar
+    # ÖTESİNE koyar. `gecis_zorunlu` varışı GECİKTİRİR ama nişanı taşımaz:
+    # araç kapı ORTASINA sürülüp orada bırakılıyordu, oysa geçişin sayılması
+    # için düzlemi `PASS_EK_YOL` = ARAC_BOY 1,03 + 0,5 = **1,53 m** aşması
+    # gerekiyor. Ölçülen (dış inceleme, 2 kapı): en ileri **−1,90 m** ve
+    # **−2,65 m** — yani ~3,5 m'lik yol hiç katedilmiyor.
+    # Algı tarafı bunu kendi `mppi_hedef` kolunda `HEDEF_OTELEME = 2,03 m` ile
+    # zaten yapıyor, ama dağıtım Plan A (`algi_yayin`) ve orada DEVREDE DEĞİL
+    # (`test_gol_tam_sistem.py` bunu kilitlemiş). Bu alan aynı çözümü KARAR
+    # tarafına koyar.
+    # ⚠ VARIŞ ÖLÇÜTÜ DEĞİŞMEZ: mesafe/düzlem hâlâ GERÇEK waypoint'e göre
+    # ölçülür — yalnız NİŞAN öteye taşınır. Yoksa puanlama çarpıtılırdı.
+    # ⚠ 0.0 = ESKİ DAVRANIŞ BİREBİR (varsayılan).
+    hedef_oteleme_m: float = 0.0
 
 
 def latlon_to_enu(
@@ -265,7 +279,30 @@ class MissionManager:
                 wp = self._wps[self._idx]
                 east, north = latlon_to_enu(lat, lon, wp.lat, wp.lon)
 
-        return east, north
+        return self._nisan(east, north, lat, lon)
+
+    def _nisan(
+        self, east: float, north: float, lat: float, lon: float
+    ) -> Tuple[float, float]:
+        """Nişan = waypoint + `hedef_oteleme_m` × bacak yönü (ENU ofseti).
+
+        Bacak yönü `_gecti` ile AYNI tanım: önceki nokta → bu nokta. İlk
+        noktada önceki yoktur; o zaman aracın YAKLAŞMA yönü kullanılır
+        (araç → nokta), yani nişan doğal olarak ileri uzar.
+        """
+        d = self._cfg.hedef_oteleme_m
+        if d <= 0.0:
+            return east, north                      # eski davranış birebir
+        wp = self._wps[self._idx]
+        if self._idx > 0:
+            onceki = self._wps[self._idx - 1]
+            tx, ty = latlon_to_enu(onceki.lat, onceki.lon, wp.lat, wp.lon)
+        else:
+            tx, ty = east, north                    # araç → nokta
+        n = math.hypot(tx, ty)
+        if n <= 1e-6:
+            return east, north                      # yön tanımsız → ötelemez
+        return east + d * tx / n, north + d * ty / n
 
     def _gecis_durumunu_sifirla(self) -> None:
         """Yaklaşma yönü + zaman aşımı saati (sayaçlar KALIR — teşhis)."""

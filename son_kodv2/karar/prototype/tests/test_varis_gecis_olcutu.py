@@ -22,6 +22,7 @@ ArduPilot #23457); bizde koşan sürüm V4.6.3.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 from prototype.mission.mission_manager import (
     MissionManager,
@@ -159,3 +160,87 @@ def test_ILK_noktaya_GECMIS_halde_girilirse_yon_KURULAMAZ() -> None:
     m.update(_kuzey_m(0.5), 0.0, 5.0)           # yedek devreye girer
     assert m.phase is MissionPhase.DWELL
     assert m.zaman_asimiyla_varilan == 1
+
+
+# ───────────────────────── HEDEF ÖTELEME (19.08.2026) ─────────────────────────
+# 🔴 KUSUR: `gecis_zorunlu` varışı GECİKTİRİYOR ama NİŞANI taşımıyordu. Araç
+# kapı ORTASINA sürülüp orada bırakılıyor, oysa geçişin sayılması için düzlemi
+# `PASS_EK_YOL` = 1,53 m aşması gerekiyor. Dış incelemede ÖLÇÜLDÜ (2 kapı):
+# en ileri **−1,90 m** ve **−2,65 m** ⇒ ~3,5 m'lik yol hiç katedilmiyor.
+# `hedef_oteleme_m` nişanı bacak yönünde öteler; VARIŞ ÖLÇÜTÜ değişmez.
+
+def _wp(lat, lon):
+    return Waypoint(lat=lat, lon=lon)
+
+
+def _duz_rota():
+    """Kuzeye doğru iki nokta (~11,1 m arayla)."""
+    return [_wp(40.0, 31.0), _wp(40.0001, 31.0)]
+
+
+def test_OTELEME_SIFIR_eski_davranis_BIREBIR() -> None:
+    """0.0 = kapalı: nişan waypoint'in kendisi (bit-birebir eski davranış)."""
+    a = MissionManager(_duz_rota(), MissionManagerConfig())
+    b = MissionManager(_duz_rota(), MissionManagerConfig(hedef_oteleme_m=0.0))
+    a.start(); b.start()
+    for i in range(30):
+        la = 39.9995 + i * 1e-5
+        assert a.update(la, 31.0, i * 0.1) == b.update(la, 31.0, i * 0.1)
+
+
+def test_OTELEME_nisani_BACAK_YONUNDE_ileri_tasir() -> None:
+    """Nişan, waypoint'in ötesinde ve TAM `hedef_oteleme_m` kadar olmalı."""
+    D = 2.03
+    kapali = MissionManager(_duz_rota(), MissionManagerConfig())
+    acik = MissionManager(_duz_rota(), MissionManagerConfig(hedef_oteleme_m=D))
+    kapali.start(); acik.start()
+    # ikinci bacakta (idx>0) bacak yönü tanımlı — oraya getir
+    for i in range(200):
+        la = 39.99995 + i * 2e-6
+        kapali.update(la, 31.0, i * 0.1)
+        acik.update(la, 31.0, i * 0.1)
+        if acik.current_index > 0:
+            break
+    assert acik.current_index > 0, "test kurulumu: ikinci bacağa geçilemedi"
+    e0, n0 = kapali.update(40.00005, 31.0, 99.0)
+    e1, n1 = acik.update(40.00005, 31.0, 99.0)
+    ileri = math.hypot(e1 - e0, n1 - n0)
+    assert abs(ileri - D) < 0.05, (
+        f"nişan {ileri:.2f} m ötelendi, beklenen {D:.2f} m"
+    )
+    assert n1 > n0, "öteleme BACAK YÖNÜNDE (kuzeye) olmalı"
+
+
+def test_OTELEME_VARIS_OLCUTUNU_BOZMAZ() -> None:
+    """🔑 Nişan öteye taşınır ama varış hâlâ GERÇEK waypoint'e göre ölçülür.
+
+    Aksi hâlde araç noktaya varmadan 'vardım' derdi — puanlama çarpıtılırdı.
+    """
+    D = 5.0
+    mm = MissionManager(_duz_rota(), MissionManagerConfig(hedef_oteleme_m=D))
+    mm.start()
+    # Noktaya 4 m mesafe: öteleme 5 m olsa da varış çemberi (2 m) DIŞINDA.
+    for i in range(5):
+        mm.update(39.999964, 31.0, i * 0.1)      # ~4 m güneyde
+    assert mm.current_index == 0, (
+        "öteleme varış ölçütünü kaydırdı — araç noktaya varmadan ilerledi"
+    )
+
+
+def test_OTELEME_ROS_PARAMETRESINE_BAGLI() -> None:
+    """🔴 `geri_hiz_yasak` tuzağı: ayar sınıfında var ama parametreye bağlı DEĞİL.
+
+    Ölçülmüş, işe yarayan bir kol yeniden derlemeden denenemiyorsa yok
+    sayılır (§1.60b · `04bddb7`). Bu nöbetçi dört yeri birden bağlar.
+    """
+    kok = Path(__file__).resolve().parents[2]
+    node = (kok / "ros2_ws/src/girdap_decision/girdap_decision"
+                  "/mission_manager_node.py").read_text(encoding="utf-8")
+    launch = (kok / "ros2_ws/src/girdap_decision/launch"
+                    "/hardware.launch.py").read_text(encoding="utf-8")
+    for ad, metin in (("declare_parameter", node), ("launch beyaz listesi", launch)):
+        assert "hedef_oteleme_m" in metin, f"{ad}'nde `hedef_oteleme_m` YOK"
+    for y in ("hardware.yaml", "params.yaml"):
+        metin = (kok / "ros2_ws/src/girdap_decision/config" / y).read_text(
+            encoding="utf-8")
+        assert "hedef_oteleme_m" in metin, f"{y}'da `hedef_oteleme_m` YOK"
