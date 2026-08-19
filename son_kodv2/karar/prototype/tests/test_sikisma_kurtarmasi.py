@@ -196,6 +196,19 @@ def _tek_direk_sahnesi(bounds: Bounds, *, stuck_recovery_enabled: bool):
     gördüğü engel geometrisi BİREBİR aynı, yalnız çevresi sadeleştirildi.
     """
     dyn = CatamaranDynamics()
+    # 19.08.2026 — SIM SAATI ENJEKTE EDILIYOR (kok neden duzeltmesi).
+    # `_sikisma_kurtarmasini_guncelle` durgunluk penceresini `self._saat()`
+    # ile olcuyor; varsayilan `time.monotonic`. Pencere uzunlugu ise
+    # `mppi_T * mppi_dt` = 2,5 s **simulasyon** ufku. Saat enjekte
+    # edilmezse bu iki ZAMAN EKSENI karisir: 900 adimlik dongu hizli bir
+    # makinede 2,5 s DUVAR saatinden once bitiyor ⇒ pencere HIC kapanmiyor
+    # ⇒ kurtarma HIC tetiklenmiyor (sayac 0), arac x≈5,1'de cakili kaliyor.
+    # OLCULDU: hizli makine (RTX 4060, GPU yolu) %100 kirmizi · ayni makinede
+    # CPU yolu (daha YAVAS ⇒ pencere kapaniyor) %100 yesil · Jetson/Orin
+    # (arada) %17 kararsiz. Ucu de TEK bu nedenle aciklaniyor.
+    # Dosyadaki diger testler zaten `_SahteSaat` kullaniyordu; bu sahne
+    # kullanmiyordu. Nobetci: `test_SAHNE_duvar_saatine_BAGLI_DEGIL`.
+    saat = _SahteSaat()
     pipe = PlanningPipeline(
         bounds,
         PlanningPipelineConfig(
@@ -203,6 +216,7 @@ def _tek_direk_sahnesi(bounds: Bounds, *, stuck_recovery_enabled: bool):
             stuck_recovery_enabled=stuck_recovery_enabled,
         ),
         dynamics=dyn,
+        saat=saat,
     )
     pipe.set_mission_state("PARKUR1")
     # Direk (6,1) — gerçek kosum() sahnesindeki kapı-0 sol direği; margin
@@ -212,14 +226,43 @@ def _tek_direk_sahnesi(bounds: Bounds, *, stuck_recovery_enabled: bool):
     pipe.set_waypoints([hedef])
     state = np.array([4.8, 1.88, math.radians(-25.0), 0.0, 0.0, 0.0])
     pipe.set_state(state)
-    return pipe, dyn, state
+    return pipe, dyn, state, saat
+
+
+def test_SAHNE_duvar_saatine_BAGLI_DEGIL() -> None:
+    """Nobetci (19.08.2026): tek-direk sahnesi KENDI saatini enjekte etmeli.
+
+    KOK NEDEN: `_sikisma_kurtarmasini_guncelle` durgunluk penceresini
+    `self._saat()` ile olcer (varsayilan `time.monotonic` = DUVAR saati),
+    pencere uzunlugu ise `mppi_T * mppi_dt` = 2,5 s **SIMULASYON** ufkudur.
+    Saat enjekte edilmezse iki zaman ekseni karisir: 900 adimlik dongu HIZLI
+    bir makinede 2,5 s duvar saatinden ONCE biter, pencere HIC kapanmaz,
+    kurtarma HIC tetiklenmez.
+
+    OLCULDU — ucu de TEK bu nedenle aciklaniyor:
+      · hizli makine (RTX 4060, GPU yolu)      → %100 KIRMIZI (5/5, 3/3)
+      · ayni makine, CPU yolu (daha YAVAS)     → %100 yesil
+      · Jetson/Orin (arada)                    → %17 kararsiz (1/6)
+    Kanit: kusurlu halde arac x=5,12'de cakili ve `_kurtarma_sayaci = 0` —
+    bu, kurtarmanin KAPALI oldugu kolun BIREBIR ayni sonucu. Yani mekanizma
+    sessizce devre disi kaliyordu.
+    Duzeltme sonrasi: sayac **7**, arac **x=21,52**; GPU 5/5, CPU 3/3 yesil.
+    """
+    import inspect
+
+    kaynak = inspect.getsource(_tek_direk_sahnesi)
+    assert "saat=" in kaynak, (
+        "`_tek_direk_sahnesi` PlanningPipeline'a saat ENJEKTE ETMIYOR — "
+        "durgunluk penceresi duvar saatine duser ve kurtarma HIZLI makinede "
+        "hic tetiklenmez (19.08: RTX 4060'ta %100 kirmizi, sayac 0)."
+    )
 
 
 def test_tek_direk_tuzaginda_kurtarma_KAPALIYKEN_donuyor(bounds: Bounds) -> None:
     """Regresyon: kurtarma olmadan tekne gerçekten (ölçülenle tutarlı
     şekilde) bu geometride sıkışıyor — testin KENDİSİ de yanlış pozitif
     vermesin diye bu kontrol burada."""
-    pipe, dyn, state = _tek_direk_sahnesi(bounds, stuck_recovery_enabled=False)
+    pipe, dyn, state, saat = _tek_direk_sahnesi(bounds, stuck_recovery_enabled=False)
     dt = 0.1
     for _ in range(400):                       # 40 s
         pipe.set_state(state)
@@ -228,6 +271,7 @@ def test_tek_direk_tuzaginda_kurtarma_KAPALIYKEN_donuyor(bounds: Bounds) -> None
             break
         for _ in range(2):
             state = dyn.step_rk4(state, u, dt / 2)
+        saat.ilerlet(dt)
     # 40 s'de x hâlâ direğin (6.0) çok gerisinde kalmalı (donmuş).
     assert state[0] < 5.5, (
         f"test kurulumu: kurtarma kapalıyken bile ilerledi (x={state[0]:.2f}) "
@@ -245,7 +289,7 @@ def test_tek_direk_tuzaginda_kurtarma_ACIKKEN_kurtuluyor_CARPMADAN(
     kontrolü) — bu, ilk denemenin (0.5 m) −0.21 m'lik ÇARPMASINI yakalayan
     tam da bu testin eksik bıraktığı kontroldü.
     """
-    pipe, dyn, state = _tek_direk_sahnesi(bounds, stuck_recovery_enabled=True)
+    pipe, dyn, state, saat = _tek_direk_sahnesi(bounds, stuck_recovery_enabled=True)
     dt = 0.1
     en_kucuk_pay = 99.0
     HULL_YARI_GENISLIK_M = 0.39      # ölçülmüş gövde eni / 2 (09.08)
@@ -256,6 +300,7 @@ def test_tek_direk_tuzaginda_kurtarma_ACIKKEN_kurtuluyor_CARPMADAN(
             break
         for _ in range(2):
             state = dyn.step_rk4(state, u, dt / 2)
+        saat.ilerlet(dt)
         pay = math.hypot(state[0] - 6.0, state[1] - 1.0) - 0.15 - HULL_YARI_GENISLIK_M
         en_kucuk_pay = min(en_kucuk_pay, pay)
     assert state[0] > 15.0, (
