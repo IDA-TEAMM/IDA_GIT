@@ -125,6 +125,9 @@ _SKIP_HOME_DEFAULT = True
 _MISSION_TIMING_DEFAULTS: dict[str, tuple[object, type]] = {
     "dwell_time_s": (2.0, float),
     "arrival_radius_m": (2.0, float),
+    # §1.68 — "GEÇTİM" varış ölçütü (along-track). False = eski davranış.
+    "gecis_zorunlu": (False, bool),
+    "gecis_zaman_asimi_s": (5.0, float),
 }
 # perception.lidar varsayılanları: (değer, ROS param tipi) — hardware.yaml
 # perception.lidar bloğu override eder, launch-arg CLI'dan da override edilir.
@@ -1076,6 +1079,14 @@ def generate_launch_description() -> LaunchDescription:
             "dwell_time_s": float(hw["mission_timing"]["dwell_time_s"]),
             "arrival_radius_m": float(
                 hw["mission_timing"]["arrival_radius_m"]
+            ),
+            # §1.68: varış "yaklaştım" değil "GEÇTİM" olsun mu (şartname:
+            # duba ikilisinin %100'ünü geçmiş olmak). Varsayılan KAPALI.
+            "gecis_zorunlu": bool(
+                hw["mission_timing"]["gecis_zorunlu"]
+            ),
+            "gecis_zaman_asimi_s": float(
+                hw["mission_timing"]["gecis_zaman_asimi_s"]
             ),
         },
     ]

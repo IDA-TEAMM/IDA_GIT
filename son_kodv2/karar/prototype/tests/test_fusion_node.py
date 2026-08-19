@@ -208,13 +208,54 @@ class _KaydedenKaynak:
     """FusionPipeline yerine geçen kayıt tutucu (gtsam yüklenmesin)."""
 
     def __init__(self) -> None:
-        self.cagrilar: list[tuple[float, float, float | None]] = []
+        self.cagrilar: list[tuple[float, float, float | None, float | None]] = []
 
-    def on_gps(self, lat: float, lon: float, sigma_xy: float | None = None) -> None:
-        self.cagrilar.append((lat, lon, sigma_xy))
+    # 19.08.2026 — `t` EKLENDI. `94c714a` gercek `FusionPipeline.on_gps`e
+    # `t` (GPS olcumunun KENDI zamani) parametresini ekledi ama bu dublor
+    # guncellenmedi => suit `main`de 5 KIRMIZI verdi
+    # (`TypeError: on_gps() got an unexpected keyword argument 't'`).
+    # Dublor gercek arayuzu taklit etmiyorsa test, uretimde OLMAYAN bir
+    # sozlesmeyi sinar. Nobetci: `test_DUBLOR_gercek_on_gps_IMZASINI_TASIYOR`.
+    def on_gps(
+        self, lat: float, lon: float, sigma_xy: float | None = None,
+        t: float | None = None,
+    ) -> None:
+        self.cagrilar.append((lat, lon, sigma_xy, t))
 
     def current_pose(self) -> tuple[float, float, float]:
         raise RuntimeError("tahmin yok")            # yayım timer'ı sessiz kalsın
+
+
+def test_DUBLOR_gercek_on_gps_IMZASINI_TASIYOR() -> None:
+    """Nobetci (19.08.2026): sahte kaynak, gercek `on_gps` ile UYUMLU mu.
+
+    `94c714a` uretimdeki `FusionPipeline.on_gps`e `t` ekledi; bu dosyadaki
+    dublor guncellenmedi ve suit `main`de 5 KIRMIZI verdi
+    (`TypeError: on_gps() got an unexpected keyword argument 't'`).
+    Dublor gercek arayuzden sapinca test, uretimde var OLMAYAN bir sozlesmeyi
+    sinamaya baslar — yani nobetci sessizce is gormez hale gelir.
+
+    Nobetci imzalari KARSILASTIRIR: gercegin kabul ettigi her adlandirilmis
+    parametreyi dublor de kabul etmeli.
+    """
+    import inspect
+
+    pytest.importorskip(
+        "gtsam",
+        reason="gtsam yok — bu dosyanin geri kalani gtsam GEREKTIRMIYOR "
+        "(modul dokstringi), bu nobetci de gercek imzayi yalniz gtsam "
+        "kuruluyken karsilastirabilir",
+    )
+    from prototype.fusion.pipeline import FusionPipeline
+
+    gercek = inspect.signature(FusionPipeline.on_gps).parameters
+    dublor = inspect.signature(_KaydedenKaynak.on_gps).parameters
+    eksik = [ad for ad in gercek if ad != "self" and ad not in dublor]
+    assert not eksik, (
+        "sahte kaynak gercek `on_gps` imzasindan SAPTI - eksik parametre(ler): "
+        f"{eksik}. Dublor guncellenmeden uretim imzasi degistirilirse suit "
+        "TypeError ile kirmizi yanar (19.08 vakasi: `t`)."
+    )
 
 
 def _gps_node(ros_context):                          # noqa: ANN001, ANN202

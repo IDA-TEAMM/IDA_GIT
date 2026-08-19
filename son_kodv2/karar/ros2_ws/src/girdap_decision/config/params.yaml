@@ -352,5 +352,9 @@ mission_manager_node:
     max_target_distance_m: 10000.0
     # fc modu görev config'i (file modunda mission_file YAML'ı kazanır):
     arrival_radius_m: 2.0    # waypoint "varıldı" yarıçapı (m)
+    # §1.68 — varış "yaklaştım" değil "GEÇTİM" olsun mu (along-track).
+    # false = eski davranış birebir; gerekçe hardware.yaml'da.
+    gecis_zorunlu: false
+    gecis_zaman_asimi_s: 5.0
     dwell_time_s: 2.0        # her waypoint'te bekleme (video netliği, s)
     cruise_velocity_mps: 1.0 # referans seyir hızı (MPPI hedef hızı)

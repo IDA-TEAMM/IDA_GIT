@@ -120,6 +120,14 @@ def test_durgunluk_ufuk_kadar_surunce_kurtarma_tetiklenir(bounds: Bounds) -> Non
 
 
 def test_hiz_normale_donunce_kurtarma_kendiliginden_soner(bounds: Bounds) -> None:
+    """19.08 gece — ÇIKIŞ artık GEOMETRİK (bkz. `_sikisma_kurtarmasini_
+    guncelle`'nin "Jetson bulgusu #2" notu): pencere-bazlı "bu pencerede
+    ilerledim mi" ölçütü GPU'da ölçülen bir tetikle/kapa döngüsüne yol
+    açıyordu. Artık kurtarma, tekne kırpılan engelin ORİJİNAL (kırpılmamış)
+    payının GERÇEKTEN dışına çıkana kadar KAPANMAZ — çıksa bile hâlâ tehlike
+    bölgesindeyse (konum hareket etmeden yalnız hız artsa bile) açık kalır;
+    gerçekten uzaklaşınca ise PENCERE BEKLEMEDEN anında kapanır.
+    """
     saat = _SahteSaat()
     dyn = CatamaranDynamics()
     pipe = PlanningPipeline(bounds, _fast_cfg(stuck_recovery_enabled=True), dynamics=dyn, saat=saat)
@@ -134,17 +142,19 @@ def test_hiz_normale_donunce_kurtarma_kendiliginden_soner(bounds: Bounds) -> Non
     pipe.compute_control()
     assert pipe._kurtarma_aktif is True
 
-    # Hız eşiğin ÜSTÜNE çıkınca hemen DEĞİL — TEK bir yüksek-hız karesi
-    # histerezisi (bilerek) kapatmamalı, tek bir "tekme" gerçek kurtuluş
-    # değildir.
+    # Hız artsa bile KONUM hâlâ tehlike bölgesinde (engel (15,0) — payı 1.4 m,
+    # yarıçapı 0.15 m ⇒ 1.55 m'nin İÇİ) olduğu sürece kapanmamalı — geometrik
+    # ölçüt konuma bakar, hıza değil.
     esik = pipe._erisilebilir_hiz() * 0.10
-    pipe.set_state(np.array([5.0, 0.0, 0.0, esik * 2.0, 0.0, 0.0]))
+    pipe.set_state(np.array([14.0, 0.0, 0.0, esik * 2.0, 0.0, 0.0]))
     pipe.compute_control()
-    assert pipe._kurtarma_aktif is True
+    assert pipe._kurtarma_aktif is True, (
+        "hâlâ engelin payı içindeyken (1.0 m) kapanmamalıydı")
 
-    # Ufuk kadar KESİNTİSİZ yüksek hız sürünce kendiliğinden kapanmalı ve
-    # engel payı eski (huni) değerine dönmeli.
-    saat.ilerlet(ufuk_s * 1.1)
+    # Konum GERÇEKTEN engelin (kırpılmamış) payının dışına çıkınca (15 m'nin
+    # 1.55 m dışı) — pencere beklemeden, ANINDA kapanmalı ve engel payı eski
+    # (huni) değerine dönmeli.
+    pipe.set_state(np.array([5.0, 0.0, 0.0, esik * 2.0, 0.0, 0.0]))
     pipe.compute_control()
     assert pipe._kurtarma_aktif is False
     assert pipe._mppi_icin_engeller()[0].margin == 1.4

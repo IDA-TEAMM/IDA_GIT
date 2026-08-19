@@ -30,6 +30,7 @@ parkur_dunyasi`).
 from __future__ import annotations
 
 import functools
+import inspect
 import math
 
 import numpy as np
@@ -82,12 +83,22 @@ def _kosum(*, model_var: bool, sure: float = 400.0):
     kapilar = PARKUR.kapilar
     dubalar = PARKUR.dubalar()
     dyn = CatamaranDynamics()
+    # 🔴 19.08.2026 — SİMÜLASYON SAATİ ENJEKTE EDİLİYOR (belirlenimlilik).
+    # `_replan_frenli` bir sonraki RRT* koşumunu SON KOŞUMUN SÜRESİNDEN
+    # türetilen aralık kadar erteliyor; süreyi `self._saat()` ölçüyor.
+    # Varsayılan `time.monotonic` olduğu için senaryonun plan takvimi MAKİNE
+    # HIZINA ve CPU YÜKÜNE bağlıydı. `PlanningPipeline` saat enjeksiyonunu
+    # zaten sunuyor ("Testler ve sim, kendi saatini enjekte edebilsin diye");
+    # test onu kullanmıyordu. Ölçüm ve gerekçe:
+    # `test_KOSUM_duvar_saatine_BAGLI_DEGIL`.
+    _sim_saat = [0.0]
     pipe = PlanningPipeline(
         Bounds(-20.0, 60.0, -25.0, 25.0),
         PlanningPipelineConfig(
             mppi_K=200, mppi_T=30, mppi_terminal_lookahead_m=3.0
         ),
         dynamics=dyn,
+        saat=lambda: _sim_saat[0],
     )
     pipe.set_mission_state("PARKUR1")
     gate = GateFollower(GateFollowerConfig(HULL_W, HULL_L))
@@ -158,6 +169,7 @@ def _kosum(*, model_var: bool, sure: float = 400.0):
         for _ in range(2):
             state = dyn.step_rk4(state, u, dt / 2)
         t += dt
+        _sim_saat[0] = t
 
         simdi = (float(state[0]), float(state[1]))
         for bx, by in dubalar:
@@ -311,6 +323,37 @@ def test_faz2_kenar_HAFIZASI_fiilen_calisiyor() -> None:
     assert r["kurtarilan"] > 0, (
         "rengi görünmezken hiçbir tespit kurtarılmadı — kapı ağzında direkler "
         "yine engel torbasına düşüyor demektir (§0.17d)"
+    )
+
+
+def test_KOSUM_duvar_saatine_BAGLI_DEGIL() -> None:
+    """🔴 Nöbetçi: `_kosum` boru hattına KENDİ saatini vermeli (19.08.2026).
+
+    Kusur: `PlanningPipeline._replan_frenli` bir sonraki RRT* koşumunu **son
+    koşumun SÜRESİNDEN** türetilen aralık kadar erteliyor ve o süreyi
+    `self._saat()` ile ölçüyor. Varsayılan saat `time.monotonic` olduğu için
+    kapalı döngü senaryosunun **plan takvimi makine hızına ve o anki CPU
+    yüküne** bağlıydı ⇒ aynı süreçte arka arkaya koşum FARKLI yörünge
+    veriyordu.
+
+    ÖLÇÜLDÜ (önbellek atlanarak, aynı süreç, GPU yolu):
+        model_var=True  → 2,8256 · 2,2702 · 2,2888 m   (yayılım **0,56 m**)
+        model_var=False → 2,4802 · 2,4944 · 2,6055 m   (yayılım 0,13 m)
+    `test_faz2_kapi_takibi...`'nin ölçtüğü etki ~0,03 m; yani nöbetçi kendi
+    gürültüsünün 1/18'ini ölçüyordu — **yazı-tura**. Kırmızı oranı iki dosya
+    birlikte koşarken 1/6; **CPU'ya (numpy/float64) pinlemek DÜZELTMEDİ**
+    (3 koşumda 2 kırmızı) ⇒ sebep GPU da float32 da değildi.
+
+    Düzeltme: `saat=lambda: _sim_saat[0]`. Sonrasında yayılım **0,000000 m**,
+    iki dosya birlikte 5/5 yeşil.
+    ⚠ `_kosum` `lru_cache`'li olduğu için belirlenimsizken hangi testin önce
+    koştuğu sonucu değiştiriyordu (sıraya bağlı kırmızı).
+    """
+    kaynak = inspect.getsource(_kosum.__wrapped__)
+    assert "saat=" in kaynak, (
+        "`_kosum` PlanningPipeline'a saat ENJEKTE ETMİYOR — boru hattı "
+        "`time.monotonic`'e düşer ve senaryo makine hızına bağlı olur "
+        "(19.08 ölçümü: yayılım 0,56 m, ölçülen etkinin ~18 katı)"
     )
 
 

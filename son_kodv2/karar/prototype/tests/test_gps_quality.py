@@ -113,16 +113,26 @@ def test_cekirdek_gtsam_yuklemez() -> None:
     bağımlı hale gelir — video günü kurulu olmayan bir makinede node hiç
     açılmaz. Alt süreçte izole ölç: aynı oturumdaki başka testler gtsam'ı
     zaten yüklemiş olabilir.
+
+    🔴 19.08.2026 (Jetson tam paket koşumu) — `cwd` VERİLMEDEN alt süreç
+    yalnız pytest `son_kodv2/karar` İÇİNDEN çağrıldığında çalışıyordu;
+    üstündeki bir dizinden (ör. repo kökü `IDA_GIT`) çağrılınca alt süreç
+    `prototype` paketini bulamıyordu (`ModuleNotFoundError`) çünkü cwd'yi
+    ÇAĞIRAN pytest sürecinden devralıyordu. `cwd` artık bu test dosyasının
+    KENDİ konumundan türetiliyor — nereden çağrılırsa çağrılsın aynı.
     """
     import subprocess
     import sys
+    from pathlib import Path
 
     kod = (
         "import sys; import prototype.fusion.gps_quality as m; "
         "print('gtsam' in sys.modules)"
     )
+    proje_koku = Path(__file__).resolve().parents[2]     # .../son_kodv2/karar
     out = subprocess.run(
-        [sys.executable, "-c", kod], capture_output=True, text=True, check=True
+        [sys.executable, "-c", kod],
+        capture_output=True, text=True, check=True, cwd=proje_koku,
     )
     assert out.stdout.strip() == "False", (
         "gps_quality dolaylı olarak gtsam yüklüyor — video modu bozulur"
