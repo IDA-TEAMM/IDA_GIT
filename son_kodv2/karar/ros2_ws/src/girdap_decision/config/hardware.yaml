@@ -202,6 +202,11 @@ planning:
   # azaltiyor. 16.08 bandinda 2,0 ile 'unutulan' 600 s'de 38'de DONDU.
   # ⚠ 2,0 = mevcut davranis; degistirmeden once kapali dongu A/B.
   edge_unutma_katsayisi: 2.0
+  # 19.08: guvenlik tavani — hafiza patladiginda (KAR-05/06 sonucu) MPPI'nin
+  # (K,T+1,N) tensoru ve _huni_payi O(n^2) taramasi kontrolu saniyelerce
+  # durduruyordu (OLCULDU: N~94'te 60+ s). 150 = saglikli araligin (30-94)
+  # 1,5-5 kati, normal kosumu etkilemez. 0 = kapali.
+  engel_azami_sayisi: 150
   mppi_geri_hiz_yasak: false      # geri surusu HIZ uzayinda eler, FREN SERBEST.
                                   # mppi_ileri_kisit'ten farki: o itki uzayinda
                                   # calisip freni de yasakliyor (durus yolu 2,4x).

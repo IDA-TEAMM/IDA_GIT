@@ -223,14 +223,26 @@ GOAL_GUNCELLE_SN = 2.0         # s - hedef en sık bu aralıkla yayınlanır
 ARAMA_ILERI = 3.0              # m - geçit yokken arama hedefi mesafesi
 ARAMA_HEDEF_SN = 4.0           # s - arama hedefi yayın periyodu
 ARAMA_YAW = 0.30               # rad - arama hedefi son görülen geçit tarafına bu kadar açılı
-#: İlerleme nöbeti: geçiş fazında araç bu kadar İLERLERSE pencere tazelenir.
-#: Gövde yarı genişliğinin ~¼'ü — ölçüm gürültüsünün (cm) belirgin üstünde,
-#: gerçek ilerlemenin belirgin altında.
-_ILERLEME_ESIGI_M = 0.10
-#: Tazelenen pencere: MPPI'nin kendi ufku (T·dt = 50×0,05 = 2,5 s) × 2 pay.
-#: İlerleme durduktan sonra bu kadar beklenir; ufuktan kısası MPPI'nin bir
-#: manevrayı tamamlamasına bile izin vermez.
-_ILERLEME_NOBETI_S = 5.0
+# 🔴 DENENDİ VE GERİ ALINDI — "İLERLEME NÖBETİ" (19.08.2026).
+# Fikir: pencereyi sabit süreyle değil, araç düzleme doğru ilerledikçe
+# tazeleyerek yönetmek. Gerekçesi ölçülmüştü ve doğruydu: pencere
+# `CRUISE_HIZ = 1,0 m/s` varsayıyor ama gerçek seyir ~0,5 m/s ve yol
+# verimi %186 ⇒ aynı mesafe 3,7 kat uzun sürüyor, pencere HİÇBİR mesafede
+# yetmiyordu (orta_z 6,3 m → pencere 23,5 s · gereken 29,2 s).
+#
+# 🔴 AMA ÖLÇÜM KÖTÜLEŞTİRDİ: tek koşumda araç 280 s'de yalnız 5,75 m
+# gidip DURDU (hız 0,00 · ψ 294,8° · üç redde de `en ileri` birebir
+# −6,63 m). Yani pencereyi uzatmak aracı kurtarmadı, TAKTI.
+#
+# 🔑 MUHTEMEL MEKANİZMA (ölçüldü ama kanıt tamamlanmadı): **GEÇİŞ fazında
+# kapı hedefi HİÇ YAYINLANMIYOR** — `gecit_hedefi_publish` yalnız
+# YAKLAŞMA dalında çağrılıyor (bu dosyada tek çağrı). Kısa pencere farkında
+# olmadan bir KURTARMA işlevi görüyor: dolunca ARAMA'ya dönülüyor, kapı
+# yeniden bulunuyor ve hedef yeniden yayınlanıyor. Pencereyi uzatmak o
+# kurtarmayı geciktiriyor.
+# ⇒ Pencere yeniden ele alınacaksa ÖNCE GEÇİŞ fazında hedef yayını
+#   sağlanmalı; yoksa "daha çok süre" vermek aracı daha uzun süre
+#   hedefsiz bırakmaktan başka bir şey yapmıyor.
 GECIS_ZAMAN_KATSAYI = 3.0      # geçiş zaman aşımı = tahmini sürenin bu katı (odom esas ölçüt)
 
 # ---- algi_yayin (PLAN A) ayarları ----
@@ -2129,33 +2141,8 @@ class DubaNavigator(Node):
                         # sayilmaz` testi bunu yakaladı — takılan araca
                         # fazladan süre vermek, ona "geçti" dedirtmenin ilk
                         # adımıdır (o test PAZARLIKSIZ diyor, haklı).
-                        _onceki = getattr(self, "_gecis_en_ileri", -math.inf)
-                        _kazanc = (_ileri - _onceki
-                                   if math.isfinite(_onceki) else 0.0)
                         self._gecis_en_ileri = _ileri
                         self._gecis_en_yanal = _yanal      # O ANKİ yanal
-                        # 🔴 İLERLEME PENCEREYİ UZATIR (19.08.2026).
-                        # Pencere `CRUISE_HIZ = 1,0 m/s` varsayımıyla
-                        # kuruluyordu; ÖLÇÜLDÜ ki gerçek seyir ~0,5 m/s ve
-                        # araç düz gitmiyor (yol verimi %186) ⇒ aynı mesafe
-                        # 3,7 KAT uzun sürüyor. Sonuç: pencere HİÇBİR
-                        # mesafede yetmiyordu —
-                        #     orta_z 5,6 m → pencere 21,4 s · gereken 26,6 s
-                        #     orta_z 7,3 m → pencere 26,5 s · gereken 32,9 s
-                        # ve araç kapıdan geçerken süre doluyordu (ölçülen
-                        # en ileri +0,25 · −0,55 · +1,82 m).
-                        #
-                        # ✅ ÇÖZÜM — SABİT SÜRE DEĞİL, İLERLEME NÖBETİ:
-                        # araç düzleme doğru ilerledikçe pencere tazelenir;
-                        # ilerleme durursa MPPI'nin KENDİ ufku kadar sonra
-                        # kapanır. Yavaş tekneyi ve dolambaçlı yolu tolere
-                        # eder ama GERÇEKTEN takılanı yine yakalar.
-                        # ⚠ Ayarlanacak sayı YOK: eşik gövde payının onda
-                        # biri (ölçüm gürültüsünün üstü), süre MPPI ufku.
-                        if _kazanc >= _ILERLEME_ESIGI_M:
-                            self.pass_bitis_t = max(
-                                self.pass_bitis_t,
-                                simdi + _ILERLEME_NOBETI_S)
                 if not gecti:
                     if simdi < self.pass_bitis_t:
                         self.durum_log()

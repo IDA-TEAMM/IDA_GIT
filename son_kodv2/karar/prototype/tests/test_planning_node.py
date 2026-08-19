@@ -521,6 +521,50 @@ def test_hatirlanan_cisim_MENZIL_DISINDA_engel_torbasina_KONMAZ(ros_context) -> 
         node.destroy_node()
 
 
+def test_engel_azami_sayisi_EN_YAKINLARI_tutar(ros_context) -> None:  # noqa: ANN001
+    """🔴 19.08 — GÜVENLİK TAVANI. Hafıza patladığında (KAR-05/06 sonucu)
+    MPPI'nin (K,T+1,N) tensörü + `_huni_payi` O(n²) taraması kontrol
+    döngüsünü saniyelerce durdurabiliyordu (ölçüldü: canlı gölde ve
+    tekrar üretilebilir laptop senaryosunda). Tavan aşılınca en YAKIN N
+    kayıt tutulmalı — çarpışma riski en yüksek olanlar bunlar."""
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("engel_azami_sayisi", Parameter.Type.INTEGER, 3),
+        ]
+    )
+    try:
+        node._on_odom(_odom_poz(0.0, 0.0, 0.0))
+        # 6 sınıfsız (UNKNOWN) tespit, 1..6 m mesafede — yalnız en yakın 3
+        # (1,2,3 m) hayatta kalmalı.
+        node._on_classified(_classified(
+            [(float(d), 0.0, 0.2, 99) for d in range(1, 7)]
+        ))
+        assert len(node._pipe._obstacles) == 3, (
+            f"tavan uygulanmadı: {len(node._pipe._obstacles)} engel"
+        )
+        kalan_x = sorted(o.cx for o in node._pipe._obstacles)
+        assert kalan_x == [1.0, 2.0, 3.0], f"en yakınlar tutulmadı: {kalan_x}"
+    finally:
+        node.destroy_node()
+
+
+def test_engel_azami_sayisi_SIFIR_sinirsiz(ros_context) -> None:  # noqa: ANN001
+    """0 = KAPALI = eski davranış birebir (geriye tam uyumluluk)."""
+    node = pn.PlanningNode(
+        parameter_overrides=[
+            Parameter("engel_azami_sayisi", Parameter.Type.INTEGER, 0),
+        ]
+    )
+    try:
+        node._on_odom(_odom_poz(0.0, 0.0, 0.0))
+        node._on_classified(_classified(
+            [(float(d), 0.0, 0.2, 99) for d in range(1, 7)]
+        ))
+        assert len(node._pipe._obstacles) == 6
+    finally:
+        node.destroy_node()
+
+
 def test_kapi_ortasi_ham_gorev_noktasini_ezer(ros_context) -> None:  # noqa: ANN001
     """md 5.5.2.2: hakemin noktası kapı ortasında OLMAYABİLİR → araç kapı
     orta noktasına yönelmeli, ham GN'ye değil."""
