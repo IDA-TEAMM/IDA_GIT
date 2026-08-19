@@ -26,7 +26,7 @@ test/ölçüm içindir, kontrol yolunda kullanılmaz.
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -47,6 +47,14 @@ class ParkurDunyasi:
     hedefler: Dict[str, Point]              # Parkur-3 hedef dubaları (renk → konum)
     baslangic: Point                        # aracın başlangıç konumu
     gn5: Optional[Point] = None             # Parkur-2 bitişi (varsa)
+    # 🔴 19.08 — ŞİMDİYE KADAR HİÇ OKUNMUYORDU: `.world` dosyasında Parkur-2'nin
+    # KENDİ kapı çiftleri (`p2_a<i>`/`p2_u<i>`, 11 çift) duruyordu ama `oku()`
+    # yalnız `p1_l/p1_r`yi (Parkur-1) parse ediyordu. Şartname Şekil 3: Parkur-2
+    # kendi GN'si YOK (tek istisna: son GN — GN5 — Parkur-2'nin son kapı
+    # çiftinden geçmekle TANIMLI); araç Parkur-2 boyunca SAF kapı takibiyle
+    # ilerlemeli. Bu alan olmadan Parkur-2 hiç ölçülemiyordu (`kapi_orani.py`
+    # yalnız Parkur-1'i koşturuyordu).
+    kapilar_p2: List[Tuple[Point, Point]] = field(default_factory=list)
 
     @property
     def kapi_genislikleri(self) -> List[float]:
@@ -107,6 +115,14 @@ def oku(yol: Optional[Path] = None) -> ParkurDunyasi:
         kapilar.append((dahil[f"p1_l{i}"], dahil[f"p1_r{i}"]))
         i += 1
 
+    # Parkur-2 kapıları: p2_a<i> / p2_u<i> çiftleri (19.08 — daha önce hiç
+    # okunmuyordu, bkz. `kapilar_p2` alan yorumu).
+    kapilar_p2: List[Tuple[Point, Point]] = []
+    k = 1
+    while f"p2_a{k}" in dahil and f"p2_u{k}" in dahil:
+        kapilar_p2.append((dahil[f"p2_a{k}"], dahil[f"p2_u{k}"]))
+        k += 1
+
     guzergah: List[Point] = []
     j = 1
     while f"GN{j}" in modeller:
@@ -133,4 +149,5 @@ def oku(yol: Optional[Path] = None) -> ParkurDunyasi:
         hedefler=hedefler,
         baslangic=baslangic,
         gn5=gn5,
+        kapilar_p2=kapilar_p2,
     )
