@@ -223,6 +223,14 @@ GOAL_GUNCELLE_SN = 2.0         # s - hedef en sık bu aralıkla yayınlanır
 ARAMA_ILERI = 3.0              # m - geçit yokken arama hedefi mesafesi
 ARAMA_HEDEF_SN = 4.0           # s - arama hedefi yayın periyodu
 ARAMA_YAW = 0.30               # rad - arama hedefi son görülen geçit tarafına bu kadar açılı
+#: İlerleme nöbeti: geçiş fazında araç bu kadar İLERLERSE pencere tazelenir.
+#: Gövde yarı genişliğinin ~¼'ü — ölçüm gürültüsünün (cm) belirgin üstünde,
+#: gerçek ilerlemenin belirgin altında.
+_ILERLEME_ESIGI_M = 0.10
+#: Tazelenen pencere: MPPI'nin kendi ufku (T·dt = 50×0,05 = 2,5 s) × 2 pay.
+#: İlerleme durduktan sonra bu kadar beklenir; ufuktan kısası MPPI'nin bir
+#: manevrayı tamamlamasına bile izin vermez.
+_ILERLEME_NOBETI_S = 5.0
 GECIS_ZAMAN_KATSAYI = 3.0      # geçiş zaman aşımı = tahmini sürenin bu katı (odom esas ölçüt)
 
 # ---- algi_yayin (PLAN A) ayarları ----
@@ -642,6 +650,9 @@ SIM_KAYNAK = SIM_KAYNAK_KIP in ("1", "2")
 #: Geometrik kipte bunların HİÇBİRİ koşmaz: orada tespit LiDAR haritasından
 #: türetilir, damga da o mesajdan gelir.
 SIM_GORUNTU = SIM_KAYNAK_KIP == "2"
+#: Sınıflı sim kaynağının (sanal göl algısı) yayın kadansı — LiDAR hızı.
+#: Kamera `FPS`'ine seyreltmek için oran olarak kullanılır.
+_SINIFLI_KAYNAK_HZ = 10.0
 
 
 class _SahteTespit:
@@ -1285,6 +1296,19 @@ class DubaNavigator(Node):
             det = self._sim_tespit_kur(bx, by, yaricap, sinif)
             if det is not None:
                 dets.append(det)
+        # 🔴 KAMERA KADANSI (19.08): sınıflı kaynak LiDAR hızında (10 Hz)
+        # akıyor, oysa GERÇEK kamera `FPS = 8`. Seyreltilmezse gölde NN 10,0
+        # FPS ölçülür ve algı sahadakinden %25 daha çok kare işlemiş olur —
+        # kapı görme oranı ve zamanlama iyimser çıkar.
+        # ⚠ BASİT THROTTLE ALIASING YAPAR: kaynak 10 Hz iken "son kareden
+        # 1/8 s geçti mi" kuralı her ikinci mesajı düşürüp **5 Hz** üretir
+        # (ölçüldü: NN FPS 4,9). Doğrusu FAZ BİRİKTİRME — kaynak kadansını
+        # hedef kadansa oranlayarak 10 mesajdan 8'ini geçirir.
+        self._sim_faz = getattr(self, "_sim_faz", 0.0) + 1.0
+        _oran = _SINIFLI_KAYNAK_HZ / float(FPS)     # 10/8 = 1,25
+        if self._sim_faz < _oran:
+            return
+        self._sim_faz -= _oran
         if dets:
             self._sim_sinifli_taze = True
             self.det_q.koy(_SahteMesaj(dets))
@@ -2085,12 +2109,53 @@ class DubaNavigator(Node):
                         p[0], p[1], mx, my, nx, ny, -ny, nx,
                         self.gecit_yari_gen, PASS_EK_YOL)
                     # TEŞHİS: bileşenleri izle (karar yolunu DEĞİŞTİRMEZ).
+                    #
+                    # 🔴 19.08 — ÇİFT OLARAK saklanır, AYRI AYRI DEĞİL.
+                    # İlk sürüm `en ileri = max(...)` ve `en yakın yanal =
+                    # min(...)` tutuyordu; bu ikisi FARKLI ANLARDAN gelince
+                    # teşhis "GECTI" diyip karar "sayılmadı" diyordu (gölde
+                    # ölçüldü: *"odometri geçişi DOĞRULAMADI, sayılmadı.
+                    # SEBEP: GECTI"*). Araç bir ara düzlemi aşmış, BAŞKA bir
+                    # ara ortada hizalanmış — ama ikisi AYNI ANDA olmamıştı.
+                    # Geçiş şartı iki bileşenin EŞ ZAMANLI sağlanmasıdır;
+                    # teşhis de öyle ölçmeli, yoksa yanlış yere baktırır.
                     _ileri, _yanal = gm.gecis_bilesenleri(
                         p[0], p[1], mx, my, nx, ny, -ny, nx)
-                    self._gecis_en_ileri = max(
-                        getattr(self, "_gecis_en_ileri", -math.inf), _ileri)
-                    self._gecis_en_yanal = min(
-                        getattr(self, "_gecis_en_yanal", math.inf), _yanal)
+                    if _ileri > getattr(self, "_gecis_en_ileri", -math.inf):
+                        # ⚠ İLK ÖLÇÜMDE PENCERE UZATILMAZ: başlangıç
+                        # `-inf` olduğu için kazanç SONSUZ çıkıyor ve araç
+                        # hiç ilerlemese bile pencere bir kez uzuyordu.
+                        # Ekibin `test_REGRESYON_saglikli_odom_GECMEDIYSE_
+                        # sayilmaz` testi bunu yakaladı — takılan araca
+                        # fazladan süre vermek, ona "geçti" dedirtmenin ilk
+                        # adımıdır (o test PAZARLIKSIZ diyor, haklı).
+                        _onceki = getattr(self, "_gecis_en_ileri", -math.inf)
+                        _kazanc = (_ileri - _onceki
+                                   if math.isfinite(_onceki) else 0.0)
+                        self._gecis_en_ileri = _ileri
+                        self._gecis_en_yanal = _yanal      # O ANKİ yanal
+                        # 🔴 İLERLEME PENCEREYİ UZATIR (19.08.2026).
+                        # Pencere `CRUISE_HIZ = 1,0 m/s` varsayımıyla
+                        # kuruluyordu; ÖLÇÜLDÜ ki gerçek seyir ~0,5 m/s ve
+                        # araç düz gitmiyor (yol verimi %186) ⇒ aynı mesafe
+                        # 3,7 KAT uzun sürüyor. Sonuç: pencere HİÇBİR
+                        # mesafede yetmiyordu —
+                        #     orta_z 5,6 m → pencere 21,4 s · gereken 26,6 s
+                        #     orta_z 7,3 m → pencere 26,5 s · gereken 32,9 s
+                        # ve araç kapıdan geçerken süre doluyordu (ölçülen
+                        # en ileri +0,25 · −0,55 · +1,82 m).
+                        #
+                        # ✅ ÇÖZÜM — SABİT SÜRE DEĞİL, İLERLEME NÖBETİ:
+                        # araç düzleme doğru ilerledikçe pencere tazelenir;
+                        # ilerleme durursa MPPI'nin KENDİ ufku kadar sonra
+                        # kapanır. Yavaş tekneyi ve dolambaçlı yolu tolere
+                        # eder ama GERÇEKTEN takılanı yine yakalar.
+                        # ⚠ Ayarlanacak sayı YOK: eşik gövde payının onda
+                        # biri (ölçüm gürültüsünün üstü), süre MPPI ufku.
+                        if _kazanc >= _ILERLEME_ESIGI_M:
+                            self.pass_bitis_t = max(
+                                self.pass_bitis_t,
+                                simdi + _ILERLEME_NOBETI_S)
                 if not gecti:
                     if simdi < self.pass_bitis_t:
                         self.durum_log()
