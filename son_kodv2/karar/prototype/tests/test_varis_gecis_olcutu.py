@@ -174,8 +174,12 @@ def _wp(lat, lon):
 
 
 def _duz_rota():
-    """Kuzeye doğru iki nokta (~11,1 m arayla)."""
-    return [_wp(40.0, 31.0), _wp(40.0001, 31.0)]
+    """Kuzeye doğru ÜÇ nokta (~11,1 m arayla).
+
+    Üç nokta şart: öteleme SON noktada ve PARKUR DEĞİŞEN noktada bilerek
+    uygulanmaz, o yüzden sınanacak nokta ORTADA olmalı.
+    """
+    return [_wp(40.0, 31.0), _wp(40.0001, 31.0), _wp(40.0002, 31.0)]
 
 
 def test_OTELEME_SIFIR_eski_davranis_BIREBIR() -> None:
@@ -244,3 +248,87 @@ def test_OTELEME_ROS_PARAMETRESINE_BAGLI() -> None:
         metin = (kok / "ros2_ws/src/girdap_decision/config" / y).read_text(
             encoding="utf-8")
         assert "hedef_oteleme_m" in metin, f"{y}'da `hedef_oteleme_m` YOK"
+
+
+def test_OTELEME_PARKUR3te_UYGULANMAZ() -> None:
+    """🔴 P3 (kamikaze) noktaya VARMAK ister, düzlemini aşmak değil.
+
+    Nişanı 2,5 m öteye koymak aracı hedefin ÖTESİNE sürerdi. Öteleme yalnız
+    kapı geçilen parkurların (1-2) sorunudur; P3'te aşılacak bir kapı düzlemi
+    yoktur. Bu nöbetçi muafiyeti dondurur.
+    """
+    D = 2.5
+    p12 = [Waypoint(40.0, 31.0, parkur=1), Waypoint(40.0001, 31.0, parkur=1),
+           Waypoint(40.0002, 31.0, parkur=1)]
+    p3 = [Waypoint(40.0, 31.0, parkur=3), Waypoint(40.0001, 31.0, parkur=3),
+          Waypoint(40.0002, 31.0, parkur=3)]
+    a = MissionManager(p12, MissionManagerConfig(hedef_oteleme_m=D))
+    b = MissionManager(p3, MissionManagerConfig(hedef_oteleme_m=D))
+    c = MissionManager(p3, MissionManagerConfig())        # öteleme kapalı
+    for mm in (a, b, c):
+        mm.start()
+    for i in range(200):
+        la = 39.99995 + i * 2e-6
+        a.update(la, 31.0, i * 0.1)
+        b.update(la, 31.0, i * 0.1)
+        c.update(la, 31.0, i * 0.1)
+        if a.current_index > 0 and b.current_index > 0:
+            break
+    assert a.current_index > 0 and b.current_index > 0, "test kurulumu"
+    n_p12 = a.update(40.00005, 31.0, 99.0)
+    n_p3 = b.update(40.00005, 31.0, 99.0)
+    n_kapali = c.update(40.00005, 31.0, 99.0)
+    assert n_p3 == n_kapali, (
+        f"PARKUR 3'te nişan ÖTELENDİ ({n_p3} ↔ kapalı {n_kapali}) — kamikaze "
+        "hedefin ötesine sürülür"
+    )
+    assert n_p12 != n_kapali, (
+        "test kurulumu: parkur 1'de öteleme de uygulanmamış, muafiyet "
+        "gerçekten sınanmıyor"
+    )
+
+
+def test_OTELEME_PARKUR_DEGISEN_noktada_UYGULANMAZ() -> None:
+    """🔴 P2 → P3 devir noktasında öteleme YOK.
+
+    Kaptanın uyarısı: son kapı geçildikten sonra nişanı 2,5 m öteye koymak
+    aracı fazladan sürer ve **P3'ün büyük dubası** görüş/menzil penceresinden
+    (kamera 69°, LiDAR ~8 m) çıkabilir. Orada kazanılacak geçit yok.
+    """
+    D = 2.5
+    rota = [
+        Waypoint(40.0, 31.0, parkur=2),
+        Waypoint(40.0001, 31.0, parkur=2),      # P2 SON noktası → devir
+        Waypoint(40.0002, 31.0, parkur=3),
+    ]
+    acik = MissionManager(rota, MissionManagerConfig(hedef_oteleme_m=D))
+    kapali = MissionManager(rota, MissionManagerConfig())
+    acik.start(); kapali.start()
+    for i in range(200):
+        la = 39.99995 + i * 2e-6
+        acik.update(la, 31.0, i * 0.1); kapali.update(la, 31.0, i * 0.1)
+        if acik.current_index == 1:
+            break
+    assert acik.current_index == 1, "test kurulumu: devir noktasına gelinemedi"
+    assert acik.update(40.00005, 31.0, 99.0) == kapali.update(40.00005, 31.0, 99.0), (
+        "parkur DEĞİŞEN noktada nişan ötelendi — araç P3'ün büyük dubasını "
+        "kaçırabilir"
+    )
+
+
+def test_OTELEME_SON_NOKTADA_UYGULANMAZ() -> None:
+    """Görevin son noktasının ötesinde sayılacak bir şey yok."""
+    D = 2.5
+    rota = [Waypoint(40.0, 31.0, parkur=1), Waypoint(40.0001, 31.0, parkur=1)]
+    acik = MissionManager(rota, MissionManagerConfig(hedef_oteleme_m=D))
+    kapali = MissionManager(rota, MissionManagerConfig())
+    acik.start(); kapali.start()
+    for i in range(200):
+        la = 39.99995 + i * 2e-6
+        acik.update(la, 31.0, i * 0.1); kapali.update(la, 31.0, i * 0.1)
+        if acik.current_index == 1:
+            break
+    assert acik.current_index == 1, "test kurulumu"
+    assert acik.update(40.00005, 31.0, 99.0) == kapali.update(40.00005, 31.0, 99.0), (
+        "SON noktada nişan ötelendi — fazladan yol, kazanç yok"
+    )

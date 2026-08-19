@@ -294,6 +294,26 @@ class MissionManager:
         if d <= 0.0:
             return east, north                      # eski davranış birebir
         wp = self._wps[self._idx]
+        # 🔴 ÖTELEME YALNIZ "GEÇİLECEK" NOKTALARDA. Üç durumda uygulanmaz:
+        #
+        #  1) **Parkur 3** — kamikaze noktaya VARMAYI ister, düzlemini aşmayı
+        #     değil; nişanı öteye koymak aracı hedefin ÖTESİNE sürerdi.
+        #  2) **Parkur değiştiren nokta** (sonraki nokta başka parkurda) —
+        #     bu bir GEÇİT değil, DEVİR noktasıdır. Örnek: P2'nin son
+        #     waypoint'i. Orada 2,5 m fazladan gitmek aracı P3'ün büyük
+        #     dubasının görüş/menzil penceresinden çıkarabilir (kamera 69°,
+        #     LiDAR ~8 m) — kazanacak geçit yok, kaybedilecek nişan var.
+        #  3) **Görevin son noktası** — ötesinde sayılacak hiçbir şey yok;
+        #     öteleme yalnız fazladan yol ve durma payı harcar.
+        #
+        # Öteleme, geçişin "düzlemi aştı mı" ile sayıldığı yerler içindir
+        # (`PASS_EK_YOL` 1,53 m); yukarıdaki üç durumda öyle bir düzlem yok.
+        son_nokta = self._idx + 1 >= len(self._wps)
+        parkur_degisiyor = (
+            not son_nokta and self._wps[self._idx + 1].parkur != wp.parkur
+        )
+        if wp.parkur == 3 or son_nokta or parkur_degisiyor:
+            return east, north
         if self._idx > 0:
             onceki = self._wps[self._idx - 1]
             tx, ty = latlon_to_enu(onceki.lat, onceki.lon, wp.lat, wp.lon)

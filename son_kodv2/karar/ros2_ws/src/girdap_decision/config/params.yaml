@@ -356,6 +356,6 @@ mission_manager_node:
     # false = eski davranış birebir; gerekçe hardware.yaml'da.
     gecis_zorunlu: true
     gecis_zaman_asimi_s: 5.0
-    hedef_oteleme_m: 2.03   # PASS_EK_YOL 1,53 + 0,5 pay (algi HEDEF_OTELEME ile ayni)
+    hedef_oteleme_m: 2.5    # 2,03 ILE OLCULDU: -2,65 -> +1,41 m, esik 1,53 => 12 cm eksik. P3 MUAF.
     dwell_time_s: 2.0        # her waypoint'te bekleme (video netliği, s)
     cruise_velocity_mps: 1.0 # referans seyir hızı (MPPI hedef hızı)
