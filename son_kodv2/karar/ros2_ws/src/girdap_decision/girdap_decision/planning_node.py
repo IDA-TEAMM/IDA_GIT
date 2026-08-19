@@ -1744,7 +1744,7 @@ class PlanningNode(Node):
         # KENDİLİĞİNDEN 10/11 kapı geçildi (aynı araç, GateFollower hiç
         # çağrılmadan).
         if self._pipe.mission_state == "PARKUR2":
-            return coarse
+            return self._p2_hedefi_oteye_it(coarse)
 
         if not self._gate_enabled or self._last_xy is None:
             return coarse
@@ -1786,6 +1786,35 @@ class PlanningNode(Node):
         # 0,13 N. Kapı yokken `surus_hedefi == target` (ham GN) — kapısız
         # davranış birebir korunur.
         return surus_hedefi
+
+    def _p2_hedefi_oteye_it(self, coarse: tuple[float, float]) -> tuple[float, float]:
+        """🔴 19.08 (aynı gece, yarış öncesi) — GN5 VARIŞ NOKTASI DEĞİL,
+        GEÇİLECEK SON KAPININ EŞİĞİDİR (F-K.1'in Parkur-2 karşılığı).
+
+        Şartname md 5.5.2.4: Parkur-2 tamamlama şartı GN5'e "varmak" değil,
+        **son duba ikilisinden GEÇEREK** varmaktır. Ölçüldü
+        (`parkur2_orani.py`): ham GN5'e doğrudan hedeflenince tekne, kapının
+        içinde ama `arrival_radius_m` (varsayılan 2 m) GN5'e daha varmadan
+        "ulaştı" sayılıp dwell'e giriyor — kapının tam kirişini fiilen
+        GEÇMEDEN duruyor. P1'de aynı arıza `gecis_hedefi`/F-K.1 ile
+        çözülmüştü ("kapı bir varış noktası değil, geçilecek eşiktir").
+
+        Çözüm P1'le AYNI ilke, GateFollower'a dokunmadan: referans noktası
+        araç→GN5 doğrultusunda `hull_length_m` (ölçülmüş gövde boyu, tahmin
+        DEĞİL) kadar ÖTEYE itilir — MPPI artık GN5'te durmayı değil, ondan
+        geçmeyi hedefler. Parkur-2'nin TEK GN'si olduğu için (md 5.5.2.4:
+        "son görev noktası" tekil) bu her zaman doğru hedefe uygulanır.
+        """
+        if self._last_xy is None:
+            return coarse
+        vx, vy = self._last_xy
+        dx, dy = coarse[0] - vx, coarse[1] - vy
+        mesafe = math.hypot(dx, dy)
+        if mesafe < 1e-6:
+            return coarse
+        oteleme = self._gate._cfg.hull_length_m
+        return (coarse[0] + dx / mesafe * oteleme,
+                coarse[1] + dy / mesafe * oteleme)
 
     def _fallback_hedefi_sinirla(self, result):
         """🔴 19.08 (aynı gece) — FALLBACK'TE UZAK/ALAKASIZ GN'YE KİLİTLENME.
