@@ -57,19 +57,29 @@ _AIM_MAX_ADIM = 64
 
 # B5 — kilitlenmeden ÖNCE aynı kapının kaç tick üst üste görülmesi gerektiği.
 #
-# 🔑 **Neden 2, ve neden bu bir "ayar" değil:** 2, "anlık" ile "kalıcı" arasındaki
-# EN KÜÇÜK ayrımdır — bir kez görülen şey tek karelik olabilir, iki kez görülen
-# olamaz. 3/5/10 seçmek ise tahmin olurdu (modülün tasarım kuralı: tahmine dayalı
-# sayı yok). Bu yüzden sayı, gecikmeyi de en aza indiren kategorik alt sınırda
-# bırakıldı: 20 Hz'lik bir kontrol çevriminde bedeli **50 ms**.
+# 🔑 **Neden ESKİDEN 2:** 2, "anlık" ile "kalıcı" arasındaki EN KÜÇÜK ayrımdı —
+# bir kez görülen şey tek karelik olabilir, iki kez görülen olamaz. 3/5/10
+# seçmek ise TAHMİN olurdu (modülün tasarım kuralı: tahmine dayalı sayı yok).
 #
-# 🔴 **Neden gerekli:** kilitlenme tek karelik bir yanlış tespiti KALICI hâle
-# getiriyordu. `update()` kilitli kapıyı oklüzyona karşı korur (taze algı
-# görmüyorsa eskisini saklar) — bu doğru bir davranıştır, ama onaysız kilitle
-# birleşince bir karelik hayalet kapı, aracın onun düzlemini fiilen geçmesine
-# kadar hedef olarak KALIYORDU. Onay kapısı bu iki doğru davranışın kesişimindeki
-# arızayı kapatır. (Kilitlendikten sonraki oklüzyon koruması aynen sürer.)
-ONAY_TICK = 2
+# 🔴 **19.08 — GERÇEKÇİ GÜRÜLTÜDE YETERSİZ BULUNDU, KULLANICI KARARIYLA
+# 4'E ÇIKARILDI.** Sanal gölde `algi_gercekcilik=1.0` (17.08 gölünde ÖLÇÜLEN
+# gerçek şiddet — uydurma bir stres değil) ile: kapı kilidi ardışık olarak
+# BAMBAŞKA genişliklerde (1,2 m → 2,1 m → 12,5 m — aynı fiziksel kapı olamaz)
+# yeniden kuruluyordu; her yeni kilitte yön hatası >60° çıkıp PIVOT'u
+# tetikliyor, tekne ilerlemeden dönüp duruyordu (104 sn'de 26 PIVOT, 1 çarpma,
+# yalnız 2/8 kapı). Kök neden: 2 ardışık kare, gerçek ölçüm gürültüsünde
+# (menzile göre 1-3 m konum hatası) rastgele bir hayalet/kopya çiftin
+# "geçerli kapı" gibi görünüp bu eşiği aşmasına yetiyordu — bu SINIFIN aynı
+# örneği zaten §1.15a'da (arada-duba cezası tarihçesi, aşağıda) ayrı bir
+# belirtiyle görülmüştü.
+# Doğru/tam çözüm literatürde de aranıldı (MIT Arcturus RoboBoat 2026 TDR —
+# aynı arızayı SLAM'e duba pozisyonlarını entegre ederek çözmüşler); o,
+# günler süren bir mimari proje, bu gece kapsam dışı. Kullanıcı açık kararla
+# ("kodun çalışmasını ne sağlayacaksa onu yap") bu modülün "tahmine dayalı
+# sayı yok" kuralını BİLEREK bu TEK sabit için esnetti — 4, ÖLÇÜLEREK seçildi
+# (aynı senaryoda 2→26 PIVOT/1 çarpma, 4→bkz. commit mesajı A/B'si), 20 Hz'te
+# bedeli 150 ms (2'ninkinin 3 katı, hâlâ küçük).
+ONAY_TICK = 4
 
 #: F-K.5 bayat kilit bırakma katsayısı (float('inf') → kapalı; A/B için).
 _BAYAT_KILIT_KATSAYI = 2.0
