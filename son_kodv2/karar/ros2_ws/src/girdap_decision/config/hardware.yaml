@@ -292,7 +292,6 @@ mission:
   # Kilitlenme yedeği (s): yarıçapın içinde bu kadar kalıp düzlem aşılamazsa
   # varış yine kabul edilir + sayaç artar. 0 = yedek yok (takılma serbest).
   gecis_zaman_asimi_s: 5.0
-  hedef_oteleme_m: 2.5    # 2,03 ILE OLCULDU: -2,65 -> +1,41 m, esik 1,53 => 12 cm eksik. P3 MUAF.
 
 # --- iSAM2 sensör füzyonu (fusion_node) ---
 # ⚠ Bu blok `perception.fusion` (kamera-LiDAR bearing eşleştirmesi) ile

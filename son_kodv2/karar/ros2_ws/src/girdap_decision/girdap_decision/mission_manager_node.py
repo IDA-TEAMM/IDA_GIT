@@ -115,7 +115,6 @@ class MissionManagerNode(Node):
         #   "Parameter not set" diyor (§1.60b) — aynı tuzağa düşmemek için.
         self.declare_parameter("gecis_zorunlu", _dflt.gecis_zorunlu)
         self.declare_parameter("gecis_zaman_asimi_s", _dflt.gecis_zaman_asimi_s)
-        self.declare_parameter("hedef_oteleme_m", _dflt.hedef_oteleme_m)
 
         # F-M.1: hedef-mesafe makullük tavanı (m) — bir waypoint mevcut
         # konumdan bundan uzaksa görev başlatılmaz (masa OOM olayı).
@@ -205,7 +204,6 @@ class MissionManagerNode(Node):
                 f"arrival={cfg.arrival_radius_m} m, dwell={cfg.dwell_time_s} s, "
                 f"geçiş_zorunlu={'AÇIK' if cfg.gecis_zorunlu else 'kapalı'}"
                 f"{f' (zaman aşımı {cfg.gecis_zaman_asimi_s:g} s)' if cfg.gecis_zorunlu else ''}, "
-                f"hedef_öteleme={cfg.hedef_oteleme_m:g} m, "
                 f"yayım={rate} Hz"
             )
         else:
@@ -226,9 +224,6 @@ class MissionManagerNode(Node):
             gecis_zorunlu=bool(self.get_parameter("gecis_zorunlu").value),
             gecis_zaman_asimi_s=float(
                 self.get_parameter("gecis_zaman_asimi_s").value
-            ),
-            hedef_oteleme_m=float(
-                self.get_parameter("hedef_oteleme_m").value
             ),
             cruise_velocity_mps=float(
                 self.get_parameter("cruise_velocity_mps").value
