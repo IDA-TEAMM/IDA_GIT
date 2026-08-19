@@ -177,14 +177,17 @@ def kosum(
             # (yukarıdaki huni'li engeller_liste) işi yapar.
             # 🔴 GN5 VARIŞ NOKTASI DEĞİL, GEÇİLECEK SON KAPININ EŞİĞİDİR
             # (F-K.1'in P2 karşılığı, planning_node._p2_hedefi_oteye_it
-            # aynası): ham GN5'e hedeflenince tekne arrival_radius'a girip
-            # kapının TAM kirişini geçmeden duruyordu. Referans, araç→GN5
-            # doğrultusunda ölçülmüş gövde boyu (HULL_L) kadar ötelenir.
+            # aynası). Yalnız HULL_L ile öteleme yanal kaçık başlangıçlarda
+            # YETERSİZ kaldı (ölçüldü: ±3 m yanal kaçıkta son kapı hâlâ
+            # "geçilmedi") — geometrik gereksinim: öteleme ≥ VARIS_YARICAP,
+            # yoksa varış dairesi (2 m) kirişi hiç geçmeden "ulaşıldı"
+            # sayılabilir. VARIS_YARICAP + HULL_L kullanılır.
             dxg, dyg = gn5_orta[0] - x, gn5_orta[1] - y
             mesafe_g = math.hypot(dxg, dyg)
+            oteleme = HULL_L
             if mesafe_g > 1e-6:
-                hedef = (gn5_orta[0] + dxg / mesafe_g * HULL_L,
-                         gn5_orta[1] + dyg / mesafe_g * HULL_L)
+                hedef = (gn5_orta[0] + dxg / mesafe_g * oteleme,
+                         gn5_orta[1] + dyg / mesafe_g * oteleme)
             else:
                 hedef = gn5_orta
             pipe.set_waypoints([hedef])

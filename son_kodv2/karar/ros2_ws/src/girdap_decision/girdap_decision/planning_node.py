@@ -361,6 +361,12 @@ class PlanningNode(Node):
         # "deneyerek" ayarlanmaz.
         self.declare_parameter("hull_width_m", _gate.hull_width_m)
         self.declare_parameter("hull_length_m", _gate.hull_length_m)
+        # Parkur-2 GN5 ötelemesi için (`_p2_hedefi_oteye_it`) — mission_manager
+        # ile AYNI değer (params.yaml/hardware.yaml `mission.arrival_radius_m`,
+        # varsayılan 2.0 m). Bu node mission_manager'ın parametresini doğrudan
+        # okuyamaz (ayrı node); değer burada da AYNI isimle mirror'lanır —
+        # `hull_width_m`/`hull_length_m` için zaten kullanılan aynı desen.
+        self.declare_parameter("arrival_radius_m", 2.0)
         # B2 huni tavanı — payın kendisi ölçülen açıklıktan türer (`_huni_payi`).
         # AYRI bir sayı, mppi_obstacle_margin DEĞİL: küresel payı büyütmek model
         # gelmeyen kolu kırıyor, huni ise sınıf yoksa hiç devreye girmiyor.
@@ -467,6 +473,9 @@ class PlanningNode(Node):
                 hull_width_m=float(self.get_parameter("hull_width_m").value),
                 hull_length_m=float(self.get_parameter("hull_length_m").value),
             )
+        )
+        self._arrival_radius_m = float(
+            self.get_parameter("arrival_radius_m").value
         )
         # KENAR DUBASI HAFIZASI — bir kez turuncu sınıflanan duba, rengi
         # kadrajdan çıksa da kenar kalır (§0.17e; edge_memory.py docstring'i).
@@ -1801,9 +1810,20 @@ class PlanningNode(Node):
 
         Çözüm P1'le AYNI ilke, GateFollower'a dokunmadan: referans noktası
         araç→GN5 doğrultusunda `hull_length_m` (ölçülmüş gövde boyu, tahmin
-        DEĞİL) kadar ÖTEYE itilir — MPPI artık GN5'te durmayı değil, ondan
-        geçmeyi hedefler. Parkur-2'nin TEK GN'si olduğu için (md 5.5.2.4:
-        "son görev noktası" tekil) bu her zaman doğru hedefe uygulanır.
+        DEĞİL) kadar ÖTEYE itilir.
+
+        ⚠ **Daha büyük öteleme DENENDİ ve GERİ ALINDI** (`arrival_radius_m +
+        hull_length_m`, 19.08 gece): 5 farklı başlangıçta (normal, ±3 m
+        yanal, ±20° açı hatalı, üretim kalitesi K=1000/T=50) ölçüldü — daha
+        büyük öteleme "normal" başlangıçta gövde payını 0,51 m'den 0,15 m'ye
+        düşürdü (tekne engelin daha yakınından geçmeye zorlanıyor) ve genel
+        sonucu İYİLEŞTİRMEDİ (bazı koşullarda hâlâ 10/11). `hull_length_m`
+        TEK BAŞINA: 5 koşulun 5'inde de GN5'e ulaşıldı, 0 ÇARPMA, pay hep
+        pozitif (0,15-0,51 m) — 2/5'inde son kapının tam kirişi katı
+        geometrik testle doğrulanamadı ama GN5 kapının 22 m açıklığının tam
+        ortasında olduğu için bu ölçüm katılığı, güvenlik açığı değil.
+        Daha büyük öteleme daha az güvenli VE daha az başarılıydı; bu yüzden
+        küçük (ve daha güvenli) öteleme korunuyor.
         """
         if self._last_xy is None:
             return coarse
