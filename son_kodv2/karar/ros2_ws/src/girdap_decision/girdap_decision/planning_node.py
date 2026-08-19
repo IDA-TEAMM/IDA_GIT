@@ -1727,6 +1727,25 @@ class PlanningNode(Node):
         if p3 is not None:
             return p3
 
+        # ── PARKUR-2: SAF ENGEL-KAÇINMA (19.08 gece, saha ölçümüyle bulundu) ─
+        # Şartname md 5.5.2.4: "Engel Bulunan Ortamda Nokta Takip" — kenar
+        # dubaları burada P1'deki gibi kilitlenip GEÇİLECEK bir kapı değil,
+        # sarı engel dubaları gibi kaçınılacak bir engel (kaptan doğrulaması).
+        # `GateFollower`ın eşleştirme mantığı P1 için doğru ama burada YANLIŞ
+        # model: bu parkurun kapıları (20-22 m) kamera FOV'u (69°) + LiDAR
+        # menzili (25 m) ile iki direğin AYNI ANDA hiç görülemeyeceği kadar
+        # geniş/yakın aralıklı — ölçüldü (parkur2_orani.py): GateFollower
+        # komşu kapıların direklerini birbirine eşleyip HAYALET bir hedefe
+        # kilitleniyor, tekne önündeki gerçek (kilitsiz) kapının huni payına
+        # sıkışıp KALICI DURUYOR (900 sn üretim kalitesinde 2/11 kapı).
+        # Kenar dubaları zaten obstacle torbasına giriyor (B2 huni,
+        # `_huni_payi`, aşağıda `_on_classified`) — kapı mantığı OLMADAN, ham
+        # GN'ye gidip MPPI'nin engelden kaçınmasına bırakınca ölçümde
+        # KENDİLİĞİNDEN 10/11 kapı geçildi (aynı araç, GateFollower hiç
+        # çağrılmadan).
+        if self._pipe.mission_state == "PARKUR2":
+            return coarse
+
         if not self._gate_enabled or self._last_xy is None:
             return coarse
         result = self._gate.update(
