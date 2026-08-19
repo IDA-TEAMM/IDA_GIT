@@ -74,6 +74,16 @@ class MissionManagerConfig:
     # Gerekli, çünkü nokta kapının ötesinde değilse ya da araç geçemiyorsa
     # görev sonsuza kadar takılırdı. 0 = yedek YOK (takılma serbest).
     gecis_zaman_asimi_s: float = 5.0
+    # 📐 GEÇİŞ PAYI (19.08.2026) — düzlemi NE KADAR aşmış sayılmalı.
+    # `_gecti` ölçütü `(p − wp)·t̂ > 0` idi: REFERANS NOKTA düzlemi geçer
+    # geçmez "geçti" sayılıyordu. Şartname ise **İDA'nın %100'ünün** geçmesini
+    # istiyor (md: "birinci duba ikilisinin %100'ünü geçmiş olması"), algı
+    # tarafı da bunu `PASS_EK_YOL` = ARAC_BOY 1,03 + 0,5 = **1,53 m** ile
+    # sayıyor. İki taraf aynı olayı farklı eşikle sayarsa geçit "sayıldı" ama
+    # puanlanmaz. ÖLÇÜLDÜ (12 farklı parkur süpürmesi, `gecis_supurme.py`):
+    # pay 0 iken ortanca aşma **+1,32 m** — eşiğin 21 cm altında.
+    # ⚠ 0.0 = ESKİ DAVRANIŞ BİREBİR.
+    gecis_payi_m: float = 0.0
 
 
 def latlon_to_enu(
@@ -345,7 +355,8 @@ class MissionManager:
         `t̂` = bacak yönü (önceki nokta → bu nokta). İlk noktada önceki yoktur;
         o zaman aracın çembere GİRDİĞİ andaki yaklaşma yönü kullanılır — düz
         yaklaşmada ikisi aynıdır ve idx=0 tanımsız kalmaz.
-        Ölçüt: `(p − wp) · t̂ > 0`.
+        Ölçüt: `(p − wp) · t̂ > gecis_payi_m` (0 = eski davranış; şartname
+        teknenin TAMAMININ geçmesini ister ⇒ dağıtımda 1,53 m).
         """
         wp = self._wps[self._idx]
         e_vw, n_vw = latlon_to_enu(lat, lon, wp.lat, wp.lon)   # araç → nokta
@@ -361,7 +372,7 @@ class MissionManager:
             # Bacak yönü tanımsız (üst üste iki nokta) ⇒ ölçüt uygulanamaz;
             # takmamak için varış kabul edilir.
             return True
-        return ((-e_vw) * tx + (-n_vw) * ty) / n > 0.0
+        return ((-e_vw) * tx + (-n_vw) * ty) / n > self._cfg.gecis_payi_m
 
     @property
     def gecis_bekleyen(self) -> int:

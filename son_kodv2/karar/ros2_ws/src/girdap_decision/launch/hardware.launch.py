@@ -128,6 +128,7 @@ _MISSION_TIMING_DEFAULTS: dict[str, tuple[object, type]] = {
     # §1.68 — "GEÇTİM" varış ölçütü (along-track). False = eski davranış.
     "gecis_zorunlu": (False, bool),
     "gecis_zaman_asimi_s": (5.0, float),
+    "gecis_payi_m": (0.0, float),
 }
 # perception.lidar varsayılanları: (değer, ROS param tipi) — hardware.yaml
 # perception.lidar bloğu override eder, launch-arg CLI'dan da override edilir.
@@ -1087,6 +1088,9 @@ def generate_launch_description() -> LaunchDescription:
             ),
             "gecis_zaman_asimi_s": float(
                 hw["mission_timing"]["gecis_zaman_asimi_s"]
+            ),
+            "gecis_payi_m": float(
+                hw["mission_timing"]["gecis_payi_m"]
             ),
         },
     ]

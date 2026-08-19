@@ -292,6 +292,10 @@ mission:
   # Kilitlenme yedeği (s): yarıçapın içinde bu kadar kalıp düzlem aşılamazsa
   # varış yine kabul edilir + sayaç artar. 0 = yedek yok (takılma serbest).
   gecis_zaman_asimi_s: 5.0
+  gecis_payi_m: 0.0       # mekanizma HAZIR ama KAPALI: fly-by gercek kosumda
+                          # duzlemi +5,98 m astirdi (esik 1,53) ⇒ siki esige GEREK YOK.
+                          # 1,53'e cekmek OLCULMEDI; gerekirse tek satir.
+
 
 # --- iSAM2 sensör füzyonu (fusion_node) ---
 # ⚠ Bu blok `perception.fusion` (kamera-LiDAR bearing eşleştirmesi) ile

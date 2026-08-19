@@ -176,6 +176,18 @@ FPS = 8                # sensorFps üst sınırı. 🔴 2026-08-12: 11 → 8 (NN
                        # 1,5 m/s'te kare arası yol 18,8 cm ↔ duba çapı 30 cm.
                        # Şartname md 4.2 Dosya-1 şartı ≥1 Hz.
 FPS_UYARI_ESIK = 6.5   # ölçülen NN FPS bunun altına düşerse logda uyar.
+#: 🔴 SIFIR VERİM UYARISI (2026-08-19). Mevcut "SESSİZ RET" alarmı yalnız
+#: tespit VARKEN ve reddedilirken yanar; tespit HİÇ üretilmediğinde reddedilecek
+#: bir şey olmadığı için hiçbir alarm yanmaz ve düğüm `kenar=0 engel=0 | NN 8.0
+#: FPS` diyerek SAĞLIKLI görünür. Bant taraması bunun sistemik olduğunu gösterdi
+#: (tespit/kare): 13.08 sabah 0,9-3,4 ✅ · 13.08 09:46+ 0,00 ❌ · 14.08 0,7-2,7 ✅
+#: · 15-16.08 0,00-0,07 ❌ · 17.08 04:20 **89,26** (kaçak) · 17.08 19:33 2,33 ✅.
+#: Yani model çalışıyor ama verim İKİ UÇLU ve günlerce fark edilmedi — sahada
+#: SSH yok, journal tek görünürlük kanalı. NN nominal hızda dönerken verim bu
+#: süre boyunca sıfır kalırsa GÜRÜLTÜLÜ uyarı basılır.
+#: ⚠ Tek başına kusur kanıtı DEĞİL: kadrajda duba yoksa sıfır NORMALDİR
+#: (kapalı alan). Uyarı "bak buraya" der, "bozuk" demez.
+SIFIR_VERIM_UYARI_S = 60.0
                        # 🪤 HEDEF FPS'İN ALTINDA KALMALI. Eskiden 8.0 idi; FPS 11
                        # iken doğruydu, ama FPS 8'e inince eşik hedefin ÜSTÜNE
                        # çıkmış olurdu ⇒ alarm HER KARE yanardı. Bizde bunun dersi
@@ -1121,6 +1133,9 @@ class DubaNavigator(Node):
         # değildir" (09.08, mono_menzil). Alarm artık TOPLAMA değil, son
         # log'dan bu yana olan ARTIŞA bakıyor.
         self._tani_onceki = dict(self._tani)
+        #: SIFIR VERİM: NN sağlıklı dönerken tespitsiz geçen sürenin başı.
+        self._sifir_verim_bas = None
+        self._sifir_verim_uyarildi = False
         # Geçilen geçitlerin orta noktaları (dünya/odom çerçevesi). Şartname G
         # tanımı "FARKLI karşılıklı kenar dubaları arasından geçiş sayısı" →
         # aynı geçitten tekrar geçilirse SAYILMAZ (bkz. gm.yeni_gecit_mi).
@@ -2330,6 +2345,27 @@ class DubaNavigator(Node):
         # 🔴 11.08: "buyuk_cisim" LİSTEDE YOKTU — büyük cisim süzgeci gerçek
         # dubayı elese sahada TEK SATIR bile basılmıyordu (SSH yok, journal tek
         # görünürlük kanalı). 06.08'deki "sessiz ret" hatasının aynısı.
+        # 🔴 SIFIR VERİM NÖBETÇİSİ (2026-08-19) — aşağıdaki "sessiz ret"
+        # alarmının GÖREMEDİĞİ hâl: hiç tespit üretilmiyorsa reddedilecek bir
+        # şey de yoktur, o yüzden o alarm susar ve düğüm sağlıklı görünür.
+        if self.olculen_fps >= FPS_UYARI_ESIK and not self.dubalar:
+            if self._sifir_verim_bas is None:
+                self._sifir_verim_bas = simdi
+            gecen = simdi - self._sifir_verim_bas
+            if gecen >= SIFIR_VERIM_UYARI_S and not self._sifir_verim_uyarildi:
+                self._sifir_verim_uyarildi = True
+                self.get_logger().warn(
+                    f"⚠️ SIFIR VERİM: NN {self.olculen_fps:.1f} FPS ile SAĞLIKLI "
+                    f"dönüyor ama {gecen:.0f} sn'dir HİÇ tespit üretilmedi. "
+                    "Kadrajda duba yoksa bu NORMALDİR (kapalı alan); suda ve "
+                    "duba görüş alanındayken görülüyorsa algı hattı fiilen "
+                    "ölüdür — model/blob yüklenmesi ve pozlama denetlenmeli. "
+                    "(19.08 bant taraması: verim günlere göre 0,00 ↔ 3,4 "
+                    "arasında zıplıyor ve bugüne kadar hiç izlenmiyordu.)")
+        else:
+            self._sifir_verim_bas = None
+            self._sifir_verim_uyarildi = False
+
         RED_KALEMLERI = ("dar", "dizili", "arada_duba", "menzil_celiski",
                          "menzil_yok", "buyuk_cisim")
         # 🔴 2026-08-13: tetikleyici TOPLAM değil, son log'dan bu yana ARTIŞ.
