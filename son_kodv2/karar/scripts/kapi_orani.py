@@ -187,6 +187,22 @@ def kosum(
     dubalar = parkur.dubalar()
     gn = gorev_rotasi(parkur)
     dyn = CatamaranDynamics()
+    # 🔴 19.08.2026 — SİMÜLASYON SAATİ ENJEKTE EDİLİYOR (belirlenimlilik).
+    # `bd01566` bu betiğin "koşum belirlenimlidir" iddiasının YANLIŞ olduğunu
+    # fark etti ama nedeni `PYTHONHASHSEED`'e bağladı. ÖLÇÜLDÜ ve o atıf
+    # yanlış çıktı: **AYNI** hash tohumuyla iki koşum da FARKLI sonuç veriyor
+    # (`--zor`, 400 s: kapı 3/8, savrulma 1039° ↔ 1075°, PDÇ 17 ↔ 15).
+    # Gerçek neden: `PlanningPipeline._replan_frenli` bir sonraki RRT*
+    # koşumunu SON KOŞUMUN SÜRESİNDEN türetilen aralık kadar erteliyor ve o
+    # süreyi `self._saat()` ile ölçüyor — varsayılanı `time.monotonic`.
+    # Yani kapalı döngünün PLAN TAKVİMİ makine hızına ve o anki CPU yüküne
+    # bağlıydı. `PlanningPipeline` saat enjeksiyonunu bu yüzden zaten sunuyor
+    # ("Testler ve sim, kendi saatini enjekte edebilsin diye"); bu betik
+    # kullanmıyordu. Aynı kusur `test_p1_saha_senaryolari`de de vardı ve
+    # 19.08'de aynı yolla kapatıldı.
+    # 📚 Yöntem literatürün standardı: belirlenimli simülasyon için zaman
+    # test/sim tarafından SÜRÜLÜR, gerçek saatten okunmaz.
+    _sim_saat = [0.0]
     pipe = PlanningPipeline(
         _sinir_kutusu(parkur, baslangic, gn),
         # ⚠ VARSAYILAN K=200/T=30 HIZ İÇİNDİR, ÜRETİM DEĞİL. Üretim
@@ -201,6 +217,7 @@ def kosum(
             stuck_recovery_enabled=stuck_recovery_enabled,
         ),
         dynamics=dyn,
+        saat=lambda: _sim_saat[0],
     )
     pipe.set_mission_state("PARKUR1")
     gate = GateFollower(
@@ -326,6 +343,7 @@ def kosum(
         for _ in range(2):
             state = dyn.step_rk4(state, u, dt / 2)
         t += dt
+        _sim_saat[0] = t
 
         simdi = (float(state[0]), float(state[1]))
         parkur_durumu = pdc.adim(simdi, t)
