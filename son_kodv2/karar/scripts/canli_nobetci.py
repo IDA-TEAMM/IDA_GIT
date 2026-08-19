@@ -101,7 +101,15 @@ PUSULA_SAPMA_DER = 35.0          # GPS gidiş yönü ↔ pusula başlığı fark
                                  # denk geliyordu. Bu kural onu SUDA, tekne
                                  # hareket ederken yakalar — tezgâhta değil.
 PUSULA_MIN_HIZ = 0.4             # m/s — altında gidiş yönü gürültüdür
-LIDAR_ARAYUZ = os.environ.get("GIRDAP_LIDAR_ARAYUZ", "enP8p1s0")
+# 🔴 19.08.2026 — ARAYÜZ ARTIK SABİT DEĞİL, ALT AĞDAN BULUNUYOR.
+# Eskiden `enP8p1s0` sabitti. LiDAR hattı USB-ethernete taşınınca
+# (`enxec9a0c1d9cdf`) nöbetçi YANLIŞ arayüze bakmaya devam etti: LiDAR
+# canlansa bile ATEŞLEMEZDİ — sessizce hep "sorun yok" derdi. Sahada SSH yok,
+# bu nöbetçi tek görünürlük kanalı.
+# Doğrusu cihazın ADRESİNİ aramak: hangi arayüz LiDAR alt ağını taşıyorsa o.
+# Böylece hat bir daha taşınsa da nöbetçi kendiliğinden doğru yere bakar.
+LIDAR_ALT_AG = os.environ.get("GIRDAP_LIDAR_ALT_AG", "192.168.117.")
+LIDAR_ARAYUZ = os.environ.get("GIRDAP_LIDAR_ARAYUZ", "")   # boş = otomatik bul
 KAMERA_USB_KIMLIK = "03e7"       # Luxonis OAK — §0.95b/1
 
 # 🔑 Beklenen uçuş kontrolcüsü parametreleri — sapma ALARM üretir.
@@ -580,17 +588,47 @@ class Nobetci(Node):
         # Mid-360 100 Mb'lik bir cihaz; 1000Mb/s ya da Unknown ise kablonun
         # ucunda LiDAR YOK (§0.63'ün imzası, iki kez birebir doğrulandı).
         try:
-            hiz = subprocess.run(["ethtool", LIDAR_ARAYUZ], capture_output=True,
-                                 text=True, timeout=10.0).stdout
-            satir = next((s.strip() for s in hiz.splitlines() if "Speed:" in s), "")
-            if "100Mb/s" in satir:
-                self._temizle("LIDAR-HAT", satir)
-            elif satir:
+            arayuz = LIDAR_ARAYUZ or self._lidar_arayuzu()
+            if not arayuz:
                 self._alarm("LIDAR-HAT",
-                            f"{LIDAR_ARAYUZ} {satir} — Mid-360 100Mb'lik bir "
-                            "cihaz; kablonun ucunda LiDAR YOK olabilir (§0.63)")
+                            f"{LIDAR_ALT_AG}x hiçbir arayüzde YOK — LiDAR ağı "
+                            "kurulu değil (host tarafı). `ip -o -4 addr` ile "
+                            "bak; hat taşınmış olabilir (19.08: yerleşik "
+                            "ethernetten USB-ethernete taşınmıştı)")
+            else:
+                hiz = subprocess.run(["ethtool", arayuz], capture_output=True,
+                                     text=True, timeout=10.0).stdout
+                satir = next((s.strip() for s in hiz.splitlines()
+                              if "Speed:" in s), "")
+                if "100Mb/s" in satir:
+                    self._temizle("LIDAR-HAT", f"{arayuz} {satir}")
+                elif satir:
+                    self._alarm("LIDAR-HAT",
+                                f"{arayuz} {satir} — Mid-360 100Mb'lik bir "
+                                "cihaz; kablonun ucunda LiDAR YOK olabilir "
+                                "(§0.63)")
         except Exception:                      # noqa: BLE001
             pass
+
+    def _lidar_arayuzu(self) -> str:
+        """LiDAR alt ağını taşıyan arayüzün adı ("" = hiçbiri).
+
+        Sabit arayüz adı yazmak 19.08'de nöbetçiyi sessizce kör etti: hat
+        USB-ethernete taşınmıştı ve alarm bir daha ateşlemedi. Adres aramak
+        taşınmaya dayanıklıdır.
+        """
+        try:
+            cikti = subprocess.run(["ip", "-o", "-4", "addr"],
+                                   capture_output=True, text=True,
+                                   timeout=5.0).stdout
+        except Exception:                      # noqa: BLE001
+            return ""
+        for satir in cikti.splitlines():
+            if LIDAR_ALT_AG in satir:
+                parcalar = satir.split()
+                if len(parcalar) >= 2:
+                    return parcalar[1]
+        return ""
 
         # 3) Disk — rosbag kesintisiz yazıyor; dolarsa teslim dosyaları biter
         try:

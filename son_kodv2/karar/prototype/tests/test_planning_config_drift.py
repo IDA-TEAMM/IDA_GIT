@@ -43,6 +43,8 @@ _ESLEME = {
     "mppi_ref_window_enabled": "ref_window_enabled",
     "mppi_ileri_kisit": "ileri_kisit",
     "mppi_w_ileri": "w_ileri",
+    # 19.08: ayar sinifinda VARDI ama hicbir yere bagli degildi (§1.60b)
+    "mppi_geri_hiz_yasak": "geri_hiz_yasak",
 }
 
 

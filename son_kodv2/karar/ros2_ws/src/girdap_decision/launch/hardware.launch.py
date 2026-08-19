@@ -213,6 +213,8 @@ _MPPI_DEFAULTS: dict[str, tuple[object, type]] = {
     "mppi_ref_window_enabled": (True, bool),
     "mppi_ileri_kisit": (False, bool),      # F-F.22 (bkz. MPPIConfig)
     "mppi_w_ileri": (0.0, float),
+    # 🔴 19.08: ayar sinifinda VARDI, hicbir yere bagli DEGILDI (§1.60b).
+    "mppi_geri_hiz_yasak": (False, bool),
 }
 # --show-args çıktısında operatörün göreceği açıklamalar (sınırlar dahil).
 _MPPI_ARG_DESC = {
@@ -233,6 +235,7 @@ _MPPI_ARG_DESC = {
                         "negatif olamaz — Nav2 vx_min=0 karşılığı. 17.08 göl "
                         "bandında komutların %23,1'i GERİYDİ. Saf pivot "
                         "([-a,+a], ortak kip 0) ETKİLENMEZ",
+    "mppi_geri_hiz_yasak": "Geri sürüşü HIZ uzayında eler; FREN SERBEST kalır. `mppi_ileri_kisit` itki uzayında çalışıp freni de yasaklıyor (duruş yolu 2,4x, kapı direğine temas) — bu kolda o sorun YOK, ama HİÇ denenmedi.",
     "mppi_w_ileri": "YUMUŞAK ileri tercihi (Nav2 PreferForwardCritic): geri "
                     "süratin zaman integrali × bu ağırlık. 0 = kapalı. "
                     "⚠ Garanti DEĞİL — her ileri örnek daha kötüyse MPPI yine "
@@ -331,6 +334,7 @@ _RRT_DEFAULTS: dict[str, tuple[object, type]] = {
     # 322 → 10 (−%97), düz çizgi geri düşüşü 43 → 7 (−%84).
     # ⚠ 6,0 m DENENDİ ve DAHA KÖTÜ çıktı (düz çizgi 7 → 12) — 3,0 ölçülmüş değer.
     "rrt_hedef_kurtarma_m": (3.0, float),
+    "stuck_recovery_enabled": (True, bool),
     # ⛔ KAPALI — aynı bantta yardımcı OLMADI (düz çizgi 7 → 14). Kod duruyor,
     # teşhis değeri var; sonuç ölçütünü bozduğu için varsayılan 0.
     "rrt_kismi_plan_min_m": (0.0, float),
@@ -339,6 +343,7 @@ _RRT_DEFAULTS: dict[str, tuple[object, type]] = {
     "pivot_yedek_referans": (False, bool),
 }
 _RRT_ARG_DESC = {
+    "stuck_recovery_enabled": "Sıkışma kurtarması (F-P.11). False = 18.08 öncesi davranış birebir — A/B ve ACİL KAPATMA için.",
     "rrt_hedef_kurtarma_m": "Hedef engel içindeyse EN YAKIN serbest noktaya "
                             "taşınır (Nav2 navfn `tolerance` karşılığı); 0 = "
                             "eski davranış (plan reddedilir, düz çizgiye "
