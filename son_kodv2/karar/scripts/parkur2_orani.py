@@ -82,7 +82,7 @@ def _sinir_kutusu(kapilar_p2, engeller, baslangic, gn5) -> Bounds:
 
 
 def kosum(
-    kapilar_p2, engel_konumlari, *, baslangic, yon0_rad,
+    kapilar_p2, engel_konumlari, *, baslangic, yon0_rad, gn5_gercek=None,
     sure=VARSAYILAN_SURE_S, mppi_k=URETIM_K, mppi_t=URETIM_T,
 ) -> dict:
     """PARKUR-2'yi kapalı döngü bir kez koştur.
@@ -95,13 +95,27 @@ def kosum(
     parkur1_gate = GateFollowerConfig(HULL_W, HULL_L)
     dyn = CatamaranDynamics()
     gn5 = kapilar_p2[-1]
-    gn5_orta = ((gn5[0][0] + gn5[1][0]) / 2.0, (gn5[0][1] + gn5[1][1]) / 2.0)
+    # Gerçek GN5 (.world dosyasından) verilmişse ONU kullan — üretimde de
+    # mission GN5'i kendi başına verir, son kapının orta noktasından
+    # TÜRETİLMEZ (ikisi arasında birkaç m fark olabilir).
+    gn5_orta = gn5_gercek if gn5_gercek is not None else (
+        (gn5[0][0] + gn5[1][0]) / 2.0, (gn5[0][1] + gn5[1][1]) / 2.0)
+    # 🔴 19.08 gece — SİMÜLASYON SAATİ ENJEKTE EDİLİYOR (kapi_orani.py'de
+    # ekip tarafından bulunan/düzeltilen AYNI kusur, 848f9465). `PlanningPipeline`
+    # varsayılan `saat=time.monotonic` kullanır — hem RRT* replan freni
+    # (`_replan_frenli`) hem F-P.11 sıkışma kurtarma penceresi
+    # (`_sikisma_kurtarmasini_guncelle`) bunu okur. Enjekte edilmezse ikisi de
+    # GERÇEK CPU hızına bağlı olur. Ölçüldü: bu betikte kurtarma HİÇBİR ZAMAN
+    # tetiklenmiyordu (`kurtarma_aktif` 300+ örnekte hep False) — tekne
+    # kilitli-ama-önündeki-kapı-kilitsiz tuzağında 35+ sn hareketsiz kaldı.
+    _sim_saat = [0.0]
     pipe = PlanningPipeline(
         _sinir_kutusu(kapilar_p2, engel_konumlari, baslangic, gn5_orta),
         PlanningPipelineConfig(mppi_K=mppi_k, mppi_T=mppi_t,
                                 mppi_terminal_lookahead_m=3.0,
                                 stuck_recovery_enabled=True),
         dynamics=dyn,
+        saat=lambda: _sim_saat[0],
     )
     pipe.set_mission_state("PARKUR2")
     gate = GateFollower(parkur1_gate)
@@ -157,9 +171,11 @@ def kosum(
         pipe.set_obstacles(engeller_liste)
 
         if round(t * 10) % 2 == 0:
-            sonuc = gate.update((x, y), gn5_orta, kenar,
-                                 [(o.cx, o.cy, o.r) for o in engeller_liste])
-            hedef = sonuc.surus_hedefi
+            # 🔴 19.08 gece — planning_node._refine_target'ın PARKUR2 baypası
+            # aynası: GateFollower burada YANLIŞ model (bkz. dosya başı
+            # docstring) — ham GN5'e doğrudan git, MPPI'nin engel kaçınması
+            # (yukarıdaki huni'li engeller_liste) işi yapar.
+            hedef = gn5_orta
             pipe.set_waypoints([hedef])
 
         pipe.set_state(state)
@@ -171,6 +187,7 @@ def kosum(
         for _ in range(2):
             state = dyn.step_rk4(state, u, dt / 2)
         t += dt
+        _sim_saat[0] = t
 
         simdi = (float(state[0]), float(state[1]))
         for bx, by in kapi_direkleri:
@@ -247,7 +264,8 @@ def main() -> None:
     sonuclar = []
     for i in range(1, a.kosum + 1):
         r = kosum(dunya.kapilar_p2, dunya.engeller, baslangic=baslangic,
-                  yon0_rad=yon0, sure=a.sure, mppi_k=a.K, mppi_t=a.T)
+                  yon0_rad=yon0, gn5_gercek=dunya.gn5,
+                  sure=a.sure, mppi_k=a.K, mppi_t=a.T)
         sonuclar.append(r)
         print(f"#{i}: kapı {r['gecilen']}/{r['toplam_kapi']} {r['gecilen_index']} · "
               f"son kapı geçildi={r['son_kapi_gecildi']} · GN5 varıldı={r['gn5_varildi']} · "
