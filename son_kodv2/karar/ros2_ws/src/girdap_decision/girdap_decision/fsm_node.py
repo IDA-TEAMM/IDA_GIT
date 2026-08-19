@@ -81,11 +81,17 @@ from girdap_decision.yeniden_baslama import (
     ResetYayinci,
 )
 from prototype.fsm.mission_fsm import MissionFSM, MissionState, Observation
+from prototype.mission.p3_cikis import P3CikisIzleyici
 from prototype.mission.parkur_fsm import (
     ParkurState,
     ParkurTransitionLogic,
     load_parkur_labels,
 )
+
+
+#: Odometri bu süreden eskiyse hız ölçümü GEÇERSİZ sayılır — bayat odomla
+#: "tekne durdu" sonucu çıkarılamaz (sahte temas ⇒ görev erken biterdi).
+_ODOM_BAYATLIK_S = 2.0
 
 
 class FSMNode(Node):
@@ -175,6 +181,13 @@ class FSMNode(Node):
             self.get_parameter("p1_to_p2_dist").value
         )
         self._obs = Observation()
+        # Parkur-3 çıkışı — şok kanalı P3'ü BİTİREMEZ (temas 0,03-0,14 g ↔
+        # eşik 3,0 g), giriş de artık `mission_complete`'ten geldiği için o
+        # terminal P3'te atlanıyor ⇒ başka bir çıkış ZORUNLU.
+        # Çekirdek ROS'suz: `prototype/mission/p3_cikis.py`.
+        self._p3_izleyici = P3CikisIzleyici()
+        self._hiz_mps = 0.0
+        self._hiz_t = None          # odom bayatlığı (sahte temas koruması)
 
         # --- Parkur geçiş katmanı (waypoint-index tabanlı, MissionFSM'den ayrı) ---
         self._cift_denetim_s = float(
@@ -507,6 +520,9 @@ class FSMNode(Node):
         )
 
     def _on_odom(self, msg: Odometry) -> None:
+        v = msg.twist.twist.linear
+        self._hiz_mps = math.hypot(v.x, v.y)
+        self._hiz_t = self._saat()
         self._pose_xy = (
             msg.pose.pose.position.x,
             msg.pose.pose.position.y,
@@ -605,14 +621,51 @@ class FSMNode(Node):
                 f"PARKUR-3 kapisi {'ACIK' if yeni else 'KAPALI'} — "
                 f"hedef rengi = {msg.data.strip() or 'ATANMAMIS'}"
             )
+            # 19.08 — hangi tetikle P3'e geçeceğimizi operatöre SÖYLE.
+            # İki yol var ve ikisi de geçerli:
+            #   · görevde `parkur: 3` etiketli nokta VARSA → o noktanın bir
+            #     öncesine (P2'nin son wp'si) varınca `p2_waypoints_done`;
+            #   · YOKSA (yarışmada beklenen hâl — kamikazede görev noktası
+            #     verilmiyor) → TÜM waypoint'ler bitince `mission_complete`.
+            # Eskiden burada "P3'e HİÇ geçilmez" diye HATA basılıyordu; ikinci
+            # yol eklendiği için o teşhis artık YANLIŞ olurdu.
+            if yeni:
+                p3_wp = 3 in self._parkur.last_index_of_parkur
+                self.get_logger().warn(
+                    "PARKUR-3 TETIGI: "
+                    + ("gorevde 'parkur: 3' etiketli nokta VAR -> P2'nin son "
+                       "waypoint'inde gecilecek"
+                       if p3_wp else
+                       "gorevde 'parkur: 3' noktasi YOK -> TUM waypoint'ler "
+                       "bitince (mission_complete) gecilecek")
+                    + f" (parkur son index'leri={self._parkur.last_index_of_parkur})"
+                )
 
     def _on_mission_complete(self, msg: Bool) -> None:
-        """Görev yöneticisi tüm waypoint'leri bitirdi → TAMAMLANDI terminal.
+        """Görev yöneticisi tüm waypoint'leri bitirdi mi? → TAMAMLANDI / PARKUR3.
 
-        Latching: bir kez True olunca sıfırlanmaz (görev bitti, geri dönüş yok).
+        🔴 19.08 — **LATCH KALDIRILDI.** Eskiden `if msg.data: ... = True` idi
+        ve bir daha sıfırlanmıyordu. P3 girişi bu bayrağa bağlandığı andan
+        itibaren bu bir ARIZA olurdu:
+
+          · md 5.5.3.1 **yeniden başlama hakkı** kullanılınca `mission_manager`
+            IDLE'a döner ve `is_complete` **False** yayınlar, ama mandallı
+            gözlem True kalırdı ⇒ araç PARKUR1'e girer girmez (renk yüklüyse)
+            **anında kamikazeye** atlardı — iskeleye 5 m mesafede.
+          · Eyüp'ün senaryosu (19.08): *"WP varken kapansın, WP yokken açılsın,
+            aç-kapa yapabilsin"* — kapının canlı olması tam olarak bu.
+
+        Güvenli, çünkü yayıncı `is_complete`'i **her tick** basıyor
+        (`mission_manager_node:523`), yani bu bir durum akışı; tek mesaj
+        düşerse 100 ms sonra yenisi gelir. TAMAMLANDI da terminal durum —
+        oraya geçildikten sonra bayrağın False olması bir şeyi geri almaz.
+
+        ⚠️ **Boş görev tuzağı yok**: waypoint listesi boşken `MissionManager`
+        IDLE'da kalır (`start()` yalnız `self._wps` doluysa ACTIVE'e geçer)
+        ⇒ `is_complete` **False** ⇒ P3 açılmaz. Sonradan WP yüklenirse görev
+        normal akar. Ölçüldü değil, kaynaktan okundu: `mission_manager.py:221`.
         """
-        if msg.data:
-            self._obs.mission_complete = True
+        self._obs.mission_complete = bool(msg.data)
 
     def _on_waypoints(self, msg: Path) -> None:
         """PAR-09: FC görevi geldi — parkur etiketleri onunla hizalı mı?
@@ -862,6 +915,26 @@ class FSMNode(Node):
         # onun yerini aldı. Sebep: `self._mav_armed` şartına bağlıydı ve
         # PAR-03'e göre araç 14 oturumun hiçbirinde ARM edilmedi — bekçi bir
         # kez bile ateşlemedi. Yeni bekçi ARM YOKLUĞUNU da bir sebep sayıyor.
+
+        # Parkur-3 çıkış ölçütleri (yalnız P3'teyken anlamlı).
+        simdi = self._saat()
+        if self._fsm.state is MissionState.PARKUR3:
+            if not self._p3_izleyici.p3te_mi:
+                self._p3_izleyici.p3ye_girildi(simdi)
+            # Odom SUSARSA `_hiz_mps` son değerinde DONAR; tekne o sırada
+            # duruyorsa "ilerleme yok" SAHTE tetiklenir ve görev, temas
+            # olmadığı hâlde TAMAMLANDI'ya düşer. Ölçemediğimiz şeyde çelişki
+            # iddia etmiyoruz (aynı kural `menzil_tutarli`da da var).
+            taze = (self._hiz_t is not None
+                    and (simdi - self._hiz_t) <= _ODOM_BAYATLIK_S)
+            self._obs.p3_ilerleme_yok, self._obs.p3_sure_doldu = (
+                self._p3_izleyici.guncelle(simdi, self._hiz_mps,
+                                           hiz_gecerli=taze)
+            )
+        elif self._p3_izleyici.p3te_mi:
+            self._p3_izleyici.sifirla()
+            self._obs.p3_ilerleme_yok = False
+            self._obs.p3_sure_doldu = False
 
         new_state = self._fsm.tick(self._obs)
 

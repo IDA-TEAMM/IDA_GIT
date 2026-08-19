@@ -103,7 +103,10 @@ from prototype.mission.gate_follower import (
     GateFollowerConfig,
 )
 from prototype.planning.mppi import MPPIConfig
-from prototype.mission.hedef_secim import Hedef, HedefKilidi, nisan_hedefi
+from prototype.mission.hedef_secim import (
+    Hedef, HedefKilidi, TemasNisani, nisan_hedefi, temas_havucu,
+    temas_muafiyeti,
+)
 from prototype.telemetry.ariza_bildirici import (
     CMDVEL_KESIK,
     ENGEL_BOS,
@@ -563,6 +566,14 @@ class PlanningNode(Node):
         # 0,3 m altında stereo ölüyor ⇒ son yarım metrede tespit KESİNLİKLE
         # kesilir; kilitsiz nişan tam temas anında ham görev noktasına düşerdi.
         self._hedef_kilidi = HedefKilidi()
+        # 🔴 19.08 — TEMAS NİŞANI. Nişan hedefin ÜSTÜNE kurulunca araç
+        # hedefe VARMIYOR (ölçüldü: 5 geometride 1 temas; kalanlarda 0,35-1,29 m
+        # önünde sıfır itkiyle park). Havuç ÜÇ ölçülmüş büyüklükten türer
+        # (hedef yarıçapı 0,32 + gövde yarı boyu + varış yarıçapı) —
+        # ayrıntı `temas_havucu` docstring'i. YALNIZ PARKUR3'te kullanılır.
+        self._p3_muafiyet_bildirildi = False
+        self._temas_nisani = TemasNisani(temas_havucu(
+            self._gate._cfg.hull_length_m, self._arrival_radius_m))
         # Dairesel engeller DÜNYA ENU'da (x, y, r) — MPPI'ye giden torbanın
         # AYNISI, kopya değil aynı taramadan. Kapı NİŞANININ engellere göre
         # kayması için gerekli: kenar dubaları MPPI'de engel olmadığından
@@ -1309,6 +1320,7 @@ class PlanningNode(Node):
                 abs(pp.orientation.z))
             for pp in msg.poses
         ]
+        obstacles = self._p3_temas_muafiyeti(obstacles)
         self._obstacles_world = [(o.cx, o.cy, o.r) for o in obstacles]
         self._pipe.set_obstacles(obstacles)
         # Sınıfsız kol: burada "99" diye bir kavram YOK — kümelerin hiçbirinin
@@ -1471,6 +1483,7 @@ class PlanningNode(Node):
         # ⚠ H5 TAZE tespit sayısına bakar, hafızadan eklenenlere DEĞİL: hafıza
         # doluyken algı ölse torba "dolu" görünür ve boş-akış kapanı körleşirdi.
         self._bos_akis_denetle(len(msg.detections))
+        obstacles = self._p3_temas_muafiyeti(obstacles)
         self._obstacles_world = [(o.cx, o.cy, o.r) for o in obstacles]
         self._pipe.set_obstacles(obstacles)
         # 🔴 Dosya-3 HARİTASI: eşleşmemiş küme (CLASS_UNKNOWN=99) ÇİZİLMEZ —
@@ -1870,6 +1883,28 @@ class PlanningNode(Node):
             y + self._harita_yaricapi * math.sin(psi),
         )
 
+    def _p3_temas_muafiyeti(self, engeller: list) -> list:
+        """PARKUR-3'te KİLİTLİ hedefin engel kaydını torbadan çıkar.
+
+        P1/P2'de ve kilit yokken liste **birebir** döner (davranış değişmez).
+        Gerekçe/ölçüm ve neden bu yarıçap: `hedef_secim.temas_muafiyeti`.
+        Nav2 docking sunucusunun `dock_collision_threshold` deseni.
+        """
+        if self._pipe.mission_state != "PARKUR3":
+            return engeller
+        kilitli = self._hedef_kilidi.kilitli
+        if kilitli is None:
+            return engeller
+        kalan = temas_muafiyeti(engeller, (kilitli.x, kilitli.y))
+        if len(kalan) != len(engeller) and not self._p3_muafiyet_bildirildi:
+            self._p3_muafiyet_bildirildi = True
+            self.get_logger().warn(
+                "PARKUR-3: kilitli hedefin engel kaydı torbadan ÇIKARILDI "
+                f"({len(engeller) - len(kalan)} kayıt) — md 5.5.2.5 temas "
+                "gerektiriyor, emniyet halkası aracı iterdi"
+            )
+        return kalan
+
     def _parkur3_nisani(self, coarse):
         """PARKUR-3'te görülen hedefe nişan al. Uygun değilse `None`.
 
@@ -1904,6 +1939,8 @@ class PlanningNode(Node):
         # PARKUR3 dışındaysak kilit BIRAKILIR (yeniden başlama / parkur geçişi).
         if parkur != "PARKUR3" or not self._istenen_renk:
             self._hedef_kilidi.sifirla()
+            self._temas_nisani.sifirla()     # eksen de bırakılır (aynı ömür)
+            self._p3_muafiyet_bildirildi = False
             return None
         secilen = self._hedef_kilidi.guncelle(taze)
         if secilen is None:
@@ -1918,9 +1955,15 @@ class PlanningNode(Node):
             self.get_logger().warn(
                 f"PARKUR-3 HEDEFİ KİLİTLENDİ: ({secilen.x:.1f}, {secilen.y:.1f}), "
                 f"renk kodu {secilen.renk_kodu}, ölçülen çap {secilen.cap_m:.2f} m "
-                "— MPPI referansı buraya kuruluyor"
+                "— MPPI referansı hedefin ARKASINA kuruluyor (temas havucu)"
             )
-        return (secilen.x, secilen.y)
+        # 🔴 19.08 — SÜRÜLECEK NOKTA HEDEFİN ARKASINDADIR (F-K.1'in P3 karşılığı).
+        # Ham hedefe nişan alınırsa MPPI hedefi bir VARIŞ noktası sanar; terminal
+        # gradyan (2·w·d) son metrede söner, itki sıfıra gider ve araç hedefin
+        # ~0,5 m önünde durur ⇒ md 5.5.2.5 "fiziksel temas" sağlanmaz.
+        # Eksen KİLİT ANINDA donar: dönen havuç aracı hedefin etrafında
+        # dolaştırıyordu (ölçüm: dönen 1/5 ↔ donmuş 4/5 temas).
+        return self._temas_nisani.nisan(secilen, self._last_xy)
 
     def _publish_edge_buoys(self, edges: list[tuple[float, float]]) -> None:
         """Kenar dubalarını DÜNYA (odom) çerçevesinde yayınla — Dosya-3 katmanı.

@@ -305,63 +305,113 @@ def test_kapi_kaniti_gecis_GEREKCESINE_yaziliyor() -> None:
     assert "kapı geçişi de doğrulandı" in gerekce
 
 
-def test_TUZAK_PARKUR3te_mission_complete_KAMIKAZEYI_KESIYOR() -> None:
-    """🔴 AÇIK TUZAK (17.08'de bulundu) — bu test mevcut davranışı DONDURUYOR,
-    onaylamıyor. Değiştirmek isteyen bilerek değiştirsin diye buraya yazıldı.
+def test_TUZAK_KAPANDI_PARKUR3te_mission_complete_KAMIKAZEYI_KESMIYOR() -> None:
+    """✅ 19.08 — 17.08'de dondurulan TUZAK KAPATILDI (Eyüp kararı).
 
-    ZİNCİR (yarışma yerleşimiyle birebir):
-      `competition_mission.yaml` 5 waypoint · etiketler [1,1,2,2,3] ·
-      SON waypoint `P3_target` (parkur 3) · `arrival_radius_m: 2.0`.
-      1. Tekne P2'nin son wp'sine varır  → PARKUR3'e geçer (renk yüklüyse)
-      2. `P3_target`'a **2 m** kala varılmış sayılır, 2 sn dwell
-      3. `mission_manager` COMPLETE → `mission_complete=True` (LATCH, geri dönüş yok)
-      4. `MissionFSM` bu bayrağı **parkur kurallarından ÖNCE** değerlendirir
-         (kod yorumu: *"görev bitince spurious PARKUR2 geçişi kazanmasın"*)
-         → **TAMAMLANDI**
-      5. TAMAMLANDI'da `compute_control` None → **thrust sıfır**
-      ⇒ Tekne hedefin **~2 m önünde durur.** P3 tamamlama şartı **FİZİKSEL
-        TEMAS** olduğu için angajman sayılmaz: **145 puan (toplamın %48'i) gider.**
+    ESKİ TUZAK: `mission_complete` LATCH'li ve parkur kurallarından ÖNCE
+    değerlendiriliyordu ⇒ P3'e giren tekne bir sonraki tick'te TAMAMLANDI'ya
+    düşüyor, hedefin ~2 m önünde thrust sıfırla duruyordu. P3 tamamlama şartı
+    **fiziksel temas** (md 5.5.2.5) olduğu için angajman sayılmıyordu.
 
-    NEDEN GÖZDEN KAÇTI: terminal kural **video senaryosu** için yazılmış (tek
-    parkur, çarpma yok — `test_mission_complete_terminates_video`) ve ikinci
-    testi de PARKUR1→PARKUR2 sahte geçişini kapatıyor. **PARKUR3 ile etkileşimi
-    hiçbir test kapsamıyordu**; yarışma yerleşiminde son waypoint'in parkur-3
-    olması bu kuralı P3'ün terminaline dönüştürüyor — oysa P3'ün tasarlanmış
-    terminali **IMU şoku** (`shock_detected_p3`).
+    ESKİ TESTİN ŞARTI: *"şok algılanmazsa aracın durma yolu kalır mı, onu da
+    doğrulayarak bu testi güncelle."* → Kaldı: `P3CikisIzleyici`
+    (`prototype/mission/p3_cikis.py`) ilerleme-yok + süre aşımı veriyor;
+    ikisi de aşağıda test ediliyor. Şok kanalı zaten ateşlenmiyordu
+    (temas 0,03-0,14 g ↔ eşik 3,0 g).
 
-    ⚠️ NEDEN DÜZELTİLMEDİ (bilinçli): `mission_complete` terminalini PARKUR3'te
-    devre dışı bırakmak, şok hiç algılanmazsa aracı **hiç durmayan** bir
-    kamikaze'de bırakır. Bu bir emniyet ödünleşimi ve yarışmaya 3 gün kala tek
-    başına verilecek karar değil — kaptanın. Aday çözümler:
-      (a) PARKUR3'te terminali yalnız `p3_bekleniyor` (renk yüklü) iken devre
-          dışı bırak; renk yoksa eski davranış aynen kalsın
-      (b) `P3_target` waypoint'ini görev dosyasından ÇIKAR (parkur-3'ün
-          waypoint'i olmasın) — o zaman COMPLETE P2 bitince gelmez
-      (c) `arrival_radius_m`'yi P3 için sıfıra yakın yap (temas ≈ varış)
-    Her üçünün de yan etkisi var; ölçülmeden seçilmemeli.
+    Seçilen çözüm docstring'deki (a): terminal yalnız `p3_bekleniyor` iken
+    devre dışı. Renk yoksa eski davranış **bit birebir** korunur (aşağıda).
     """
     fsm = MissionFSM()
     _advance_to_beklemede(fsm)
     fsm.request_start()
     fsm.tick(Observation(boot_ok=True, kill_switch_off=True))
-
-    # P1 bitti → P2
     fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
                          dist_to_last_wp_p1=1.0))
-    assert fsm.state is MissionState.PARKUR2
-
-    # P2'nin son waypoint'i + renk yüklü → PARKUR3 (kamikaze başlar)
     fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
                          p2_waypoints_done=True, p3_bekleniyor=True))
     assert fsm.state is MissionState.PARKUR3, "kamikaze hiç başlamadı"
 
-    # P3_target'a 2 m kala varıldı sayıldı → mission_manager COMPLETE
-    fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
-                         p3_bekleniyor=True, mission_complete=True))
-
-    assert fsm.state is MissionState.TAMAMLANDI, (
-        "DAVRANIŞ DEĞİŞMİŞ: mission_complete artık PARKUR3'ü kesmiyor. "
-        "Bu İYİ bir değişiklik olabilir (bkz. docstring aday çözümler) ama "
-        "BİLİNÇLİ olmalı — şok algılanmazsa aracın durma yolu kalır mı, "
-        "onu da doğrulayarak bu testi güncelle."
+    # Görev tamamlandı sinyali GELSE BİLE kamikaze kesilmez — ve bu LATCH'li
+    # bayrak her tick tekrar geldiği için tek tick değil, sürekli sınanır.
+    for _ in range(5):
+        fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
+                             p3_bekleniyor=True, mission_complete=True))
+    assert fsm.state is MissionState.PARKUR3, (
+        "mission_complete kamikazeyi yine kesiyor — hedefe temas edilemez"
     )
+
+
+def test_P3_GIRISI_waypointler_bitince_RENK_YUKLUYSE() -> None:
+    """🔑 Yarışma tetiği (19.08, Eyüp): P3'e AYRI GÖREV NOKTASI VERİLMEZ.
+
+    md 5.5.2.5 tamamlama şartı yalnız *"hedefe fiziksel olarak temas"*;
+    görev noktasından hiç söz etmiyor (tam tarama). Bu yüzden tetik
+    "parkur-3 etiketli waypoint" DEĞİL, **verilen waypoint'lerin bitmesi**.
+    """
+    fsm = MissionFSM()
+    _advance_to_beklemede(fsm)
+    fsm.request_start()
+    fsm.tick(Observation(boot_ok=True, kill_switch_off=True))
+    fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
+                         dist_to_last_wp_p1=1.0))
+    assert fsm.state is MissionState.PARKUR2
+
+    # P2'nin son waypoint'i = görevin son waypoint'i (parkur-3 noktası YOK)
+    fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
+                         mission_complete=True, p3_bekleniyor=True))
+
+    assert fsm.state is MissionState.PARKUR3
+    _, _, gerekce = fsm.history[-1]
+    assert "kamikaze" in gerekce
+
+
+def test_RENK_YOKKEN_waypointler_bitince_ESKI_DAVRANIS() -> None:
+    """Renk yüklü değilse P1/P2 davranışı BİT BİREBİR eski hâlinde."""
+    fsm = MissionFSM()
+    _advance_to_beklemede(fsm)
+    fsm.request_start()
+    fsm.tick(Observation(boot_ok=True, kill_switch_off=True))
+    fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
+                         dist_to_last_wp_p1=1.0))
+
+    fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
+                         mission_complete=True))     # p3_bekleniyor = False
+
+    assert fsm.state is MissionState.TAMAMLANDI
+
+
+def test_P3_CIKISI_ilerleme_yok() -> None:
+    """Temas: ileri komut var, tekne ilerlemiyor → TAMAMLANDI (şok gerekmez)."""
+    fsm = _p3e_getir()
+    fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
+                         p3_bekleniyor=True, mission_complete=True,
+                         p3_ilerleme_yok=True))
+    assert fsm.state is MissionState.TAMAMLANDI
+    _, _, gerekce = fsm.history[-1]
+    assert "ilerleme yok" in gerekce
+
+
+def test_P3_CIKISI_sure_asimi() -> None:
+    """Hedef hiç bulunamazsa tekne sonsuza kadar kamikazede kalmaz."""
+    fsm = _p3e_getir()
+    fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
+                         p3_bekleniyor=True, mission_complete=True,
+                         p3_sure_doldu=True))
+    assert fsm.state is MissionState.TAMAMLANDI
+    _, _, gerekce = fsm.history[-1]
+    assert "süre aşımı" in gerekce
+
+
+def _p3e_getir() -> MissionFSM:
+    """P3'e waypoint bitişiyle giren FSM (yarışma yerleşimi)."""
+    fsm = MissionFSM()
+    _advance_to_beklemede(fsm)
+    fsm.request_start()
+    fsm.tick(Observation(boot_ok=True, kill_switch_off=True))
+    fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
+                         dist_to_last_wp_p1=1.0))
+    fsm.tick(Observation(boot_ok=True, kill_switch_off=True,
+                         mission_complete=True, p3_bekleniyor=True))
+    assert fsm.state is MissionState.PARKUR3
+    return fsm

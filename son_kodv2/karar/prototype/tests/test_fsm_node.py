@@ -1560,3 +1560,23 @@ def test_PAR09_kilit_kalkti_ama_KOSU_ORTASI_korumasi_DURUYOR(ros_context, tmp_pa
         assert node._parkur.last_index_of_parkur == {}
     finally:
         node.destroy_node()
+
+
+def test_mission_complete_LATCHLI_DEGIL_ackapa(ros_context, tmp_path) -> None:  # noqa: ANN001
+    """🔴 19.08 — `mission_complete` MANDALLANMAZ (Eyüp: "aç-kapa yapabilsin").
+
+    P3 girişi bu bayrağa bağlı. Mandallı kalsaydı md 5.5.3.1 yeniden başlama
+    hakkı kullanıldığında `mission_manager` IDLE'a döner (`is_complete=False`)
+    ama gözlem True kalır ⇒ araç PARKUR1'e girer girmez kamikazeye atlardı.
+    """
+    from std_msgs.msg import Bool
+    node = _make_node(ros_context, tmp_path)
+    try:
+        node._on_mission_complete(Bool(data=True))
+        assert node._obs.mission_complete is True
+        node._on_mission_complete(Bool(data=False))
+        assert node._obs.mission_complete is False, (
+            "bayrak mandallandı — yeniden başlamada P3 anında açılırdı"
+        )
+    finally:
+        node.destroy_node()

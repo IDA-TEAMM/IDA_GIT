@@ -328,3 +328,35 @@ def test_fv8_baslamamis_gorevde_yok_sayilir() -> None:
     m = _iki_wp_mgr()
     assert m.notify_external_reached(1) is False
     assert m.phase is MissionPhase.IDLE
+
+
+# --------------------------------------------------------------------------- #
+# 19.08 — BOŞ GÖREV TUZAĞI (Eyüp senaryosu: "denize koyduk, GUIDED'dayız,
+# waypoint'ler SONRADAN girildi"). P3 girişi `mission_complete`'e bağlandığı
+# için "waypoint yok" ile "waypoint bitti" ASLA karışmamalı: karışırsa tekne
+# iskelenin dibinde kamikaze moduna girer.
+# --------------------------------------------------------------------------- #
+
+
+def test_BOS_gorev_COMPLETE_DEGIL_iskelede_kamikaze_yok() -> None:
+    """Waypoint listesi boşken görev IDLE'da kalır — `is_complete` ASLA True."""
+    m = MissionManager([], _CFG)
+    assert m.phase is MissionPhase.IDLE
+    m.start()                                  # başlat komutu gelse bile
+    assert m.phase is MissionPhase.IDLE, "boş görev ACTIVE'e geçti"
+    assert not m.is_complete, (
+        "BOŞ görev 'tamamlandı' sayıldı — P3 iskelede açılırdı"
+    )
+    assert m.update(0.0, 0.0, 0.0) is None
+    assert not m.is_complete
+
+
+def test_gorev_SONRADAN_yuklenirse_normal_akar() -> None:
+    """WP'ler sonradan girilince görev normal çalışır (aç/kapa)."""
+    m = MissionManager([], _CFG)
+    m.start()
+    assert not m.is_complete
+    m2 = _mission()                            # yeni liste yüklendi
+    m2.start()
+    assert m2.phase is MissionPhase.ACTIVE
+    assert not m2.is_complete                  # daha bitmedi ⇒ P3 KAPALI

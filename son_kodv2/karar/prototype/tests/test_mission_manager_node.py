@@ -633,3 +633,44 @@ def test_fs11_waypoints_path_ilerler_sirayla(ros_context, mission_file_short_dwe
     finally:
         helper.destroy_node()
         node.destroy_node()
+
+
+def test_START_ONCE_WP_SONRA_gorev_KILITLENMEZ(ros_context) -> None:  # noqa: ANN001
+    """🔴 19.08 (Eyüp senaryosu): *"denize koyduk, GUIDED'dayız, ilk WP yoktu,
+    sonradan girildi"* — bu sıra görevi KİLİTLEMEMELİ ve P3'ü AÇMAMALI.
+
+    Tehlike: `_started` bayrağı waypoint YOKKEN de mandallansaydı, sonradan
+    gelen liste `_on_fc_waypoints`'te *"görev başladıktan sonra geldi"* diye
+    ATILIRDI (yalnız WARN) ⇒ tekne hiç waypoint'siz kalır, servis yeniden
+    başlatılmadan dönüş olmazdı.
+
+    İkinci ve daha ağır tehlike (19.08 sonrası): P3 girişi artık
+    `mission_complete`'e bağlı. "waypoint YOK" ile "waypoint BİTTİ" karışırsa
+    tekne iskelenin dibinde kamikaze moduna girer. Karışmadığı burada donduruldu.
+    """
+    from types import SimpleNamespace
+
+    n = girdap.MissionManagerNode(
+        parameter_overrides=[
+            Parameter("mission_source", Parameter.Type.STRING, "fc"),
+        ]
+    )
+    try:
+        # 1) Görev yokken FSM aktif parkura geçti (start verildi)
+        n._on_state(String(data="PARKUR1"))
+        assert not n._started, "waypoint yokken _started mandallandı"
+        assert not n._mgr.is_complete, (
+            "BOŞ görev 'tamamlandı' sayıldı — P3 iskelede açılırdı"
+        )
+
+        # 2) Waypoint'ler SONRADAN yüklendi → kabul edilmeli
+        msg = SimpleNamespace(waypoints=[
+            SimpleNamespace(command=16, x_lat=40.0, y_long=29.0),      # home
+            SimpleNamespace(command=16, x_lat=40.001, y_long=29.0),
+            SimpleNamespace(command=16, x_lat=40.001, y_long=29.001),
+        ])
+        n._on_fc_waypoints(msg)
+        assert n._mgr.waypoint_count == 2, "sonradan gelen görev yok sayıldı"
+        assert not n._mgr.is_complete            # daha koşulmadı ⇒ P3 KAPALI
+    finally:
+        n.destroy_node()
