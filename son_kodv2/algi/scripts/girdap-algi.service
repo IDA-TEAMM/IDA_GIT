@@ -43,6 +43,21 @@ Environment=HOME=/home/__USER__
 # servisine ayni satiri yazmis: "systemd .bashrc okumaz").
 # ⚠️ Deger karar tarafiyla AYNI olmak zorunda — onlar degistirirse burasi da degisir.
 Environment=ROS_DOMAIN_ID=42
+# 🔴 PARKUR-3 HEDEF YAYINI — 19.08.2026'da AÇILDI (Eyup karari: IHA'siz
+# yarisiyoruz, P3 = 100 puan / Tablo 5 s.25 ve bu satir olmadan ALINAMAZ).
+# Kapaliyken `/perception/targets` HIC yayinlanmaz: FSM PARKUR3'e gecse ve
+# hakem rengi verse bile `hedef_sec` secim yapamaz => angajman olmaz, ve
+# hicbir hata basilmaz (tekne son waypoint'te temiz durur).
+# Ikinci etkisi (bilincli): mono yolunda yesil/siyah HEDEF dubasi artik
+# `/perception/buoys`'a NORMAL DUBA olarak girmez. Bu P2'yi KORUR — stereo
+# tavani (10 m) otesindeki gercek hedef duba kenar sayilirsa `EdgeBuoyMemory`
+# KALICI kenar yazar => hayalet kapi => P2 rotasi bozulur.
+# Olculdu (16.08, 6.042 gercek kenar/engel kutusu, karanlik/ters isik dahil):
+# kapsama esigi 0,45'te yesil %0,000 · siyah %0,000 yanlis pozitif; kirmizi bu
+# yoldan BILEREK gecmiyor (RAL 3026 ↔ RAL 2003 karisiyor, stereo ister).
+# ⚠️ P1/P2 KODUNA DOKUNULMADI — bu yalniz bir ortam degiskeni.
+# Geri almak icin: satiri sil + `sudo systemctl restart girdap-algi`.
+Environment=GIRDAP_P3_HEDEF=1
 # Login shell: ROS + workspace ortamini yukle, launch'i kostur.
 # Launch respawn'li - node cokerse launch toparlar; launch'in kendisi cokerse
 # systemd 10 sn sonra yeniden dener.

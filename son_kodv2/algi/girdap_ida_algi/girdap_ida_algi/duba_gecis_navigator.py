@@ -1051,6 +1051,23 @@ class DubaNavigator(Node):
             self.get_logger().info(f"OAK-D Lite hazır — YOLO VPU'da. MOD = {MOD}")
         for _s in _blob_denetle(MODEL_BLOB, self._siniflar, self.get_logger()):
             pass                      # logger içinde basıldı; node'u ÖLDÜRMEZ
+        # 🔴 19.08 — P3 ŞALTERİ AÇILIŞTA GÖRÜNÜR OLSUN. Şalter kapalıyken
+        # `/perception/targets` HİÇ yayınlanmaz; hakem rengi verse ve FSM
+        # PARKUR3'e geçse bile `hedef_sec` seçim yapamaz ⇒ angajman olmaz
+        # (İHA'sız **100 puan**). Eskiden bu durumun TEK belirtisi yoktu:
+        # servis dosyasında `Environment=GIRDAP_P3_HEDEF=1` unutulursa hata
+        # basılmıyor, tekne sessizce hedefe gitmiyordu. Sahada SSH yok;
+        # journal tek kanal ⇒ açılışta bir satır.
+        if P3_HEDEF_YAYINI:
+            self.get_logger().info(
+                "PARKUR-3 hedef yayını AÇIK (GIRDAP_P3_HEDEF=1) — "
+                f"/perception/targets {HEDEF_HZ:.0f} Hz, yalnız PARKUR3'te")
+        else:
+            self.get_logger().warn(
+                "PARKUR-3 hedef yayını KAPALI (GIRDAP_P3_HEDEF ayarlı değil) "
+                "— angajman yapılacaksa servise "
+                "'Environment=GIRDAP_P3_HEDEF=1' eklenip KALKIŞTAN ÖNCE "
+                "yeniden başlatılmalı; aksi hâlde Parkur-3 puanı alınmaz")
         self.kenar_cls, self.engel_cls, isimle = _sinif_indeksleri_coz(self._siniflar)
         self.sinif_esleme = {self.kenar_cls: "0", self.engel_cls: "1"}
         if isimle:

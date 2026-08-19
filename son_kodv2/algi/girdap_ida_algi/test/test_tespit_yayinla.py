@@ -330,7 +330,7 @@ def test_mono_KIRMIZI_bu_yoldan_gecmez(hsv, ad):
     assert len(arr.detections) == 1, f"{ad} süzüldü — gerçek duba kaybolur"
 
 
-def test_mono_hedef_yolu_SALTERE_BAGLI():
+def test_mono_hedef_yolu_SALTERE_BAGLI(monkeypatch):
     """🔴 P3 KAPALIYKEN mono/OpenCV yolu HİÇ koşmaz (16.08 akşamı, Eyüp).
 
     Şalterin ikinci yönü. Yukarıdaki testler `p3_acik` fixture'ıyla yolun
@@ -344,7 +344,13 @@ def test_mono_hedef_yolu_SALTERE_BAGLI():
 
     ⚖️ Kapalıyken tespit `/perception/buoys`'a NORMAL duba olarak girer —
     bilinçli takas: P1/P2 ölçüm koşusunda suda P3 hedef dubası YOK.
+
+    🔴 19.08 — şalter ORTAM DEĞİŞKENİNDEN değil, açıkça kapatılıyor. Sebep:
+    dağıtım servisi artık `Environment=GIRDAP_P3_HEDEF=1` ile koşuyor
+    (yarışma günü P3 açık); test o ortamda çalıştırılınca "varsayılan kapalı"
+    kabulü çöküyordu. Test kapalı YÖNÜ sınıyor, ortamı değil.
     """
+    monkeypatch.setattr(dgn, "P3_HEDEF_YAYINI", False)
     arr, _ = _yayinla([_mono()], kare=_kare_renkli(_YESIL))
     assert len(arr.detections) == 1, (
         "P3 kapalıyken mono tespit yine süzüldü — şalter mono yolunu "
