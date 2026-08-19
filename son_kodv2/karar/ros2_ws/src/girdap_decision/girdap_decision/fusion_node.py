@@ -152,6 +152,16 @@ class FusionNode(Node):
         # Sıfırlamada korunacak kuyruğun süresi. 0.0 = graf tek poza iner.
         # Periyottan KÜÇÜK olmak zorunda (yoksa çıpalama hiçbir şey atmaz).
         self.declare_parameter("reanchor_keep_s", 0.0)
+        # 🔴 19.08 — ÇAPA SİGMASI ARTIK AYARDAN VERİLEBİLİR (§1.68e-②).
+        # `reanchor_sigma_xy` ayar sınıfında VARDI ama hiçbir parametreye bağlı
+        # değildi ⇒ `None` → `prior_sigma_xy` = 0,05 m SABİT. Yani çıpa, GPS
+        # kalitesinden bağımsız olarak "5 cm doğrulukla buradayım" diyordu.
+        # ÖLÇÜLDÜ: elimizdeki bantların HİÇBİRİNDE RTK yok (fix status 0),
+        # σ ≈ 0,25-0,34 m — çapanın iddiasının 5-7 KATI. Çıpalama canlıda AÇIK
+        # (30 s), yani her 30 saniyede o anki hatayı kilitliyor olabilir.
+        # ⚠ 0.0 = ESKİ DAVRANIŞ BİREBİR (None gibi davranır). Ölçülmeden
+        # değiştirilmez; ama artık DENENEBİLİR — kol açık kalsın diye.
+        self.declare_parameter("reanchor_sigma_xy", 0.0)
         # Fix kalitesine göre ölçüm sigma'sı [m] — hardware.yaml
         # `fusion.gps_sigma_by_status` bloğu. ROS parametreleri sözlük
         # taşımadığı için düzleştirilmiş skalerler.
@@ -304,6 +314,9 @@ class FusionNode(Node):
                 self.get_parameter("reanchor_period_s").value
             ),
             reanchor_keep_s=float(self.get_parameter("reanchor_keep_s").value),
+            reanchor_sigma_xy=(
+                float(self.get_parameter("reanchor_sigma_xy").value) or None
+            ),
         )
         self.get_logger().info(
             f"iSAM2: keyframe≤{cfg.keyframe_rate_hz} Hz "

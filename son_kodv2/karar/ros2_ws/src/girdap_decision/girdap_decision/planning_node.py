@@ -254,6 +254,17 @@ class PlanningNode(Node):
         # serbest noktaya planlansın (Nav2 navfn `tolerance` karşılığı).
         # 0.0 = ESKİ DAVRANIŞ. 17.08 bandında `RRT-RED` 43 kez ateşledi.
         self.declare_parameter("rrt_hedef_kurtarma_m", 0.0)
+        # 🔴 19.08 — ERİŞİLEMEYEN İKİ KOL BAĞLANDI. İkisi de ayar sınıfında
+        # tanımlıydı ama hiçbir parametreye/yaml'a bağlı değildi; yani ölçülmüş
+        # ve işe yarayan kollar SAHADA DENENEMİYORDU (§1.60b, `04bddb7` tuzağı).
+        #  · `stuck_recovery_enabled`: kendi belgesi "A/B / acil kapatma için"
+        #    diyor — ama kapatmanın YOLU YOKTU.
+        #  · `geri_hiz_yasak`: geri sürüşü HIZ uzayında eler, freni serbest
+        #    bırakır. `mppi_ileri_kisit`in (itki uzayı) fren kaybı sorunu
+        #    bunda YOK — kaptan kararı `ileri_kisit` için verildi,
+        #    `geri_hiz_yasak` hiç denenemedi.
+        self.declare_parameter("stuck_recovery_enabled", True)
+        self.declare_parameter("mppi_geri_hiz_yasak", False)
         # F-F.28 — hedefe varan yol yoksa AĞACIN ulaştığı en yakın düğüme
         # kadar KISMİ plan üret. 0.0 = ESKİ DAVRANIŞ (düz çizgiye düş).
         # Ölçüm: 95 engelde uzay 2/5 sahnede gerçekten tıkalı ve bütçe
@@ -400,6 +411,12 @@ class PlanningNode(Node):
             mppi_w_ileri=float(self.get_parameter("mppi_w_ileri").value),
             rrt_hedef_kurtarma_m=float(
                 self.get_parameter("rrt_hedef_kurtarma_m").value
+            ),
+            stuck_recovery_enabled=bool(
+                self.get_parameter("stuck_recovery_enabled").value
+            ),
+            mppi_geri_hiz_yasak=bool(
+                self.get_parameter("mppi_geri_hiz_yasak").value
             ),
             rrt_kismi_plan_min_m=float(
                 self.get_parameter("rrt_kismi_plan_min_m").value

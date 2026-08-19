@@ -19,7 +19,35 @@
 set -uo pipefail
 
 IP=192.168.117.60/24
-IF=enP8p1s0
+
+# 🔴 19.08.2026 — ARAYÜZ ARTIK SABİT DEĞİL, BULUNUYOR.
+# Eskiden `IF=enP8p1s0` sabitti. LiDAR hattı USB-ethernete taşınınca
+# (`enxec9a0c1d9cdf`) bu betik YANLIŞ porta IP veriyordu: LiDAR'ın portu
+# IP'siz kalıyor, sürücü bağlanamıyor, `/livox/lidar` hiç akmıyor —
+# ve BELİRTİSİ YOK (yukarıdaki gerekçenin aynısı, bu kez arayüz yüzünden).
+# Aynı sabit `canli_nobetci.py`de de vardı; nöbetçi de kör kalmıştı.
+#
+# Seçim sırası: (1) elle verilen GIRDAP_LIDAR_ARAYUZ  (2) LiDAR alt ağını
+# ZATEN taşıyan arayüz  (3) KABLOSU TAKILI (carrier) ilk ethernet
+# (4) hiçbiri yoksa yerleşik port + GÜRÜLTÜLÜ uyarı.
+_eth() { ip -br link | awk '$1!~/^(lo|can|docker|veth|wlan|l4tbr|usb[0-9])/ {print $1}'; }
+_carrier() { ! ip -br link show "$1" 2>/dev/null | grep -q NO-CARRIER; }
+
+IF="${GIRDAP_LIDAR_ARAYUZ:-}"
+if [ -z "$IF" ]; then
+  IF=$(ip -o -4 addr | awk '/192\.168\.117\./ {print $2; exit}')
+fi
+if [ -z "$IF" ]; then
+  for _i in $(_eth); do _carrier "$_i" && { IF="$_i"; break; }; done
+fi
+if [ -z "$IF" ]; then
+  IF=$(_eth | head -1)
+  echo "⚠️  HİÇBİR ethernet portunda KABLO YOK (hepsi NO-CARRIER)."
+  echo "    IP yine de '$IF' üzerine kalıcı yazılıyor; kablo takılınca hazır olur."
+  echo "    LiDAR ulaşılamıyorsa önce KABLO/GÜÇ bak — yazılım tarafı bu adımla tamam."
+fi
+[ -n "$IF" ] || { echo "❌ ethernet arayüzü bulunamadı"; exit 1; }
+echo "→ seçilen arayüz: $IF"
 say(){ printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok(){  printf '   \033[32m✓\033[0m %s\n' "$*"; }
 uy(){  printf '   \033[33m!\033[0m %s\n' "$*"; }

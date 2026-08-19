@@ -33,6 +33,13 @@ fusion_node:
     # Kuyruk seçildi çünkü bedeli ölçülemeyecek kadar küçük ve `all_poses()`
     # teşhis için tek poz yerine ~30 poz döndürüyor. Periyottan KÜÇÜK olmalı.
     reanchor_keep_s: 6.0
+    # 🔴 19.08 (§1.68e-②): capa prior'u AYARDAN verilemiyordu — None →
+    # prior_sigma_xy = 0,05 m SABIT. Yani capa, GPS kalitesinden BAGIMSIZ
+    # olarak '5 cm dogrulukla buradayim' diyordu. OLCULDU: elimizdeki
+    # bantlarin HICBIRINDE RTK yok (fix 0), sigma ~0,25-0,34 m = iddianin
+    # 5-7 KATI. Cipalama canli ve 30 s'de bir; o anki hatayi kilitleyebilir.
+    # 0.0 = ESKI DAVRANIS BIREBIR. Olculmeden degistirilmez.
+    reanchor_sigma_xy: 0.0
     gps_robust_enabled: true # Huber M-estimator ile GPS outlier reddi
     gps_huber_k: 1.345       # σ katı; Gauss verimliliğinin %95'ini korur
     # Fix kalitesine göre GPS ölçüm sigma'sı (NavSatFix.status.status).
@@ -138,6 +145,20 @@ planning_node:
     # İKİSİ DE KAPALI = eski davranış birebir; sahada A/B ile açılır.
     mppi_ileri_kisit: false   # SERT (Nav2 vx_min=0): ortak kip >= 0, GARANTİ
     mppi_w_ileri: 0.0         # YUMUŞAK (PreferForwardCritic): garanti YOK
+    # 🔴 19.08: ikisi de ayar sinifinda VARDI ama hicbir parametreye bagli
+    # DEGILDI — olculmus kollar sahada denenemiyordu (04bddb7 tuzagi).
+    stuck_recovery_enabled: true    # F-P.11. false = 18.08 oncesi davranis (ACIL KAPATMA)
+    # 🔴 19.08: launch beyaz listesinde VARDI ama iki yaml'da da YOKTU —
+    # yani olculmus A/B adayi ayardan verilemiyordu (04bddb7'nin ILK vakasi).
+    # Unutma menzili = harita yaricapi (25 m) x bu katsayi.
+    # OLCULDU: 1,0 torbayi ~%30 kucultuyor, kurtarilan kaydi yalniz %0,9
+    # azaltiyor. 16.08 bandinda 2,0 ile 'unutulan' 600 s'de 38'de DONDU.
+    # ⚠ 2,0 = mevcut davranis; degistirmeden once kapali dongu A/B.
+    edge_unutma_katsayisi: 2.0
+    mppi_geri_hiz_yasak: false      # geri surusu HIZ uzayinda eler, FREN SERBEST.
+                                    # mppi_ileri_kisit'ten farki: o itki uzayinda
+                                    # calisip freni de yasakliyor (durus yolu 2,4x).
+                                    # HIC DENENMEDI — olculmeden acilmaz.
                              # Ölçüm: 736 → 58 ms/iter, d2 tensörü 16× küçük.
     # --- Kapı takibi (gate following, 2026-08-03) ---
     # Şartname md 5.5.2.2: Parkur-1/2 puanı GPS noktasına basmaktan DEĞİL,
