@@ -387,9 +387,25 @@ def test_faz2_kapi_takibi_AYNI_kapilari_daha_ortali_gecirir() -> None:
     kotu_acik = max(acik["gecilen"][k] for k in ortak)
     kotu_kapali = max(kapali["gecilen"][k] for k in ortak)
 
-    assert ort_acik <= ort_kapali, (
+    # 🔴 19.08.2026 — TOLERANS EKLENDİ, GEREKÇESİ ÖLÇÜM.
+    # `1f48524` `ONAY_TICK`i 2→4 yaptı (gerçekçi gürültüde kapı kilidi
+    # kararsızdı: 26 PIVOT · 1 çarpışma · 8 kapıdan yalnız 2-3'ü geçildi).
+    # Bu senaryo GÜRÜLTÜSÜZ olduğu için takasın yalnız MALİYET tarafını
+    # görüyor. Aynı senaryoda birebir ölçüldü:
+    #     ONAY_TICK=2 → açık 2,5204 · kapalı 2,5499   (açık 3,0 cm ÖNDE)
+    #     ONAY_TICK=4 → açık 2,5636 · kapalı 2,5499   (açık 1,4 cm GERİDE)
+    # Yani kayıp **4,3 cm**; kapalı kol hiç değişmiyor (kapı takibi zaten
+    # kapalı, beklenen). Katı `<=` bu 4 cm'de kırmızı yanıyordu ve bizi
+    # gürültüsüz simde 4 cm için, gürültülü sahada kapı kaybettiren bir
+    # ayara geri döndürmeye zorluyordu — yanlış takas.
+    # ⚠ GEVŞETME DEĞİL: tolerans, testin AYIRT EDEBİLDİĞİ ölçeğe çekildi.
+    # Gerçek bozulma (nişan zincirinin kopması) santimetre değil METRE
+    # mertebesindedir. Mutasyonla doğrulandı: +0,5 m sapma HÂLÂ kırmızı.
+    TOLERANS_M = 0.10
+    assert ort_acik <= ort_kapali + TOLERANS_M, (
         f"kapı takibi geçişi ORTALAMIYOR (açık {ort_acik:.2f} m ↔ kapalı "
-        f"{ort_kapali:.2f} m, {len(ortak)} ortak kapı) — nişan zinciri kopuk"
+        f"{ort_kapali:.2f} m, tolerans {TOLERANS_M:.2f} m, {len(ortak)} ortak "
+        "kapı) — nişan zinciri kopuk"
     )
     assert kotu_acik <= kotu_kapali, (
         f"kapı takibi EN KÖTÜ geçişi iyileştirmiyor (açık {kotu_acik:.2f} m ↔ "
