@@ -252,6 +252,31 @@ class SanalGol(Node):
         self.dalga_yaw_frekans = float(
             self.get_parameter("dalga_yaw_frekans_hz").value)
 
+        # --- Duba (kapı direği) akıntı kayması (19.08.2026) ---------------
+        # 🔑 Şartname: "kenar dubaları ve engeller de deniz şartlarından
+        # dolayı yer değiştirebilir" — göl bugüne kadar bunu HİÇ simüle
+        # etmiyordu, `self.kapilar` kuruluşta donuyordu. `gate_follower`'ın
+        # "sahada ölçüp eşik gir diye bir şey OLAMAZ" tasarımı (bkz.
+        # CLAUDE.md) tam bu senaryo için var — ama gölde hiç sınanmamıştı.
+        # ⚠ GENLİK/PERİYOT ÖLÇÜLMÜŞ DEĞİL (gerçek çapa sallanması hiç
+        # ölçülmedi) — bu bir DAYANIKLILIK STRES parametresi, iddia edilen
+        # bir saha gerçeği değil. 0.0 = KAPALI = eski (donuk) davranış birebir.
+        self.declare_parameter("duba_akinti_genlik_m", 0.0)
+        self.declare_parameter("duba_akinti_periyot_s", 25.0)
+        self.duba_akinti_genlik = float(
+            self.get_parameter("duba_akinti_genlik_m").value)
+        self.duba_akinti_periyot = float(
+            self.get_parameter("duba_akinti_periyot_s").value)
+        # Her direk (kapı başına 2) BAĞIMSIZ faz alır — gerçekte ayrı çapa
+        # halatı demek; iki direk lock-step sallanmaz, kapı GENİŞLİĞİ de
+        # hafifçe oynar (sabit-genişlik varsayımı sınanır). parkur_tohum'dan
+        # AYRI tohumlanır (geometri RNG'siyle karışmasın, izolasyon aynı
+        # gerekçe: yukarıdaki `_grng` yorumu).
+        _drng = random.Random(int(self.get_parameter("parkur_tohum").value) + 90190)
+        self._duba_faz = [
+            _drng.uniform(0.0, 2.0 * math.pi) for _ in range(2 * len(self.kapilar))
+        ]
+
         # --- Başlangıç yönü (F-F.22 ölçüm kapısı) -------------------------
         # 🔴 NEDEN VAR: 17.08 göl bandında GUIDED komutlarının %23,1'i GERİYDİ
         # ve o anların %83,4'ünde hedef aracın ARKASINDAYDI. Sanal göl bu
@@ -535,6 +560,39 @@ class SanalGol(Node):
     #: (`stream_rate_hz: 10`). Değiştirilirse kadans gerçeği yansıtmaz.
     _MAVROS_SEYRELTME = 5
 
+    def _duba_kaymasi(self, indeks: int) -> tuple[float, float]:
+        """Bir direğin ÇAPA noktasına göre şu anki kayması (dünya, m).
+
+        Boyuna bileşen [0, genlik] arası — çapa halatı YALNIZ akıntı
+        YÖNÜNDE (`dalga_yon`) sürüklenmeye izin verir, ters yöne germe
+        halatı engeller (gerçek fiziksel kısıt). Enine bileşen daha küçük
+        (halatın izin verdiği yanal salınım). duba_akinti_genlik_m<=0 →
+        (0,0) — eski (donuk) davranış birebir.
+        """
+        if self.duba_akinti_genlik <= 0.0:
+            return 0.0, 0.0
+        faz = self._duba_faz[indeks]
+        w = 2.0 * math.pi / max(0.1, self.duba_akinti_periyot)
+        boyuna = self.duba_akinti_genlik * (
+            0.5 + 0.5 * math.sin(w * self.t + faz))
+        enine = 0.35 * self.duba_akinti_genlik * math.sin(
+            2.0 * w * self.t + faz * 1.7)
+        dx = boyuna * math.cos(self.dalga_yon) - enine * math.sin(self.dalga_yon)
+        dy = boyuna * math.sin(self.dalga_yon) + enine * math.cos(self.dalga_yon)
+        return dx, dy
+
+    def _duba_postlari(self) -> list[tuple[float, float]]:
+        """Her kapının SOL, SAĞ direği — akıntı kayması UYGULANMIŞ dünya
+        konumu (çift indeks = sol, tek = sağ). Kayma kapalıyken
+        `self.kapilar`'ın açılımıyla BİREBİR aynı (regresyon yok)."""
+        out: list[tuple[float, float]] = []
+        for i, (gx, gy, yari) in enumerate(self.kapilar):
+            dxl, dyl = self._duba_kaymasi(2 * i)
+            dxr, dyr = self._duba_kaymasi(2 * i + 1)
+            out.append((gx - yari + dxl, gy + dyl))
+            out.append((gx + yari + dxr, gy + dyr))
+        return out
+
     def _fizik(self) -> None:
         dt = 0.02
         self.t += dt
@@ -613,10 +671,10 @@ class SanalGol(Node):
         if _yayinla:
             self.p_lpose.publish(lp)
 
-        # Açıklık: gövde YÜZEYİNDEN duba YÜZEYİNE
+        # Açıklık: gövde YÜZEYİNDEN duba YÜZEYİNE (akıntı kayması UYGULANMIŞ
+        # GERÇEK konum — bir gerçek tekne de sürüklenmiş dubaya çarpabilir).
         for i, (wx, wy, yari) in enumerate(
-            [(kx - yr, ky, 0.15) for (kx, ky, yr) in self.kapilar]
-            + [(kx + yr, ky, 0.15) for (kx, ky, yr) in self.kapilar]
+            [(px, py, 0.15) for (px, py) in self._duba_postlari()]
             + [(ex, ey, 0.25) for (ex, ey) in self.engeller]
         ):
             d = math.hypot(wx - self.x, wy - self.y) - 0.3925 - yari
@@ -719,9 +777,8 @@ class SanalGol(Node):
         da.header = pa.header
 
         cisimler = []
-        for (kx, ky, yari) in self.kapilar:
-            cisimler.append((kx - yari, ky, 0.15, KENAR_SINIF))
-            cisimler.append((kx + yari, ky, 0.15, KENAR_SINIF))
+        for (px, py) in self._duba_postlari():
+            cisimler.append((px, py, 0.15, KENAR_SINIF))
         for (ex, ey) in self.engeller:
             cisimler.append((ex, ey, 0.25, BILINMEYEN))
 
