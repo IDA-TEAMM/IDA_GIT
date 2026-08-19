@@ -175,7 +175,18 @@ def kosum(
             # aynası: GateFollower burada YANLIŞ model (bkz. dosya başı
             # docstring) — ham GN5'e doğrudan git, MPPI'nin engel kaçınması
             # (yukarıdaki huni'li engeller_liste) işi yapar.
-            hedef = gn5_orta
+            # 🔴 GN5 VARIŞ NOKTASI DEĞİL, GEÇİLECEK SON KAPININ EŞİĞİDİR
+            # (F-K.1'in P2 karşılığı, planning_node._p2_hedefi_oteye_it
+            # aynası): ham GN5'e hedeflenince tekne arrival_radius'a girip
+            # kapının TAM kirişini geçmeden duruyordu. Referans, araç→GN5
+            # doğrultusunda ölçülmüş gövde boyu (HULL_L) kadar ötelenir.
+            dxg, dyg = gn5_orta[0] - x, gn5_orta[1] - y
+            mesafe_g = math.hypot(dxg, dyg)
+            if mesafe_g > 1e-6:
+                hedef = (gn5_orta[0] + dxg / mesafe_g * HULL_L,
+                         gn5_orta[1] + dyg / mesafe_g * HULL_L)
+            else:
+                hedef = gn5_orta
             pipe.set_waypoints([hedef])
 
         pipe.set_state(state)
