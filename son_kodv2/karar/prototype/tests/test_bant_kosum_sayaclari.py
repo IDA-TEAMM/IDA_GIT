@@ -91,3 +91,30 @@ def test_UC_ESKI_KUSUR_hala_kapali():
         "kusur 3 geri gelmiş: launch şalterleri açıkça verilmiyor, "
         "düzeltme KAPALI ölçülür"
     )
+
+
+def test_KAPI_ORANI_duvar_saatine_BAGLI_DEGIL() -> None:
+    """🔴 Nöbetçi (19.08.2026): `kapi_orani.py` kendi saatini enjekte etmeli.
+
+    `bd01566` bu betiğin *"koşum belirlenimlidir"* iddiasının yanlış olduğunu
+    fark etti ama nedeni **`PYTHONHASHSEED`**'e bağladı. Ölçüm o atfı ÇÜRÜTTÜ:
+
+        aynı hash tohumu (0), iki koşum → **FARKLI**
+        (`--zor`, 400 s: savrulma 1039° ↔ 1075°, PDÇ 17 ↔ 15, kapı 3/8)
+
+    Yani hash tohumunu sabitlemek belirlenimlilik SAĞLAMIYORDU; o doğrulama
+    yöntemi tekrarlanabilir değildi. Gerçek neden `PlanningPipeline.
+    _replan_frenli`: bir sonraki RRT* koşumunu SON KOŞUMUN SÜRESİNDEN
+    türetilen aralık kadar erteliyor ve o süreyi `self._saat()` ile ölçüyor
+    (varsayılan `time.monotonic`) ⇒ plan takvimi MAKİNE HIZINA bağlıydı.
+
+    Düzeltme sonrası: aynı tohumda iki koşum ve FARKLI hash tohumu — üçü de
+    **bayt-bayt aynı**. Aynı kusur `test_p1_saha_senaryolari`de de vardı.
+    """
+    kaynak = (Path(__file__).resolve().parents[2]
+              / "scripts" / "kapi_orani.py").read_text(encoding="utf-8")
+    assert "saat=" in kaynak, (
+        "`kapi_orani.py` PlanningPipeline'a saat ENJEKTE ETMİYOR — ölçüm "
+        "aracı makine hızına bağlı olur ve 'belirlenimli' iddiası yanlış "
+        "olur (19.08: aynı hash tohumunda bile farklı sonuç)."
+    )
