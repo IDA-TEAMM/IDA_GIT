@@ -58,6 +58,10 @@ setup(
             "perception_lidar_node = girdap_decision.perception_lidar_node:main",
             "perception_fusion_node = girdap_decision.perception_fusion_node:main",
             "kamikaze_param_node = girdap_decision.kamikaze_param_node:main",
+            # Parkur-3 rengini Mission Planner (YKI arayuzu) uzerinden
+            # almak icin: FC parametresi -> kamikaze_param_node.
+            # SOKULEBILIR: launch'ta varsayilan KAPALI.
+            "renk_kodu_koprusu = girdap_decision.renk_kodu_koprusu:main",
             # Salt-okur dogrulama izleyicisi (runtime verification).
             # Sistem topic'lerine YAZMAZ; yalniz /girdap/dogrulama* yayinlar.
             "dogrulama_node = girdap_decision.dogrulama_node:main",

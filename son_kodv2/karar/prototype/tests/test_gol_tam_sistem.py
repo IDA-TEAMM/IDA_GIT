@@ -28,6 +28,12 @@ _SAHTELENEN = frozenset({
     "livox_driver_node", "oakd_driver_node", "mavros_node",
     "mock_sensors", "static_transform_publisher",
     "kamera_kayit_node",   # gerçek kamera karesi ister (OAK-D); FAZ 7
+    # 19.08: renk köprüsü FC parametresini (SCR_USER1) MAVROS üzerinden okur;
+    # gölde MAVROS zaten sahtelenmiş (yukarıda) ⇒ okuyacak bir FC yok, node
+    # yalnız "param/get hazır değil" uyarısı basardı. Kendi uçtan uca testi
+    # var: `test_renk_kodu_koprusu.py` (sahte /mavros/param/get + GERÇEK
+    # kamikaze_param_node ile 4 test).
+    "renk_kodu_koprusu",
 })
 
 

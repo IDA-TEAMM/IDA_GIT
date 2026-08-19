@@ -772,6 +772,21 @@ def generate_launch_description() -> LaunchDescription:
             "mission_source", default_value=str(hw["mission_source"]),
             description="Görev kaynağı: file (araç üstü YAML) | fc (YKİ→MAVROS)",
         ),
+        # 🔴 19.08 — PARKUR-3 RENK KÖPRÜSÜ. Rengi Mission Planner'ın parametre
+        # ekranından (bir YKİ ARAYÜZÜ) almayı sağlar: SCR_USER1 = 1/2/3.
+        # Alternatif tek yol terminalden `ros2 param set` idi ve şartname s.21
+        # ile sürtüşüyor: "Görev yükleme aşamasında … YKİ'de SADECE YKİ arayüzü
+        # açık olacak". Ayrıca s.12 tüm bilgisayarların WiFi'ını kapatıyor ⇒
+        # terminal için tekneye KABLO çekmek gerekir (kablolu yükleme s.21'de
+        # AÇIKÇA izinli, ama terminal maddesi ayrı bir risk).
+        # VARSAYILAN AÇIK: kapalı olsaydı yarışma sabahı bayrağı unutmak
+        # sessizce P3 = 0 demekti. Köprü pasiftir: FC değeri 0 iken HİÇBİR ŞEY
+        # yapmaz, elle `ros2 param set` yolunu da bozmaz (0 → "karar yok").
+        # Kapatmak için: `use_renk_kodu_koprusu:=false`.
+        DeclareLaunchArgument(
+            "use_renk_kodu_koprusu", default_value="true",
+            description="Parkur-3 rengini FC parametresinden (SCR_USER1) oku",
+        ),
         # with_drivers — sensör sürücüleri (ida_topics paketi, F-S.2). false =
         # video günü (AUTO görevine sensör gerekmez, MAVROS yeter); true =
         # final/algı testleri (Livox UDP + OAK-D + Dosya-1 kamera kaydı).
@@ -1200,6 +1215,16 @@ def generate_launch_description() -> LaunchDescription:
              name="kamikaze_param_node",
              parameters=[{"kamikaze_target_color":
                           str(hw["kamikaze_target_color"])}],
+             output="screen"),
+        # Renk köprüsü: FC parametresi (SCR_USER1) → kamikaze_param_node.
+        # md 5.5.3.1 zamanlama kapısı KOPYALANMADI — köprü yalnız parametreyi
+        # SET ediyor, kapı `KamikazeHedefKapisi._on_param_set`te (tek yerde).
+        # 🔴 Cihazda bir kez denetle: SCR_USER1'i başka bir Lua script
+        # kullanmıyor olsun (kullanıyorsa `fc_param_adi` ile başka bir
+        # parametreye taşı) — yoksa yabancı bir değer renk sanılır.
+        Node(package=_PKG, executable="renk_kodu_koprusu",
+             name="renk_kodu_koprusu",
+             condition=IfCondition(LaunchConfiguration("use_renk_kodu_koprusu")),
              output="screen"),
         # Sprint 3: obstacle_map + buoys (sync) → /perception/classified_obstacles.
         # LiDAR+kamera node'larından SONRA gelmeli (mesajları tüketiyor).
