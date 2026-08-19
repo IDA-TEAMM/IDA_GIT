@@ -651,6 +651,21 @@ class PlanningNode(Node):
         # MPPI'nin arkasında bekler, yani tam da koruması gereken durumda
         # susardı.
         self._grup_bekci = MutuallyExclusiveCallbackGroup()
+        # 🔴 19.08.2026 — KONTROL VE HARİTA ZAMANLAYICILARI KENDİ GRUPLARINA
+        # ALINDI. Eskiden ikisi de GRUPSUZ oluşturuluyordu ⇒ düğümün VARSAYILAN
+        # `MutuallyExclusiveCallbackGroup`una düşüyorlardı; orada ayrıca üç
+        # abonelik (`waypoints`, `targets`, `hedef_rengi`) ve arıza
+        # zamanlayıcısı var. Mutually-exclusive grupta AYNI ANDA yalnız BİR
+        # geri çağrı koşabilir — kaç iş parçacığı olduğu fark etmez.
+        # ÖLÇÜLDÜ (§1.68b): 31,9 s boyunca odom AKMAYA DEVAM ETTİ (316 mesaj)
+        # ama kontrol VE harita zamanlayıcılarının İKİSİ BİRDEN durdu; kadans
+        # bekçisi (`_grup_bekci`, AYRI grup) o sırada ÇALIŞMAYA DEVAM ETTİ ve
+        # boşlukları bastı (0,53 · 1,43 · 3,35 s). Yani donan şey iş parçacığı
+        # ya da hesap değil (`_on_control_step` toplam %4,6 CPU), donan şey
+        # GRUBUN KENDİSİ. Ayrı grupta olan her şey çalışmaya devam etti.
+        # ⚠ ArduPilot GUIDED'da 3 s setpoint kesiyor ⇒ 32 s komutsuz sürüş.
+        self._grup_kontrol = MutuallyExclusiveCallbackGroup()
+        self._grup_harita = MutuallyExclusiveCallbackGroup()
 
         # --- Subscribers ---
         # 🔬 18.08 — POZ KUYRUK DERİNLİĞİ ÖLÇÜLEBİLİR ŞALTER.
@@ -917,11 +932,17 @@ class PlanningNode(Node):
 
         # --- Kontrol döngüsü ---
         rate = float(self.get_parameter("control_rate_hz").value)
-        self._timer = self.create_timer(1.0 / rate, self._on_control_step)
+        self._timer = self.create_timer(
+            1.0 / rate, self._on_control_step,
+            callback_group=self._grup_kontrol,
+        )
 
         # --- Yerel harita yayım döngüsü (Dosya-3, ~10 Hz) ---
         map_rate = float(self.get_parameter("map_rate_hz").value)
-        self._map_timer = self.create_timer(1.0 / map_rate, self._publish_local_map)
+        self._map_timer = self.create_timer(
+            1.0 / map_rate, self._publish_local_map,
+            callback_group=self._grup_harita,
+        )
 
         # --- 🛟 Kadans bekçisi (18.08) ---
         # Kontrol adımı bütçeyi aşınca cmd_vel akışı kesiliyor ve ArduPilot
@@ -1927,6 +1948,11 @@ class PlanningNode(Node):
                 f"(kod {yeni})"
             )
 
+    # 🔴 19.08: KİLİT EKLENDİ. Bu geri çağrı kilitsizdi ve kontrol adımıyla
+    # karşılıklı dışlaması YALNIZ ikisinin aynı varsayılan grupta olmasından
+    # geliyordu. Kontrol zamanlayıcısı kendi grubuna alınınca o örtük
+    # koruma kalkar ⇒ dışlama artık AÇIKÇA kilitten gelir.
+    @_pipe_kilidiyle
     def _on_targets(self, msg: Detection3DArray) -> None:
         """`/perception/targets` → dünya çerçevesinde hedef adayları.
 

@@ -2033,3 +2033,64 @@ def test_FF22_VARSAYILAN_bos_birakilinca_KAPALI(ros_context) -> None:  # noqa: A
         assert cfg.w_ileri == 0.0
     finally:
         node.destroy_node()
+
+
+# ═══ 19.08.2026 — KONTROL DÖNGÜSÜ KENDİ GRUBUNDA (B1 kök nedeni) ═══════════
+def test_KONTROL_ve_HARITA_zamanlayicilari_KENDI_grubunda() -> None:
+    """🔴 B1'in kök nedeni: iki zamanlayıcı da VARSAYILAN grupta koşuyordu.
+
+    Düğümün varsayılan geri çağrı grubu `MutuallyExclusiveCallbackGroup`tur:
+    orada aynı anda YALNIZ BİR geri çağrı koşabilir — kaç iş parçacığı olduğu
+    fark etmez. Kontrol ve harita zamanlayıcıları grupsuz oluşturulunca oraya
+    düşüyor ve üç abonelikle (`waypoints`, `targets`, `hedef_rengi`) + arıza
+    zamanlayıcısıyla aynı kuyruğa giriyorlardı.
+
+    ÖLÇÜLDÜ (§1.68b, py-spy + `/clock` kaydı): 31,9 saniye boyunca
+      · odom AKMAYA DEVAM ETTİ           (316 mesaj, beklenen ~319)
+      · kontrol VE harita çıktısı DURDU  (thrust 0, kilit 0, harita 1)
+      · kadans bekçisi (AYRI grup) ÇALIŞMAYA DEVAM ETTİ (0,53 · 1,43 · 3,35 s)
+    `_on_control_step` toplam **%4,6 CPU** ⇒ hesap değil, SEVK sorunu. Ayrı
+    grupta olan her şey çalıştı; donan şey grubun kendisiydi.
+    ⚠ ArduPilot GUIDED'da 3 s setpoint kesiyor ⇒ 32 s KOMUTSUZ SÜRÜŞ.
+
+    Bu nöbetçi kaynağı okur (düğüm kurmak ROS bağlamı ister; tezgâh burada
+    gereksiz ağırlık): iki zamanlayıcı da AÇIKÇA kendi grubunu almalı.
+    """
+    import re
+    from pathlib import Path
+
+    kaynak = (Path(__file__).resolve().parents[2] / "ros2_ws" / "src"
+              / "girdap_decision" / "girdap_decision" / "planning_node.py"
+              ).read_text(encoding="utf-8")
+
+    for ad, grup in (("_on_control_step", "_grup_kontrol"),
+                     ("_publish_local_map", "_grup_harita")):
+        kalip = re.compile(
+            r"create_timer\((?:[^()]|\([^()]*\))*?" + re.escape(ad)
+            + r"(?:[^()]|\([^()]*\))*?callback_group=self\." + re.escape(grup),
+            re.S)
+        assert kalip.search(kaynak), (
+            f"`{ad}` zamanlayıcısı `self.{grup}` grubuna BAĞLI DEĞİL — "
+            "varsayılan gruba düşerse tek bir yavaş abonelik onu 32 saniye "
+            "durdurabilir (§1.68b ölçümü)."
+        )
+
+
+def test_ON_TARGETS_kilitle_korunuyor() -> None:
+    """Kontrol zamanlayıcısı ayrı gruba alınınca örtük dışlama KALKAR.
+
+    `_on_targets` eskiden kilitsizdi; kontrol adımıyla karşılıklı dışlaması
+    yalnız ikisinin aynı varsayılan grupta olmasından geliyordu. Gruplar
+    ayrılınca dışlama AÇIKÇA kilitten gelmeli.
+    """
+    from pathlib import Path
+
+    kaynak = (Path(__file__).resolve().parents[2] / "ros2_ws" / "src"
+              / "girdap_decision" / "girdap_decision" / "planning_node.py"
+              ).read_text(encoding="utf-8")
+    i = kaynak.find("def _on_targets(")
+    assert i > 0, "`_on_targets` bulunamadı"
+    assert "@_pipe_kilidiyle" in kaynak[max(0, i - 400):i], (
+        "`_on_targets` kilitsiz — kontrol adımı ayrı grupta koşarken "
+        "boru hattı durumuna YARIŞ ile erişilir"
+    )
