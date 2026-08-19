@@ -1734,6 +1734,7 @@ class PlanningNode(Node):
             gozlem_no=self._algi_no,
         )
         self._koridoru_besle(result)
+        surus_hedefi = self._fallback_hedefi_sinirla(result)
         # Kapı bulundu/kaybedildi geçişini bir kez logla (10 Hz'te spam yok).
         if result.used_fallback != self._last_gate_used_fallback:
             self._last_gate_used_fallback = result.used_fallback
@@ -1765,7 +1766,41 @@ class PlanningNode(Node):
         # Sanal gölde ölçüldü: tekne (0.02, 24.95)'te kilitlendi, thrust
         # 0,13 N. Kapı yokken `surus_hedefi == target` (ham GN) — kapısız
         # davranış birebir korunur.
-        return result.surus_hedefi
+        return surus_hedefi
+
+    def _fallback_hedefi_sinirla(self, result):
+        """🔴 19.08 (aynı gece) — FALLBACK'TE UZAK/ALAKASIZ GN'YE KİLİTLENME.
+
+        `GateFollower` kapı bulamayınca (`used_fallback`) ham GN'yi olduğu
+        gibi döner — bu DOĞRU (kendi işi bu, bkz. modül docstring'i). Ama
+        görev rotasının kapı sayısıyla 1:1 örtüşmesi ŞART DEĞİL (hakemin
+        noktası kapı ortasında olmayabilir, md 5.5.2.2) — bu yüzden ham GN
+        bazen algı menzilinin ÇOK ötesinde kalabilir. `kapi_orani.py`'de
+        ölçüldü: 8 kapılı bir parkurda 5 GN'li rotada tekne son kapıya
+        (yarı görünür — FOV kamerayı sadece bir dubasını gösteriyor) 57 m
+        ötedeki hedefe kilitlenip önündeki huninin (komşusu görünmediği için
+        maksimum, 1.4 m) payına sıkıştı: 400 sn'lik koşumun **146 sn'si**
+        sıfır hızda geçti. Düzeltme SONRASI aynı koşum: 37 sn (5.3× azalma),
+        en uzun epizot 146→17 sn, kapı 6/8→7/8.
+
+        Kök neden `GateFollower`'da DEĞİL (o "fallback" demekte haklı) —
+        entegrasyon katmanında: menzil dışı bir noktaya kör kilitlenmek
+        yerine MEVCUT YÖNDE devam etmek MPPI'ye ilerleyebileceği bir referans
+        verir; engel/huni maliyeti güvenliği zaten koruyor. `_harita_yaricapi`
+        YENİ bir tahmin değil — yerel maliyet haritasının (ve `EdgeBuoyMemory.
+        hatirlananlar`ın) zaten kullandığı ölçülmüş algı penceresi.
+        """
+        hedef = result.surus_hedefi
+        if not result.used_fallback:
+            return hedef
+        x, y = self._last_xy
+        if math.hypot(hedef[0] - x, hedef[1] - y) <= self._harita_yaricapi:
+            return hedef
+        psi = self._last_psi
+        return (
+            x + self._harita_yaricapi * math.cos(psi),
+            y + self._harita_yaricapi * math.sin(psi),
+        )
 
     def _parkur3_nisani(self, coarse):
         """PARKUR-3'te görülen hedefe nişan al. Uygun değilse `None`.
