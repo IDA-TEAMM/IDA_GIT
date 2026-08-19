@@ -278,6 +278,29 @@ def kosum(
                     gozlem_no=algi_no,
                 )
                 hedef = sonuc.surus_hedefi
+                # 🔴 19.08 — FALLBACK'TE UZAK/ALAKASIZ GN'YE KİLİTLENME.
+                # Ölçüldü: 8 kapılı bir parkurda görev rotası yalnız 5 GN
+                # noktası taşıyor (hakem noktası kapı sayısıyla 1:1 değil,
+                # CLAUDE.md "hakemin verdiği nokta tam kapı ortasında
+                # OLMAYABİLİR" notu). Kapı kilitlenmediği an (`used_fallback`)
+                # ham GN 57 m öteye sıçrayabiliyor; tekne o uzak noktaya
+                # yönelirken TAM ÖNÜNDEKİ (yarı görünür, henüz eşleşmemiş)
+                # kapının huni payına (maksimum, komşusu görünmediği için
+                # 1.4 m) sıkışıp kalıyor — 400 sn'lik koşumda **146 sn**
+                # kalıcı sıfır hız (`kosum()` `--iz` izi, pdc epizot 5).
+                # Kök neden GateFollower'da DEĞİL (o doğru "fallback" diyor);
+                # burada, entegrasyon katmanında: menzil dışı bir hedefe kör
+                # kilitlenmek yerine MEVCUT YÖNDE devam etmek MPPI'ye ilerici
+                # bir referans verir, obstacle/huni maliyeti zaten güvenliği
+                # korur. `KAMERA_MENZIL` yeni bir tahmin DEĞİL — algı
+                # katmanının zaten kullandığı ölçülmüş sensör menzili
+                # (üretimde `planning_node`'un `_harita_yaricapi`si).
+                if (sonuc.used_fallback
+                        and math.hypot(hedef[0] - x, hedef[1] - y) > KAMERA_MENZIL):
+                    hedef = (
+                        x + KAMERA_MENZIL * math.cos(psi),
+                        y + KAMERA_MENZIL * math.sin(psi),
+                    )
                 # F-S.16 (planning_node._koridoru_besle aynası) — koridoru
                 # da besle, yoksa bu araç kaptanın 18.08 06:52 bağlantısını
                 # ölçemez (koridor hep boş kalır, terim susar).
