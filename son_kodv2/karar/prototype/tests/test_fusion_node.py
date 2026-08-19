@@ -240,6 +240,12 @@ def test_DUBLOR_gercek_on_gps_IMZASINI_TASIYOR() -> None:
     """
     import inspect
 
+    pytest.importorskip(
+        "gtsam",
+        reason="gtsam yok — bu dosyanin geri kalani gtsam GEREKTIRMIYOR "
+        "(modul dokstringi), bu nobetci de gercek imzayi yalniz gtsam "
+        "kuruluyken karsilastirabilir",
+    )
     from prototype.fusion.pipeline import FusionPipeline
 
     gercek = inspect.signature(FusionPipeline.on_gps).parameters
