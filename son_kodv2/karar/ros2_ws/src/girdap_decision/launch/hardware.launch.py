@@ -365,6 +365,13 @@ _BEKCI_DEFAULTS: dict[str, tuple[object, type]] = {
     # ölçülmüş A/B tablosu varken değer sahada denenemiyordu (yalnız kodu
     # düzenleyerek). Varsayılan 2.0 = eski davranış, BİREBİR korunur.
     "edge_unutma_katsayisi": (2.0, float),
+    # 🔴 19.08.2026 — GÜVENLİK TAVANI. Hafıza patladığında (KAR-05/06'nın
+    # sonucu — bkz. planning_node.py declare_parameter yorumu) MPPI'nin
+    # (K,T+1,N) tensörü + `_huni_payi` O(n²) taraması kontrol döngüsünü
+    # saniyelerce durdurabiliyordu (ÖLÇÜLDÜ: N~94'te 60+ s kilitlenme,
+    # canlı gölde tekrarlayan "cmd_vel kesildi/MPPI durdu" arızasıyla eşleşen
+    # mekanizma). Kök nedeni DÜZELTMEZ, yalnız sonucunu sınırlar. 0 = kapalı.
+    "engel_azami_sayisi": (150, int),
 }
 _BEKCI_ARG_DESC = {
     "edge_unutma_katsayisi": "Kenar dubası hafızasında unutma menzili = "
@@ -373,6 +380,11 @@ _BEKCI_ARG_DESC = {
                              "devreye girmez, torba 843 kayda şişer. "
                              "Ölçülen A/B: 1.0 ⇒ torba %30 küçülür, "
                              "kurtarılan yalnız %0,9 düşer",
+    "engel_azami_sayisi": "Kontrol döngüsüne verilen engel/kenar sayısının "
+                          "üst sınırı (en yakın N tutulur). Hafıza patlaması "
+                          "MPPI'yi saniyelerce kilitliyordu (19.08 ölçümü, "
+                          "canlı göl arızasıyla eşleşen mekanizma). "
+                          "0 = KAPALI (eski davranış, sınırsız)",
     "obstacle_timeout_s": "F-P.2 engel bekçisi zaman aşımı (s). Engel "
                           "haritası bu süreden eskiyse (ya da HİÇ gelmediyse) "
                           "itki sıfırlanır. 0 = BEKÇİ KAPALI — araç engel "

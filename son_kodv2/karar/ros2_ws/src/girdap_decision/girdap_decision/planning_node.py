@@ -221,6 +221,25 @@ class PlanningNode(Node):
         # gittiğini sanıp üstüne sürebilir). Topic her taramada (engel olsun
         # olmasın) publish edildiği için tazelik kontrolü güvenli. 0 → kapalı.
         self.declare_parameter("obstacle_timeout_s", 2.0)
+        # 🔴 19.08.2026 — GÜVENLİK TAVANI (canlı gölde tekrarlayan "cmd_vel
+        # kesildi / MPPI durdu" arızasının bulunan mekanizması). Kök neden
+        # `edge_memory.py`nin kendi dondurulmuş testi (test_BUYUK_gurultu_
+        # hafizayi_PATLATIYOR_belgelenmis_kisit) tarafından zaten belgeli:
+        # bozuk/sıçrayan odometri (KAR-05/06) aynı cismi her karede yeni kayıt
+        # sanıp hafızayı patlatıyor — GERÇEK ÇÖZÜM ORADA, bu parametre onu
+        # DEĞİŞTİRMEZ. Ama patlama gerçekleştiğinde `_huni_payi`'nin O(n²)
+        # taraması ve MPPI'nin (K,T+1,N) engel tensörü saniyelerce sürüyor ve
+        # kontrol döngüsünü TAMAMEN durduruyor — ÖLÇÜLDÜ (laptop, tekrar
+        # üretilebilir sanal göl senaryosu): N~94 kayıtta 60+ saniye kontrol
+        # kilitlenmesi. Bu, kök nedeni DÜZELTMEZ — yalnız SONUCUNU sınırlar:
+        # aracın en YAKIN bu kadar cismi bilmesi, çok uzaktaki/duplike
+        # kayıtları hiç bilmemesinden HER ZAMAN güvenlidir (yakın olan
+        # çarpışma riskidir). Sıralama _on_classified'da mesafeye göre.
+        # ⚠ 150 ÖLÇÜLMÜŞ bir optimum DEĞİL — sağlıklı çalışma aralığının
+        # (gözlenen 30-94 kayıt) 1,5-5 katı, yani normal koşumu HİÇ etkilemez
+        # ama patlamayı (gözlenen 1362'ye kadar) küçük bir sabite sınırlar.
+        # 0 = KAPALI = eski davranış birebir.
+        self.declare_parameter("engel_azami_sayisi", 150)
         self.declare_parameter("mode_name", "GUIDED")        # otonomi modu
         self.declare_parameter("map_rate_hz", 10.0)          # Dosya-3 yayım hızı
         self.declare_parameter("use_rrt", True)              # false → video bypass
@@ -584,6 +603,9 @@ class PlanningNode(Node):
         # F-P.2: obstacle_map bayatlık takibi
         self._obstacle_timeout = float(
             self.get_parameter("obstacle_timeout_s").value
+        )
+        self._engel_azami_sayisi = int(
+            self.get_parameter("engel_azami_sayisi").value
         )
         # H4 eşiği AYRI BİR AYAR DEĞİL, F-P.2 bütçesinden TÜRER: durdurma
         # bütçesinin yarısında yedeğe geç → devralmak için bütçenin yarısı
@@ -1409,6 +1431,22 @@ class PlanningNode(Node):
                 edges.append((wx, wy))
             else:
                 obstacles.append(CircleObstacle(wx, wy, r))
+
+        # 🔴 GÜVENLİK TAVANI (bkz. `engel_azami_sayisi` declare_parameter'ı) —
+        # `_huni_payi`'nin O(n²) taramasından VE MPPI'nin (K,T+1,N) engel
+        # tensöründen ÖNCE, hafıza patlamışsa en YAKIN (çarpışma riski en
+        # yüksek) kayıtlarla sınırla. Kapı takibi de korunur: edges ayrı
+        # sınırlanır ki uzak bir engel yoğunluğu iki gerçek direği torbadan
+        # atmasın.
+        if self._engel_azami_sayisi > 0:
+            ax, ay = self._last_xy
+            if len(edges) > self._engel_azami_sayisi:
+                edges.sort(key=lambda e: (e[0] - ax) ** 2 + (e[1] - ay) ** 2)
+                edges = edges[: self._engel_azami_sayisi]
+            if len(obstacles) > self._engel_azami_sayisi:
+                obstacles.sort(
+                    key=lambda o: (o.cx - ax) ** 2 + (o.cy - ay) ** 2)
+                obstacles = obstacles[: self._engel_azami_sayisi]
 
         # B2 HUNİ: kapı direkleri kenar OLARAK KALIR ama çarpışma korumasından
         # çıkarılmaz — payları ölçülen açıklıktan türetilerek engel torbasına da

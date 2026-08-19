@@ -38,6 +38,9 @@ SALTERLER = [
      "kaptan kararı KAPALI; kararı taşıyan şalter erişilebilir kalmalı"),
     ("edge_unutma_katsayisi",
      "04bddb7'nin ilk vakası — A/B adayı (2,0 → 1,0)"),
+    ("engel_azami_sayisi",
+     "19.08 — hafıza patlaması MPPI'yi saniyelerce kilitliyordu (canlı "
+     "göl arızasıyla eşleşen mekanizma); tavan sahada ayarlanabilmeli"),
     ("gecis_zorunlu",
      "geçiş ölçütü; fly-by buna bağlı"),
     ("bilinmeyen_engelleri_tut",
