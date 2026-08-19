@@ -2780,7 +2780,36 @@ def main(args: list[str] | None = None) -> None:
     # tetikliyordu. Üç grup var ⇒ üç iş parçacığı. Daha fazlası yalnız rclpy
     # yürütücü ek yükü getirir (rclpy #1223/#1452). 18.08: DÖRT grup var
     # (varsayılan · algı · durum · kadans bekçisi) ⇒ dört iş parçacığı.
-    executor = MultiThreadedExecutor(num_threads=4)
+    #
+    # 🔴 19.08 (aynı gece, BU commit'in kök nedeni) — 19.08'İN KENDİ B1
+    # DÜZELTMESİ (kontrol + harita zamanlayıcılarını `_grup_kontrol` /
+    # `_grup_harita`'ya ayırdı) grup sayısını DÖRTTEN ALTIYA çıkardı ama
+    # bu satır GÜNCELLENMEDİ — "N grup ⇒ N iş parçacığı" kuralının kendisi
+    # ÇİĞNENDİ (4 iş parçacığı, 6 grup). Sonuç: canlı gölde ve tekrar
+    # üretilebilir bir laptop senaryosunda (`gol_kos_akinti.sh` + realistik
+    # algı gürültüsü) kontrol döngüsü 5-70+ saniye TAMAMEN kilitlendi
+    # ("cmd_vel kesildi", kullanıcının canlı gölde de bağımsız bildirdiği
+    # arıza). py-spy KAYIT modunda (15 s, 50 Hz örnekleme, 870 örnek)
+    # yakalandı: örneklerin **%75,5'i** `rclpy/executors.py:780
+    # wait_for_ready_callbacks`'te — yani sistem HESAP YAPMIYORDU, bir
+    # şeyin sevke hazır olmasını bekliyordu (MPPI'nin kendisi örneklerin
+    # <%2'sinde göründü — ilk teşhisim "MPPI/engel sayısı yavaşlıyor"
+    # YANLIŞTI, izole ölçüldü: K=1000/T=50 rollout tek başına ~50 ms).
+    # Literatür (Polymath Robotics, "Evolution of Execution Management in
+    # rclcpp"; ros2/rclpy #1159): ROS 2 Humble'ın klasik (poll tabanlı)
+    # executor'ı entity sayısıyla DOĞRUSAL, MultiThreadedExecutor'da ayrıca
+    # keşif fazı `wait_mutex_` ile TÜM iş parçacıkları arasında SERİLEŞİYOR
+    # — yetersiz iş parçacığı sayısında bazı gruplar sevk sırası bulamıyor
+    # (tam olarak 18.08'in kendi ölçtüğü desenin AYNISI, bu kez B1'in
+    # eklediği iki yeni grup için). Gerçek çözüm (EventsExecutor) yalnız
+    # Jazzy/Rolling'de var — bu proje Humble'a KİLİTLİ (CLAUDE.md), o yüzden
+    # kullanılamaz. Ölçüldü (aynı senaryo, aynı tohum): num_threads=4 → 3/3
+    # koşumda kilitlenme; num_threads=6 (kuralla birebir: 5 açık grup +
+    # varsayılan) → 100+ s kesintisiz, 0 boşluk. Mutasyonla doğrulandı
+    # (4'e dönünce AYNI senaryo yine kilitlendi).
+    # ⚠ Kural GELECEKTE yeni bir `MutuallyExclusiveCallbackGroup()` eklenirse
+    # YİNE ÇİĞNENEBİLİR — bu satırı da güncellemeyi unutma.
+    executor = MultiThreadedExecutor(num_threads=6)
     try:
         rclpy.spin(node, executor=executor)
     finally:

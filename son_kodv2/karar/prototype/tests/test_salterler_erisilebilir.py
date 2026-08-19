@@ -142,3 +142,52 @@ def test_fusion_node_FusionPipelineConfig_cagrisi_GERCEK_ALANLARLA_ESLESIR() -> 
         f"ama sınıfta YOK: {eksik} — use_isam2=true'da TypeError ile çöker "
         f"(ce3242e9 vakası: reanchor_sigma_xy)."
     )
+
+
+def test_planning_node_THREAD_SAYISI_grup_sayisiyla_ESLESIYOR() -> None:
+    """🔴 19.08 (aynı gece, KRİTİK) — `main()`'in kendi belgelenmiş kuralı
+    "N grup ⇒ N iş parçacığı" (rclpy #1223/#1452, ek yürütücü yükü) B1
+    düzeltmesiyle (kontrol+harita ayrı gruplara alındı) ÇİĞNENDİ: grup
+    sayısı 4'ten 6'ya çıktı ama `num_threads` 4'te kaldı. Sonuç: canlı
+    gölde ve tekrar üretilebilir bir laptop senaryosunda kontrol döngüsü
+    5-70+ saniye kilitlendi ("cmd_vel kesildi"). py-spy kayıt modu kanıtı:
+    örneklerin %75,5'i `wait_for_ready_callbacks`'te — hesap değil, sevk
+    açlığı. Literatür: Polymath Robotics "Evolution of Execution
+    Management in rclcpp"; ros2/rclpy #1159.
+
+    Bu nöbetçi `planning_node.py` kaynağını `ast` ile okuyup KENDİ
+    `PlanningNode.__init__`'inde kurulan `MutuallyExclusiveCallbackGroup()`
+    sayısını + 1 (varsayılan grup) `main()`'deki `MultiThreadedExecutor(
+    num_threads=N)` ile bağlar — gelecekte yeni bir grup eklenip bu satır
+    unutulursa CI kırmızı yanar.
+    """
+    import ast
+
+    kok = Path(__file__).resolve().parents[2]
+    kaynak = (SRC / "girdap_decision" / "planning_node.py").read_text(
+        encoding="utf-8")
+    agac = ast.parse(kaynak)
+
+    grup_sayisi = sum(
+        1 for node in ast.walk(agac)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "MutuallyExclusiveCallbackGroup"
+    )
+    beklenen = grup_sayisi + 1          # +1: düğümün varsayılan grubu
+
+    num_threads: int | None = None
+    for node in ast.walk(agac):
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "MultiThreadedExecutor"):
+            for kw in node.keywords:
+                if kw.arg == "num_threads" and isinstance(kw.value, ast.Constant):
+                    num_threads = kw.value.value
+    assert num_threads is not None, "MultiThreadedExecutor(num_threads=...) bulunamadı"
+    assert num_threads == beklenen, (
+        f"{grup_sayisi} açık MutuallyExclusiveCallbackGroup + 1 varsayılan "
+        f"= {beklenen} iş parçacığı gerekiyor, ama num_threads={num_threads}. "
+        "Yeni bir grup eklendiyse main()'deki MultiThreadedExecutor satırı "
+        "da güncellenmeli — aksi hâlde 19.08'in kilitlenmesi tekrarlar."
+    )
