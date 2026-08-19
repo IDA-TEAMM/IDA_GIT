@@ -1228,8 +1228,17 @@ def test_abone_yokken_gonderilmis_SAYILMAZ(ros_context) -> None:  # noqa: ANN001
         node.destroy_node()
 
 
-def test_ariza_gecince_TEMIZ_bildirilir(ros_context) -> None:  # noqa: ANN001
-    """Operatör arızanın düzeldiğini de görmeli (yoksa ekranda asılı kalır)."""
+def test_ariza_gecince_TEMIZ_bildirilir(ros_context, monkeypatch) -> None:  # noqa: ANN001
+    """Operatör arızanın düzeldiğini de görmeli (yoksa ekranda asılı kalır).
+
+    SAAT-YOK (§0.61h) gerçek çekirdek saat disiplinini (`adjtimex`) okur —
+    NTP'siz bir test makinesinde (ör. bu konteyner) HER ZAMAN aktif olup
+    "ariza yok" beklentisini asla sağlatmaz. Test kendi konusuyla (ENGEL-YOK
+    geçip geçmediği) İLGİSİZ bir gerçek-dünya durumuna bağımlı olmamalı —
+    Yahya'nın 19.08 `test_p1_saha_senaryolari.py` düzeltmesiyle AYNI ders
+    (duvar durumuna bağımlı test = makineye göre kırmızı/yeşil).
+    """
+    monkeypatch.setattr(pn, "saat_guvenilir_mi", lambda: (True, "test: saat güvenilir sayıldı"))
     from geometry_msgs.msg import PoseArray
     node = pn.PlanningNode()
     casus, gelenler = _statustext_casusu()
