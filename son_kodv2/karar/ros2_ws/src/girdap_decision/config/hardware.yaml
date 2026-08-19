@@ -295,7 +295,14 @@ mission:
   gecis_payi_m: 0.0       # mekanizma HAZIR ama KAPALI: fly-by gercek kosumda
                           # duzlemi +5,98 m astirdi (esik 1,53) ⇒ siki esige GEREK YOK.
                           # 1,53'e cekmek OLCULMEDI; gerekirse tek satir.
-
+  # 19.08.2026 — daha önce burada YOKTU (§1.60b: alan var, yüzeye bağlı
+  # değil — hardware.yaml'da değiştirmek sessizce etkisizdi). Referans
+  # seyir hızı (MPPI hedef hızı); şu an params.yaml'daki (1.0) ile AYNI —
+  # bu satır saf tellemektir, davranış değişmedi.
+  # ⚠ AÇIK KARAR: kaptanın göl bandından ölçtüğü gerçek seyir 0,62 m/s,
+  # burada 1.0 — henüz uzlaştırılmadı, sahada gerçek kapı geçme
+  # performansıyla doğrulanmalı (bkz. CLAUDE.md "MPPI Terminal Maliyeti").
+  cruise_velocity_mps: 1.0
 
 # --- iSAM2 sensör füzyonu (fusion_node) ---
 # ⚠ Bu blok `perception.fusion` (kamera-LiDAR bearing eşleştirmesi) ile
