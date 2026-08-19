@@ -183,7 +183,7 @@ basla fusion   ros2 run girdap_decision fusion_node --ros-args --params-file "$P
 basla mission  ros2 run girdap_decision mission_manager_node --ros-args --params-file "$P" -p mission_source:=fc
 basla fsm      ros2 run girdap_decision fsm_node --ros-args --params-file "$P"
 basla bridge   ros2 run girdap_decision mavros_bridge_node --ros-args --params-file "$P"
-basla planning ros2 run girdap_decision planning_node --ros-args --params-file "$P" -p use_rrt:=true $GOL_PLANNING_EK
+basla planning env "GIRDAP_HAVUC_M=${GIRDAP_HAVUC_M:-1.03}" ros2 run girdap_decision planning_node --ros-args --params-file "$P" -p use_rrt:=true $GOL_PLANNING_EK
 
 # ══════════════════════════════════════════════════════════════════════════
 # TAM SİSTEM KATMANLARI (18.08.2026) — varsayılan KAPALI, davranış bit birebir
@@ -274,7 +274,7 @@ if [ "${GIRDAP_GOL_ALGI:-0}" = "1" ]; then
     #       stereo bilerek YOK (z=0) ⇒ suyun stereo'yu öldürdüğü gerçek durum
     #       (08.08 bulgusu) ve onun için yazılan pinhole yedeği sınanır.
     #       Damga da GERÇEK kareden gelir ⇒ kamera↔LiDAR ms farkı anlamlı olur.
-    basla algi_navigator env "GIRDAP_SIM_KAYNAK=${GIRDAP_GOL_ALGI_KIP:-2}" \
+    basla algi_navigator env "GIRDAP_SIM_KAYNAK=${GIRDAP_GOL_ALGI_KIP:-1}" \
         ros2 run girdap_ida_algi duba_gecis_navigator
     echo "  + ALGI zinciri: sahte_ham_sensor → perception_lidar → perception_fusion"
     echo "  + BİZİM KATMAN: duba_gecis_navigator (SİM KAYNAK) → /perception/buoys"

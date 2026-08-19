@@ -1236,12 +1236,72 @@ class DubaNavigator(Node):
                 "🔵 sim aboneliği (GÖRÜNTÜ kipi): /oak/rgb/image_raw → "
                 "CLAHE+HSV → sahte NN kuyruğu (stereo YOK → mono yedek)")
             return
+        # 🔴 19.08 ÖLÇÜMÜ — SINIFLI KAYNAK TERCİH EDİLİR.
+        # Sınıfsız `obstacle_map` her tespiti KENAR yapıyordu; ayrıca görüntü
+        # kipinin renk eşiği dubaların çoğunu kaçırıyordu. Aynı sahnede
+        # ölçüldü (600 kare):
+        #     FOV'da GEOMETRİK ≥2 duba : %67,7
+        #     kamera tespiti   ≥2 duba : %12,7   ⇒ 5,3 KAT KAYIP
+        # Kapı ancak İKİ duba birden görülünce kurulabildiği için bu kayıp
+        # kapı zincirini gölde sınanamaz hale getiriyordu. Sınıflı kaynak
+        # hem kaybı kapatır hem gerçek sınıfı (0=kenar · 1=engel) taşır.
+        # ⚠ Bu kip YOLO'yu SINAMAZ (zaten sınamıyordu); sınadığı şey
+        # bbox→metre, menzil, kapı geometrisi ve geçiş zinciridir.
+        from vision_msgs.msg import Detection3DArray
+        self.create_subscription(
+            Detection3DArray, "/gercek/classified_obstacles",
+            self._sim_sinifli_geldi, 10)
         from geometry_msgs.msg import PoseArray
         self.create_subscription(
             PoseArray, "/perception/obstacle_map", self._sim_engel_geldi, 10)
         self.get_logger().info(
-            "🔵 sim aboneliği (GEOMETRİK kip): /perception/obstacle_map → "
+            "🔵 sim aboneliği (GEOMETRİK kip): /gercek/classified_obstacles "
+            "(sınıflı, tercih) + /perception/obstacle_map (yedek) → "
             "sahte NN kuyruğu")
+
+    def _sim_sinifli_geldi(self, msg) -> None:
+        """`Detection3DArray` → sınıfıyla birlikte sahte NN kuyruğu.
+
+        Sınıf kaynağın kendisinden gelir: kamera FOV'u/menzili dışındaki
+        cisimler zaten UNKNOWN etiketlidir ve burada ELENİR — yani "kameranın
+        gördüğü" kısıtı korunur, yalnız renk eşiğinin kaçırması ortadan kalkar.
+        """
+        dets = []
+        for d in msg.detections:
+            bx = float(d.bbox.center.position.x)
+            by = float(d.bbox.center.position.y)
+            if bx <= 0.05:
+                continue
+            sinif = None
+            for r in d.results:
+                try:
+                    sinif = int(r.hypothesis.class_id)
+                except (TypeError, ValueError):
+                    sinif = None
+                break
+            if sinif not in (KENAR_CLASS, ENGEL_CLASS):
+                continue                      # UNKNOWN(99) → kamera görmedi
+            yaricap = max(0.05, float(d.bbox.size.x) / 2.0)
+            det = self._sim_tespit_kur(bx, by, yaricap, sinif)
+            if det is not None:
+                dets.append(det)
+        if dets:
+            self._sim_sinifli_taze = True
+            self.det_q.koy(_SahteMesaj(dets))
+
+    def _sim_tespit_kur(self, bx, by, yaricap, sinif):
+        """Gövde (x ileri, y sol) → ters pinhole → `_SahteTespit` (ortak yol)."""
+        x_kam, z_kam = -by, bx
+        w_n = min(0.9, (2.0 * yaricap) * self._f_sim / max(z_kam, 0.3))
+        cx = 0.5 + (x_kam / max(z_kam, 0.3)) * self._f_sim
+        if not (0.0 < cx < 1.0):
+            return None
+        h_n = w_n * 1.4
+        return _SahteTespit(
+            xmin=cx - w_n / 2, xmax=cx + w_n / 2,
+            ymin=0.5 - h_n / 2, ymax=0.5 + h_n / 2,
+            label=sinif, confidence=0.9,
+            x_mm=x_kam * 1000.0, z_mm=z_kam * 1000.0)
 
     def _sim_kare_geldi(self, msg) -> None:
         """`sensor_msgs/Image` (bgr8) → gerçek ön işleme → sahte NN kuyruğu.
@@ -1288,7 +1348,13 @@ class DubaNavigator(Node):
             self.rgb_q.koy(_SahteKare(kare))
 
     def _sim_engel_geldi(self, msg) -> None:
-        """PoseArray → `_SahteTespit` listesi → sahte NN kuyruğu."""
+        """PoseArray → `_SahteTespit` listesi → sahte NN kuyruğu (YEDEK).
+
+        ⚠ Sınıflı kaynak akıyorsa BU YOL SUSAR — iki üretici aynı kuyruğu
+        doldurursa tespitler ikiye katlanır ve ölçüm anlamsızlaşır.
+        """
+        if getattr(self, "_sim_sinifli_taze", False):
+            return
         dets = []
         for p in msg.poses:
             bx, by = float(p.position.x), float(p.position.y)

@@ -75,6 +75,16 @@ ONAY_TICK = 2
 _BAYAT_KILIT_KATSAYI = 2.0
 
 
+#: Geçişin sayılması için düzlemin ötesine gereken ek yol payı (m).
+#: Algı tarafındaki `PASS_EK_YOL = ARAC_BOY + 0,5` ile AYNI 0,5'tir —
+#: kıçın da kapı düzlemini temizlemesi için. İki taraf ayrışırsa geçiş
+#: sayımı ile sürüş hedefi çelişir.
+_GECIS_PAYI_M = 0.5
+#: `params.yaml arrival_radius_m`. Burada tutulur ki bu modül ROS'a bağımlı
+#: kalmasın; ikisi ayrışırsa araç çembere girip durur ve düzlem aşılmaz.
+_VARIS_YARICAPI_M = 2.0
+
+
 @dataclass(frozen=True)
 class GateFollowerConfig:
     r"""Kapı seçimi — **TAHMİNE DAYALI TEK BİR SAYI YOK.**
@@ -123,11 +133,45 @@ class GateFollowerConfig:
     hull_width_m: float = 0.785
     # Boy: dubanın "önümüzde" sayılması için burnun ötesinde olması gerekir.
     hull_length_m: float = 1.04
+
     # ⚠️ Buraya yeni alan EKLEME: `test_kapi_seciminde_ayarlanabilir_esik_
     # KALMADI` bu sınıfın YALNIZ bu iki ölçülmüş boyutu taşımasını dondurur
     # (§0.0d). Deneysel/A-B şalterleri (kurs ekseni, arada duba kontrolü)
     # `select_gate`e `kurs` deseniyle AYRI KEYWORD PARAMETRE olarak geçer —
     # bkz. o fonksiyonun imzası — config'e değil.
+
+    @property
+    def cikis_havucu(self) -> float:
+        """Kapı nişanının düzlemin NE KADAR ötesine konacağı (m) — TÜRETİLMİŞ.
+
+        🔴 ARIZA (19.08.2026): araç kapı ortasına varıp düzlemi aşamıyordu.
+        İmza her redde aynı: yanal **0,00 m** (nişan kusursuz) · ileri
+        **−0,2 … −7 m** (gerekli > +1,53 m). Yani algı doğru, araç duruyor.
+
+        MEKANİZMA — üç büyüklük uyumsuzdu:
+            eski havuç (gövde boyu)   1,04 m
+            MPPI terminal ufku        3,00 m  (`terminal_lookahead_m`)
+            geçişin sayılma şartı     1,54 m  (algı `PASS_EK_YOL`)
+        MPPI'de AYRI HIZ TERİMİ YOK; seyir hızını terminal maliyetin gradyanı
+        (2·w·d) belirler. Hedef 1 m ötedeyken gradyan küçülür, itki sıfıra
+        gider ve araç tam kapı ortasında frenler.
+
+        ✅ TÜRETME (ayarlanan sayı değil — üçü de başka yerde ölçülmüş):
+            gövde boyu            `hull_length_m`      1,04 m
+          + geçiş payı            algı `PASS_EK_YOL`   0,50 m
+          + varış yarıçapı        `arrival_radius_m`   2,00 m
+        ⇒ araç nişan çemberine girdiği ANDA düzlemi zaten aşmış olur.
+
+        📊 ÖLÇÜLDÜ (`kapi_orani.py`, 12'şer koşum, ROS'suz deterministik):
+            1,04 m → kapı geçme %31,2 · en iyi  %37,5
+            3,54 m → kapı geçme %62,5 · ortanca %75,0 · en kötü %37,5
+          Dağılımlar ÖRTÜŞMÜYOR. Yan etkiler de iyi: en küçük gövde payı
+          0,06 → 0,24 m · yol verimi %252 → %185 · çarpma 0/12 ↔ 0/12.
+        ⚠ ROS'lu gölde TEK koşumla ölçmek yanıltır: orada 19 süreç asenkron
+          koşuyor ve aynı ayar 0 ile 2 kapı arasında oynuyor (ROS 2'de çok
+          süreçli koşum tanım gereği belirlenimsiz — ölçüldü).
+        """
+        return self.hull_length_m + _GECIS_PAYI_M + _VARIS_YARICAPI_M
 
     @property
     def min_forward(self) -> float:
@@ -1140,7 +1184,7 @@ class GateFollower:
                     surus_hedefi=self._committed.surus_noktasi(
                         vehicle,
                         self._committed.width / 2.0,      # öz-ölçekli hizalanma payı
-                        self._cfg.hull_length_m,
+                        self._cfg.cikis_havucu,
                     ),
                 )
             # Geçildi → serbest bırak, aşağıda yeniden seç.
