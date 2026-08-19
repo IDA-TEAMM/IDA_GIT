@@ -100,6 +100,14 @@ class FusionPipelineConfig:
     # Sıfırlamada korunacak kuyruğun SÜRESİ (kaptan sorusu: "hepsini silme").
     # 0.0 = saf çıpalama.
     reanchor_keep_s: float = 0.0
+    # 🔴 19.08 (§1.68e-②) — ÇAPA PRİOR'UNUN SİGMALARI. `ISAM2SmootherConfig`
+    # zaten kabul ediyordu ama BURADA (ROS'un konuştuğu katman) hiç
+    # YOKTU — `fusion_node._setup_isam2` bu iki alanı `FusionPipelineConfig`
+    # kurucusuna kwarg olarak geçiyordu, alan yoksa `TypeError` ile ÇÖKER
+    # (`use_isam2=true` = yarışma varsayılanı, yani her başlatmada). None →
+    # prior_sigma_xy/prior_sigma_psi (ölçülen kazanan [0,05·0,05·0,05]).
+    reanchor_sigma_xy: Optional[float] = None
+    reanchor_sigma_psi: Optional[float] = None
 
     @property
     def keyframe_period_s(self) -> float:
@@ -164,6 +172,8 @@ class FusionPipeline:
                 heading_huber_k=self.cfg.heading_huber_k,
                 reanchor_period_keys=self.cfg.reanchor_period_keys,
                 reanchor_keep_keys=self.cfg.reanchor_keep_keys,
+                reanchor_sigma_xy=self.cfg.reanchor_sigma_xy,
+                reanchor_sigma_psi=self.cfg.reanchor_sigma_psi,
             )
         )
         self._sm.initialize(gtsam.Pose2(0.0, 0.0, 0.0))

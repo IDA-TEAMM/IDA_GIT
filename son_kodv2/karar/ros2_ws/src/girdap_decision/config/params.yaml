@@ -40,6 +40,9 @@ fusion_node:
     # 5-7 KATI. Cipalama canli ve 30 s'de bir; o anki hatayi kilitleyebilir.
     # 0.0 = ESKI DAVRANIS BIREBIR. Olculmeden degistirilmez.
     reanchor_sigma_xy: 0.0
+    # Kardeşi (xy) 19.08'de bağlandı ama BU alan atlanmıştı — aynı gerekçe,
+    # heading kalitesi için. 0.0 = ESKİ DAVRANIŞ BİREBİR.
+    reanchor_sigma_psi: 0.0
     gps_robust_enabled: true # Huber M-estimator ile GPS outlier reddi
     gps_huber_k: 1.345       # σ katı; Gauss verimliliğinin %95'ini korur
     # Fix kalitesine göre GPS ölçüm sigma'sı (NavSatFix.status.status).

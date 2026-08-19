@@ -51,6 +51,9 @@ FUZYON_SALTERLERI = [
     ("reanchor_sigma_xy",
      "§1.68e-②: bağlı değilken çapa 0,05 m SABİT iddia ediyordu; ölçülen "
      "GPS σ ≈ 0,25-0,34 m (bantların hiçbirinde RTK yok)"),
+    ("reanchor_sigma_psi",
+     "reanchor_sigma_xy'nin kardeşi — heading kalitesi için aynı gerekçe, "
+     "az önce (aynı gece) atlanmıştı"),
 ]
 
 
@@ -88,4 +91,51 @@ def test_FUZYON_SALTERI_dugum_ve_iki_yamlda_BAGLI(salter: str, neden: str) -> No
             eksik.append(y)
     assert not eksik, (
         f"`{salter}` şu yerlerde BAĞLI DEĞİL: {eksik}. Neden bağlı olmalı: {neden}"
+    )
+
+
+def test_fusion_node_FusionPipelineConfig_cagrisi_GERCEK_ALANLARLA_ESLESIR() -> None:
+    """🔴 19.08 (aynı gece) — DAHA CİDDİ kardeş kusur: `ce3242e9`
+    `reanchor_sigma_xy`'yi `fusion_node.py`'de `FusionPipelineConfig(...)`
+    kurucusuna kwarg olarak geçirmeye başladı ama `FusionPipelineConfig`
+    sınıfının KENDİSİNE (`prototype/fusion/pipeline.py`) bu alanı EKLEMEYİ
+    unuttu. Sonuç: yukarıdaki nöbetçilerin ikisi de (declare_parameter +
+    iki yaml) YEŞİLDİ ama `use_isam2=true` (yarışma varsayılanı) her
+    başladığında `_setup_isam2()` şu hatayla ÇÖKÜYORDU:
+        TypeError: FusionPipelineConfig.__init__() got an unexpected
+        keyword argument 'reanchor_sigma_xy'
+    Bu, config dosyalarında string arama ile YAKALANAMAZ — kurucunun
+    GERÇEKTEN o kwarg'ı kabul ettiğini doğrulamak gerekir. gtsam
+    gerektirmez (ikisi de düz `ast` ile okunur, hiçbir modül import
+    edilmez) — laptop dahil her ortamda koşar.
+    """
+    import ast
+
+    kok = Path(__file__).resolve().parents[2]
+    dugum_kaynagi = (kok / "ros2_ws" / "src" / "girdap_decision"
+                      / "girdap_decision" / "fusion_node.py").read_text(encoding="utf-8")
+    pipeline_kaynagi = (kok / "prototype" / "fusion" / "pipeline.py").read_text(encoding="utf-8")
+
+    # fusion_node.py'deki FusionPipelineConfig(...) çağrısının kwarg'ları.
+    cagri_kwargs: set[str] = set()
+    for node in ast.walk(ast.parse(dugum_kaynagi)):
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "FusionPipelineConfig"):
+            cagri_kwargs.update(kw.arg for kw in node.keywords if kw.arg)
+
+    # pipeline.py'deki FusionPipelineConfig sınıfının GERÇEK alanları.
+    sinif_alanlari: set[str] = set()
+    for node in ast.walk(ast.parse(pipeline_kaynagi)):
+        if isinstance(node, ast.ClassDef) and node.name == "FusionPipelineConfig":
+            for item in node.body:
+                if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                    sinif_alanlari.add(item.target.id)
+
+    assert cagri_kwargs, "çağrı bulunamadı — test kırılgan olabilir, kontrol et"
+    eksik = cagri_kwargs - sinif_alanlari
+    assert not eksik, (
+        f"fusion_node.py FusionPipelineConfig(...)'e şu kwarg'ları geçiriyor "
+        f"ama sınıfta YOK: {eksik} — use_isam2=true'da TypeError ile çöker "
+        f"(ce3242e9 vakası: reanchor_sigma_xy)."
     )

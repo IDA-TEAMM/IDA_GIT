@@ -162,6 +162,13 @@ class FusionNode(Node):
         # ⚠ 0.0 = ESKİ DAVRANIŞ BİREBİR (None gibi davranır). Ölçülmeden
         # değiştirilmez; ama artık DENENEBİLİR — kol açık kalsın diye.
         self.declare_parameter("reanchor_sigma_xy", 0.0)
+        # 19.08 — kardeşi (`reanchor_sigma_xy`) az önce bağlandı ama BU alan
+        # atlandı: `ISAM2SmootherConfig.reanchor_sigma_psi` de aynı sınıftan
+        # kusur — None → prior_sigma_psi = 0,05 rad SABİT, heading kalitesi
+        # (Huber-sarılı pusula) ne olursa olsun. Aynı gerekçe: ölçülmeden
+        # değiştirilmez, ama kol artık DENENEBİLİR.
+        # ⚠ 0.0 = ESKİ DAVRANIŞ BİREBİR (None gibi davranır).
+        self.declare_parameter("reanchor_sigma_psi", 0.0)
         # Fix kalitesine göre ölçüm sigma'sı [m] — hardware.yaml
         # `fusion.gps_sigma_by_status` bloğu. ROS parametreleri sözlük
         # taşımadığı için düzleştirilmiş skalerler.
@@ -316,6 +323,9 @@ class FusionNode(Node):
             reanchor_keep_s=float(self.get_parameter("reanchor_keep_s").value),
             reanchor_sigma_xy=(
                 float(self.get_parameter("reanchor_sigma_xy").value) or None
+            ),
+            reanchor_sigma_psi=(
+                float(self.get_parameter("reanchor_sigma_psi").value) or None
             ),
         )
         self.get_logger().info(
